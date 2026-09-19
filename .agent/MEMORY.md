@@ -69,10 +69,23 @@ Updated 2026-09-12. This is implementation status, not durable user profiling.
     - Built Next.js BFF route handlers (`/api/auth/login`, `/api/auth/callback`, `/api/auth/me`, `/api/auth/logout`) implementing OAuth 2.1 with PKCE S256 and HttpOnly session cookies.
     - Added `AuthProvider` context and updated `Navbar` with authenticated profile badge and sign-out controls.
     - Implemented FastAPI Bearer token dependency (`auth.py`) with offline JWKS validation, audience binding, and zero credentials stored in the travel database.
+  - **Next.js 16 Proxy & Route Protection (`frontend/src/proxy.ts`)**:
+    - Implemented Next.js 16 proxy/middleware convention intercepting all `/dashboard` and `/dashboard/:path*` requests.
+    - Inspects `swena_session` cookie; unauthenticated users are immediately redirected to `/login?return_to=...`.
+  - **Shadcn UI & SWENA 2.0 Forest Night Palette**:
+    - Initialized `components.json` with Tailwind CSS v4 and Radix UI base components (`card`, `badge`, `button`, `tabs`, `input`, `dialog`, `separator`).
+    - Aligned semantic tokens (`:root`, `.dark`) to `#0D1915` background, `#15271F` surface, `#F7F7F2` text, `#A9B8AD` secondary, and `#B7C9AD` sage accent.
+  - **GSAP 3D Travel Card (`travel-card-3d.tsx`)**:
+    - Built pure GSAP 3D perspective tilting card (`useGSAP`, `gsap.to`, `transformPerspective`, `rotationX`, `rotationY`, `translateZ`) with zero framer-motion dependencies.
+    - Integrated into Marketing Home page (`/`) showcasing signature topographic corridors with ground-truth elevations and advisories.
+  - **Sovereign OAuth 2.1 Fail-Closed Hardening**:
+    - Eliminated synthetic token fallbacks in `/api/auth/callback`; unconfigured environments redirect to `/login?error=oauth_unconfigured` with clear diagnostic setup instructions.
+  - **Unified Startup Orchestrator (`start.sh` & `Makefile`)**:
+    - Created root `start.sh` with `backend` (`uv run uvicorn`), `frontend` (`npm run dev`), and `all` (concurrent execution with trap cleanup) modes.
+    - Updated `Makefile` with `make backend-dev`, `make frontend-dev`, `make run-all`, and `make verify`.
   - **Playwright E2E Automated Verification**:
-    - Created `frontend/e2e/app.spec.ts` covering marketing page navigation, 5-tab constraint planner workflow (Solved Schedule, Corridor Map, Zero-Coercion Budget, Corridor Places, 4-Tier Evidence Registry), live benchmark runner, mobile QR modal, and OAuth 2.1 BFF login/logout cycle.
-    - 5/5 Playwright tests pass in 8.2 seconds; integrated directly into master `./verify.sh`.
-  - Master `./verify.sh` passes 100% cleanly across backend lint (Ruff), strict Mypy (39 files), Pytest unit suite (38 tests), Next.js Turbopack build (13 routes), and Playwright E2E suite (5 tests).
+    - Expanded test suite to 6 comprehensive tests covering marketing page, GSAP 3D corridors, Next.js proxy route protection, fail-closed OAuth diagnostics, authenticated 5-tab planner workflow (Solved Schedule, Corridor Map, Zero-Coercion Budget, Corridor Places, Evidence Registry), live benchmark runner, mobile QR modal, and session lifecycle.
+    - 6/6 Playwright tests pass in 19.5 seconds; master `./verify.sh` passes 100% cleanly.
 
 ## Locked
 

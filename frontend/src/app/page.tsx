@@ -19,8 +19,11 @@ import {
 } from "lucide-react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
+import { TravelCard3D } from "@/components/ui/travel-card-3d";
+import { useRouter } from "next/navigation";
 
 export default function HomePage() {
+  const router = useRouter();
   const heroRef = useRef<HTMLDivElement>(null);
   const headlineRef = useRef<HTMLHeadingElement>(null);
   const subheadRef = useRef<HTMLParagraphElement>(null);
@@ -367,6 +370,53 @@ export default function HomePage() {
               </div>
             </div>
           </div>
+        </div>
+      </section>
+
+      {/* SECTION 2.5: FEATURED 3D CORRIDOR SHOWCASE (GSAP POWERED) */}
+      <section className="px-6 py-20 max-w-7xl mx-auto border-t border-[#15271F]">
+        <div className="text-center max-w-3xl mx-auto mb-14">
+          <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#B7C9AD] uppercase tracking-wider mb-3">
+            <Sparkles className="h-4 w-4" />
+            <span>Interactive 3D Corridor Discovery</span>
+          </div>
+          <h2 className="text-3xl sm:text-4xl font-bold text-[#F7F7F2]">
+            Signature Topographic Corridors
+          </h2>
+          <p className="mt-3 text-sm sm:text-base text-[#A9B8AD]">
+            Hover to experience depth-layered 3D interaction powered by GSAP.
+            Inspect ground truth elevations, verified transit routes, and regional advisories.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 justify-items-center">
+          <TravelCard3D
+            title="Western Ghats Monsoon Odyssey"
+            subtitle="Bengaluru → Coorg → Wayanad → Ooty"
+            tagline="Elevation: 900m – 2,240m • 340 km"
+            badge="Biodiversity Hotspot"
+            verified={true}
+            actionText="Explore Ghats Route"
+            onActionClick={() => router.push("/trips/sample-western-ghats-corridor")}
+          />
+          <TravelCard3D
+            title="Royal Rajputana Circuit"
+            subtitle="Delhi → Jaipur → Jodhpur → Udaipur"
+            tagline="Heritage Expressways • 610 km"
+            badge="Desert & Fort Corridor"
+            verified={true}
+            actionText="Explore Royal Route"
+            onActionClick={() => router.push("/trips/sample-rajasthan-heritage-circuit")}
+          />
+          <TravelCard3D
+            title="Konkan & Sahyadri Pass"
+            subtitle="Mumbai → Pune → Mahabaleshwar → Goa"
+            tagline="Coastal Ghat Curves • 580 km"
+            badge="Coastal Transit"
+            verified={true}
+            actionText="Explore Coastal Route"
+            onActionClick={() => router.push("/trips/sample-goa-monsoon-coastal-escape")}
+          />
         </div>
       </section>
 
