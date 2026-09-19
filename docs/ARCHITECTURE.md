@@ -71,3 +71,31 @@ Trips owns brief/deltas; itinerary owns stop/leg versions; transport/hotels owns
 ## Data rights through the graph
 
 Persist references and permitted normalized fields, not unlimited raw provider payloads. The same rules apply to logs, Redis, LangGraph checkpoints and PDFs. Disallowed content is fetched transiently when needed. Data-use rules accompany evidence records.
+
+## Identity & Authentication (SWYRA Auth — OAuth 2.1 / OIDC)
+
+Identity is strictly externalized to [SWYRA Auth](https://github.com/SGOD-pro/OAuth2.1), a sovereign self-hosted OAuth 2.1 / OIDC provider:
+
+1. **Protocol Standards**: Strict OAuth 2.1 and RFC 8252 compliance with PKCE (`code_challenge_method=S256`), exact redirect URI matching, and single-use authorization codes.
+2. **Next.js BFF Integration**: Next.js App Router serves as the confidential client using the BFF pattern:
+   - `/api/auth/login`: Initiates OAuth 2.1 authorization with PKCE challenge and state.
+   - `/api/auth/callback`: Exchanges authorization code with SWYRA Auth token endpoint (`/api/auth/oauth2/token`) using client credentials, sets secure HttpOnly session cookie, and redirects to dashboard.
+   - `/api/auth/me`: Decodes and provides current authenticated user session context.
+   - `/api/auth/logout`: Clears session cookies.
+3. **Resource Server Offline Validation (FastAPI)**:
+   - FastAPI inspects incoming `Authorization: Bearer <token>`.
+   - Validates RS256 signatures offline against SWYRA Auth JWKS endpoint (`/.well-known/jwks.json`) with caching.
+   - Enforces `client_id` and `aud` binding to prevent cross-application token replay.
+   - No user passwords or credentials are ever stored in the PostgreSQL travel database; users are identified purely via `sub` claims.
+
+## Geospatial Canvas & Voice Architecture
+
+1. **Geospatial Corridor Engine**:
+   - Leaflet client-side engine with CartoDB Dark Matter tiles matching SWENA 2.0 `forest-night`.
+   - PostGIS queries provide waypoints, bounding boxes, and detour spatial geometries.
+   - Rendered using Next.js dynamic client-side imports (`ssr: false`) to avoid SSR window pollution.
+2. **Client-Native Voice Processing**:
+   - Web Speech API (`SpeechRecognition`) converts spoken briefs to structured destination/mode parameters on-device.
+   - Web Speech Synthesis (`SpeechSynthesisUtterance`) reads solved itineraries aloud in natural voice.
+   - Strict Privacy Boundary: Audio waveforms never leave the client browser; zero speech audio is transmitted or logged to backend servers.
+

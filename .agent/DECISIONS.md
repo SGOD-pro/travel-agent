@@ -21,5 +21,10 @@ Append important decisions; never rewrite history to hide supersession. Date: 20
 | D015 | Integration gate | Google Places display/storage rights with selected map renderer unresolved; adapters can proceed independently |
 | D016 | Engineering baseline | Async provider I/O, bounded blocking thread pool and browser isolation; no unbounded gather/thread fan-out |
 | D017 | Deferred | Vector retrieval, voice and checkout require later evidence/specification; no automatic scope expansion |
+| D018 | Implemented | 50-Scenario Automated Benchmark Runner (`BenchmarkRunner`) validates `tests/evaluations/cases.json` invariant suite (zero-coercion, temporal feasibility, price non-negativity) exposed via `GET /api/v1/benchmarks` and `/benchmarks` UI |
+| D019 | Implemented | Interactive Geospatial Corridor Canvas using Leaflet with CartoDB Dark Matter styling matching SWENA `forest-night` (`#0D1915`/`#15271F`/`#B7C9AD`) with dynamic SSR-safe wrapper |
+| D020 | Implemented | Client-native Web Speech API for voice brief dictation & audio tour narration; regional corridor weather & Western Ghats hazard advisory; public shareable dynamic route (`/trips/[id]`) with instant QR code generation |
+| D021 | Implemented | SWYRA Auth (SGOD-pro/OAuth2.1) OAuth 2.1 / OIDC integration via Next.js BFF pattern with PKCE S256 (`/api/auth/*`), HttpOnly session cookies, and FastAPI RS256 Bearer offline JWKS validation |
+| D022 | Implemented | Automated Playwright E2E test suite (`frontend/e2e/app.spec.ts`) validating marketing navigation, 5-tab constraint solving, corridor maps, benchmarks, mobile QR handover, and OAuth 2.1 session lifecycle integrated into `./verify.sh` |
 
 Future runtime split ADRs must include workload, package/import/RSS profile, cold/warm latency, cost, alternative considered, before/after result, rollback and affected contracts.

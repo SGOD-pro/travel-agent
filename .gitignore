@@ -1,0 +1,12 @@
+.mypy_cache
+.venv
+.pytest_cache
+.ruff_cache
+.vscode
+.env
+node_modules
+.next
+.agents
+dist
+*.pyc
+__pycache__

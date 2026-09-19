@@ -1,0 +1,116 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+@import "lenis/dist/lenis.css";
+@import "leaflet/dist/leaflet.css";
+
+:root {
+  --bg-forest: #0D1915;
+  --surface-forest: #15271F;
+  --surface-hover: #1b3329;
+  --card-forest: #162b22;
+  --border-forest: #233e32;
+  --border-subtle: rgba(183, 201, 173, 0.12);
+  --text-main: #F7F7F2;
+  --text-secondary: #A9B8AD;
+  --accent-sage: #B7C9AD;
+  --accent-hover: #c9dbbe;
+  --btn-text: #102D25;
+}
+
+html {
+  background-color: var(--bg-forest);
+  color: var(--text-main);
+  font-family: 'Manrope', sans-serif;
+  scroll-behavior: auto; /* Let Lenis handle smooth scrolling */
+}
+
+body {
+  background-color: var(--bg-forest);
+  color: var(--text-main);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* Custom cinematic utility styles */
+.glass-panel {
+  background-color: rgba(21, 39, 31, 0.75);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
+}
+
+.glass-card {
+  background: linear-gradient(135deg, rgba(21, 39, 31, 0.9) 0%, rgba(13, 25, 21, 0.95) 100%);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+}
+
+.glass-card:hover {
+  border-color: rgba(183, 201, 173, 0.35);
+  transform: translateY(-2px);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-sage {
+  background-color: var(--accent-sage);
+  color: var(--btn-text);
+  font-weight: 600;
+  transition: all 0.25s ease;
+}
+
+.btn-sage:hover {
+  background-color: var(--accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(183, 201, 173, 0.2);
+}
+
+.btn-outline-forest {
+  background-color: transparent;
+  color: var(--text-main);
+  border: 1px solid var(--border-forest);
+  transition: all 0.25s ease;
+}
+
+.btn-outline-forest:hover {
+  border-color: var(--accent-sage);
+  color: var(--accent-sage);
+  background-color: rgba(183, 201, 173, 0.05);
+}
+
+/* Custom scrollbar for modern browsers */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0D1915;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #233e32;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #B7C9AD;
+}
+
+/* Custom dark styling for Leaflet elements */
+.leaflet-popup-content-wrapper {
+  background: #15271F !important;
+  color: #F7F7F2 !important;
+  border: 1px solid rgba(183, 201, 173, 0.3) !important;
+  border-radius: 12px !important;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+  font-family: 'Manrope', sans-serif !important;
+}
+
+.leaflet-popup-tip {
+  background: #15271F !important;
+  border: 1px solid rgba(183, 201, 173, 0.3) !important;
+}
+
+.leaflet-container {
+  background: #0D1915 !important;
+  font-family: 'Manrope', sans-serif !important;
+}
+

@@ -24,6 +24,10 @@ Serve India-first domestic travelers planning family, solo, group, food, heritag
 | P12 | Preferences and memory | Long-term preferences require opt-in and can be edited/deleted |
 | P13 | Export itinerary | Includes version, source timestamps, estimates, warnings and permitted content |
 | P14 | Best months/dates suggestions | Seasonal guidance distinguished from short-term forecasts and real-time closures |
+| P15 | Voice brief dictation & tour narration | Client-side Web Speech API with explicit permission; audio not recorded server-side |
+| P16 | Corridor weather & ghat hazard advisory | Regional weather, monsoon risks, and Western Ghats visibility/safety advisories |
+| P17 | Public shareable itinerary & mobile QR | Deep-link sharing at `/trips/[id]` with client-side QR generation for road travelers |
+| P18 | Sovereign OAuth 2.1 identity integration | Delegated auth to SWYRA Auth (RFC 8252 + PKCE), zero stored credentials, offline JWKS validation |
 
 Not every domain requires an LLM agent. Not every domain is supported by a live supplier on launch. UNAVAILABLE is a valid section state.
 
@@ -41,7 +45,7 @@ If a rail provider fails and the user requires rail, keep that requirement unres
 
 ## Non-goals and deferred features
 
-No checkout, payment capture, booking creation, cancellations/refunds, universal inventory coverage, live crowd-density promise, autonomous emergency response, guaranteed safe route, EV battery/charging planning, vector store or independent frontend deployments. Voice remains in the vision but is a later phase with its own accuracy and consent gates. Competitor research is outstanding; no unverified superiority claims enter product copy.
+No checkout, payment capture, booking creation, cancellations/refunds, universal inventory coverage, live crowd-density promise, autonomous emergency response, guaranteed safe route, EV battery/charging planning, vector store or independent frontend deployments. Voice brief dictation and audio narration are implemented purely client-side via native Web Speech API with zero server-side recording. No inferred approval for checkout exists merely because external booking handoffs exist. Competitor research is outstanding; no unverified superiority claims enter product copy.
 
 ## Success criteria
 

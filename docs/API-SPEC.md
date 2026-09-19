@@ -28,6 +28,11 @@ POST commands require Idempotency-Key scoped to actor + operation. Reuse with id
 | POST /trips/{id}/handoffs | tripVersion, optionId | 201 intentId, merchant, url, evidence, contextWarnings | 422 unsafe/unmatched link |
 | POST /trips/{id}/exports | tripVersion, itineraryId, format=pdf | 202 artifactId, jobId | 409 |
 | GET /artifacts/{artifactId} | none | 200 state and short-lived downloadUrl if ready | 404/410 |
+| GET /benchmarks | none | 200 50-case invariant report, passRate, durationMs | 500 |
+| GET /api/auth/login | none | 302 redirect to SWYRA Auth gateway with PKCE | 500 |
+| GET /api/auth/callback | code, state | 302 redirect to /dashboard with HttpOnly session cookie | 400 invalid code |
+| GET /api/auth/me | session cookie | 200 authenticated user profile (sub, email) | 401 unauthenticated |
+| POST /api/auth/logout | session cookie | 200 cleared session cookie | 200 |
 | GET /me/preferences | none | 200 preferences and consent | 401 |
 | PUT /me/preferences | values, consentDecision, policyVersion | 200 updated preferences | 422 |
 | DELETE /user/me | explicit deletion scope | 202 deletionJobId | 401 |
