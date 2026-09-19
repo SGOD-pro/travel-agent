@@ -1,91 +1,83 @@
 import Link from "next/link";
-import { Compass, ShieldCheck, Cpu, ArrowUpRight } from "lucide-react";
+import { Compass } from "lucide-react";
 
 export function Footer() {
   return (
-    <footer className="border-t border-[#233e32] bg-[#0A1411] text-[#A9B8AD] py-16 px-6">
+    <footer className="border-t border-[#233E32] bg-[#0A1411] text-[#A9B8AD] py-14 px-6 sm:px-8">
       <div className="mx-auto max-w-7xl">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-12 mb-16">
-          {/* Col 1: Brand & Tagline */}
-          <div className="md:col-span-2 space-y-4">
-            <div className="flex items-center gap-3">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#15271F] border border-[#B7C9AD]/20 text-[#B7C9AD]">
-                <Compass className="h-5 w-5" />
+        <div className="grid grid-cols-1 md:grid-cols-12 gap-10 pb-12 border-b border-[#233E32]/60">
+          {/* Brand Col (6 cols) */}
+          <div className="md:col-span-6 space-y-4">
+            <Link href="/" className="flex items-center gap-2.5 w-fit">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#15271F] border border-[#B7C9AD]/25 text-[#B7C9AD]">
+                <Compass className="h-4 w-4" />
               </div>
-              <span className="text-xl font-bold text-[#F7F7F2]">SWENA</span>
-            </div>
-            <p className="text-sm leading-relaxed max-w-md text-[#A9B8AD]">
-              “We gave you memory.” An India-first travel planning, comparison,
-              and discovery platform. Powered by LangGraph multi-modal workflows
-              and Google OR-Tools scheduling.
+              <span className="text-xl font-bold tracking-tight text-[#F7F7F2]">SWENA</span>
+            </Link>
+            <p className="text-sm text-[#A9B8AD] max-w-md leading-relaxed">
+              India-first travel intelligence. We bring routes, daily stops, and budget
+              assumptions together into one editable plan, with direct handoff to official providers.
             </p>
-            <div className="flex items-center gap-2 text-xs text-[#B7C9AD]/90 bg-[#15271F]/80 px-3.5 py-1.5 rounded-full border border-[#B7C9AD]/15 w-fit">
-              <ShieldCheck className="h-3.5 w-3.5" />
-              <span>Zero-Hallucination Standard: No fake quotes, non-coerced costs</span>
-            </div>
+            <p className="text-xs text-[#6E8274]">
+              “We gave you memory.”
+            </p>
           </div>
 
-          {/* Col 2: Navigation */}
-          <div>
-            <h4 className="text-sm font-semibold uppercase tracking-wider text-[#F7F7F2] mb-4">
-              Platform
+          {/* Navigation Links (3 cols) */}
+          <div className="md:col-span-3 space-y-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[#F7F7F2]">
+              Explore
             </h4>
-            <ul className="space-y-2.5 text-sm">
+            <ul className="space-y-2 text-sm">
               <li>
-                <Link href="/" className="hover:text-[#F7F7F2] transition-colors">
-                  Cinematic Showcase
+                <Link href="/#journeys" className="hover:text-[#F7F7F2] transition-colors">
+                  Signature Journeys
+                </Link>
+              </li>
+              <li>
+                <Link href="/#how-it-works" className="hover:text-[#F7F7F2] transition-colors">
+                  How It Works
                 </Link>
               </li>
               <li>
                 <Link href="/dashboard" className="hover:text-[#F7F7F2] transition-colors">
-                  Itinerary Planner
+                  Trip Planner
                 </Link>
               </li>
               <li>
-                <Link href="/about" className="hover:text-[#F7F7F2] transition-colors">
-                  About Our Ethos
-                </Link>
-              </li>
-              <li>
-                <Link href="/contact" className="hover:text-[#F7F7F2] transition-colors">
-                  Concierge Inquiries
+                <Link href="/benchmarks" className="text-xs text-[#6E8274] hover:text-[#A9B8AD] transition-colors">
+                  Evaluation Benchmarks
                 </Link>
               </li>
             </ul>
           </div>
 
-          {/* Col 3: Architecture & Engineering */}
-          <div>
-            <h4 className="text-sm font-semibold uppercase tracking-wider text-[#F7F7F2] mb-4">
-              Engine & Standards
+          {/* Company & Support (3 cols) */}
+          <div className="md:col-span-3 space-y-3">
+            <h4 className="text-xs font-semibold uppercase tracking-wider text-[#F7F7F2]">
+              Company
             </h4>
-            <ul className="space-y-2.5 text-sm">
-              <li className="flex items-center gap-1.5">
-                <Cpu className="h-3.5 w-3.5 text-[#B7C9AD]" />
-                <span>LangGraph Workflow State</span>
+            <ul className="space-y-2 text-sm">
+              <li>
+                <Link href="/about" className="hover:text-[#F7F7F2] transition-colors">
+                  About Our Approach
+                </Link>
               </li>
-              <li className="flex items-center gap-1.5">
-                <Cpu className="h-3.5 w-3.5 text-[#B7C9AD]" />
-                <span>OR-Tools TSPTW Optimization</span>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <Cpu className="h-3.5 w-3.5 text-[#B7C9AD]" />
-                <span>PostGIS Spatial Authority</span>
-              </li>
-              <li className="flex items-center gap-1.5">
-                <Cpu className="h-3.5 w-3.5 text-[#B7C9AD]" />
-                <span>Upstash Redis Ephemeral Sync</span>
+              <li>
+                <Link href="/contact" className="hover:text-[#F7F7F2] transition-colors">
+                  Contact & Inquiries
+                </Link>
               </li>
             </ul>
           </div>
         </div>
 
-        {/* Bottom bar */}
-        <div className="pt-8 border-t border-[#15271F] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs">
-          <p>© {new Date().getFullYear()} SWENA Travel Intelligence. All rights reserved.</p>
-          <div className="flex items-center gap-6">
-            <span className="text-[#687d6f]">External Booking Handoff Only</span>
-            <span className="text-[#687d6f]">No Internal Checkout Locks</span>
+        {/* Bottom Bar */}
+        <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#6E8274]">
+          <p>© {new Date().getFullYear()} SWENA. All rights reserved.</p>
+          <div className="flex flex-wrap items-center gap-6">
+            <span>Direct Official Supplier Handoff</span>
+            <span>Non-Custodial (No Checkout Locks)</span>
           </div>
         </div>
       </div>

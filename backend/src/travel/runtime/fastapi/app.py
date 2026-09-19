@@ -6,6 +6,7 @@ from travel.infrastructure.config import settings
 from travel.runtime.fastapi.routes.benchmarks import router as benchmarks_router
 from travel.runtime.fastapi.routes.exports import router as exports_router
 from travel.runtime.fastapi.routes.health import router as health_router
+from travel.runtime.fastapi.routes.support import router as support_router
 from travel.runtime.fastapi.routes.trips import router as trips_router
 
 
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(trips_router)
     app.include_router(exports_router)
     app.include_router(benchmarks_router)
+    app.include_router(support_router)
 
     return app
 

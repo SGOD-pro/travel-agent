@@ -1,49 +1,126 @@
-# Technical requirements
+# SWENA Technical Requirements Document (TRD)
 
-Version 1.0 | Change when technical requirements change.
+**Version:** 2.0  
+**Status:** Approved Technical Contract  
+**Runtime:** Python 3.12 (FastAPI / LangGraph / OR-Tools) + Node.js 22 (Next.js 16 App Router)  
+**Database:** PostgreSQL 16 + PostGIS (Aiven) | Ephemeral Cache: Redis (Upstash) | Storage: AWS S3
 
-## Runtime and module contracts
+---
 
-Python 3.12 baseline with Pydantic v2; verify support of pinned dependency versions. FastAPI handles HTTP. LangGraph owns workflow sequencing, branching and HITL. OR-Tools solves constrained candidate itineraries. SQLAlchemy/async PostgreSQL driver and Alembic are proposed persistence implementation choices; LangGraph uses its supported PostgreSQL saver in a separate schema. Confirm checkpoint driver/pool compatibility in integration tests.
+## 1. Runtime Architecture & Module Boundaries
 
-Domain models must run without cloud SDK initialization. Adapters implement typed ports: repositories, unit of work, providers, clock, object store, LLM, event publisher and job dispatcher. Use Decimal throughout monetary logic, decimal strings on the wire and explicit ISO 4217 currencies. OR-Tools integer costs use documented currency minor units and rounding. Geographic distance is not money and may use floating-point calculations.
+### 1.1 Python Backend Modular Monolith
+* **Language Baseline:** Python 3.12.x with strict typing (`mypy --strict`) and Ruff formatting.
+* **HTTP Layer:** FastAPI with Pydantic v2 data transfer objects.
+* **Workflow Orchestration:** LangGraph state machine owning end-to-end planning sequencing, checkpointing, and human-in-the-loop approvals.
+* **Constraint Optimization:** Google OR-Tools (`pywrapcp.RoutingModel`) solving the Traveling Salesperson Problem with Time Windows (TSPTW).
+* **Persistence Layer:** SQLAlchemy 2.0 (asyncio extension) with Alembic migrations. Domain models are strictly separated from SQLAlchemy ORM entities via the Repository pattern and Unit of Work (`SqlAlchemyUnitOfWork`).
 
-## Bounded concurrency
+### 1.2 Mathematical & Monetary Contracts
+* **Monetary Representation:** Every monetary value must use Python `Decimal` internally and serialize as a decimal string (e.g., `"1250.00"`) over the API. Floating-point arithmetic for currency is strictly prohibited.
+* **Currency Support:** Standard ISO 4217 code (`INR` default). Multi-currency transactions must be converted using a timestamped, verified `fx_rates` record or rejected.
+* **Non-Coercion Formula:**
+  $$\text{Total} = \sum_{\text{known}} \text{Item} + \sum_{\text{unknown}} \text{Item}$$
+  If $\text{Count}(\text{unknown}) > 0$, then $\text{is\_complete} = \text{False}$, and the total is explicitly labeled: `"Known/estimated subtotal; tolls unknown"`. Unknown amounts must NEVER evaluate to $0.00$.
 
-Use async I/O for independent provider requests; reuse connection pools and enforce per-provider plus global admission limits. Only blocking I/O goes to a bounded ThreadPoolExecutor. Cancelling an await does not kill its underlying thread: configure socket timeouts and avoid overlapping retries. CPU-heavy Python parsing/optimization goes to an isolated worker/process where appropriate; threads are not an automatic CPU speedup.
+### 1.3 Road Budget Formulation
+$$\text{Fuel Liters} = \frac{\text{Route Distance (km)}}{\text{Vehicle Mileage (km/L)}}$$
+$$\text{Fuel Cost} = \text{Fuel Liters} \times \text{Fuel Price (₹/L)}$$
+$$\text{Road Total} = \text{Fuel Cost} + \text{Highway Tolls} + \text{Parking Fees} + \text{Permits}$$
 
-Initial tunable experiment defaults: global provider tasks 8 per worker, per-origin scrape tasks 2, blocking pool 4 threads, browser contexts 1 per worker. These are not supplier entitlements; the stricter provider limit always wins. Production values require memory, timeout and load measurements. Cap queued work, response bytes, browser lifetime, candidate count and request fan-out. Do not share unsafe browser/session objects between threads.
+---
 
-## Search/extraction pipeline
+## 2. Bounded Concurrency & Resource Quotas
 
-SerpAPI discovery -> canonical URL validation -> registry authorization -> ordinary async fetch or permitted browser rendering -> site-specific extraction -> normalized evidence -> context matching -> deduplication -> comparison. Run independent permitted sites concurrently; fetching a discovered URL depends on discovery completion.
+To prevent resource starvation, memory leaks, and cascading failures, the execution runtime enforces strict per-worker admission limits:
 
-Extract route/date, passengers, room/occupancy, fare/room type, currency, inclusions, availability wording, source time and merchant link. If dates or occupancy cannot be established, retain a generic indicative observation or reject it from exact-trip comparison. Adaptive selectors cannot establish semantic correctness: validate labels, units and fixture expectations. A sudden implausible price shift or missing context quarantines a parser result. Never take the minimum across incompatible fare conditions.
+| Resource Pool | Concurrency Limit | Rationale & Enforcement |
+| :--- | :--- | :--- |
+| **Global Provider I/O** | 8 concurrent tasks / worker | Asyncio `asyncio.Semaphore(8)` capping outbound HTTP sockets. |
+| **Per-Origin Web Extraction** | 2 concurrent tasks / domain | Prevents abusive request bursts against third-party partner portals. |
+| **Blocking CPU/Disk ThreadPool**| 4 worker threads | Bounded `ThreadPoolExecutor(max_workers=4)` for ReportLab PDF compilation and local disk I/O. |
+| **Headless Browser Contexts** | 1 browser context / worker | Playwright/Scrapling chromium process lifecycle strictly bounded to prevent RAM exhaustion. |
+| **Database Connection Pool** | 20 pool size + 10 max overflow | SQLAlchemy `QueuePool` sized to stay safely within Aiven PostgreSQL connection limits. |
 
-Scrapling anti-bot/challenge evasion is outside the approved project policy even if the library offers it. Blocks return UNAVAILABLE/BLOCKED. Do not launch bulk crawls of named suppliers merely because their public homepage exists.
+---
 
-## Failure and retry ownership
+## 3. Verified AWS Lambda Limits & Split Decision Protocol
 
-Each request has a deadline propagated to tools. Provider-specific timeouts replace a universal 3.5s timeout. One layer owns provider retries; avoid retries multiplied by SDK, adapter, graph and worker. Retry transient idempotent operations with bounded exponential backoff/jitter and Retry-After; no blind retry of 401/403/challenges. Persistent job retries handle worker failure separately. Circuit breakers expose status and recover through limited probes.
+### 3.1 Official AWS Lambda Limits (Verified 2026-09-12)
+* **Deployment Package Size:** 50 MB compressed ZIP direct upload; **250 MB uncompressed deployment contents limit** (including all layers and custom runtime).
+* **Container Image Deployment:** Up to **10 GB uncompressed** container image via Amazon ECR.
+* **Configurable Memory:** 128 MB to **10,240 MB (10 GB)** in 1 MB increments. CPU allocation scales linearly with allocated memory (dedicated vCPU allocated at 1,769 MB).
+* **Maximum Execution Timeout:** **900 seconds (15 minutes)**.
+* **Ephemeral `/tmp` Storage:** 512 MB to 10,240 MB.
 
-## Road budget model
+### 3.2 Runtime Split Protocol (Container vs. Lambda)
+Because Google OR-Tools and headless browser binaries exceed the 250 MB uncompressed ZIP limit, **ECS containers are the primary long-running execution runtime**. Workloads may be extracted to Lambda functions only when all of the following criteria are satisfied:
+1. **Profiling Evidence:** Measured uncompressed package size $\le 250$ MB (or packaged as an ECR container image).
+2. **Cold-Start Latency:** Measured P95 cold-start overhead $\le 1.5$s.
+3. **Execution Horizon:** Task executes within a predictable bounded window $\le 60$s (e.g. PDF export artifact generation).
+4. **Zero Shared In-Memory State:** Task operates purely as an idempotent consumer of database job IDs.
 
-fuel_liters = route_distance_km / mileage_km_per_liter
+---
 
-fuel_cost = fuel_liters * fuel_price_per_liter
+## 4. Asynchronous Job Lifecycle & State Transitions
 
-road_total = fuel_cost + applicable_tolls + parking + rental + applicable_fees_and_taxes
+Planning runs, PDF exports, and account data deletions execute as durable asynchronous jobs managed via PostgreSQL row locks (`SKIP LOCKED`).
 
-All inputs carry provenance, units, effective date, location and vehicle class. Mileage must be positive. User overrides remain distinct from sourced averages. Do not assume all motorcycles pay the car toll, or that every road is toll-free. Rate validity depends on vehicle class, plaza, direction, date and return/pass rules. Route providers may identify a toll road without providing its charge. Unknown entries propagate incomplete budget status. No live fuel/toll source is verified yet.
+```
+              ┌─────────────┐
+              │   PENDING   │ ◄────────────────────────┐
+              └──────┬──────┘                          │
+                     │ (Worker claims lease)           │ (Lease expires / Worker crash)
+                     ▼                                 │
+              ┌─────────────┐                          │
+              │   CLAIMED   │ ─────────────────────────┘
+              └──────┬──────┘
+         ┌───────────┴───────────┐
+         │ (Success)             │ (Exception / Retries < 5)
+         ▼                       ▼
+  ┌─────────────┐         ┌─────────────┐
+  │  COMPLETED  │         │   FAILED    │ (Terminal if retries >= 5)
+  └─────────────┘         └─────────────┘
+```
 
-Normalize currencies using a sourced timestamped FX rate before aggregating; preserve original amounts and conversion/rounding evidence. Fixed costs count per vehicle/room when appropriate, not once per passenger. Estimate scenarios are not actual-trip spending guarantees.
+### 4.1 State Invariants
+1. **Atomic Claiming:** Workers claim available jobs using:
+   ```sql
+   SELECT id, type, payload_ref 
+   FROM jobs 
+   WHERE status = 'PENDING' AND (available_at IS NULL OR available_at <= NOW())
+   ORDER BY available_at ASC 
+   FOR UPDATE SKIP LOCKED 
+   LIMIT 1;
+   ```
+2. **Lease Fencing:** When claiming, the worker updates `lease_until = NOW() + INTERVAL '60 seconds'` and increments `lease_generation`. Updates from a worker whose lease has expired are rejected.
+3. **Poison Job Quarantine:** Jobs that fail 5 consecutive attempts transition to `status = 'FAILED'` with a recorded error trace. They are never retried automatically, preventing infinite worker crash loops.
 
-## Jobs, state and streaming
+---
 
-Persist accepted commands and durable jobs transactionally. Workers claim jobs using PostgreSQL row locking/leases with heartbeat, fencing generation and bounded attempts. Job completion checks active lease ownership. Duplicate delivery is expected; domain commands are idempotent. Jobs that exhaust attempts enter failed state with a replay action. A recovery scan reclaims expired leases. Redis cannot be the only lease/job authority.
+## 5. Third-Party Provider Search & Extraction Pipeline
 
-Persist progress events with monotonic per-run sequence. SSE supports Last-Event-ID and client deduplication; expired event cursors return a snapshot/reconnect instruction. Browser disconnect does not cancel a run; explicit cancellation does. Provider results bind to trip version and cannot silently overwrite a newer edit.
+```
+[Target Destination / Query]
+       │
+       ▼
+[Canonical Host & Port Validation] ──(Check Domain Allowlist)──► [Block if Unapproved]
+       │
+       ▼
+[Async HTTP Fetch / Permitted Headless Render]
+       │
+       ▼
+[Anti-Bot / CAPTCHA Detection] ──(If Detected)──► [Transition to UNAVAILABLE (Zero Bypass)]
+       │
+       ▼
+[Structured Selector Extraction] ──(Normalize Fare, Room, Date, Inclusions)
+       │
+       ▼
+[Context Matching & Verification] ──(Party Size & Date Check)
+       │
+       ▼
+[Classification: LIVE_OFFER | INDICATIVE_SEARCH | EDITORIAL_DISCOVERY]
+```
 
-## Quality and performance
-
-Trace trip/run/delta IDs, provider latency, evidence class, cache hit, retries, parser version, LLM usage, solver duration, queue delay and cold-start duration. Do not log raw personal data or scraped bodies. Profile initialization time, package size, peak RSS, warm/cold P95, provider overhead and per-run cost before splitting Lambda workloads. No fixed tokens-to-dollar assumption is accepted.
+### 5.1 Anti-Bot Policy
+Under no circumstances may the application attempt CAPTCHA bypass, IP rotating proxy abuse, or header forging to evade supplier anti-bot defenses. If an external supplier blocks automated queries, the adapter must report `UNAVAILABLE` with status `PROVIDER_ACCESS_RESTRICTED`.

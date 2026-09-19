@@ -12,37 +12,60 @@ const TEST_SESSION_TOKEN =
   ".test_signature";
 
 test.describe("SWENA Travel Platform E2E Suite", () => {
-  test("1. Marketing Home Page renders, displays 3D Corridor Cards, and navigation links", async ({
+  test("1. Marketing Home Page renders, displays destination corridors, interactive story, and navigation", async ({
     page,
   }) => {
     await page.goto("/");
     await expect(page).toHaveTitle(/SWENA/);
 
-    // Verify brand heading and core value proposition
+    // Verify brand heading and core editorial headline
     await expect(page.locator("text=SWENA").first()).toBeVisible();
-    await expect(page.locator("text=We gave you").first()).toBeVisible();
+    await expect(page.locator("text=Less planning.").first()).toBeVisible();
+    await expect(page.locator("text=More remembering.").first()).toBeVisible();
 
-    // Verify GSAP 3D Corridor Showcase cards
-    await expect(
-      page.locator("text=Signature Topographic Corridors")
-    ).toBeVisible();
-    await expect(
-      page.locator("text=Western Ghats Monsoon Odyssey")
-    ).toBeVisible();
-    await expect(
-      page.locator("text=Royal Rajputana Circuit")
-    ).toBeVisible();
-    await expect(
-      page.locator("text=Konkan & Sahyadri Pass")
-    ).toBeVisible();
+    // Verify destination switcher buttons
+    await expect(page.getByRole("tab", { name: "Western Ghats" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Rajasthan" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Konkan coast" })).toBeVisible();
 
-    // Verify navigation links
-    await expect(
-      page.getByRole("link", { name: "Dashboard", exact: true })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "Benchmarks", exact: true })
-    ).toBeVisible();
+    // Verify Chapter H3 (Interactive Story)
+    await expect(page.locator("text=Watch a trip take shape.")).toBeVisible();
+    await expect(page.locator("text=Example Itinerary Preview")).toBeVisible();
+
+    // Verify Chapter H4 (Destination Journal)
+    await expect(page.locator("text=Where will your next memory begin?")).toBeVisible();
+    await expect(page.locator("text=Into the Western Ghats")).toBeVisible();
+
+    // Verify Chapter H6 (Practical FAQ Accordion)
+    await expect(page.locator("text=Frequently asked questions.")).toBeVisible();
+
+    // Verify primary navigation and CTAs
+    await expect(page.getByRole("link", { name: "Explore", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "How it works", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Plan my trip" }).first()).toBeVisible();
+
+    // Verify Tab Switcher on Hero
+    const rajasthanTab = page.getByRole("tab", { name: "Rajasthan" });
+    await rajasthanTab.click();
+    await expect(page.locator("text=ROYAL RAJPUTANA CORRIDORS")).toBeVisible();
+    await expect(page.locator("text=ancient stepwells")).toBeVisible();
+
+    // Verify Interactive Story Steps
+    const step2Button = page.getByRole("button", { name: /Find a rhythm that fits/i });
+    await step2Button.click();
+    await expect(page.getByRole("heading", { name: "Balanced Daily Schedule" })).toBeVisible();
+    await expect(page.locator("text=Mysuru Palace & Heritage Zone")).toBeVisible();
+
+    const step3Button = page.getByRole("button", { name: /See the details before you decide/i });
+    await step3Button.click();
+    await expect(page.getByRole("heading", { name: "Itemized Cost & Unknown Item Disclosure" })).toBeVisible();
+    await expect(page.locator("text=Unknown fee (Not added to total)")).toBeVisible();
+
+    // Verify FAQ Accordion Interaction
+    const faqTrigger = page.locator("button:has-text('How does SWENA generate an itinerary?')");
+    await expect(faqTrigger).toBeVisible();
+    await faqTrigger.click();
+    await expect(page.locator("text=SWENA uses constraint-based optimization")).toBeVisible();
   });
 
   test("2. Unauthenticated Route Protection via Middleware & Fail-Closed OAuth Diagnostics", async ({
@@ -223,4 +246,58 @@ test.describe("SWENA Travel Platform E2E Suite", () => {
     const meJsonLoggedOut = await meResLoggedOut.json();
     expect(meJsonLoggedOut.user).toBeNull();
   });
+
+  test("7. About Page renders, exhibits SEO metadata, and explains four core tenets", async ({
+    page,
+  }) => {
+    await page.goto("/about");
+    await expect(page).toHaveTitle(/About.*SWENA/);
+
+    // Verify main headline and editorial tenets
+    await expect(page.locator("h1:has-text('We gave you')")).toBeVisible();
+    await expect(page.locator("text=The Zero-Hallucination Standard")).toBeVisible();
+    await expect(page.locator("text=Non-Coercion of Unknown Costs")).toBeVisible();
+    await expect(page.locator("text=Constraint Solvers Over Guesswork")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Direct Official Supplier Handoff" })).toBeVisible();
+
+    // Verify architectural transparency disclosures
+    await expect(page.locator("text=Scrapling Engine")).toBeVisible();
+    await expect(page.getByText("Google OR-Tools", { exact: true })).toBeVisible();
+    await expect(page.locator("text=PostgreSQL + PostGIS")).toBeVisible();
+
+    // Verify permanent redirect from legacy /about-us
+    await page.goto("/about-us");
+    await expect(page).toHaveURL(/.*\/about$/);
+  });
+
+  test("8. Contact Page renders, exhibits SEO metadata, and submits durable inquiry", async ({
+    page,
+  }) => {
+    await page.goto("/contact");
+    await expect(page).toHaveTitle(/Contact.*SWENA/);
+
+    // Verify direct contact coordinates
+    await expect(page.locator("text=Indiranagar, Bengaluru")).toBeVisible();
+    await expect(page.locator("text=concierge@swena.travel")).toBeVisible();
+    await expect(page.locator("text=registry@swena.travel")).toBeVisible();
+
+    // Fill and submit inquiry form
+    await page.locator("#contact-name").fill("Devi Rao");
+    await page.locator("#contact-email").fill("devi@example.com");
+    await page.locator("#contact-topic").selectOption("Bespoke Corridor Curation");
+    await page.locator("#contact-corridor").selectOption("Western Ghats");
+    await page.locator("#contact-message").fill("Inquiring about family road route through Coorg coffee estates.");
+
+    await page.getByRole("button", { name: "Submit Inquiry" }).click();
+
+    // Verify successful confirmation view
+    await expect(page.locator("text=We have received your message.")).toBeVisible();
+    await expect(page.locator("text=Reference Ticket:")).toBeVisible();
+    await expect(page.locator("text=Turnaround: 24–48 business hours")).toBeVisible();
+
+    // Verify permanent redirect from legacy /contact-us
+    await page.goto("/contact-us");
+    await expect(page).toHaveURL(/.*\/contact$/);
+  });
 });
+

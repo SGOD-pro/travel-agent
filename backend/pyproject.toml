@@ -20,6 +20,10 @@ dependencies = [
     "langchain-core>=0.2.0",
     "ortools>=9.10.0",
     "reportlab>=5.0.1",
+    "scrapling[all]>=0.4.15",
+    "curl-cffi>=0.7.0",
+    "playwright>=1.40.0",
+    "email-validator>=2.3.0",
 ]
 
 [project.optional-dependencies]

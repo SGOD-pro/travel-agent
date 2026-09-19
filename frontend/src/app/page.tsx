@@ -1,504 +1,871 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import {
   ArrowRight,
-  ShieldCheck,
-  Cpu,
-  MapPin,
-  Sparkles,
-  Gauge,
   Compass,
+  Sparkles,
+  MapPin,
+  Clock,
+  Calendar,
+  ShieldCheck,
   CheckCircle2,
   AlertCircle,
   Car,
-  Bike,
-  Route,
-  Navigation,
+  ChevronRight,
+  ExternalLink,
+  HelpCircle,
 } from "lucide-react";
 import gsap from "gsap";
-import { ScrollTrigger } from "gsap/ScrollTrigger";
-import { TravelCard3D } from "@/components/ui/travel-card-3d";
-import { useRouter } from "next/navigation";
+import { useGSAP } from "@gsap/react";
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";
+
+type DestinationKey = "western-ghats" | "rajasthan" | "konkan";
+
+interface DestinationInfo {
+  id: DestinationKey;
+  label: string;
+  locationKicker: string;
+  image: string;
+  alt: string;
+  caption: string;
+  corridorSlug: string;
+  elevation: string;
+  routeHighlight: string;
+}
+
+const DESTINATIONS: Record<DestinationKey, DestinationInfo> = {
+  "western-ghats": {
+    id: "western-ghats",
+    label: "Western Ghats",
+    locationKicker: "KARNATAKA & KERALA CORRIDORS",
+    image: "/images/destinations/western-ghats.jpg",
+    alt: "Misty green hills and tea plantations of the Western Ghats under morning light",
+    caption: "Misty ridge lines, coffee country, and unhurried ghat roads from Bengaluru to Wayanad.",
+    corridorSlug: "western-ghats",
+    elevation: "900m – 2,240m",
+    routeHighlight: "Bengaluru → Mysuru → Coorg → Wayanad",
+  },
+  rajasthan: {
+    id: "rajasthan",
+    label: "Rajasthan",
+    locationKicker: "ROYAL RAJPUTANA CORRIDORS",
+    image: "/images/destinations/rajasthan.jpg",
+    alt: "Sunlit sandstone arches and royal courtyards of Amber Fort in Jaipur, Rajasthan",
+    caption: "Sunlit stone courtyards, ancient stepwells, and wide desert highways between Jaipur and Jodhpur.",
+    corridorSlug: "rajasthan",
+    elevation: "260m – 430m",
+    routeHighlight: "Delhi → Jaipur → Pushkar → Jodhpur",
+  },
+  konkan: {
+    id: "konkan",
+    label: "Konkan coast",
+    locationKicker: "COASTAL MAHARASHTRA & GOA",
+    image: "/images/destinations/konkan-coast.jpg",
+    alt: "Arabian Sea waves washing against tropical palm-lined cliffs along the Konkan coastline",
+    caption: "Red coastal roads, quiet palm coves, and sea air stretching from Mumbai down to Goa.",
+    corridorSlug: "konkan-coast",
+    elevation: "Sea level – 180m",
+    routeHighlight: "Mumbai → Alibaug → Ratnagiri → Goa",
+  },
+};
 
 export default function HomePage() {
-  const router = useRouter();
-  const heroRef = useRef<HTMLDivElement>(null);
-  const headlineRef = useRef<HTMLHeadingElement>(null);
-  const subheadRef = useRef<HTMLParagraphElement>(null);
-  const corridorsRef = useRef<HTMLDivElement>(null);
-  const interactiveDemoRef = useRef<HTMLDivElement>(null);
+  const [activeDest, setActiveDest] = useState<DestinationKey>("western-ghats");
+  const [activeStep, setActiveStep] = useState<number>(1);
+  const heroContentRef = useRef<HTMLDivElement>(null);
 
-  // Interactive demo state
-  const [selectedVehicle, setSelectedVehicle] = useState<"car" | "bike">("car");
-  const [selectedCorridor, setSelectedCorridor] = useState<number>(0);
+  const currentDest = DESTINATIONS[activeDest];
 
-  const sampleCorridors = [
-    {
-      name: "Western Ghats Corridor",
-      route: "Bengaluru → Mysuru → Coorg → Wayanad",
-      distanceKm: 340,
-      durationHours: 6.5,
-      carMileage: 15.0,
-      bikeMileage: 40.0,
-      fuelPrice: 102.5,
-      tollsVerified: false,
-      tollReason: "Expressway toll rates unverified for two-wheeler bypass",
-      knownTolls: 320,
-    },
-    {
-      name: "Royal Heritage Odyssey",
-      route: "Delhi → Agra → Jaipur → Jodhpur",
-      distanceKm: 610,
-      durationHours: 10.2,
-      carMileage: 16.5,
-      bikeMileage: 42.0,
-      fuelPrice: 96.7,
-      tollsVerified: true,
-      knownTolls: 890,
-    },
-    {
-      name: "Deccan Plateau & Konkan Coast",
-      route: "Mumbai → Pune → Mahabaleshwar → Goa",
-      distanceKm: 580,
-      durationHours: 11.0,
-      carMileage: 14.5,
-      bikeMileage: 38.0,
-      fuelPrice: 104.2,
-      tollsVerified: false,
-      tollReason: "Ghat section seasonal pass rates unverified",
-      knownTolls: 640,
-    },
-  ];
+  // GSAP Entrance Animation
+  useGSAP(
+    () => {
+      const mm = gsap.matchMedia();
 
-  const currentCorridor = sampleCorridors[selectedCorridor];
-  const mileage =
-    selectedVehicle === "car"
-      ? currentCorridor.carMileage
-      : currentCorridor.bikeMileage;
-  const fuelLiters = (currentCorridor.distanceKm / mileage).toFixed(1);
-  const fuelCost = Math.round(
-    parseFloat(fuelLiters) * currentCorridor.fuelPrice
-  );
-
-  useEffect(() => {
-    gsap.registerPlugin(ScrollTrigger);
-
-    const ctx = gsap.context(() => {
-      // Cinematic hero fade and rise
-      const tl = gsap.timeline();
-      tl.from(headlineRef.current, {
-        y: 40,
-        opacity: 0,
-        duration: 1.1,
-        ease: "power3.out",
-      }).from(
-        subheadRef.current,
-        {
-          y: 25,
+      mm.add("(prefers-reduced-motion: no-preference)", () => {
+        gsap.from(".hero-reveal", {
+          y: 24,
           opacity: 0,
-          duration: 0.9,
-          ease: "power3.out",
-        },
-        "-=0.6"
-      );
-
-      // Scroll triggered reveal for corridors
-      if (corridorsRef.current) {
-        gsap.from(corridorsRef.current.children, {
-          scrollTrigger: {
-            trigger: corridorsRef.current,
-            start: "top 80%",
-          },
-          y: 45,
-          opacity: 0,
-          stagger: 0.15,
-          duration: 0.8,
+          duration: 0.85,
+          stagger: 0.08,
           ease: "power2.out",
         });
-      }
-    }, heroRef);
+      });
 
-    return () => ctx.revert();
-  }, []);
+      return () => mm.revert();
+    },
+    { scope: heroContentRef }
+  );
 
   return (
-    <div ref={heroRef} className="relative overflow-hidden">
-      {/* Ambient background glow accents (Forest Night palette) */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[550px] bg-[#15271F] blur-[150px] rounded-full -z-10 opacity-70 pointer-events-none" />
-      <div className="absolute top-[800px] left-0 w-[600px] h-[600px] bg-[#15271F]/40 blur-[180px] rounded-full -z-10 pointer-events-none" />
+    <div className="relative bg-[#0D1915] text-[#F7F7F2] selection:bg-[#B7C9AD] selection:text-[#102D25]">
+      {/* =========================================================================
+          CHAPTER H1: DESTINATION-FIRST HERO
+          ========================================================================= */}
+      <section
+        className="relative min-h-[90svh] flex flex-col justify-between overflow-hidden pt-24 pb-12 px-6 sm:px-12 border-b border-[#233E32]"
+        aria-label="Hero: Indian travel planning"
+      >
+        {/* Layered Background Imagery with Crossfade */}
+        <div className="absolute inset-0 z-0">
+          {(Object.keys(DESTINATIONS) as DestinationKey[]).map((key) => {
+            const dest = DESTINATIONS[key];
+            const isActive = activeDest === key;
+            return (
+              <div
+                key={dest.id}
+                className={`absolute inset-0 transition-opacity duration-700 ease-out ${
+                  isActive ? "opacity-100 scale-100" : "opacity-0 scale-102 pointer-events-none"
+                }`}
+                style={{ transitionProperty: "opacity, transform" }}
+              >
+                <Image
+                  src={dest.image}
+                  alt={dest.alt}
+                  fill
+                  priority={key === "western-ghats"}
+                  className="object-cover object-center"
+                  sizes="100vw"
+                />
+              </div>
+            );
+          })}
 
-      {/* SECTION 1: CINEMATIC HERO */}
-      <section className="relative px-6 pt-16 pb-28 sm:pt-24 sm:pb-36 max-w-7xl mx-auto text-center">
-        <div className="inline-flex items-center gap-2.5 px-4 py-1.5 rounded-full bg-[#15271F] border border-[#B7C9AD]/20 text-xs font-semibold text-[#B7C9AD] tracking-wide uppercase mb-8 shadow-sm">
-          <Sparkles className="h-3.5 w-3.5" />
-          <span>SWENA 2.0 • India-First Multi-Modal Travel Platform</span>
+          {/* Cinematic Scrim: subtle contrast without blacking out the landscape */}
+          <div className="absolute inset-0 bg-gradient-to-r from-[#0D1915]/95 via-[#0D1915]/75 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0D1915] via-transparent to-[#0D1915]/40" />
         </div>
 
-        <h1
-          ref={headlineRef}
-          className="text-5xl sm:text-7xl lg:text-8xl font-bold tracking-tight text-[#F7F7F2] max-w-5xl mx-auto leading-[1.08]"
+        {/* Hero Narrative Content */}
+        <div
+          ref={heroContentRef}
+          className="relative z-10 max-w-3xl my-auto pt-8 sm:pt-14 pb-8"
         >
-          We gave you <span className="text-[#B7C9AD]">memory.</span>
-        </h1>
+          {/* Location Kicker */}
+          <div className="hero-reveal inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#15271F]/80 border border-[#B7C9AD]/25 text-xs font-semibold text-[#B7C9AD] tracking-wider uppercase mb-6 backdrop-blur-sm">
+            <span>{currentDest.locationKicker}</span>
+            <span className="text-[#6E8274]">•</span>
+            <span className="text-[#A9B8AD] font-normal">{currentDest.elevation}</span>
+          </div>
 
-        <p
-          ref={subheadRef}
-          className="mt-8 text-lg sm:text-xl text-[#A9B8AD] max-w-3xl mx-auto leading-relaxed font-normal"
-        >
-          The luxury travel intelligence platform built on mathematical certainty.
-          Multi-stop route sequencing solved via Google OR-Tools, zero-hallucination
-          pricing, and uncoerced road transit budgeting for India.
-        </p>
+          {/* Main Editorial Headline */}
+          <h1 className="hero-reveal text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-[#F7F7F2] leading-[1.02] mb-6">
+            Less planning. <br />
+            <span className="text-[#B7C9AD]">More remembering.</span>
+          </h1>
 
-        {/* Hero CTAs */}
-        <div className="mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
-          <Link
-            href="/dashboard"
-            className="btn-sage w-full sm:w-auto flex items-center justify-center gap-3 px-8 py-4 rounded-xl text-base font-semibold shadow-xl"
-          >
-            <span>Launch Itinerary Planner</span>
-            <ArrowRight className="h-5 w-5" />
-          </Link>
-          <Link
-            href="/about"
-            className="btn-outline-forest w-full sm:w-auto flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-base font-semibold"
-          >
-            <span>Explore the Ethos</span>
-          </Link>
+          {/* Supporting Copy */}
+          <p className="hero-reveal text-base sm:text-xl text-[#A9B8AD] max-w-xl font-normal leading-relaxed mb-8">
+            Bring your driving route, daily stops, and transparent budget assumptions into one editable trip plan.
+          </p>
+
+          {/* Primary & Secondary Actions */}
+          <div className="hero-reveal flex flex-wrap items-center gap-4 mb-10">
+            <Link
+              href="/dashboard"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#B7C9AD] px-6 py-3.5 text-sm font-semibold text-[#102D25] hover:bg-[#C9DBBE] transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B7C9AD] shadow-lg shadow-black/30 cursor-pointer"
+            >
+              <span>Plan my trip</span>
+              <ArrowRight className="h-4 w-4" />
+            </Link>
+
+            <a
+              href="#how-it-works"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#15271F]/80 border border-[#233E32] px-5 py-3.5 text-sm font-medium text-[#F7F7F2] hover:bg-[#15271F] hover:border-[#B7C9AD]/40 transition-colors backdrop-blur-sm"
+            >
+              Explore an example
+            </a>
+          </div>
+
+          {/* Destination Selector Tabs */}
+          <div className="hero-reveal pt-4 border-t border-[#233E32]/60">
+            <div className="flex flex-wrap items-center gap-2" role="tablist" aria-label="Select destination corridor">
+              <span className="text-xs uppercase tracking-wider text-[#6E8274] mr-2">
+                Corridor:
+              </span>
+              {(Object.keys(DESTINATIONS) as DestinationKey[]).map((key) => {
+                const isSelected = activeDest === key;
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={isSelected}
+                    onClick={() => setActiveDest(key)}
+                    className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B7C9AD] ${
+                      isSelected
+                        ? "bg-[#15271F] text-[#B7C9AD] border border-[#B7C9AD]/40 shadow-sm"
+                        : "bg-[#0D1915]/60 text-[#A9B8AD] border border-[#233E32]/80 hover:text-[#F7F7F2] hover:bg-[#15271F]/40"
+                    }`}
+                  >
+                    {DESTINATIONS[key].label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-3 text-xs text-[#A9B8AD] leading-relaxed max-w-lg">
+              {currentDest.caption}
+            </p>
+          </div>
         </div>
 
-        {/* Feature badges strip */}
-        <div className="mt-20 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-5xl mx-auto">
-          <div className="glass-card p-5 rounded-2xl text-left">
-            <ShieldCheck className="h-6 w-6 text-[#B7C9AD] mb-3" />
-            <h3 className="text-sm font-semibold text-[#F7F7F2]">0 Hallucinations</h3>
-            <p className="text-xs text-[#A9B8AD] mt-1">
-              Zero fabricated quotes, availability, or fake booking holds.
-            </p>
-          </div>
+        {/* Footer Note of Hero */}
+        <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between text-xs text-[#6E8274] pt-4 border-t border-[#233E32]/40 gap-2">
+          <span>Official booking handoff to IRCTC, state tourism, and direct suppliers</span>
+          <span className="hidden sm:inline">Zero payment capture or internal lock-in</span>
+        </div>
+      </section>
 
-          <div className="glass-card p-5 rounded-2xl text-left">
-            <Cpu className="h-6 w-6 text-[#B7C9AD] mb-3" />
-            <h3 className="text-sm font-semibold text-[#F7F7F2]">OR-Tools Engine</h3>
-            <p className="text-xs text-[#A9B8AD] mt-1">
-              Constraint-based TSP solver with stay windows & arrival sequencing.
-            </p>
-          </div>
+      {/* =========================================================================
+          CHAPTER H2: EDITORIAL BRIDGE (WARM PAPER)
+          ========================================================================= */}
+      <section
+        className="bg-[#F7F7F2] text-[#0D1915] py-20 sm:py-28 px-6 sm:px-12 border-b border-[#E2E2DC]"
+        aria-label="Philosophy: Room for the unexpected"
+      >
+        <div className="mx-auto max-w-5xl">
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 md:gap-12 items-center">
+            <div className="md:col-span-8 space-y-5">
+              <span className="text-xs font-bold tracking-widest text-[#6E8274] uppercase">
+                The SWENA Approach
+              </span>
+              <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-[#0D1915] leading-[1.12]">
+                A good trip leaves room for the unexpected.
+              </h2>
+              <p className="text-base sm:text-lg text-[#33443B] leading-relaxed max-w-2xl font-normal">
+                Most travel tools force you between rigid tour packages and dozens of disconnected browser tabs.
+                SWENA brings your driving corridors, daily stops, and budget assumptions into one clear, editable plan—so
+                you spend less time coordinating and more time taking in the morning light.
+              </p>
+            </div>
 
-          <div className="glass-card p-5 rounded-2xl text-left">
-            <Gauge className="h-6 w-6 text-[#B7C9AD] mb-3" />
-            <h3 className="text-sm font-semibold text-[#F7F7F2]">Exact Transit Math</h3>
-            <p className="text-xs text-[#A9B8AD] mt-1">
-              Deterministic fuel calculations with uncoerced toll tracking.
-            </p>
-          </div>
-
-          <div className="glass-card p-5 rounded-2xl text-left">
-            <Navigation className="h-6 w-6 text-[#B7C9AD] mb-3" />
-            <h3 className="text-sm font-semibold text-[#F7F7F2]">Direct Handoff</h3>
-            <p className="text-xs text-[#A9B8AD] mt-1">
-              Handoff to official merchants without intermediary markups.
-            </p>
+            <div className="md:col-span-4 bg-[#EDECE5] border border-[#DDDCD3] p-5 rounded-2xl space-y-3">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#15271F] uppercase tracking-wider">
+                <Compass className="h-4 w-4 text-[#2E5A44]" />
+                <span>Representative Corridor</span>
+              </div>
+              <p className="text-sm font-bold text-[#0D1915]">
+                Bengaluru → Mysuru → Coorg → Wayanad
+              </p>
+              <div className="text-xs text-[#526458] space-y-1 pt-2 border-t border-[#DDDCD3]">
+                <div className="flex justify-between">
+                  <span>Corridor Distance</span>
+                  <span className="font-semibold text-[#0D1915]">340 km</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Paced Driving Time</span>
+                  <span className="font-semibold text-[#0D1915]">~6.5 hours</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Road Terrain</span>
+                  <span className="font-semibold text-[#0D1915]">Plain to Ghat Pass</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* SECTION 2: INTERACTIVE LIVE CORRIDOR ENGINE */}
+      {/* =========================================================================
+          CHAPTER H3: "WATCH A TRIP TAKE SHAPE" INTERACTIVE STORY (#how-it-works)
+          ========================================================================= */}
       <section
-        ref={interactiveDemoRef}
-        className="px-6 py-20 max-w-7xl mx-auto border-t border-[#15271F]"
+        id="how-it-works"
+        className="py-24 sm:py-32 px-6 sm:px-12 bg-[#0D1915] border-b border-[#233E32]"
+        aria-label="Interactive Story: How a trip takes shape"
       >
-        <div className="text-center max-w-3xl mx-auto mb-14">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#B7C9AD] uppercase tracking-wider mb-3">
-            <Route className="h-4 w-4" />
-            <span>Deterministic Transit Engine</span>
-          </div>
-          <h2 className="text-3xl sm:text-4xl font-bold text-[#F7F7F2]">
-            Experience Real-Time Indian Road Mathematics
-          </h2>
-          <p className="mt-3 text-sm sm:text-base text-[#A9B8AD]">
-            Toggle vehicle profiles and corridors. Observe how unverified toll
-            data is treated with strict mathematical honesty rather than coerced to zero.
-          </p>
-        </div>
-
-        {/* Interactive Console */}
-        <div className="glass-card rounded-3xl p-6 sm:p-10 max-w-5xl mx-auto border border-[#B7C9AD]/20 shadow-2xl">
-          {/* Corridor selector pills */}
-          <div className="flex flex-wrap items-center justify-center gap-2.5 mb-8">
-            {sampleCorridors.map((corridor, idx) => (
-              <button
-                key={corridor.name}
-                onClick={() => setSelectedCorridor(idx)}
-                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
-                  selectedCorridor === idx
-                    ? "bg-[#B7C9AD] text-[#102D25] font-semibold shadow-md"
-                    : "bg-[#15271F] text-[#A9B8AD] hover:text-[#F7F7F2] border border-[#233e32]"
-                }`}
-              >
-                {corridor.name}
-              </button>
-            ))}
+        <div className="mx-auto max-w-6xl">
+          {/* Section Header */}
+          <div className="max-w-2xl mb-16 space-y-3">
+            <span className="text-xs font-semibold tracking-wider text-[#B7C9AD] uppercase">
+              How It Works
+            </span>
+            <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-[#F7F7F2]">
+              Watch a trip take shape.
+            </h2>
+            <p className="text-base sm:text-lg text-[#A9B8AD]">
+              From your initial destination ideas to an itemized, daylight-balanced daily schedule.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-center">
-            {/* Left: Corridor details & Vehicle Switch */}
-            <div className="space-y-6">
-              <div>
-                <span className="text-xs text-[#A9B8AD] uppercase tracking-wider">
-                  Active Corridor
-                </span>
-                <h3 className="text-xl font-bold text-[#F7F7F2] mt-1">
-                  {currentCorridor.name}
-                </h3>
-                <p className="text-xs text-[#B7C9AD] font-mono mt-1">
-                  {currentCorridor.route}
-                </p>
-              </div>
-
-              <div>
-                <span className="text-xs text-[#A9B8AD] uppercase tracking-wider block mb-2">
-                  Vehicle Profile
-                </span>
-                <div className="grid grid-cols-2 gap-2 bg-[#0D1915] p-1.5 rounded-xl border border-[#233e32]">
+          {/* Desktop Two-Column Layout */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
+            {/* Left Steps Column (5 cols) */}
+            <div className="lg:col-span-5 space-y-4">
+              {[
+                {
+                  step: 1,
+                  title: "Start with your kind of trip",
+                  subtitle: "Destination, dates, travelers, pace",
+                  body: "Tell us where you want to go and how you like to travel. We account for your vehicle type, party size, and daylight driving limits.",
+                },
+                {
+                  step: 2,
+                  title: "Find a rhythm that fits",
+                  subtitle: "Day sequence, route, stop selections",
+                  body: "Stops are arranged in a logical geographic flow. Dwell times and transit hours are paced so mornings stay unhurried.",
+                },
+                {
+                  step: 3,
+                  title: "See the details before you decide",
+                  subtitle: "Cost categories, estimates, unknown items",
+                  body: "Inspect estimated fuel and stay costs alongside unquoted tolls and park fees. We never hide unknown charges behind a zero.",
+                },
+              ].map((item) => {
+                const isActive = activeStep === item.step;
+                return (
                   <button
-                    onClick={() => setSelectedVehicle("car")}
-                    className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                      selectedVehicle === "car"
-                        ? "bg-[#15271F] text-[#B7C9AD] shadow-sm"
-                        : "text-[#A9B8AD] hover:text-[#F7F7F2]"
+                    key={item.step}
+                    type="button"
+                    onClick={() => setActiveStep(item.step)}
+                    className={`w-full text-left p-6 rounded-2xl transition-all cursor-pointer border ${
+                      isActive
+                        ? "bg-[#15271F] border-[#B7C9AD]/40 shadow-xl shadow-black/20"
+                        : "bg-[#0D1915] border-[#233E32]/70 hover:border-[#233E32] hover:bg-[#15271F]/30"
                     }`}
                   >
-                    <Car className="h-4 w-4" />
-                    <span>Petrol Car</span>
-                  </button>
-                  <button
-                    onClick={() => setSelectedVehicle("bike")}
-                    className={`flex items-center justify-center gap-2 py-2 px-3 rounded-lg text-xs font-semibold transition-all ${
-                      selectedVehicle === "bike"
-                        ? "bg-[#15271F] text-[#B7C9AD] shadow-sm"
-                        : "text-[#A9B8AD] hover:text-[#F7F7F2]"
-                    }`}
-                  >
-                    <Bike className="h-4 w-4" />
-                    <span>Motorcycle</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="bg-[#0D1915]/60 p-3 rounded-xl border border-[#15271F]">
-                  <span className="text-[#A9B8AD] block">Distance</span>
-                  <span className="text-sm font-bold text-[#F7F7F2]">
-                    {currentCorridor.distanceKm} km
-                  </span>
-                </div>
-                <div className="bg-[#0D1915]/60 p-3 rounded-xl border border-[#15271F]">
-                  <span className="text-[#A9B8AD] block">Benchmark</span>
-                  <span className="text-sm font-bold text-[#B7C9AD]">
-                    {mileage} km/L
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Middle: Real-time math breakdown */}
-            <div className="bg-[#0D1915] p-6 rounded-2xl border border-[#233e32] space-y-4">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-[#A9B8AD] flex items-center gap-2">
-                <Gauge className="h-4 w-4 text-[#B7C9AD]" />
-                <span>Computed Fuel Math</span>
-              </h4>
-
-              <div className="space-y-3 font-mono text-xs">
-                <div className="flex justify-between py-1 border-b border-[#15271F]">
-                  <span className="text-[#A9B8AD]">Fuel Required:</span>
-                  <span className="text-[#F7F7F2] font-semibold">
-                    {fuelLiters} Liters
-                  </span>
-                </div>
-                <div className="flex justify-between py-1 border-b border-[#15271F]">
-                  <span className="text-[#A9B8AD]">Avg Rate:</span>
-                  <span className="text-[#F7F7F2] font-semibold">
-                    ₹{currentCorridor.fuelPrice}/L
-                  </span>
-                </div>
-                <div className="flex justify-between py-1 text-sm font-bold pt-2">
-                  <span className="text-[#B7C9AD]">Fuel Subtotal:</span>
-                  <span className="text-[#B7C9AD]">₹{fuelCost.toLocaleString()}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Right: Integrity & Zero-Coercion Status */}
-            <div className="space-y-4">
-              <div
-                className={`p-5 rounded-2xl border ${
-                  currentCorridor.tollsVerified
-                    ? "bg-[#15271F]/60 border-[#B7C9AD]/30"
-                    : "bg-[#271E15]/60 border-[#D4A373]/30"
-                }`}
-              >
-                <div className="flex items-start gap-3">
-                  {currentCorridor.tollsVerified ? (
-                    <CheckCircle2 className="h-5 w-5 text-[#B7C9AD] shrink-0 mt-0.5" />
-                  ) : (
-                    <AlertCircle className="h-5 w-5 text-[#D4A373] shrink-0 mt-0.5" />
-                  )}
-                  <div>
-                    <h5 className="text-xs font-semibold text-[#F7F7F2] uppercase tracking-wide">
-                      {currentCorridor.tollsVerified
-                        ? "Budget Status: Complete"
-                        : "Budget Status: Incomplete (Preserved)"}
-                    </h5>
-                    <p className="text-xs text-[#A9B8AD] mt-1 leading-relaxed">
-                      {currentCorridor.tollsVerified
-                        ? `Official highway toll charges verified: ₹${currentCorridor.knownTolls}.`
-                        : `${currentCorridor.tollReason}. Cost is not coerced to zero.`}
+                    <div className="flex items-center gap-3 mb-2">
+                      <div
+                        className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
+                          isActive
+                            ? "bg-[#B7C9AD] text-[#102D25]"
+                            : "bg-[#233E32] text-[#A9B8AD]"
+                        }`}
+                      >
+                        {item.step}
+                      </div>
+                      <h3
+                        className={`text-base font-bold ${
+                          isActive ? "text-[#F7F7F2]" : "text-[#A9B8AD]"
+                        }`}
+                      >
+                        {item.title}
+                      </h3>
+                    </div>
+                    <p className="text-xs font-medium text-[#B7C9AD] mb-2 pl-10">
+                      {item.subtitle}
                     </p>
+                    <p className="text-sm text-[#A9B8AD] pl-10 leading-relaxed">
+                      {item.body}
+                    </p>
+                  </button>
+                );
+              })}
+
+              <div className="pt-4 pl-2">
+                <Link
+                  href="/dashboard"
+                  className="inline-flex items-center gap-2 text-sm font-semibold text-[#B7C9AD] hover:text-[#C9DBBE] transition-colors"
+                >
+                  <span>Make it your trip in the planner</span>
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </div>
+            </div>
+
+            {/* Right Interactive Preview Card (7 cols, sticky) */}
+            <div className="lg:col-span-7 lg:sticky lg:top-28">
+              <div className="rounded-2xl bg-[#15271F] border border-[#233E32] p-6 sm:p-8 shadow-2xl shadow-black/40 space-y-6">
+                {/* Header Banner */}
+                <div className="flex items-center justify-between pb-4 border-b border-[#233E32]">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-block h-2 w-2 rounded-full bg-[#B7C9AD]" />
+                    <span className="text-xs font-bold uppercase tracking-wider text-[#B7C9AD]">
+                      Example Itinerary Preview
+                    </span>
+                  </div>
+                  <span className="text-xs text-[#6E8274]">
+                    Step {activeStep} of 3
+                  </span>
+                </div>
+
+                {/* Dynamic Step Preview Content */}
+                {activeStep === 1 && (
+                  <div className="space-y-4">
+                    <h4 className="text-lg font-bold text-[#F7F7F2]">
+                      Initial Travel Brief Parameters
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3 text-xs">
+                      <div className="p-3.5 rounded-xl bg-[#0D1915] border border-[#233E32]">
+                        <span className="text-[#6E8274] block mb-1">Origin & Corridor</span>
+                        <span className="font-semibold text-[#F7F7F2]">Bengaluru → Coorg</span>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-[#0D1915] border border-[#233E32]">
+                        <span className="text-[#6E8274] block mb-1">Duration</span>
+                        <span className="font-semibold text-[#F7F7F2]">3 Days • 2 Nights</span>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-[#0D1915] border border-[#233E32]">
+                        <span className="text-[#6E8274] block mb-1">Travelers</span>
+                        <span className="font-semibold text-[#F7F7F2]">2 Adults (1 Room)</span>
+                      </div>
+                      <div className="p-3.5 rounded-xl bg-[#0D1915] border border-[#233E32]">
+                        <span className="text-[#6E8274] block mb-1">Vehicle Mode</span>
+                        <span className="font-semibold text-[#F7F7F2]">Petrol Car (15 km/L)</span>
+                      </div>
+                    </div>
+                    <div className="p-4 rounded-xl bg-[#0D1915]/60 border border-[#233E32]/70 text-xs text-[#A9B8AD] leading-relaxed">
+                      <span className="font-semibold text-[#B7C9AD]">Daylight Bound:</span> Departure set for 06:30 AM to pass Mysore before midday traffic and reach Madikeri ridge before dusk.
+                    </div>
+                  </div>
+                )}
+
+                {activeStep === 2 && (
+                  <div className="space-y-4">
+                    <h4 className="text-lg font-bold text-[#F7F7F2]">
+                      Balanced Daily Schedule
+                    </h4>
+                    <div className="space-y-2.5 text-xs">
+                      <div className="p-3 rounded-xl bg-[#0D1915] border border-[#233E32] flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-[#B7C9AD] font-semibold">06:30 AM</span>
+                          <span className="text-[#F7F7F2] font-medium">Bengaluru Departure</span>
+                        </div>
+                        <span className="text-[#6E8274]">Origin Hub</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-[#0D1915] border border-[#233E32] flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-[#B7C9AD] font-semibold">10:15 AM</span>
+                          <div>
+                            <span className="text-[#F7F7F2] font-medium block">Mysuru Palace & Heritage Zone</span>
+                            <span className="text-[#6E8274] text-[11px]">240 min dwell • Heritage visit</span>
+                          </div>
+                        </div>
+                        <span className="text-[#B7C9AD] font-medium">Midday Stop</span>
+                      </div>
+                      <div className="p-3 rounded-xl bg-[#0D1915] border border-[#233E32] flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-[#B7C9AD] font-semibold">05:45 PM</span>
+                          <div>
+                            <span className="text-[#F7F7F2] font-medium block">Madikeri, Coorg</span>
+                            <span className="text-[#6E8274] text-[11px]">Estate Homestay check-in</span>
+                          </div>
+                        </div>
+                        <span className="text-[#B7C9AD] font-medium">Day 1 Destination</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {activeStep === 3 && (
+                  <div className="space-y-4">
+                    <h4 className="text-lg font-bold text-[#F7F7F2]">
+                      Itemized Cost & Unknown Item Disclosure
+                    </h4>
+                    <div className="space-y-2 text-xs">
+                      <div className="flex justify-between py-2 border-b border-[#233E32]/60">
+                        <span className="text-[#A9B8AD]">Estimated Fuel (340 km @ 15 km/L @ ₹102.5/L)</span>
+                        <span className="font-mono font-semibold text-[#F7F7F2]">₹2,323.00</span>
+                      </div>
+                      <div className="flex justify-between py-2 border-b border-[#233E32]/60">
+                        <span className="text-[#A9B8AD]">Verified Highway Tolls</span>
+                        <span className="font-mono font-semibold text-[#F7F7F2]">₹320.00</span>
+                      </div>
+                      <div className="flex justify-between py-2 border-b border-[#233E32]/60">
+                        <span className="text-[#A9B8AD]">Estimated Lodging (2 nights, 1 room)</span>
+                        <span className="font-mono font-semibold text-[#F7F7F2]">₹7,000.00</span>
+                      </div>
+                      <div className="flex justify-between py-2 border-b border-[#233E32]/60 items-center">
+                        <span className="text-[#A9B8AD]">Ghat Corridor Entry Permit</span>
+                        <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-300 font-medium text-[11px]">
+                          Unknown fee (Not added to total)
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl bg-[#0D1915] border border-[#233E32] flex items-center justify-between">
+                      <div>
+                        <span className="text-[11px] text-[#6E8274] block">Summary Standard</span>
+                        <span className="text-xs font-semibold text-[#B7C9AD]">
+                          Known subtotal: ₹9,643.00; permit fee unknown
+                        </span>
+                      </div>
+                      <span className="text-xs text-[#6E8274] italic">Zero coercion</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Bottom Card Controls */}
+                <div className="flex items-center justify-between pt-4 border-t border-[#233E32] text-xs">
+                  <span className="text-[#6E8274]">
+                    *Illustrative values; actuals compile on server
+                  </span>
+                  <div className="flex gap-2">
+                    {[1, 2, 3].map((step) => (
+                      <button
+                        key={step}
+                        type="button"
+                        onClick={() => setActiveStep(step)}
+                        className={`h-2 w-6 rounded-full transition-all ${
+                          activeStep === step ? "bg-[#B7C9AD]" : "bg-[#233E32]"
+                        }`}
+                        aria-label={`View step ${step} preview`}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* =========================================================================
+          CHAPTER H4: DESTINATION JOURNAL (#journeys)
+          ========================================================================= */}
+      <section
+        id="journeys"
+        className="py-24 sm:py-32 px-6 sm:px-12 bg-[#0A1411] border-b border-[#233E32]"
+        aria-label="Destination Journal: Where memory begins"
+      >
+        <div className="mx-auto max-w-6xl">
+          <div className="max-w-2xl mb-16 space-y-3">
+            <span className="text-xs font-semibold tracking-wider text-[#B7C9AD] uppercase">
+              Inspiration Corridors
+            </span>
+            <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-[#F7F7F2]">
+              Where will your next memory begin?
+            </h2>
+            <p className="text-base sm:text-lg text-[#A9B8AD]">
+              Three distinct Indian landscapes, each with its own character, driving rhythm, and morning light.
+            </p>
+          </div>
+
+          {/* Asymmetric Editorial Spread */}
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-stretch">
+            {/* Feature 1: Large Landscape (7 cols) */}
+            <div className="lg:col-span-7 flex flex-col justify-between rounded-2xl bg-[#15271F] border border-[#233E32] overflow-hidden group">
+              <div className="relative h-72 sm:h-96 w-full overflow-hidden">
+                <Image
+                  src="/images/destinations/western-ghats.jpg"
+                  alt="Misty green hills of the Western Ghats"
+                  fill
+                  className="object-cover group-hover:scale-103 transition-transform duration-700 ease-out"
+                  sizes="(max-width: 1024px) 100vw, 60vw"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#15271F] via-transparent to-transparent" />
+                <div className="absolute top-4 left-4 px-3 py-1 rounded-full bg-[#0D1915]/80 backdrop-blur-sm border border-[#B7C9AD]/20 text-xs font-semibold text-[#B7C9AD]">
+                  Western Ghats
+                </div>
+              </div>
+              <div className="p-6 sm:p-8 space-y-4">
+                <h3 className="text-2xl font-bold text-[#F7F7F2]">
+                  Into the Western Ghats
+                </h3>
+                <p className="text-sm text-[#A9B8AD] leading-relaxed">
+                  Coffee country, green hills, slower mornings. From the Mysore plateau into the mist of Madikeri and Wayanad, winding through spice estates and quiet mountain passes.
+                </p>
+                <div className="pt-2 flex items-center justify-between">
+                  <Link
+                    href="/dashboard"
+                    className="inline-flex items-center gap-2 text-xs font-semibold text-[#B7C9AD] hover:text-[#C9DBBE] transition-colors"
+                  >
+                    <span>Use this inspiration in planner</span>
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                  <span className="text-xs text-[#6E8274]">340 km corridor</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Feature 2 & 3: Stacked Offset Cards (5 cols) */}
+            <div className="lg:col-span-5 space-y-8 flex flex-col justify-between">
+              {/* Card 2: Rajasthan */}
+              <div className="rounded-2xl bg-[#15271F] border border-[#233E32] overflow-hidden group flex-1 flex flex-col justify-between">
+                <div className="relative h-48 w-full overflow-hidden">
+                  <Image
+                    src="/images/destinations/rajasthan.jpg"
+                    alt="Courtyards of Amber Fort, Rajasthan"
+                    fill
+                    className="object-cover group-hover:scale-103 transition-transform duration-700 ease-out"
+                    sizes="(max-width: 1024px) 100vw, 40vw"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#15271F] via-transparent to-transparent" />
+                  <div className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full bg-[#0D1915]/80 backdrop-blur-sm border border-[#B7C9AD]/20 text-xs font-semibold text-[#B7C9AD]">
+                    Rajasthan
+                  </div>
+                </div>
+                <div className="p-6 space-y-2">
+                  <h3 className="text-xl font-bold text-[#F7F7F2]">
+                    Through Rajasthan
+                  </h3>
+                  <p className="text-xs text-[#A9B8AD] leading-relaxed">
+                    Old stone cities, courtyards, changing landscapes. From Delhi through Jaipur to Jodhpur across the historic Aravalli corridors.
+                  </p>
+                  <div className="pt-2">
+                    <Link
+                      href="/dashboard"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#B7C9AD] hover:text-[#C9DBBE]"
+                    >
+                      <span>Use this inspiration</span>
+                      <ArrowRight className="h-3 w-3" />
+                    </Link>
                   </div>
                 </div>
               </div>
 
-              <div className="bg-[#15271F] p-4 rounded-xl border border-[#233e32] flex items-center justify-between">
-                <span className="text-xs text-[#A9B8AD]">Estimated Road Transit:</span>
-                <span className="text-base font-bold text-[#F7F7F2]">
-                  ₹{(fuelCost + (currentCorridor.tollsVerified ? currentCorridor.knownTolls : 0)).toLocaleString()}
-                  {!currentCorridor.tollsVerified && <span className="text-xs text-[#D4A373] ml-1 font-normal">+ unknown</span>}
-                </span>
+              {/* Card 3: Konkan Coast */}
+              <div className="rounded-2xl bg-[#15271F] border border-[#233E32] overflow-hidden group flex-1 flex flex-col justify-between">
+                <div className="relative h-48 w-full overflow-hidden">
+                  <Image
+                    src="/images/destinations/konkan-coast.jpg"
+                    alt="Arabian Sea coastline along Konkan"
+                    fill
+                    className="object-cover group-hover:scale-103 transition-transform duration-700 ease-out"
+                    sizes="(max-width: 1024px) 100vw, 40vw"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-[#15271F] via-transparent to-transparent" />
+                  <div className="absolute top-3 left-3 px-2.5 py-0.5 rounded-full bg-[#0D1915]/80 backdrop-blur-sm border border-[#B7C9AD]/20 text-xs font-semibold text-[#B7C9AD]">
+                    Konkan Coast
+                  </div>
+                </div>
+                <div className="p-6 space-y-2">
+                  <h3 className="text-xl font-bold text-[#F7F7F2]">
+                    Along the Konkan coast
+                  </h3>
+                  <p className="text-xs text-[#A9B8AD] leading-relaxed">
+                    Coastal towns, sea air, unhurried stops. Coastal highway stretches, ferry crossings, and quiet palm groves along the Arabian Sea.
+                  </p>
+                  <div className="pt-2">
+                    <Link
+                      href="/dashboard"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#B7C9AD] hover:text-[#C9DBBE]"
+                    >
+                      <span>Use this inspiration</span>
+                      <ArrowRight className="h-3 w-3" />
+                    </Link>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* SECTION 2.5: FEATURED 3D CORRIDOR SHOWCASE (GSAP POWERED) */}
-      <section className="px-6 py-20 max-w-7xl mx-auto border-t border-[#15271F]">
-        <div className="text-center max-w-3xl mx-auto mb-14">
-          <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#B7C9AD] uppercase tracking-wider mb-3">
-            <Sparkles className="h-4 w-4" />
-            <span>Interactive 3D Corridor Discovery</span>
+      {/* =========================================================================
+          CHAPTER H5: USEFUL PLANNING EXPLAINED THROUGH THE PRODUCT
+          ========================================================================= */}
+      <section
+        className="py-24 sm:py-32 px-6 sm:px-12 bg-[#0D1915] border-b border-[#233E32]"
+        aria-label="Planning capabilities explained through product"
+      >
+        <div className="mx-auto max-w-5xl space-y-20">
+          <div className="max-w-2xl space-y-3">
+            <span className="text-xs font-semibold tracking-wider text-[#B7C9AD] uppercase">
+              Honest By Design
+            </span>
+            <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-[#F7F7F2]">
+              Useful planning, without the usual noise.
+            </h2>
           </div>
-          <h2 className="text-3xl sm:text-4xl font-bold text-[#F7F7F2]">
-            Signature Topographic Corridors
-          </h2>
-          <p className="mt-3 text-sm sm:text-base text-[#A9B8AD]">
-            Hover to experience depth-layered 3D interaction powered by GSAP.
-            Inspect ground truth elevations, verified transit routes, and regional advisories.
-          </p>
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 justify-items-center">
-          <TravelCard3D
-            title="Western Ghats Monsoon Odyssey"
-            subtitle="Bengaluru → Coorg → Wayanad → Ooty"
-            tagline="Elevation: 900m – 2,240m • 340 km"
-            badge="Biodiversity Hotspot"
-            verified={true}
-            actionText="Explore Ghats Route"
-            onActionClick={() => router.push("/trips/sample-western-ghats-corridor")}
-          />
-          <TravelCard3D
-            title="Royal Rajputana Circuit"
-            subtitle="Delhi → Jaipur → Jodhpur → Udaipur"
-            tagline="Heritage Expressways • 610 km"
-            badge="Desert & Fort Corridor"
-            verified={true}
-            actionText="Explore Royal Route"
-            onActionClick={() => router.push("/trips/sample-rajasthan-heritage-circuit")}
-          />
-          <TravelCard3D
-            title="Konkan & Sahyadri Pass"
-            subtitle="Mumbai → Pune → Mahabaleshwar → Goa"
-            tagline="Coastal Ghat Curves • 580 km"
-            badge="Coastal Transit"
-            verified={true}
-            actionText="Explore Coastal Route"
-            onActionClick={() => router.push("/trips/sample-goa-monsoon-coastal-escape")}
-          />
+          {/* Row 1: Change the plan. Keep the trip. */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
+            <div className="md:col-span-6 space-y-4">
+              <span className="text-xs font-semibold text-[#B7C9AD] uppercase tracking-wider">
+                01 • Dynamic Adjustment
+              </span>
+              <h3 className="text-2xl sm:text-3xl font-bold text-[#F7F7F2]">
+                Change the plan. Keep the trip.
+              </h3>
+              <p className="text-sm sm:text-base text-[#A9B8AD] leading-relaxed">
+                Plans change on the road. When you decide to stay an extra morning in coffee country or take an unhurried detour to an ancient temple, SWENA recomputes transit times and adjusts adjacent legs without wiping out your entire itinerary.
+              </p>
+            </div>
+            <div className="md:col-span-6 p-6 rounded-2xl bg-[#15271F] border border-[#233E32] space-y-3">
+              <div className="flex items-center justify-between text-xs text-[#A9B8AD] pb-2 border-b border-[#233E32]">
+                <span>Stop Duration Adjustment</span>
+                <span className="text-[#B7C9AD] font-semibold">Recalculated</span>
+              </div>
+              <div className="text-xs space-y-2">
+                <div className="p-3 rounded-lg bg-[#0D1915] border border-[#233E32] flex justify-between items-center">
+                  <span>Madikeri Homestay</span>
+                  <span className="text-[#B7C9AD] font-semibold">+1 Day Extended</span>
+                </div>
+                <div className="p-3 rounded-lg bg-[#0D1915] border border-[#233E32] flex justify-between items-center text-[#A9B8AD]">
+                  <span>Subsequent Transit to Wayanad</span>
+                  <span>Shifted to Day 3, 09:30 AM</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Know what is included—and what is still an estimate. */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
+            <div className="md:col-span-6 md:order-2 space-y-4">
+              <span className="text-xs font-semibold text-[#B7C9AD] uppercase tracking-wider">
+                02 • Financial Transparency
+              </span>
+              <h3 className="text-2xl sm:text-3xl font-bold text-[#F7F7F2]">
+                Know what is included—and what is still an estimate.
+              </h3>
+              <p className="text-sm sm:text-base text-[#A9B8AD] leading-relaxed">
+                Unknown highway tolls, seasonal park permits, and unquoted entry fees never quietly become zero. We itemize what is verified, what is modeled, and what is still unknown, so your budget means what it says.
+              </p>
+            </div>
+            <div className="md:col-span-6 md:order-1 p-6 rounded-2xl bg-[#15271F] border border-[#233E32] space-y-3">
+              <div className="text-xs font-bold text-[#B7C9AD] uppercase tracking-wider pb-2 border-b border-[#233E32]">
+                Budget Integrity Standard
+              </div>
+              <div className="space-y-2 text-xs">
+                <div className="flex justify-between p-2 rounded bg-[#0D1915]">
+                  <span className="text-[#A9B8AD]">Fuel & Sourced Lodging</span>
+                  <span className="font-semibold text-[#F7F7F2]">₹9,320.00 (Modeled)</span>
+                </div>
+                <div className="flex justify-between p-2 rounded bg-[#0D1915]">
+                  <span className="text-[#A9B8AD]">National Highway Tolls</span>
+                  <span className="font-semibold text-[#F7F7F2]">₹320.00 (Verified)</span>
+                </div>
+                <div className="flex justify-between p-2 rounded bg-amber-500/10 border border-amber-500/20 text-amber-300">
+                  <span>State Forest Entry Fee</span>
+                  <span>Unquoted (Marked Unknown)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 3: Choose where you book. */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8 items-center">
+            <div className="md:col-span-6 space-y-4">
+              <span className="text-xs font-semibold text-[#B7C9AD] uppercase tracking-wider">
+                03 • Supplier Sovereignty
+              </span>
+              <h3 className="text-2xl sm:text-3xl font-bold text-[#F7F7F2]">
+                Choose where you book.
+              </h3>
+              <p className="text-sm sm:text-base text-[#A9B8AD] leading-relaxed">
+                SWENA is a planning and comparison workspace, not a checkout broker. When you are ready to reserve a train, flight, or hotel, we provide direct handoff links to official portals like IRCTC and state tourism sites. No markups, no hidden locks.
+              </p>
+            </div>
+            <div className="md:col-span-6 p-6 rounded-2xl bg-[#15271F] border border-[#233E32] space-y-3">
+              <div className="text-xs font-bold text-[#B7C9AD] uppercase tracking-wider pb-2 border-b border-[#233E32]">
+                Official Handoff Example
+              </div>
+              <div className="p-4 rounded-xl bg-[#0D1915] border border-[#233E32] flex items-center justify-between text-xs">
+                <div className="space-y-1">
+                  <span className="font-semibold text-[#F7F7F2] block">Vande Bharat Express (Train 20608)</span>
+                  <span className="text-[#6E8274]">Deep link pre-filled with date & passenger count</span>
+                </div>
+                <div className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#15271F] text-[#B7C9AD] border border-[#B7C9AD]/30 font-medium">
+                  <span>View on IRCTC</span>
+                  <ExternalLink className="h-3 w-3" />
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* SECTION 3: ARCHITECTURAL PILLARS */}
-      <section className="px-6 py-24 max-w-7xl mx-auto">
-        <div className="text-center max-w-3xl mx-auto mb-16">
-          <span className="text-xs font-semibold uppercase tracking-wider text-[#B7C9AD]">
-            Engineered for Precision
+      {/* =========================================================================
+          CHAPTER H6: PRACTICAL FAQ
+          ========================================================================= */}
+      <section
+        className="py-24 sm:py-32 px-6 sm:px-12 bg-[#0A1411] border-b border-[#233E32]"
+        aria-label="Frequently Asked Questions"
+      >
+        <div className="mx-auto max-w-4xl space-y-12">
+          <div className="text-center space-y-3 max-w-xl mx-auto">
+            <span className="text-xs font-semibold tracking-wider text-[#B7C9AD] uppercase">
+              Practical Information
+            </span>
+            <h2 className="text-3xl sm:text-4xl font-bold tracking-tight text-[#F7F7F2]">
+              Frequently asked questions.
+            </h2>
+            <p className="text-sm text-[#A9B8AD]">
+              Straight answers about how SWENA plans journeys, handles pricing, and connects you to suppliers.
+            </p>
+          </div>
+
+          <Accordion type="single" collapsible className="w-full space-y-3">
+            <AccordionItem value="faq-1" className="border border-[#233E32] rounded-xl px-5 bg-[#15271F]">
+              <AccordionTrigger className="text-sm font-semibold text-[#F7F7F2] hover:text-[#B7C9AD]">
+                How does SWENA generate an itinerary?
+              </AccordionTrigger>
+              <AccordionContent className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed pt-2">
+                SWENA uses constraint-based optimization to sequence your daily stops, estimate transit times, and balance driving durations against daylight hours. Your brief sets the hard rules (destinations, dates, party, vehicle mode); the system helps you find a realistic daily rhythm without overlapping visits.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="faq-2" className="border border-[#233E32] rounded-xl px-5 bg-[#15271F]">
+              <AccordionTrigger className="text-sm font-semibold text-[#F7F7F2] hover:text-[#B7C9AD]">
+                Does SWENA take payments or book tickets directly?
+              </AccordionTrigger>
+              <AccordionContent className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed pt-2">
+                No. SWENA is strictly non-custodial. We hold zero customer funds and create zero tickets. When you are ready to book, we provide direct handoff links to verified official portals such as IRCTC, airlines, and registered hotel sites so you transact directly with the supplier.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="faq-3" className="border border-[#233E32] rounded-xl px-5 bg-[#15271F]">
+              <AccordionTrigger className="text-sm font-semibold text-[#F7F7F2] hover:text-[#B7C9AD]">
+                Are all displayed prices live and guaranteed?
+              </AccordionTrigger>
+              <AccordionContent className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed pt-2">
+                Prices on SWENA reflect their verified evidence status. Live provider quotes carry a checked timestamp and expiry window. When rates are unverified, we label them as estimates or explicit unknowns rather than inventing a fixed price hold.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="faq-4" className="border border-[#233E32] rounded-xl px-5 bg-[#15271F]">
+              <AccordionTrigger className="text-sm font-semibold text-[#F7F7F2] hover:text-[#B7C9AD]">
+                Can I change stops or driving pace after creating a plan?
+              </AccordionTrigger>
+              <AccordionContent className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed pt-2">
+                Yes. Every itinerary is fully editable. You can reorder stops, adjust dwell durations, change your fuel mileage assumptions, or remove destinations. SWENA recomputes only the affected travel legs and updates your version history.
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="faq-5" className="border border-[#233E32] rounded-xl px-5 bg-[#15271F]">
+              <AccordionTrigger className="text-sm font-semibold text-[#F7F7F2] hover:text-[#B7C9AD]">
+                Which regions of India are currently supported?
+              </AccordionTrigger>
+              <AccordionContent className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed pt-2">
+                SWENA is optimized for Indian domestic road and rail corridors, with curated topographic routing across the Western Ghats (Karnataka and Kerala), Rajasthan heritage circuits, and the Konkan coast. Additional regional corridors are added as road network datasets are verified.
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </section>
+
+      {/* =========================================================================
+          CHAPTER H7: FINAL INVITATION
+          ========================================================================= */}
+      <section
+        className="relative py-28 sm:py-36 px-6 sm:px-12 text-center overflow-hidden border-b border-[#233E32]"
+        aria-label="Call to action: Start your journey"
+      >
+        <div className="absolute inset-0 z-0">
+          <Image
+            src="/images/destinations/western-ghats.jpg"
+            alt="Misty landscape of Western Ghats"
+            fill
+            className="object-cover object-center brightness-30"
+            sizes="100vw"
+          />
+          <div className="absolute inset-0 bg-[#0D1915]/80 backdrop-blur-[2px]" />
+        </div>
+
+        <div className="relative z-10 max-w-2xl mx-auto space-y-6">
+          <span className="text-xs font-semibold tracking-widest text-[#B7C9AD] uppercase">
+            Start Your Journey
           </span>
-          <h2 className="text-3xl sm:text-5xl font-bold text-[#F7F7F2] mt-3">
-            Why Generic AI Itineraries Fail Travelers
+          <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-[#F7F7F2] leading-tight">
+            Make room for the journey.
           </h2>
-          <p className="text-sm sm:text-base text-[#A9B8AD] mt-4">
-            Most AI travel tools hallucinate fictitious flight schedules, ignore
-            corridor topography, and pretend entry fees are zero. SWENA operates as
-            a verifiable deterministic engine.
+          <p className="text-base sm:text-lg text-[#A9B8AD] max-w-lg mx-auto leading-relaxed">
+            Less planning. More remembering. Bring your route, stays, and budget into one calm workspace.
           </p>
-        </div>
-
-        <div ref={corridorsRef} className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          <div className="glass-card p-8 rounded-3xl border border-[#233e32]">
-            <div className="h-12 w-12 rounded-2xl bg-[#15271F] border border-[#B7C9AD]/20 flex items-center justify-center text-[#B7C9AD] mb-6">
-              <Cpu className="h-6 w-6" />
-            </div>
-            <h3 className="text-xl font-bold text-[#F7F7F2]">
-              Mathematical Solvers vs Probabilistic Guesses
-            </h3>
-            <p className="text-sm text-[#A9B8AD] mt-3 leading-relaxed">
-              We do not ask an LLM to guess driving durations. Google OR-Tools
-              solves the traveling salesperson problem with time windows, guaranteeing
-              arrival times advance logically without teleportation.
-            </p>
-          </div>
-
-          <div className="glass-card p-8 rounded-3xl border border-[#233e32]">
-            <div className="h-12 w-12 rounded-2xl bg-[#15271F] border border-[#B7C9AD]/20 flex items-center justify-center text-[#B7C9AD] mb-6">
-              <ShieldCheck className="h-6 w-6" />
-            </div>
-            <h3 className="text-xl font-bold text-[#F7F7F2]">
-              Strict Non-Coercion of Unknown Costs
-            </h3>
-            <p className="text-sm text-[#A9B8AD] mt-3 leading-relaxed">
-              If a national park entry fee or expressway toll cannot be verified
-              from an official source, it remains an explicit unknown. We never
-              silently treat unknowns as ₹0 to claim false budget compliance.
-            </p>
-          </div>
-
-          <div className="glass-card p-8 rounded-3xl border border-[#233e32]">
-            <div className="h-12 w-12 rounded-2xl bg-[#15271F] border border-[#B7C9AD]/20 flex items-center justify-center text-[#B7C9AD] mb-6">
-              <Compass className="h-6 w-6" />
-            </div>
-            <h3 className="text-xl font-bold text-[#F7F7F2]">
-              Direct Official Merchant Handoff
-            </h3>
-            <p className="text-sm text-[#A9B8AD] mt-3 leading-relaxed">
-              No intermediary markups, no deceptive hotel inventory locks, and no
-              internal payment hostage taking. Review transparent evidence and book
-              directly on IRCTC, airline, or hotel portals.
-            </p>
-          </div>
-        </div>
-      </section>
-
-      {/* SECTION 4: CALL TO ACTION */}
-      <section className="px-6 py-20 max-w-5xl mx-auto mb-20">
-        <div className="glass-card p-10 sm:p-16 rounded-3xl border border-[#B7C9AD]/30 text-center relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-[#B7C9AD]/10 blur-3xl rounded-full pointer-events-none" />
-          <h2 className="text-3xl sm:text-5xl font-bold text-[#F7F7F2] max-w-2xl mx-auto">
-            Ready to design a journey with true peace of mind?
-          </h2>
-          <p className="mt-4 text-base text-[#A9B8AD] max-w-xl mx-auto">
-            Input your origin, preferred travel dates, and dream destinations.
-            Watch SWENA compile a mathematically verified plan in seconds.
-          </p>
-          <div className="mt-8 flex justify-center">
+          <div className="pt-4">
             <Link
               href="/dashboard"
-              className="btn-sage px-8 py-4 rounded-xl text-base font-semibold shadow-2xl flex items-center gap-2"
+              className="inline-flex items-center gap-2 rounded-xl bg-[#B7C9AD] px-7 py-3.5 text-sm font-semibold text-[#102D25] hover:bg-[#C9DBBE] transition-all shadow-xl shadow-black/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B7C9AD]"
             >
-              <Sparkles className="h-5 w-5" />
-              <span>Open the Planning Dashboard</span>
+              <span>Plan my trip</span>
+              <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
         </div>

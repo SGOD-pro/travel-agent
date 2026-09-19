@@ -1,3 +1,5 @@
-import ContactPage from "@/app/contact/page";
+import { permanentRedirect } from "next/navigation";
 
-export default ContactPage;
+export default function ContactUsPage() {
+  permanentRedirect("/contact");
+}

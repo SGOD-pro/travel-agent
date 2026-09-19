@@ -1,68 +1,96 @@
-# Build phases
+# SWENA Project Build Phases & Implementation Roadmap
 
-Version 1.0 | Release Phase 1 is delivered through the following engineering stages.
+**Version:** 2.0  
+**Status:** Reconciled Engineering Roadmap  
+**Structure:** Preserves Historical Stages (Stages 0–6 and Later.1–Later.6) and establishes the canonical Production Completion Milestones (C0–C8).
 
-## Stage 0 — Documentation baseline (current)
+---
 
-Create requested specs, decisions, registry and 50 evaluation definitions. Verify internal links and JSON. Exit: documents distinguish locked decisions, defaults and unverified integrations. No production claim.
+## 1. Historical Engineering Stages (Retrospective Record)
 
-## Stage 1 — Foundation
+The following stages represent the initial prototype development and architectural exploration phases:
 
-Create one repo/application layout, dependency locks, import checks, typed domains/ports, TripBrief/deltas, Decimal money, version/validation gate, migrations/repositories, PostGIS, Redis adapter, PostgreSQL jobs/outbox and initial telemetry. Build deterministic money, conflict, lease and ownership tests. Exit: provider-independent state survives process/Redis loss; concurrent changes do not overwrite; false budget compliance is rejected.
+* **Stage 0 — Documentation Baseline:** Initial requirements, architectural decisions D001–D017, and provider registry.
+* **Stage 1 — Domain Foundation:** Typed domain models, Pydantic contracts, Decimal monetary arithmetic, initial SQLAlchemy repositories, and Alembic migrations (`0001_initial_schema.py`).
+* **Stage 2 — Workflows & Scheduling:** Initial FastAPI routes, LangGraph prototype graph, and OR-Tools TSP scheduler.
+* **Stage 3 — Frontend Workspace:** Next.js 16 setup, Tailwind CSS v4, multi-tab planning console, Leaflet map canvas, and ReportLab PDF export.
+* **Stage 4 — Portable Jobs:** Background job schema, worker claiming loops, and ReportLab PDF export service (`0002_add_artifacts.py`).
+* **Stage 5 — Acceptance Scaffolding:** Initial test harnesses, mock test scripts, and local Docker compose profiles.
+* **Stage 6 — EC2 Profile:** Local and containerized entrypoints (`start.sh`, `Makefile`).
+* **Stage Later (Prototypes):**
+  * *Later.1:* 50-scenario benchmark runner (`travel.benchmarks.runner`).
+  * *Later.2:* Leaflet geospatial corridor canvas with CartoDB Dark Matter styling.
+  * *Later.3:* Client-native Web Speech API voice brief assistant.
+  * *Later.4:* Corridor weather & Western Ghats hazard advisory card.
+  * *Later.5:* Public shareable route `/trips/[id]` and client-side SVG QR code generator.
+  * *Later.6:* Next.js BFF OAuth 2.1 integration with SWYRA Auth.
 
-## Stage 2 — Workflows and adapters
+---
 
-Build FastAPI command/query API, LangGraph persistence/replay, OR-Tools scheduling, Mapbox/OSRM adapters, Places interface and permitted display strategy, flight/hotel/rail/bus interfaces, SerpAPI and authorized Scrapling extraction. Implement fuel/mileage assumptions and toll/fee unknowns. Exit: fixture workflows produce valid partial plans; providers remain disabled until registry authorization; unknowns remain explicit.
+## 2. Canonical Production Completion Milestones (C0 through C8)
 
-## Stage 3 — Frontend
+As documented in [`docs/IMPLEMENTATION-AUDIT.md`](IMPLEMENTATION-AUDIT.md), initial prototype implementations relied on client-side math fallbacks, unverified scenario loops, and mock identity fallbacks. Milestones **C0 through C8** represent the official, dependency-ordered engineering plan to transition the platform into an operational, verifiable production release:
 
-Implement feature modules, brief editor, route/list views, itinerary edits, budget, recommendations, evidence, approval, handoff and streaming recovery. Exit: mobile/keyboard/error state checks; no false live offers or fake confirmations; map-data display rights resolved before provider-backed mapped POIs launch.
+```
+[ C0: Reality & Contract Repair ] (Completed)
+   │
+   ▼
+[ C1: Identity, Ownership & Data Integrity ] (Active Milestone)
+   │
+   ▼
+[ C2: Durable Planning Vertical Slice ]
+   │
+   ▼
+[ C3: Routing Engine, Discovery & Evidence Classification ]
+   │
+   ▼
+[ C4: Complete Multi-Tab Planning Workspace ]
+   │
+   ▼
+[ C5: Sharing, Export Artifacts, Handoff & Privacy ]
+   │
+   ▼
+[ C6: Cinematic Marketing Experience & Support Inquiries ]
+   │
+   ▼
+[ C7: Regional Weather, Voice Briefing & Dynamic In-Trip Replanning ]
+   │
+   ▼
+[ C8: Staging Deployment, SLO Verification & Release Governance ]
+```
 
-## Stage 4 — Portable jobs and exports
+### Milestone C0 — Reality & Contract Repair (Status: Completed)
+* **Scope:** Full codebase reality audit, defect inventory, reconciliation of specifications, creation of companion specs (`IMPLEMENTATION-AUDIT.md`, `END-TO-END-JOURNEYS.md`, `PRODUCTION-COMPLETION-PLAN.md`, `VISUALIZATION-AND-MOTION-SPEC.md`, `TEST-AND-RELEASE-PLAN.md`, `OPERATIONS-RUNBOOK.md`, `GEMINI.md`).
+* **Exit Gate:** Complete traceability matrix covering P01–P18 and all companion specifications approved.
 
-Implement thin export, notification and enrichment entrypoints; benchmark runtime options. Do not automatically create three functions if measurements favor shared workers. Add permitted PDF export content, task idempotency, cancellation and replay. Exit: domain results match across local worker and handler contract harnesses; actual AWS tests separately validate packaging/cold starts.
+### Milestone C1 — Identity, Ownership & Data Integrity (Status: Active Milestone)
+* **Scope:** Cryptographically verified OAuth 2.1 JWT sessions (`jose` RS256 validation against JWKS); removal of client `owner_id` fields; strict server-derived ownership enforcement on all trip routes; removal of `simulateLogin()` mock states.
+* **Exit Gate:** Two-user cross-tenant integration test proves zero unauthorized resource access; forged tokens strictly return 401/404; real login survives page reloads.
 
-## Stage 5 — ECS and release acceptance
+### Milestone C2 — Durable Planning Vertical Slice
+* **Scope:** True asynchronous job execution; worker claims job and executes LangGraph; frontend consumes server plan response; complete removal of client-side Haversine simulation in dashboard.
+* **Exit Gate:** Re-solve updates canonical database plan; worker restart preserves running jobs; version advances cleanly $v1 \to v2$.
 
-Staging deployment, actual provider credentials/access verification, SWYRA security acceptance, deletion/backup drills, 50-case fixture suite, bounded live probes, SLO/cost baselines and visual regression. Exit: release gates have evidence. An unavailable rail/bus supplier can remain explicitly unavailable; coverage marketing matches registry.
+### Milestone C3 — Routing Engine, Discovery & Evidence Classification
+* **Scope:** Real road distance/duration matrices; OR-Tools time-window and return-leg formulation; strict four-tier evidence normalization; comprehensive overhaul of 50 benchmark cases enforcing scenario-specific invariants.
+* **Exit Gate:** 50/50 benchmark cases pass with unique, scenario-specific assertions; zero tautological looping.
 
-## Stage 6 — EC2 profile
+### Milestone C4 — Complete Multi-Tab Planning Workspace
+* **Scope:** Synchronized Leaflet map and monotonic timeline; differential comparison view on edits; atomic approval transactions; full WCAG 2.1 AA keyboard accessibility.
+* **Exit Gate:** Stop edits recompute adjacent legs; approval commits version atomically; 409 Conflict handled cleanly.
 
-Add host/container deployment configuration, TLS, restart/log/backup operations and parity tests without domain changes. Exit: same image and application behavior verified under EC2/Docker.
+### Milestone C5 — Sharing, Export Artifacts, Handoff & Privacy
+* **Scope:** Dynamic public trip projection reading from database; instant share link revocation; verified ReportLab PDF generation; domain allowlist handoffs; DPDP/GDPR account deletion cascade.
+* **Exit Gate:** Anonymous visitor views sanitized public route without private PII; revoking link returns immediate 404; account deletion cascade clears all stores.
 
-## Later — Expansion & Real-World Readiness
+### Milestone C6 — Cinematic Marketing Experience & Support Inquiries
+* **Scope:** Editorial GSAP 3D corridor discovery on marketing home; authentic value proposition copy; durable contact inquiry ingestion with PostgreSQL storage.
+* **Exit Gate:** Contact form submission persists row to `contact_inquiries` table; GSAP animations satisfy `prefers-reduced-motion`.
 
-The "Later" phase elevates the platform into a production-ready, competition-winning application with automated verification, interactive corridor mapping, accessibility, and sovereign identity integration, while strictly maintaining core boundaries:
+### Milestone C7 — Regional Weather, Voice Briefing & Dynamic In-Trip Replanning
+* **Scope:** Verified meteorological weather feeds; client-native Web Speech dictation with explicit browser cloud disclosure; dynamic in-trip replanning for remaining stops.
+* **Exit Gate:** Web Speech UI explicitly notifies user of browser cloud streaming; in-trip replan freezes completed stops.
 
-### Stage Later.1 — 50-Scenario Deterministic Benchmark Runner (Completed)
-- Built `travel.benchmarks.runner.BenchmarkRunner` evaluating all 50 scenarios in `tests/evaluations/cases.json`.
-- Enforces invariant verification: zero-coercion preservation (unquoted tolls never become ₹0), temporal feasibility ($arrival \le departure$), price non-negativity, and anti-hallucination isolation.
-- Exposed via `GET /api/v1/benchmarks` and interactive `/benchmarks` inspector UI. Achieves 100% pass rate in 31 ms.
-
-### Stage Later.2 — Geospatial Corridor Canvas (Completed)
-- Leaflet map with CartoDB Dark Matter tiles matching SWENA 2.0 `forest-night`.
-- Renders sequence stops, polyline corridor traces, and recommended detour POIs with uncertainty badges.
-- SSR-safe dynamic wrapper embedded in planning console and public trip pages.
-
-### Stage Later.3 — Voice Brief Dictation & Audio Guide (Completed)
-- Client-side Web Speech API integration (`SpeechRecognition` + `SpeechSynthesis`).
-- Speech-to-text voice brief dictation into planning parameters.
-- Text-to-speech audio guide narrating finalized schedules and safety advisories without external cloud audio processing.
-
-### Stage Later.4 — Corridor Weather & Ghat Hazard Advisory (Completed)
-- Regional corridor terrain intelligence: live stop temperature, humidity, monsoon indices, and Western Ghats hazard warnings (e.g. foggy pass alerts, low-beam headlight recommendations).
-
-### Stage Later.5 — Public Shareable Itinerary & QR Code (Completed)
-- Deep-link sharing at `/trips/[id]` with client-side SVG/Canvas QR Code generation (`qrcode` package) for mobile smartphone scanning on the road.
-
-### Stage Later.6 — SWYRA OAuth 2.1 / OIDC Integration (Underway)
-- Integrate with [SWYRA Auth (SGOD-pro/OAuth2.1)](https://github.com/SGOD-pro/OAuth2.1) via standard OAuth 2.1 (PKCE + Authorization Code Flow).
-- Next.js BFF route handlers (`/api/auth/login`, `/api/auth/callback`, `/api/auth/me`, `/api/auth/logout`) with secure HttpOnly cookies.
-- Offline RS256 JWT validation using remote JWKS (`/.well-known/jwks.json`).
-- Zero credentials stored in `travel-agent` database; identity delegated completely to SWYRA Auth.
-
-### Future Expansion Gates (Explicit Approvals Required)
-- **International Expansion**: Multi-currency forex conversion, international border/visa regulations, and multi-hub flight connections require separate domain models.
-- **EV Feasibility**: Electric vehicle battery state-of-charge, degradation, charging curves, and highway charger availability remain deferred per decision D010.
-- **Vector Retrieval**: Optional pgvector embeddings for unstructured traveler reviews require separate storage acceptance.
-- **Booking & Payments**: STRICT NON-GOAL. No internal checkout, payment capture, or price locking. All commercial fulfillment remains non-custodial external handoff to verified supplier portals (IRCTC, KSTDC).
+### Milestone C8 — Staging Deployment, SLO Verification & Release Governance
+* **Scope:** Production ECS container packaging; automated recovery drills; load testing verifying P95 SLOs; complete release gate sign-offs.
+* **Exit Gate:** P95 first useful map $\le 3.5$s; P95 plan compilation $\le 20$s; all 8 release gates signed off with evidence.

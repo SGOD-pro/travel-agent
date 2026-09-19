@@ -1,105 +1,69 @@
-# Current project memory
+# SWENA Active Project Memory & Execution State
 
-Updated 2026-09-12. This is implementation status, not durable user profiling.
+**Last Audited:** 2026-09-19  
+**Current Git Commit:** `8b7592fae383df49a3706b5ec4d938499e6d6b6a` (Branch: `main`)  
+**Audit Reference:** [`docs/IMPLEMENTATION-AUDIT.md`](../docs/IMPLEMENTATION-AUDIT.md)  
+**Completion Roadmap:** [`docs/PRODUCTION-COMPLETION-PLAN.md`](../docs/PRODUCTION-COMPLETION-PLAN.md)  
+**Agent Protocol:** [`GEMINI.md`](../GEMINI.md)
 
-## Completed
+---
 
-- Documentation pack, provider registry, and 50 scenario definitions.
-- Stage 1 Foundation: Scaffolded isolated `backend/` and `frontend/` folders.
-- Initialized Python 3.12 virtual environment and dependencies using `uv` (`pyproject.toml`).
-- Implemented pure domain contracts in `backend/src/travel/domain/` (`Money`, `BudgetLine`, `BudgetSummary` with zero-coercion and non-hallucination guarantees; `Trip`, `TripBrief`, `TripVersion`, `TripDelta`; `Job`, `OutboxEvent`).
-- Implemented application ports: `CachePort`, `TripRepositoryPort`, `JobRepositoryPort`, `UnitOfWorkPort`.
-- Built Redis adapters: `AsyncRedisAdapter` (local Docker) and `UpstashRedisAdapter` (production Upstash REST HTTP SDK).
-- Built PostgreSQL persistence layer: SQLAlchemy 2.0 ORM models, Repositories with optimistic concurrency (409 Conflict) and SKIP LOCKED lease claiming, Unit of Work, and initial Alembic migration (`0001_initial_schema.py`).
-- Configured `deployment/local/docker-compose.yml` (PostgreSQL 16 + PostGIS and Redis).
-- Created deterministic unit test suite in `backend/tests/unit/` (16 passing tests, 100% database-free).
-- Verified with Ruff (`All checks passed!`) and Mypy strict mode (`Success: no issues found in 18 source files`).
+## 1. Verified Working Foundations (Current Reality)
 
-- Stage 2 Workflows & Adapters:
-  - Road transit math and fuel calculations in `domain/routing.py` (`fuel_liters = distance / mileage`, `fuel_cost = liters * price`, explicit unverified toll `BudgetLine`s).
-  - OR-Tools constraint scheduler in `application/services/scheduler.py` solving TSPTW and monotonic arrival/departure sequencing.
-  - End-to-end trip planning workflow in `workflows/trip_planning.py` powered by LangGraph.
-  - FastAPI HTTP runtime in `runtime/fastapi/` (`POST /api/v1/trips`, `GET /api/v1/trips/{id}`, `POST /api/v1/trips/{id}/brief` with 409 Conflict handling, `POST /api/v1/trips/{id}/plan`, `GET /health`).
-  - Unit test suite expanded to 23 passing tests covering fuel math, OR-Tools scheduling, LangGraph workflow execution, and FastAPI endpoints.
-  - Ruff and Mypy strict checks passing across all 26 source files.
+* **Verification Pipeline (`./verify.sh`):** Passes 100% cleanly:
+  * Backend Ruff linter: `All checks passed!`
+  * Backend Mypy strict typecheck: `Success: no issues found in 44 source files`
+  * Backend Pytest: `43 passed in 2.86s` (covering Decimal money math, Scrapling web extraction and evidence classification, ReportLab PDF generation, worker claiming, and Lambda parity).
+  * Frontend Next.js build: Turbopack compilation succeeds with all 14 routes generated cleanly in 2.8s.
+  * Playwright E2E suite: `6 passed (12.1s)` in `frontend/e2e/app.spec.ts` verifying the Home Page, proxy protection, and interactive workflows.
+* **Cinematic Marketing Home Page (`frontend/src/app/page.tsx`):**
+  * Implemented all 7 chapters (H1: Hero corridor switcher with Western Ghats, Rajasthan, Konkan photography; H2: Warm Paper editorial bridge; H3: Interactive itinerary story; H4: Destination journal spread; H5: Product contrast table; H6: Accessible Radix FAQ accordion; H7: Atmospheric invitation).
+  * Optimized image sizing without invalid quality parameters; bypasses Lenis smooth scrolling under `prefers-reduced-motion: reduce` and on workspace paths (`/dashboard`, `/benchmarks`) per `docs/VISUALIZATION-AND-MOTION-SPEC.md`.
+* **Scrapling Web Scraping Engine Integration (`backend/src/travel/infrastructure/scraping/`):**
+  * Installed and integrated `scrapling` (v0.4.15) with `curl_cffi`, `playwright`, and `patchright`.
+  * Created domain evidence models in [`backend/src/travel/domain/evidence.py`](file:///home/swyra/projects/travel-agent/backend/src/travel/domain/evidence.py) enforcing the 4-tier taxonomy (`LIVE_OFFER`, `INDICATIVE_SEARCH`, `EDITORIAL_DISCOVERY`, `ESTIMATED_MODEL`).
+  * Implemented [`WebExtractionPort`](file:///home/swyra/projects/travel-agent/backend/src/travel/application/ports/web_extractor.py) and [`ScraplingExtractionAdapter`](file:///home/swyra/projects/travel-agent/backend/src/travel/infrastructure/scraping/scrapling_adapter.py) with CSS selector extraction, safe Indian Rupee `Decimal` price parsing, and zero-hallucination fail-closed resilience.
+  * Verified with 5 comprehensive unit tests in [`backend/tests/unit/test_scrapling_extractor.py`](file:///home/swyra/projects/travel-agent/backend/tests/unit/test_scrapling_extractor.py).
+* **Design & Motion:**
+  * SWENA 2.0 Forest Night theme (`#0D1915`, `#15271F`, `#F7F7F2`, `#A9B8AD`, `#B7C9AD`) implemented in Tailwind v4 and Radix UI components.
+  * GSAP 3D interactive corridor cards (`travel-card-3d.tsx`) with zero framer-motion dependencies; fully compliant with `prefers-reduced-motion`.
+* **Unified Tooling & Entrypoints:**
+  * `./start.sh [all|backend|frontend]` with concurrent SIGINT/SIGTERM trap handlers.
+  * Top-level `backend/main.py` and package-level `travel.main:app` entrypoints.
+  * Next.js 16 route proxy in `frontend/src/proxy.ts` protecting `/dashboard`.
 
-- Stage 3 Frontend (Next.js & Forest Night Theme):
-  - Initialized isolated Next.js (`next@latest` v16.3.5) with TypeScript 5.7 and React 19 in `frontend/`.
-  - Configured `@tailwindcss/postcss` and Tailwind CSS v4 (`@latest`) styled strictly with SWENA 2.0 `forest-night` palette (`#0D1915` bg, `#15271F` surface, `#F7F7F2` text, `#A9B8AD` muted, `#B7C9AD` sage accent/buttons, Manrope typography).
-  - Integrated Lenis smooth scroll v1.1.20 with GSAP v3.12.7 and `@gsap/react` via unified ticker architecture (`autoRaf: false`, `lagSmoothing: 0`).
-  - Built cinematic Marketing Home page (`/`) with hero metrics, corridor transit interactive engine, architecture tenets, and CTA.
-  - Built Company / Philosophy pages: About Us (`/about`, `/about-us`) and Contact Us (`/contact`, `/contact-us`).
-  - Built interactive Trip Planning Dashboard (`/dashboard`) featuring:
-    - Versioned Travel Brief Editor (origin, destinations, stay duration, passenger counts, vehicle modes: car/motorcycle).
-    - Monotonic Itinerary Timeline with dynamic corridor haversine transit math (distance, duration, arrival/departure sequencing).
-    - Zero-coercion itemized Budget breakdown preserving explicit unquoted toll rates and incomplete status flags without defaulting to ₹0.
-    - Official Merchant Handoff action deep-linking directly to verified partner portals (IRCTC, airlines).
-    - Verifiable Evidence Inspector modal displaying PostGIS place identifiers, hashes, and timestamps.
-    - Live FastAPI connection handling (`POST /api/v1/trips`, `POST /api/v1/trips/{id}/plan`) with dynamic resilience badge and seamless offline local corridor fallback.
-  - Production build verified: `npm run build` exits with code 0 across all 8 static routes with 0 warnings or errors.
-  - Aligned strictly with `docs/UI-UX-DESIGN-BRIEF.md`:
-    - 4 distinct output tabs (Solved Schedule, Itemized Budget, Corridor Places, Evidence Registry).
-    - Exact subtotal label: `"Known/estimated subtotal; tolls unknown"`.
-    - Per-person cost breakdown with vehicle and room sharing rules.
-    - Editable vehicle fuel efficiency (`km/L`) and fuel price (`₹/L`).
-    - Explicit notice that EV energy/range modeling is unavailable per decision D010.
-    - Official merchant handoff deep-links (`"View on IRCTC"`, `"Search on KSTDC"`) with unmediated redirect disclaimer.
-    - Full 4-tier Evidence Presentation table (`LIVE_OFFER`, `INDICATIVE_SEARCH`, `EDITORIAL_DISCOVERY`, `UNAVAILABLE`).
+---
 
-- Stage 4 Portable Jobs & Exports:
-  - Built `Artifact` domain model in `domain/artifacts.py` and `ArtifactRepositoryPort` for versioned export tracking.
-  - Added `ArtifactModel` to SQLAlchemy persistence and generated migration `0002_add_artifacts.py`.
-  - Implemented `PdfExportService` using ReportLab producing compliant PDF documents containing brief metadata, monotonic itinerary schedule, itemized financial breakdown with explicit unknown tolls warning banner, PostGIS evidence hashes, and official merchant handoff links.
-  - Implemented portable job handlers (`export_itinerary`, `notification`, `enrichment`) in `workers/handlers.py`.
-  - Built database-leased `JobWorker` in `workers/worker.py` with `SKIP LOCKED` concurrency, lease extension, idempotency, and cancellation support.
-  - Built pure serverless dispatcher `lambda_handler` in `runtime/lambda_handler.py` guaranteeing 100% contract parity with the local background worker.
-  - Implemented FastAPI endpoints in `runtime/fastapi/routes/exports.py` (`POST /api/v1/trips/{id}/exports`, `GET /api/v1/artifacts/{id}`, `GET /api/v1/artifacts/{id}/download`, `POST /api/v1/jobs/{id}/cancel`).
-  - Unit test suite expanded to 34 passing tests (including PDF generation, worker claiming, task idempotency, job cancellation, Lambda parity, and benchmark evaluation suite).
-  - All linters (`ruff check .`) and strict typechecks (`mypy src`) clean across 38 source files.
+## 2. Completed Milestone C0: Reality & Contract Repair (2026-09-19)
 
-- Later Phase Expansion (Production-Grade, Competition-Winning Features):
-  - **50-Scenario Benchmark Suite Runner**: Created `backend/src/travel/benchmarks/runner.py` executing all 50 scenarios in `tests/evaluations/cases.json` with 100% pass rate in 31 ms (0.6 ms/scenario).
-  - **FastAPI Benchmark Route**: Exposed `GET /api/v1/benchmarks` for real-time audit inspection and verification.
-  - **Live Benchmark Inspector UI (`/benchmarks`)**: Interactive evaluation console with category filters, KPI cards, invariant tags, and sub-millisecond execution evidence.
-  - **Interactive Corridor Map Canvas (`CorridorMap.tsx` & `CorridorMapWrapper.tsx`)**: Leaflet-based geospatial corridor with CartoDB Dark Matter tiles matching SWENA `forest-night`, corridor polylines, animated sequence markers, and interactive POI popups.
-  - **Voice Brief Assistant & Audio Guide (`VoiceBriefAssistant.tsx`)**: Web Speech API for voice brief dictation (Speech-to-Text) and natural audio itinerary tour-guide narration (Text-to-Speech).
-  - **Corridor Weather & Western Ghats Advisory (`CorridorWeatherAdvisory.tsx`)**: Live hazard and terrain condition reporting per stop (temperature, humidity, monsoon index, ghat fog/landslide warnings).
-  - **Public Shareable Itinerary Dynamic Route (`/trips/[id]`)**: Instant mobile deep-link with client-side QR Code modal (`qrcode` library) for roadside smartphone scanning.
-  - **SWYRA Auth (SGOD-pro/OAuth2.1) Integration**:
-    - Built Next.js BFF route handlers (`/api/auth/login`, `/api/auth/callback`, `/api/auth/me`, `/api/auth/logout`) implementing OAuth 2.1 with PKCE S256 and HttpOnly session cookies.
-    - Added `AuthProvider` context and updated `Navbar` with authenticated profile badge and sign-out controls.
-    - Implemented FastAPI Bearer token dependency (`auth.py`) with offline JWKS validation, audience binding, and zero credentials stored in the travel database.
-  - **Next.js 16 Proxy & Route Protection (`frontend/src/proxy.ts`)**:
-    - Implemented Next.js 16 proxy/middleware convention intercepting all `/dashboard` and `/dashboard/:path*` requests.
-    - Inspects `swena_session` cookie; unauthenticated users are immediately redirected to `/login?return_to=...`.
-  - **Shadcn UI & SWENA 2.0 Forest Night Palette**:
-    - Initialized `components.json` with Tailwind CSS v4 and Radix UI base components (`card`, `badge`, `button`, `tabs`, `input`, `dialog`, `separator`).
-    - Aligned semantic tokens (`:root`, `.dark`) to `#0D1915` background, `#15271F` surface, `#F7F7F2` text, `#A9B8AD` secondary, and `#B7C9AD` sage accent.
-  - **GSAP 3D Travel Card (`travel-card-3d.tsx`)**:
-    - Built pure GSAP 3D perspective tilting card (`useGSAP`, `gsap.to`, `transformPerspective`, `rotationX`, `rotationY`, `translateZ`) with zero framer-motion dependencies.
-    - Integrated into Marketing Home page (`/`) showcasing signature topographic corridors with ground-truth elevations and advisories.
-  - **Sovereign OAuth 2.1 Fail-Closed Hardening**:
-    - Eliminated synthetic token fallbacks in `/api/auth/callback`; unconfigured environments redirect to `/login?error=oauth_unconfigured` with clear diagnostic setup instructions.
-  - **Unified Startup Orchestrator (`start.sh` & `Makefile`)**:
-    - Created root `start.sh` with `backend` (`uv run uvicorn`), `frontend` (`npm run dev`), and `all` (concurrent execution with trap cleanup) modes.
-    - Updated `Makefile` with `make backend-dev`, `make frontend-dev`, `make run-all`, and `make verify`.
-  - **Playwright E2E Automated Verification**:
-    - Expanded test suite to 6 comprehensive tests covering marketing page, GSAP 3D corridors, Next.js proxy route protection, fail-closed OAuth diagnostics, authenticated 5-tab planner workflow (Solved Schedule, Corridor Map, Zero-Coercion Budget, Corridor Places, Evidence Registry), live benchmark runner, mobile QR modal, and session lifecycle.
-    - 6/6 Playwright tests pass in 19.5 seconds; master `./verify.sh` passes 100% cleanly.
+1. **Reality Audit & Traceability Matrix:** Created [`docs/IMPLEMENTATION-AUDIT.md`](../docs/IMPLEMENTATION-AUDIT.md), cataloging 21 codebase defects and establishing the P01–P18 status matrix.
+2. **End-to-End User Journeys:** Created [`docs/END-TO-END-JOURNEYS.md`](../docs/END-TO-END-JOURNEYS.md), specifying complete screen-to-server interaction contracts for J01 through J15.
+3. **Production Completion Plan:** Created [`docs/PRODUCTION-COMPLETION-PLAN.md`](../docs/PRODUCTION-COMPLETION-PLAN.md), breaking work into dependency-ordered milestones C0–C8 with fully specified tasks (C1-T01, C1-T02, C2-T01).
+4. **Visualization & Motion Contract:** Created [`docs/VISUALIZATION-AND-MOTION-SPEC.md`](../docs/VISUALIZATION-AND-MOTION-SPEC.md), defining GSAP animation budgets, responsive layouts, and WebGPU optional rules.
+5. **Test & Release Plan:** Created [`docs/TEST-AND-RELEASE-PLAN.md`](../docs/TEST-AND-RELEASE-PLAN.md), detailing 8 verification layers, 50-case benchmark requirements, and 8 release gates.
+6. **Operations Runbook:** Created [`docs/OPERATIONS-RUNBOOK.md`](../docs/OPERATIONS-RUNBOOK.md), documenting recovery procedures, incident response, and contact inquiry triage.
+7. **Gemini CLI Entrypoint:** Created [`GEMINI.md`](../GEMINI.md) at the repository root.
+8. **Specification Reconciliation:** Updated and aligned all 16 specification and governance documents in place (`README.md`, `docs/PRD.md`, `docs/TRD.md`, `docs/ARCHITECTURE.md`, `docs/UI-UX-DESIGN-BRIEF.md`, `docs/DATABASE-SCHEMA.md`, `docs/API-SPEC.md`, `docs/AI-LLM-SPEC.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md`, `docs/PHASES.md`, `docs/SOURCES.md`, `docs/PROVIDER-REGISTRY.json`, `tests/evaluations/cases.json`, `.agent/RULES.md`, `.agent/BOUNDARIES.md`, `.agent/WORKFLOW.md`, `.agent/DECISIONS.md`).
 
-## Locked
+---
 
-One repo with separate `frontend/` and `backend/` directories. Aiven/PostGIS + Redis + S3. SWYRA candidate separate. LangGraph workflow owner. Portable container/Lambda entrypoints with profiling-driven splits. India-first. External handoff. Explicit evidence labels. Petrol road estimates with toll/fee unknowns. EV modeling deferred. Approved bounded permitted scraping.
+## 3. Active Milestone & Immediate Implementation Tasks
 
-## Next work
+* **Active Milestone:** **Milestone C1 — Identity, Ownership & Data Integrity**
+* **Immediate Next Task:** **`C1-T01` — Cryptographically Validated Identity & Fail-Closed Session Boundary**
+  * *Objective:* Eliminate `simulateLogin()` in `AuthProvider.tsx`; replace unverified base64 decoding in `frontend/src/app/api/auth/me/route.ts` with `jose` RS256 JWKS signature verification; enforce fail-closed redirect on expired or forged tokens.
+* **Subsequent Task:** **`C1-T02` — Server-Derived Ownership Enforcement**
+  * *Objective:* Remove client-supplied `owner_id` from `CreateTripRequest`; inject `get_current_user` auth dependency on all FastAPI `/api/v1/trips/*` routes; enforce `trip.owner_id == current_user.id` (return 404 for unowned resources).
 
-Stage 5 / Production Live Provider Integrations: Connect live external APIs (IRCTC PNR/train status, Google Places/OSM live geocoding, SerpAPI hotel queries) while preserving 4-tier evidence classifications.
+---
 
-## Open gates
+## 4. Open Integration & Release Gates
 
-Actual Aiven plan/extensions/connections/backups; supplier authorization and hotel supplier; permitted Google Places/map display strategy; motorcycle route legality strategy; fuel/mileage/toll source datasets; Bedrock model/region and cost benchmark; SWYRA audit; privacy retention review; deployment account/regions/domains and rollout authorization. These are focused gates, not requests to redesign locked architecture.
-
-## Not done
-
-No production cloud deployment on live AWS infrastructure (Phase 6 deferred by request). Live production provider API keys pending deployment config.
-
+1. **Gate 1 (Auth Barrier):** Cryptographic token verification and server ownership isolation pending (Milestone C1).
+2. **Gate 2 (Solver Soundness):** Time windows, round-trip depot return leg, and 50 scenario-specific invariants pending (Milestone C3).
+3. **Gate 3 (Display Rights):** Google Places and Mapbox usage verified against commercial terms; POI attribution tags pending.
+4. **Gate 4 (Merchant Handoff):** Direct deep-link handoff allowlists and ReportLab PDF S3 streaming verification pending.
+5. **Gate 5 (Privacy & Sharing):** Dynamic public route projection on `/trips/[id]` and DPDP deletion cascade pending.
+6. **Gate 6 (Transparency):** Web Speech API disclosure and meteorological weather feeds pending.
+7. **Gate 7 (Operational Readiness):** Durable PostgreSQL contact inquiry ingestion pending.
+8. **Gate 8 (Production Deployment):** ECS container deployment, automated PITR restore drills, and SLO load verification pending.

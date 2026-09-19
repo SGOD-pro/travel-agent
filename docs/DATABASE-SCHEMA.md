@@ -1,55 +1,90 @@
-# Database schema specification
+# SWENA Database Schema Specification
 
-Version 1.0 | Logical/relational design, not executed SQL | Change when data model changes.
+**Version:** 2.0  
+**Engine:** PostgreSQL 16 with PostGIS Extension  
+**Authority:** Single authoritative persistence store for all domain entities.  
+**Migrations:** Managed via Alembic (`backend/alembic/versions/`).
 
-## Conventions
+---
 
-PostgreSQL is authoritative. Enable PostGIS in the application's Aiven instance after verifying actual account support. No pgvector initially. UUID primary keys; timestamptz timestamps in UTC; local itinerary times carry IANA timezone. Dates are date fields. Money uses numeric(20,6) plus currency char(3); validate allowed currencies and minor units in application code. FX rates use numeric(24,12). Decimal values serialize as strings. Costs are nonnegative; adjustments, if later supported, require explicit signed type.
+## 1. Current Implemented Migrations vs. Proposed Future Schema
 
-## Tables
+### 1.1 Implemented Migrations in Source Code
+* **`0001_initial_schema.py`:**
+  * `trips`: `(id UUID PK, owner_id UUID NOT NULL, current_version INT NOT NULL, state VARCHAR(50) NOT NULL, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)`. Index on `(owner_id, updated_at)`.
+  * `trip_versions`: `(id UUID PK, trip_id UUID NOT NULL FK, version INT NOT NULL, brief_json JSONB NOT NULL, schema_version INT NOT NULL, command_id UUID NOT NULL UNIQUE, created_at TIMESTAMPTZ)`. Unique on `(trip_id, version)`.
+  * `jobs`: `(id UUID PK, type VARCHAR(50), payload_ref JSONB, status VARCHAR(20), available_at TIMESTAMPTZ, attempts INT, lease_until TIMESTAMPTZ, lease_generation INT, owner VARCHAR(100), idempotency_key VARCHAR(100) UNIQUE, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)`.
+  * `outbox_events`: `(id UUID PK, aggregate_id UUID, event_type VARCHAR(100), payload JSONB, created_at TIMESTAMPTZ, delivered_at TIMESTAMPTZ, attempts INT)`.
+* **`0002_add_artifacts.py`:**
+  * `artifacts`: `(id UUID PK, trip_id UUID NOT NULL FK, trip_version INT NOT NULL, object_key VARCHAR(255) NOT NULL UNIQUE, format VARCHAR(20) NOT NULL, status VARCHAR(20) NOT NULL, content_type VARCHAR(100) NOT NULL, expires_at TIMESTAMPTZ, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ)`.
 
-| Table | Essential columns | Constraints/indexes |
-| --- | --- | --- |
-| users | id, identity_issuer, identity_subject, created_at, deletion_state | unique(issuer, subject) |
-| user_preferences | user_id, preference_key, value_json, consent_id, updated_at | unique(user_id, preference_key) |
-| consents | id, user_id, purpose, policy_version, granted_at, revoked_at | index(user_id, purpose) |
-| trips | id, owner_id, current_version, state, created_at, updated_at | FK owner; index(owner_id, updated_at) |
-| trip_versions | trip_id, version, brief_json, schema_version, command_id, created_at | PK(trip_id,version); unique(command_id) |
-| trip_deltas | id, trip_id, base_version, proposal_json, evidence_refs, actor_id, created_at | immutable payload; FK base version |
-| delta_events | id, delta_id, sequence, status, validation_json, created_at | unique(delta_id,sequence) |
-| approvals | id, delta_id, trip_id, base_version, proposal_hash, actor_id, expires_at, decision, decided_at | one terminal decision; authorized actor |
-| planning_runs | id, trip_id, base_version, graph_version, status, started_at, finished_at | index(trip_id,status) |
-| provider_registry | id, provider, capability, environment, market, config_json, verified_at, status | unique(provider,capability,environment,market) |
-| evidence | id, registry_id, query_hash, evidence_class, data_kind, observed_at, expires_at, source_url, permitted_payload, rights_json, parser_version | class enum; query/time index |
-| places | id, source, source_place_id, name, point, access_point, accuracy, rights_json | unique(source,source_place_id); GiST permitted points |
-| transport_options | id, run_id, evidence_id, mode, departure, arrival, option_json | FK evidence; index(run_id,mode) |
-| hotel_options | id, run_id, evidence_id, place_ref, occupancy_json, check_in, check_out, option_json | check_out > check_in |
-| itineraries | id, trip_id, trip_version, run_id, status, created_at | versioned plan; trip/version index |
-| itinerary_stops | id, itinerary_id, position, place_id, arrival, departure, timezone, status | unique(itinerary_id,position); departure >= arrival |
-| itinerary_legs | id, itinerary_id, position, mode, route_json, distance_m, duration_s, evidence_id | nonnegative distance/duration |
-| budget_lines | id, itinerary_id, category, amount, currency, basis, quantity, source_ref, estimated, unknown_reason | null amount iff unknown; no coercion to zero |
-| cost_assumptions | id, type, vehicle_class, region, value, unit, source, effective_at, expires_at | positive mileage; versioned |
-| fx_rates | id, base_currency, quote_currency, rate, source, observed_at | rate >0 |
-| external_booking_intents | id, trip_id, trip_version, option_ref, merchant, context_json, state | no booking confirmation field |
-| handoff_events | id, intent_id, actor_id, destination_url, checked_at, event_type | authorized destination; immutable events |
-| jobs | id, type, run_id, payload_ref, status, available_at, attempts, lease_until, lease_generation, owner, idempotency_key | unique(type,idempotency_key); claim index(status,available_at) |
-| outbox_events | id, aggregate_id, event_type, payload, delivered_at, attempts | pending partial index |
-| run_events | run_id, sequence, event_type, payload, created_at | PK(run_id,sequence) |
-| artifacts | id, trip_id, trip_version, object_key, status, content_type, expires_at | unique object_key; ownership via trip |
-| deletion_jobs | id, user_id, state, progress_json, requested_at, completed_at | auditable per-store completion |
+### 1.2 Proposed Schema Additions (Milestones C1–C5 Migrations)
 
-LangGraph-managed checkpoint tables occupy a separate schema and are created/migrated by the selected supported integration. Do not invent its internal schema or couple application SQL to it.
+| Proposed Table | Essential Columns | Key Constraints & Indexes | Target Milestone |
+| :--- | :--- | :--- | :--- |
+| `users` | `id UUID PK, identity_issuer VARCHAR(255), identity_subject VARCHAR(255), email VARCHAR(255), deletion_state VARCHAR(20), created_at TIMESTAMPTZ` | `UNIQUE(identity_issuer, identity_subject)` | C1 (`0003_add_users`) |
+| `public_shares` | `id UUID PK, trip_id UUID FK, version INT NOT NULL, share_token_hash VARCHAR(64) UNIQUE, projection_json JSONB NOT NULL, expires_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ, created_at TIMESTAMPTZ` | Index on `(share_token_hash, revoked_at)` | C5 (`0004_add_public_shares`) |
+| `contact_inquiries` | `id UUID PK, name VARCHAR(100), email VARCHAR(255), category VARCHAR(50), trip_id UUID, message TEXT, status VARCHAR(20), created_at TIMESTAMPTZ, resolved_at TIMESTAMPTZ` | Index on `(status, created_at)` | C6 (`0005_add_contact_inquiries`) |
+| `itineraries` | `id UUID PK, trip_id UUID FK, version INT NOT NULL, status VARCHAR(50), plan_json JSONB NOT NULL, created_at TIMESTAMPTZ` | `UNIQUE(trip_id, version)` | C2 (`0006_add_itineraries`) |
+| `places` | `id UUID PK, source VARCHAR(50), source_place_id VARCHAR(100), name VARCHAR(255), location GEOGRAPHY(Point, 4326), attribution_json JSONB, created_at TIMESTAMPTZ` | `UNIQUE(source, source_place_id)`, GiST index on `location` | C3 (`0007_add_places_postgis`) |
+| `deletion_jobs` | `id UUID PK, user_id UUID NOT NULL, state VARCHAR(20), progress_json JSONB, requested_at TIMESTAMPTZ, completed_at TIMESTAMPTZ` | Index on `(user_id, state)` | C5 (`0008_add_deletion_jobs`) |
 
-## Canonical brief
+---
 
-brief_json is a versioned Pydantic contract: origin and ordered destinations with provider refs, coordinates and confidence; date range; adults, child ages and rooms; budget; modes; accessibility/dietary requirements; fixed/preferred hotels/vendors; hard constraints/preferences. total_days is derived using the documented calendar-day convention. Itinerary records are separate version-bound outputs, not duplicated mutable JSON roots.
+## 2. Entity Relational Model & Foreign Key Rules
 
-## Commit and concurrency
+```
+       ┌──────────────┐
+       │    users     │
+       └──────┬───────┘
+              │ 1
+              │
+              │ N (owner_id)
+              ▼
+       ┌──────────────┐       1:N        ┌─────────────────┐
+       │    trips     │ ───────────────► │  trip_versions  │
+       └──────┬───────┘                  └─────────────────┘
+              │
+              ├─────────────── 1:N ─────► ┌─────────────────┐
+              │                          │   itineraries   │
+              │                          └─────────────────┘
+              ├─────────────── 1:N ─────► ┌─────────────────┐
+              │                          │    artifacts    │ (PDFs in S3)
+              │                          └─────────────────┘
+              └─────────────── 1:N ─────► ┌─────────────────┐
+                                         │  public_shares  │ (Sanitized projections)
+                                         └─────────────────┘
+```
 
-Commit locks/checks current trip version, revalidates approval and evidence, inserts vN+1 and delta acceptance, updates current_version and inserts outbox in one transaction. Repeated command_id returns the prior result. Conflicts return 409, not last-write-wins. Immutable proposals use append-only status events; no rewriting historical deltas. Graph replay reconciles via command_id after partial checkpoint/domain persistence failure.
+---
 
-## Retention and deletion
+## 3. Migration & Backfill Strategy (Non-Destructive)
 
-Proposed release defaults: ephemeral coordination <=24h; raw GPS not persisted by default; SSE progress 7 days; operational logs 30 days with redaction; artifacts 30 days unless explicitly saved; durable trip/checkpoint retention tied to saved trip and deletion policy. Provider contractual retention overrides these defaults downward. These values are design defaults, not a legal compliance assertion.
+1. **Expand / Contract Pattern:**
+   * All schema changes are strictly additive (new tables or nullable columns).
+   * No destructive dropping of columns or existing trip versions.
+   * Rollback compatibility: Every migration includes a tested `downgrade()` script in Alembic.
+2. **Backfill Plan for `users` Table:**
+   * When `users` table is migrated in `0003_add_users`, an initial system user (`00000000-0000-0000-0000-000000000001`, `traveler@swena.internal`) is seeded to retain ownership links for historical draft trips created in local testing.
+   * New authenticated trips bind to real user UUIDs derived from SWYRA Auth `sub` claims.
 
-User deletion tombstones access first, cancels jobs, removes travel data, checkpoint references, Redis keys and S3 artifacts, then records completion without personal payload. Backups expire on documented provider retention; restore procedures reapply deletion tombstones. Identity account deletion is a separate coordinated operation, not an implicit global delete of a shared SWYRA identity.
+---
+
+## 4. Retention & Deletion Lifecycle
+
+* **Active Trips & Versions:** Retained indefinitely until explicitly deleted by trip owner.
+* **Ephemeral Coordination (Redis):** Cache keys set with $\le 24$h TTL.
+* **Export Artifacts (S3):** Pre-signed download URLs expire in 15 minutes. Artifact database records and S3 objects retained for 30 days unless pinned to saved trip.
+* **Audit & Contact Logs:** Retained for 90 days for operational resolution, then hard purged.
+* **Account Erasure Cascade (DPDP / GDPR):**
+  When a user deletion request executes:
+  ```sql
+  BEGIN;
+  DELETE FROM public_shares WHERE trip_id IN (SELECT id FROM trips WHERE owner_id = $1);
+  DELETE FROM artifacts WHERE trip_id IN (SELECT id FROM trips WHERE owner_id = $1);
+  DELETE FROM trip_versions WHERE trip_id IN (SELECT id FROM trips WHERE owner_id = $1);
+  DELETE FROM itineraries WHERE trip_id IN (SELECT id FROM trips WHERE owner_id = $1);
+  DELETE FROM trips WHERE owner_id = $1;
+  UPDATE users SET email = 'DELETED@swena.internal', deletion_state = 'COMPLETED' WHERE id = $1;
+  COMMIT;
+  ```

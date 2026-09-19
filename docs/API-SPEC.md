@@ -1,73 +1,99 @@
-# API specification
+# SWENA API Specification
 
-Version 1.0 | Proposed /api/v1 contract | Change when contracts change.
+**Version:** 2.0  
+**Base URL:** `/api/v1` (FastAPI Resource Server) | `/api/auth` (Next.js BFF Identity Gateway)  
+**Protocol:** REST over HTTPS + Server-Sent Events (SSE) for asynchronous streaming.
 
-## Common protocol
+---
 
-JSON camelCase on wire; UUID IDs; ISO 8601 timestamps; ISO dates; money amount as decimal string and currency code. Authenticate via configured OIDC access token or validated BFF session. Never accept ownerId as authorization. All trip subresources authorize ownership. Cookie-authenticated mutations need CSRF protection. Errors include code, message, details, requestId and retryable; do not expose provider secrets.
+## 1. Wire Casing Convention & Migration Strategy
 
-POST commands require Idempotency-Key scoped to actor + operation. Reuse with identical canonical payload returns the original response; a changed payload returns 409 IDEMPOTENCY_CONFLICT. Mutations based on a snapshot require baseVersion. Version conflict returns 409 VERSION_CONFLICT and currentVersion. Schema errors return 422. Rate limit returns 429 plus Retry-After. Unknown optional fields are rejected in command schemas to catch typos.
+### 1.1 The Casing Discrepancy
+* **Original Documentation (v1.0):** Documented strict JSON `camelCase` (`ownerId`, `currentVersion`, `tripId`).
+* **Current Implementation Baseline:** FastAPI Pydantic DTOs implemented standard Python `snake_case` (`owner_id`, `current_version`, `trip_id`, `job_id`).
 
-## Endpoints
+### 1.2 Canonical Resolution Strategy
+To ensure frontend and backend interoperability without brittle, one-sided renames:
+1. **Pydantic Model Configuration:** All request and response DTOs use Pydantic v2's alias generator:
+   ```python
+   from pydantic import BaseModel, ConfigDict
+   from pydantic.alias_generators import to_camel
 
-| Method/path | Input | Success | Important failures |
-| --- | --- | --- | --- |
-| POST /trips | TripBriefInput | 201 tripId, version=1, brief | 422 ambiguous/invalid |
-| GET /trips | cursor, limit <=100 | 200 owned trips, nextCursor | 401 |
-| GET /trips/{id} | none | 200 currentVersion, brief, latestPlan | 404 absent/not visible |
-| POST /trips/{id}/deltas | baseVersion, changes, evidenceRefs | 201 deltaId, status, validation | 409/422 |
-| GET /trips/{id}/deltas/{deltaId} | none | 200 proposal and outcomes | 404 |
-| POST /trips/{id}/plans | baseVersion | 202 runId, eventsUrl, statusUrl | 409 |
-| GET /runs/{runId} | none | 200 status, sectionStates, latestSequence | 404 |
-| GET /runs/{runId}/events | Last-Event-ID header | 200 text/event-stream | 410 cursor expired |
-| POST /runs/{runId}/cancel | reason | 202 cancellationRequested | 409 terminal |
-| POST /trips/{id}/approvals | deltaId, baseVersion, proposalHash, decision | 200 committedVersion or rejection | 409 stale; 422 infeasible |
-| POST /trips/{id}/reroutes | baseVersion, currentLocation, remainingStopIds | 202 runId | 409/422 |
-| GET /trips/{id}/itineraries/{planId} | none | 200 versioned itinerary and budget | 404 |
-| POST /trips/{id}/sections/{section}/retry | baseVersion, previousRunId | 202 runId | 409/429 |
-| POST /trips/{id}/handoffs | tripVersion, optionId | 201 intentId, merchant, url, evidence, contextWarnings | 422 unsafe/unmatched link |
-| POST /trips/{id}/exports | tripVersion, itineraryId, format=pdf | 202 artifactId, jobId | 409 |
-| GET /artifacts/{artifactId} | none | 200 state and short-lived downloadUrl if ready | 404/410 |
-| GET /benchmarks | none | 200 50-case invariant report, passRate, durationMs | 500 |
-| GET /api/auth/login | none | 302 redirect to SWYRA Auth gateway with PKCE | 500 |
-| GET /api/auth/callback | code, state | 302 redirect to /dashboard with HttpOnly session cookie | 400 invalid code |
-| GET /api/auth/me | session cookie | 200 authenticated user profile (sub, email) | 401 unauthenticated |
-| POST /api/auth/logout | session cookie | 200 cleared session cookie | 200 |
-| GET /me/preferences | none | 200 preferences and consent | 401 |
-| PUT /me/preferences | values, consentDecision, policyVersion | 200 updated preferences | 422 |
-| DELETE /user/me | explicit deletion scope | 202 deletionJobId | 401 |
-| GET /deletions/{id} | none | 200 per-store completion status | 404 |
+   class BaseSchema(BaseModel):
+       model_config = ConfigDict(
+           alias_generator=to_camel,
+           populate_by_name=True,  # Accepts both camelCase and snake_case on input
+           serialize_by_alias=True,  # Serializes to camelCase on the wire
+       )
+   ```
+2. **Wire Standard:** Wire JSON defaults to `camelCase` for all new client-server contracts.
+3. **TypeScript Alignment:** Frontend types in `frontend/src/types/api.ts` are generated directly from the OpenAPI schema (`GET /openapi.json`).
 
-Endpoints describe application contracts, not existing routes. OpenAPI and generated client types are produced during implementation.
+---
 
-## Representative money/evidence record
+## 2. Standard Headers & Error Response Envelope
 
+### 2.1 Request Headers
+* `Authorization: Bearer <oauth_jwt_token>` (Required for all private `/api/v1/*` routes).
+* `Idempotency-Key: <uuid>` (Required on state-mutating POST commands to prevent duplicate execution).
+* `Content-Type: application/json`
+
+### 2.2 Standard Error Envelope
+All error responses return structured JSON matching this schema:
 ```json
 {
-  "amount": "1200.00",
-  "currency": "INR",
-  "evidenceClass": "INDICATIVE_SEARCH",
-  "dataKind": "BUS_PRICE",
-  "provider": "example-approved-source",
-  "sourceUrl": "https://example.com/route",
-  "observedAt": "2026-09-12T10:00:00Z",
-  "expiresAt": null,
-  "queryContext": {"departureDate": "2026-11-10", "adults": 1},
-  "inclusions": [],
-  "unknowns": ["taxes", "seat availability"]
+  "code": "VERSION_CONFLICT",
+  "message": "Trip version 1 has been superseded. Current server version is 2.",
+  "details": {
+    "expectedBaseVersion": 1,
+    "currentServerVersion": 2
+  },
+  "requestId": "req_01J8Z4G6K9M2N1P",
+  "retryable": false
 }
 ```
 
-This is synthetic contract data, not a fare observation. Unknown expiry is null, never an invented 15-minute lock. Numeric estimates include assumption IDs. Non-price unavailable records do not require an amount.
+### 2.3 Status Code Semantics
+* `200 OK`: Synchronous read or successful mutation.
+* `201 Created`: Aggregate created (e.g. initial trip brief commit).
+* `202 Accepted`: Long-running async job acknowledged (e.g. plan compilation, PDF export).
+* `400 Bad Request`: Malformed syntax or invalid parameter.
+* `401 Unauthorized`: Missing or invalid Bearer token / expired session.
+* `404 Not Found`: Resource absent or caller does not hold ownership (prevents resource enumeration).
+* `409 Conflict`: Optimistic locking failure (`VERSION_CONFLICT`) or duplicate idempotency payload mismatch.
+* `422 Unprocessable Entity`: Semantic validation failure (e.g. invalid date order, unsupported vehicle type).
+* `429 Too Many Requests`: Rate limit exceeded; response includes `Retry-After: <seconds>` header.
 
-## TripBriefInput details
+---
 
-origin and destinations: name, provider refs, optional resolved coordinates, timezone and resolution status. dates: start/end or flexible-window intent; planning requires resolved dates. travelers: adults >=1, children as age list, room allocations. budget: amount/currency and hardLimit. modes enum: CAR_PETROL, MOTORCYCLE_PETROL, BICYCLE, WALK, TRAIN, BUS, FLIGHT. Unknown fuel type requests clarification. EV modes are rejected as unsupported in this release, not mapped to petrol. fixedSelections and preferences are separate objects; coordinate ranges and date order are validated.
+## 3. Complete Endpoint Inventory (Current vs. Target)
 
-## Progress contract
-
-SSE event types: run.started, section.updated, proposal.ready, approval.required, run.completed, run.failed, run.cancelled. Envelope: schemaVersion, runId, tripId, baseVersion, sequence, occurredAt, type, data. IDs monotonically increase per run; delivery may repeat, client deduplicates. Heartbeats are transport keepalives without fake business progress. A 410 cursor response supplies a status snapshot endpoint. Polling returns the same section state model.
-
-## Handoff contract
-
-Validate merchant allowlist and each redirect; display context match as EXACT, PARTIAL or GENERIC. Revalidate only through the provider capable of checking that offer. Any changed amount is shown; a configurable material-change threshold controls prominence, not whether change is disclosed. HEAD 200 alone never certifies a booking link. No API endpoint creates a booking, charges a card or declares merchant confirmation.
+| Method & Path | Auth Required | Input Payload | Success Response | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **BFF Identity Endpoints** | | | | |
+| `GET /api/auth/login` | No | None | `302 Redirect` to SWYRA Auth with PKCE challenge | Implemented |
+| `GET /api/auth/callback` | No | `code`, `state` | `302 Redirect` to `/dashboard` with `swena_session` cookie | Implemented |
+| `GET /api/auth/me` | Session Cookie | None | `200 OK` `{ user: { id, name, email } }` | Implemented (Hardening signature verification in C1-T01) |
+| `POST /api/auth/logout` | Session Cookie | None | `200 OK` (clears cookie) | Implemented |
+| **Trip & Planning Endpoints** | | | | |
+| `POST /api/v1/trips` | Bearer Token | `CreateTripRequest { brief: TripBrief }` | `201 Created` `TripResponse { id, currentVersion, brief }` | Implemented (Removing client `owner_id` in C1-T02) |
+| `GET /api/v1/trips` | Bearer Token | `cursor`, `limit` | `200 OK` `{ trips: TripResponse[], nextCursor }` | Target (C1-T02) |
+| `GET /api/v1/trips/{id}` | Bearer Token | None | `200 OK` `TripResponse` | Implemented (Adding ownership auth in C1-T02) |
+| `POST /api/v1/trips/{id}/brief` | Bearer Token | `UpdateBriefRequest { expectedBaseVersion, brief, commandId }` | `200 OK` `TripResponse` (or 409 Conflict) | Implemented (Adding ownership auth in C1-T02) |
+| `POST /api/v1/trips/{id}/plans` | Bearer Token | `PlanTripRequest { expectedBaseVersion }` | `202 Accepted` `{ runId, statusUrl, eventsUrl }` | Target (Transitioning to true 202 async in C2-T02) |
+| `GET /api/v1/runs/{runId}` | Bearer Token | None | `200 OK` `{ status, sectionStates, proposal }` | Target (C2-T02) |
+| `GET /api/v1/runs/{runId}/events` | Bearer Token | Header: `Last-Event-ID` | `200 OK` `text/event-stream` (SSE progress stream) | Target (C2-T03) |
+| `POST /api/v1/runs/{runId}/cancel` | Bearer Token | `{ reason: string }` | `202 Accepted` `{ status: "cancelling" }` | Target (C2-T02) |
+| `POST /api/v1/trips/{id}/approvals`| Bearer Token | `{ deltaId, baseVersion, proposalHash, decision }` | `200 OK` `TripResponse` with version $N+1$ | Target (C4-T02) |
+| **Exports & Sharing** | | | | |
+| `POST /api/v1/trips/{id}/exports` | Bearer Token | `{ tripVersion, format: "pdf" }` | `202 Accepted` `{ artifactId, status: "pending" }` | Implemented |
+| `GET /api/v1/artifacts/{id}` | Bearer Token | None | `200 OK` `{ status: "ready", downloadUrl }` | Implemented |
+| `GET /api/v1/artifacts/{id}/download`| Bearer Token | None | `302 Redirect` to pre-signed S3 URL | Implemented |
+| `POST /api/v1/trips/{id}/shares` | Bearer Token | `{ version: int }` | `201 Created` `{ shareToken, shareUrl, qrCodeSvg }` | Target (C5-T01) |
+| `GET /api/v1/public/trips/{token}` | Public | None | `200 OK` `PublicTripProjection` (sanitized) | Target (C5-T01) |
+| `DELETE /api/v1/trips/{id}/shares/{token}`| Bearer Token| None | `200 OK` (revokes link immediately) | Target (C5-T01) |
+| **Operational & Evaluation** | | | | |
+| `POST /api/v1/support/inquiries` | Public / Rate-limited | `{ name, email, category, tripId, message }` | `201 Created` `{ inquiryId, status: "received" }` | Target (C6-T02) |
+| `GET /api/v1/benchmarks` | Public / Ops | None | `200 OK` `{ passedCount, totalCount: 50, results: [...] }`| Implemented |
+| `GET /health` | Public | None | `200 OK` `{ "status": "healthy" }` | Implemented |
+| `GET /ready` | Public | None | `200 OK` `{ "database": "connected", "redis": "connected" }` | Target (C8-T01) |

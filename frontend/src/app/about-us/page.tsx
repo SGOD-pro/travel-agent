@@ -1,3 +1,5 @@
-import AboutPage from "@/app/about/page";
+import { permanentRedirect } from "next/navigation";
 
-export default AboutPage;
+export default function AboutUsPage() {
+  permanentRedirect("/about");
+}

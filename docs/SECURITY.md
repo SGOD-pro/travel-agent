@@ -1,37 +1,77 @@
-# Security and privacy
+# SWENA Security & Privacy Architecture
 
-Version 1.0 | Security acceptance requirements, not an audit certificate.
+**Version:** 2.0  
+**Status:** Approved Security Specification  
+**Governing Standard:** Defense-in-depth across identity, transport, application, and persistence tiers.
 
-## Threat boundaries
+---
 
-Browser, external identity, API, workers, providers, LLM and persistence are separate trust boundaries. Threats include cross-user trip access, stale approval replay, token theft, SSRF via discovered URLs, hostile page prompts, data leakage in logs/checkpoints, duplicate jobs, abusive scraping and exposed exports.
+## 1. Threat Model & Trust Boundaries
 
-## Identity acceptance
+```
+[Untrusted Client Browser]
+       │
+       ├── [Trust Boundary 1: Next.js BFF Gateway] ── (PKCE S256, HttpOnly Cookie, CSRF)
+       │
+       ├── [Trust Boundary 2: FastAPI Resource Server] ── (Offline RS256 JWKS Signature, aud/client_id)
+       │
+       ├── [Trust Boundary 3: Domain Authorization] ── (Server-derived user_id == trip.owner_id)
+       │
+       ├── [Trust Boundary 4: External Web Extraction] ── (SSRF Protection, Domain Allowlist, Sanitization)
+       │
+       └── [Trust Boundary 5: PostgreSQL Database] ── (Tenant Isolation, Row Locking, Least Privilege)
+```
 
-SWYRA Auth production use requires review of OAuth/OIDC flows, PKCE S256, exact redirect URIs, state/nonce, token type/issuer/audience/expiry validation, refresh token reuse detection, signing-key/JWKS rotation, cookie flags, CSRF/CORS, rate limiting, tenant isolation, recovery, email verification, secrets, logging and deployment configuration. JWT verification must pin permitted algorithms and validate issuer and intended audience. Do not assume README claims constitute test evidence.
+---
 
-MongoDB belongs to the external identity service. Do not copy the README's unrestricted network access recommendation as a production requirement. Choose reviewed egress/network rules. Travel data remains in PostgreSQL. Application authorization checks trip ownership regardless of successful authentication.
+## 2. Authentication & Session Security (SWYRA Auth Integration)
 
-## Scraping and SSRF
+### 2.1 Cryptographic Token Verification
+* **Elimination of Base64 Decoding:** The previous insecure baseline (`api/auth/me/route.ts`), which decoded JWT payloads without signature verification, is strictly prohibited. All tokens must be cryptographically verified using remote public keys (`JWKS_URL`) via the `jose` library (Node.js) and `PyJWT` / `cryptography` (Python).
+* **Token Claims Validation:**
+  * Algorithm: Strict pinning to `RS256` (rejects `none` and symmetric `HS256` confusion attacks).
+  * Expiry (`exp`): Token must be within valid timestamp window; clock skew allowance $\le 60$s.
+  * Audience (`aud` / `azp`): Must strictly match configured `CLIENT_ID`.
+  * Issuer (`iss`): Must strictly match configured `AUTH_ISSUER`.
 
-Approved automation only. No CAPTCHA solving, authentication/paywall bypass, rate-limit evasion, robots/access-rule evasion or anti-bot bypass. Discovery does not authorize extraction. Registry records authorization/terms and last verification; blocked or unreviewed sources do not execute.
+### 2.2 Session Cookie Lifecycle
+* **Flags:** Marked `HttpOnly; Secure; SameSite=Lax; Path=/`.
+* **Zero Browser Secrets:** Tokens are never stored in client `localStorage`, `sessionStorage`, or accessible via client-side JavaScript.
+* **CSRF Mitigation:** State parameter generated as 16 bytes of cryptographically secure randomness; verified strictly against HttpOnly cookie on callback.
 
-Allow HTTPS to approved merchant/provider hosts and ports. Reject userinfo URLs, private/loopback/link-local/metadata IPs, unexpected schemes and redirect destinations. Validate DNS resolution on connection and every redirect against rebinding; use outbound network controls as defense in depth. Limit bytes/time/redirect count/content types. Browser extraction runs isolated without application secrets or arbitrary filesystem access. Scraped instructions cannot change tools, destinations, system prompts or policy.
+---
 
-## Secrets and data
+## 3. Multi-Tenant Authorization & Ownership Isolation
 
-Use runtime secret injection/references, never Git-tracked credentials or registry values. Distinguish public map tokens with origin/scope restrictions from secret tokens. Enforce TLS, least-privilege IAM/DB roles and private S3. Generate short-lived object download URLs after ownership checks. No raw GPS in durable logs/checkpoints by default; stripping only top-level request fields is insufficient. Hash/query identifiers do not automatically anonymize sensitive locations.
+1. **Zero Client Trust:** API endpoints strictly reject client-supplied `owner_id` fields. The aggregate owner is derived exclusively from the authenticated user context (`get_current_user` in FastAPI).
+2. **Resource Ownership Checks:** Every operation on `/api/v1/trips/{id}/*` validates:
+   ```python
+   if trip.owner_id != current_user.id:
+       raise HTTPException(status_code=404, detail="Trip not found")
+   ```
+   *Returning 404 instead of 403 prevents attackers from probing the existence of valid trip UUIDs.*
+3. **Automated Two-User Test Requirement:** Automated tests must execute two concurrent user sessions (`User A` and `User B`), verifying that `User B` receives 404 when attempting to read, update, or delete any resource created by `User A`.
 
-## Approval and replay
+---
 
-Approvals bind actor, trip, base version, delta hash and expiry. Atomic consumption plus idempotent commands prevent replay. Change of dates/party/budget invalidates affected evidence/approval. Worker lease generation prevents stale workers committing after recovery. User cancellation/deletion prevents later job results or notifications from resurrecting data.
+## 4. SSRF & External Provider Protection
 
-## Privacy lifecycle
+When performing web extraction or initiating merchant handoffs:
+* **Protocol & Port Whitelist:** Only outbound `https://` on port `443` is permitted. All other schemes (`http://`, `file://`, `ftp://`, `gopher://`) are blocked.
+* **Forbidden Destinations:** Egress is strictly blocked to:
+  * Localhost / Loopback: `127.0.0.0/8`, `::1`
+  * Private Networks (RFC 1918): `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
+  * Link-Local / AWS Metadata: `169.254.169.254`, `fe80::/10`
+* **DNS Rebinding Defense:** IP resolution is validated on initial connection and re-validated on every HTTP redirect.
+* **Merchant Handoff Allowlist:** Handoff URLs are validated against a strict domain allowlist (`*.irctc.co.in`, `*.kstdc.co`, `*.makemytrip.com`, `*.booking.com`). Unregistered domains are blocked with an explicit security alert.
 
-Long-term preferences require consent by purpose/policy version. Apply provider retention/display rights to database, cache, exports and checkpoints. Deletion is an asynchronous observable workflow across records, S3 and Redis; report incomplete stores honestly. Account removal in this application must not destroy a shared SWYRA identity without explicit scope. Backup retention and restoration tombstones are documented before release.
+---
 
-Do not claim full GDPR/DPDP compliance from this design. Applicable obligations, notices, processors, retention and rights handling require a separate review for the actual deployment and markets.
+## 5. Public Sharing Privacy & Data Minimization
 
-## Release evidence
-
-Negative ownership tests, CSRF/auth failures, expired/rotated keys, duplicate approvals, DNS/redirect SSRF, malicious extraction content, resource exhaustion, secret scanning, dependency review, S3 access and deletion recovery must be exercised. Security findings have owner/severity/resolution or explicit acceptance. No production auth gate is marked passed in this pack.
+1. **Sanitized Projections:** Public itinerary views (`/trips/[id]`) display only a filtered `PublicTripProjection`:
+   * **Included:** Trip title, duration, stop names, city coordinates, itinerary timeline, road distance, weather advisories.
+   * **Excluded (Stripped):** Owner user ID, email address, exact home street address, private budget line item notes, passenger dietary requirements, and external provider credentials.
+2. **High-Entropy Tokens:** Share URLs use 128-bit cryptographically secure random tokens (e.g. `sh_8f93a0b2...`). Guessing or brute-forcing share links is computationally infeasible.
+3. **Instant Revocation:** Owners can revoke a share token with a single click. Revocation sets `revoked_at = NOW()`, rendering the public link immediately inaccessible (404) with zero CDN caching delay.
+4. **Search Engine Protection:** All public trip routes emit `X-Robots-Tag: noindex, nofollow` headers to prevent public indexing.

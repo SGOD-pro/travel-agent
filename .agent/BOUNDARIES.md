@@ -1,21 +1,35 @@
 # Boundaries
 
-Version 1.0 | Rarely changes.
+**Version:** 2.0  
+**Status:** Permanent Architectural & Domain Boundaries
 
-## Domain ownership
+---
 
-Trips owns canonical brief/versions/deltas. Itinerary owns schedules/stops/legs. Transport and hotels own provider-normalized options. Budget owns arithmetic and assumptions. Places owns identity/spatial records subject to rights. Recommendations owns ranking. Users owns travel profiles/consents. SWYRA Auth alone owns identity infrastructure (users, sessions, credentials, MFA/TOTP, OAuth 2.1 authorization server, and JWKS). Travel-agent only consumes offline-verified JWT tokens with `sub` claims; never stores passwords or session secrets.
+## 1. Domain Ownership
 
-Application services coordinate modules through public interfaces and a unit of work. Runtime controllers/handlers validate transport concerns only. LangGraph chooses workflow paths but imports ports/services rather than supplier SDKs. Infrastructure adapters implement ports. No repository imports into domain; no frontend direct DB/secret access.
+* **Trips:** Owns canonical brief, version snapshots, optimistic locking, and deltas.
+* **Itinerary:** Owns monotonic timetable schedules, stop sequences, and transit legs.
+* **Transport & Hotels:** Owns provider-normalized options and four-tier evidence states.
+* **Budget:** Owns exact Decimal financial arithmetic, fuel math, and unknown cost tracking.
+* **Places:** Owns identity and spatial records in PostGIS subject to provider display rights.
+* **Recommendations:** Owns candidate ranking based on normalized scores and evidence.
+* **Users:** Owns user preferences and privacy consent records.
+* **SWYRA Auth:** Sole external owner of identity infrastructure (users, credentials, MFA/TOTP, OAuth 2.1 server, and JWKS). `travel-agent` consumes offline-verified JWT tokens with `sub` claims; never stores passwords or session secrets.
 
-## Operational scope
+---
 
-One Next.js application and shared backend source. ECS is primary core runtime; local/EC2 share container image. Lambda is a legitimate bounded execution target with boundaries based on profiling. Browser-heavy code and solver dependencies must not load in unrelated handlers. Threads are bounded I/O helpers, not uncontrolled parallelism.
+## 2. Architecture & Operational Scope
 
-## Product boundary
+* **Hexagonal Boundaries:** Domain code must never import FastAPI, LangGraph, SQLAlchemy, AWS SDKs, or database drivers. Adapters implement typed application ports.
+* **One Canonical Plan:** The backend server holds mathematical and scheduling authority. The frontend UI displays server-derived plans; client-side approximations must not impersonate server routes.
+* **Execution Profiles:** ECS is the primary production runtime; Docker and EC2 share the same container image. Bounded Lambda tasks are permitted only when package size ($\le 250$ MB) and cold-start profiling justify extraction.
+* **Bounded Concurrency:** Concurrency is strictly capped per worker (8 provider tasks, 2 scrape tasks/origin, 4 blocking threads, 1 browser context).
 
-India-first planning/comparison/discovery/export/handoff. No internal checkout, payment, booking confirmation or price locks. Petrol cars and motorcycles plus ordinary bicycles/walking; EV energy/range/charging deferred. Motorcycle legality cannot be inferred from bicycle routing. Client-native voice dictation and narration operate strictly on-device with zero server-side recording. No inferred approval for checkout exists merely because external booking handoffs exist.
+---
 
-## Rights and uncertainty
+## 3. Product & Commercial Boundaries
 
-Provider access is gated per registry environment/market/capability. Brand names in candidate lists do not authorize execution. Google-derived data cannot automatically populate a non-Google map or permanent store. Unknown fees/hours/access remain unknown; do not relax fixed constraints silently.
+* **India-First Planning & Comparison:** Unified travel workspace for Indian domestic corridors.
+* **Strict Non-Custodial Handoff:** No internal checkout, payment capture, booking creation, cancellation handling, or price locks. All fulfillment transfers travelers directly to official provider portals (IRCTC, state tourism corporations, airlines).
+* **Supported Vehicle Modes:** Petrol cars, petrol motorcycles, pedal bicycles, and walking. Electric vehicle (EV) energy, range, battery degradation, and charging station modeling is explicitly deferred (Decision D010).
+* **Client-Native Voice Processing:** Operates via browser Web Speech API. Speech waveforms are processed by the browser's engine (which may utilize remote cloud recognition in Chrome/Edge); zero speech audio is transmitted to or stored on SWENA backend servers.
