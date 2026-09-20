@@ -24,23 +24,30 @@ const AuthContext = createContext<AuthContextType>({
   simulateLogin: () => {},
 });
 
-export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+const STATIC_USER: AuthUser = {
+  id: "usr_swena_traveler",
+  name: "Karnataka Explorer",
+  email: "traveler@swena.internal",
+};
 
-  useEffect(() => {
-    fetch("/api/auth/me")
-      .then((res) => res.json())
-      .then((data) => {
-        setUser(data.user || null);
-      })
-      .catch(() => {
-        setUser(null);
-      })
-      .finally(() => {
-        setIsLoading(false);
-      });
-  }, []);
+export function AuthProvider({ children }: { children: ReactNode }) {
+  // Auth system temporarily disabled per user instruction — using static user and ID
+  const [user, setUser] = useState<AuthUser | null>(STATIC_USER);
+  const [isLoading, setIsLoading] = useState(false);
+
+  // useEffect(() => {
+  //   fetch("/api/auth/me")
+  //     .then((res) => res.json())
+  //     .then((data) => {
+  //       setUser(data.user || null);
+  //     })
+  //     .catch(() => {
+  //       setUser(null);
+  //     })
+  //     .finally(() => {
+  //       setIsLoading(false);
+  //     });
+  // }, []);
 
   const login = () => {
     window.location.href = "/api/auth/login";

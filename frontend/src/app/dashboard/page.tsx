@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import {
   Compass,
   MapPin,
@@ -69,7 +70,10 @@ function computeDistanceKm(lat1: number, lon1: number, lat2: number, lon2: numbe
   return Math.max(20, Math.round(R * c * 1.28));
 }
 
-export default function DashboardPage() {
+function DashboardContent() {
+  const searchParams = useSearchParams();
+  const corridorParam = searchParams.get("corridor");
+
   // Brief configuration state
   const [origin, setOrigin] = useState("Bengaluru");
   const [originLat, setOriginLat] = useState(12.9716);
@@ -94,6 +98,42 @@ export default function DashboardPage() {
   const [apiStatus, setApiStatus] = useState<"offline" | "connected" | "checking">("checking");
   const [serverTripId, setServerTripId] = useState<string>("urn:swena:trip:karnataka-circuit-2026");
   const [isExporting, setIsExporting] = useState(false);
+
+  // Consume corridor query parameter
+  useEffect(() => {
+    if (!corridorParam) return;
+    if (corridorParam === "rajasthan") {
+      setOrigin("Delhi");
+      setOriginLat(28.6139);
+      setOriginLng(77.2090);
+      setDestinations([
+        { id: "1", name: "Jaipur", lat: 26.9124, lng: 75.7873, stayDays: 2 },
+        { id: "2", name: "Pushkar", lat: 26.4899, lng: 74.5511, stayDays: 1 },
+        { id: "3", name: "Jodhpur", lat: 26.2389, lng: 73.0243, stayDays: 2 },
+      ]);
+      setServerTripId("urn:swena:trip:rajasthan-circuit-2026");
+    } else if (corridorParam === "konkan" || corridorParam === "konkan-coast") {
+      setOrigin("Mumbai");
+      setOriginLat(19.0760);
+      setOriginLng(72.8777);
+      setDestinations([
+        { id: "1", name: "Alibaug", lat: 18.6534, lng: 72.8770, stayDays: 1 },
+        { id: "2", name: "Ratnagiri", lat: 16.9902, lng: 73.3120, stayDays: 2 },
+        { id: "3", name: "Goa", lat: 15.2993, lng: 74.1240, stayDays: 2 },
+      ]);
+      setServerTripId("urn:swena:trip:konkan-coast-2026");
+    } else if (corridorParam === "western-ghats") {
+      setOrigin("Bengaluru");
+      setOriginLat(12.9716);
+      setOriginLng(77.5946);
+      setDestinations([
+        { id: "1", name: "Mysuru", lat: 12.2958, lng: 76.6394, stayDays: 2 },
+        { id: "2", name: "Coorg (Madikeri)", lat: 12.4244, lng: 75.7382, stayDays: 2 },
+        { id: "3", name: "Wayanad", lat: 11.6854, lng: 76.1320, stayDays: 2 },
+      ]);
+      setServerTripId("urn:swena:trip:western-ghats-2026");
+    }
+  }, [corridorParam]);
 
   // Editable vehicle efficiency and fuel price (with units)
   const [mileage, setMileage] = useState(15.0);
@@ -1262,5 +1302,20 @@ export default function DashboardPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DashboardPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#0D1915] flex flex-col items-center justify-center text-[#B7C9AD] gap-3">
+          <div className="h-8 w-8 rounded-full border-2 border-[#B7C9AD] border-t-transparent animate-spin" />
+          <span className="text-xs font-mono tracking-wider uppercase">Loading SWENA planner...</span>
+        </div>
+      }
+    >
+      <DashboardContent />
+    </Suspense>
   );
 }

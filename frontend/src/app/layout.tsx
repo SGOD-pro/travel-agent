@@ -4,10 +4,20 @@ import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
 import { SmoothScrollProvider } from "@/components/providers/SmoothScrollProvider";
 import { AuthProvider } from "@/components/providers/AuthProvider";
-import { Geist } from "next/font/google";
+import { Bodoni_Moda, Manrope } from "next/font/google";
 import { cn } from "@/lib/utils";
 
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+const bodoni = Bodoni_Moda({
+  subsets: ["latin"],
+  variable: "--font-serif",
+  display: "swap",
+});
+
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://swena.travel"),
@@ -98,7 +108,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={cn("font-sans", geist.variable)}>
+    <html lang="en" className={cn("font-sans", bodoni.variable, manrope.variable)}>
       <body className="antialiased bg-[#0D1915] text-[#F7F7F2]">
         <script
           type="application/ld+json"

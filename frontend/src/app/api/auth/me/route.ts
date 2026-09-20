@@ -1,6 +1,16 @@
 import { NextResponse } from "next/server";
 
 export async function GET(request: Request) {
+  // Auth system temporarily disabled per user instruction — using static user and ID
+  return NextResponse.json({
+    user: {
+      id: "usr_swena_traveler",
+      name: "Karnataka Explorer",
+      email: "traveler@swena.internal",
+    },
+  });
+
+  /*
   const cookieHeader = request.headers.get("cookie") || "";
   const match = cookieHeader.match(/(^|;\s*)swena_session=([^;]*)/);
   const sessionToken = match ? decodeURIComponent(match[2]) : null;
@@ -32,4 +42,5 @@ export async function GET(request: Request) {
   } catch {
     return NextResponse.json({ user: null });
   }
+  */
 }

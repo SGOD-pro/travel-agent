@@ -82,9 +82,9 @@ export default function ContactPage() {
             <span>Direct Concierge & Registry Desk</span>
           </div>
 
-          <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-[#F7F7F2] leading-[1.08]">
+          <h1 className="font-serif text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-[#F7F7F2] leading-[1.04]">
             Speak with our <br className="hidden sm:inline" />
-            <span className="text-[#B7C9AD]">concierge desk.</span>
+            <span className="italic text-[#B7C9AD] font-normal">concierge desk.</span>
           </h1>
 
           <p className="text-base sm:text-lg text-[#A9B8AD] leading-relaxed max-w-2xl mx-auto font-normal">

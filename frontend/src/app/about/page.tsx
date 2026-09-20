@@ -92,9 +92,9 @@ export default function AboutPage() {
             <span>Our Vision & Philosophy</span>
           </div>
 
-          <h1 className="text-4xl sm:text-6xl lg:text-7xl font-bold tracking-tight text-[#F7F7F2] leading-[1.05]">
+          <h1 className="font-serif text-5xl sm:text-7xl lg:text-8xl font-bold tracking-tight text-[#F7F7F2] leading-[1.02]">
             We gave you <br className="hidden sm:inline" />
-            <span className="text-[#B7C9AD]">memory.</span>
+            <span className="italic text-[#B7C9AD] font-normal">memory.</span>
           </h1>
 
           <p className="text-base sm:text-xl text-[#A9B8AD] leading-relaxed max-w-2xl mx-auto font-normal">
@@ -230,23 +230,23 @@ export default function AboutPage() {
       {/* =========================================================================
           CHAPTER A4: TOPOGRAPHIC REALITY & INDIAN CORRIDORS
           ========================================================================= */}
-      <section className="py-24 px-6 sm:px-12 border-b border-[#233E32] bg-[#F7F7F2] text-[#0D1915]">
+      <section className="py-24 px-6 sm:px-12 border-b border-[#233E32] bg-[#F3EFE6] text-[#142820]">
         <div className="mx-auto max-w-5xl space-y-12">
           <div className="space-y-4 max-w-3xl">
-            <span className="text-xs font-bold tracking-widest text-[#6E8274] uppercase">
+            <span className="text-xs font-bold tracking-widest text-[#C56C4D] uppercase font-mono">
               India-First Geographic Depth
             </span>
-            <h2 className="text-3xl sm:text-5xl font-bold tracking-tight text-[#0D1915] leading-[1.1]">
+            <h2 className="font-serif text-3xl sm:text-5xl font-bold tracking-tight text-[#142820] leading-[1.1]">
               Grounded in the geography of the subcontinent.
             </h2>
-            <p className="text-base sm:text-lg text-[#33443B] leading-relaxed font-normal">
+            <p className="text-base sm:text-lg text-[#142820]/80 leading-relaxed font-normal">
               India cannot be planned with generic North American grid assumptions. We model ghat road elevations, seasonal monsoon road conditions, and authentic dwell paces.
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8 pt-6">
             <div className="space-y-4">
-              <div className="relative h-48 w-full rounded-2xl overflow-hidden border border-[#DDDCD3]">
+              <div className="relative h-48 w-full rounded-2xl overflow-hidden border border-[#E8E1D4]">
                 <Image
                   src="/images/destinations/western-ghats.jpg"
                   alt="Western Ghats tea plantations and mist"
@@ -255,40 +255,40 @@ export default function AboutPage() {
                   sizes="(max-width: 768px) 100vw, 33vw"
                 />
               </div>
-              <h3 className="text-xl font-bold text-[#0D1915]">Western Ghats</h3>
-              <p className="text-xs sm:text-sm text-[#4F6055] leading-relaxed">
+              <h3 className="font-serif text-xl font-bold text-[#142820]">Western Ghats</h3>
+              <p className="text-xs sm:text-sm text-[#142820]/75 leading-relaxed">
                 Elevation profiles from 900m to 2,240m across Madikeri, Wayanad, and Munnar. Real daylight driving limits ensure mountain hairpins are navigated before evening mist rolls in.
               </p>
             </div>
 
             <div className="space-y-4">
-              <div className="relative h-48 w-full rounded-2xl overflow-hidden border border-[#DDDCD3]">
+              <div className="relative h-48 w-full rounded-2xl overflow-hidden border border-[#E8E1D4]">
                 <Image
-                  src="/images/destinations/rajasthan.jpg"
-                  alt="Amber Fort sandstone courtyards in Jaipur"
+                  src="/images/destinations/rajasthan-courtyard.jpg"
+                  alt="Amber Fort courtyard in Jaipur, Rajasthan"
                   fill
                   className="object-cover"
                   sizes="(max-width: 768px) 100vw, 33vw"
                 />
               </div>
-              <h3 className="text-xl font-bold text-[#0D1915]">Rajasthan Circuits</h3>
-              <p className="text-xs sm:text-sm text-[#4F6055] leading-relaxed">
+              <h3 className="font-serif text-xl font-bold text-[#142820]">Rajasthan Circuits</h3>
+              <p className="text-xs sm:text-sm text-[#142820]/75 leading-relaxed">
                 Historic Aravalli highways connecting Delhi, Jaipur, Pushkar, and Jodhpur. Stop durations account for high-noon desert temperatures and morning courtyard visits.
               </p>
             </div>
 
             <div className="space-y-4">
-              <div className="relative h-48 w-full rounded-2xl overflow-hidden border border-[#DDDCD3]">
+              <div className="relative h-48 w-full rounded-2xl overflow-hidden border border-[#E8E1D4]">
                 <Image
-                  src="/images/destinations/konkan-coast.jpg"
-                  alt="Arabian Sea coastline and palm groves along the Konkan coast"
+                  src="/images/destinations/konkan-sunset.jpg"
+                  alt="Arabian Sea coastline and rocky headlands along the Konkan coast"
                   fill
                   className="object-cover"
                   sizes="(max-width: 768px) 100vw, 33vw"
                 />
               </div>
-              <h3 className="text-xl font-bold text-[#0D1915]">Konkan Coastline</h3>
-              <p className="text-xs sm:text-sm text-[#4F6055] leading-relaxed">
+              <h3 className="font-serif text-xl font-bold text-[#142820]">Konkan Coastline</h3>
+              <p className="text-xs sm:text-sm text-[#142820]/75 leading-relaxed">
                 Coastal ferry crossings, red dirt highways, and Arabian Sea headlands from Mumbai down to Goa. Calibrated for unhurried seafood lunches and coastal sunset viewpoints.
               </p>
             </div>

@@ -20,52 +20,47 @@ test.describe("SWENA Travel Platform E2E Suite", () => {
 
     // Verify brand heading and core editorial headline
     await expect(page.locator("text=SWENA").first()).toBeVisible();
-    await expect(page.locator("text=Less planning.").first()).toBeVisible();
-    await expect(page.locator("text=More remembering.").first()).toBeVisible();
+    await expect(page.locator("text=Make room for").first()).toBeVisible();
+    await expect(page.locator("text=the journey").first()).toBeVisible();
 
-    // Verify destination switcher buttons
-    await expect(page.getByRole("tab", { name: "Western Ghats" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Rajasthan" })).toBeVisible();
-    await expect(page.getByRole("tab", { name: "Konkan coast" })).toBeVisible();
+    // Verify Scene 2 Destination Filmstrip
+    await expect(page.locator("text=Find your kind of away.")).toBeVisible();
+    await expect(page.locator("text=Western Ghats").first()).toBeVisible();
+    await expect(page.locator("text=Through Rajasthan")).toBeVisible();
+    await expect(page.locator("text=Along the Konkan Coast")).toBeVisible();
 
-    // Verify Chapter H3 (Interactive Story)
-    await expect(page.locator("text=Watch a trip take shape.")).toBeVisible();
-    await expect(page.locator("text=Example Itinerary Preview")).toBeVisible();
+    // Verify Scene 3 Editorial Pause
+    await expect(page.locator("text=Leave room for the unexpected.")).toBeVisible();
+    await expect(page.locator("text=Rock Hills Estate")).toBeVisible();
 
-    // Verify Chapter H4 (Destination Journal)
-    await expect(page.locator("text=Where will your next memory begin?")).toBeVisible();
-    await expect(page.locator("text=Into the Western Ghats")).toBeVisible();
+    // Verify Scene 4 Trip Example
+    await expect(page.locator("text=See a journey take shape.")).toBeVisible();
+    await expect(page.getByRole("radio", { name: "Unhurried" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "Balanced" })).toBeVisible();
+    await expect(page.getByRole("radio", { name: "In-Depth" })).toBeVisible();
 
-    // Verify Chapter H6 (Practical FAQ Accordion)
+    // Toggle pace
+    await page.getByRole("radio", { name: "Unhurried" }).click();
+    await expect(page.locator("text=3 Days • 2 Nights")).toBeVisible();
+
+    // Verify budget ledger unknown item
+    await expect(page.locator("text=Ghat Corridor Entry Permit")).toBeVisible();
+    await expect(page.locator("text=Unknown fee")).toBeVisible();
+
+    // Verify Scene 5 Practical FAQ Accordion
     await expect(page.locator("text=Frequently asked questions.")).toBeVisible();
+    const faqTrigger = page.locator("button:has-text('How does SWENA generate an itinerary?')");
+    await expect(faqTrigger).toBeVisible();
+    await faqTrigger.click();
+    await expect(page.locator("text=SWENA uses constraint-based optimization")).toBeVisible();
+
+    // Verify Scene 6 Closing Scene
+    await expect(page.locator("text=Where will you go next?")).toBeVisible();
 
     // Verify primary navigation and CTAs
     await expect(page.getByRole("link", { name: "Explore", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "How it works", exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Plan my trip" }).first()).toBeVisible();
-
-    // Verify Tab Switcher on Hero
-    const rajasthanTab = page.getByRole("tab", { name: "Rajasthan" });
-    await rajasthanTab.click();
-    await expect(page.locator("text=ROYAL RAJPUTANA CORRIDORS")).toBeVisible();
-    await expect(page.locator("text=ancient stepwells")).toBeVisible();
-
-    // Verify Interactive Story Steps
-    const step2Button = page.getByRole("button", { name: /Find a rhythm that fits/i });
-    await step2Button.click();
-    await expect(page.getByRole("heading", { name: "Balanced Daily Schedule" })).toBeVisible();
-    await expect(page.locator("text=Mysuru Palace & Heritage Zone")).toBeVisible();
-
-    const step3Button = page.getByRole("button", { name: /See the details before you decide/i });
-    await step3Button.click();
-    await expect(page.getByRole("heading", { name: "Itemized Cost & Unknown Item Disclosure" })).toBeVisible();
-    await expect(page.locator("text=Unknown fee (Not added to total)")).toBeVisible();
-
-    // Verify FAQ Accordion Interaction
-    const faqTrigger = page.locator("button:has-text('How does SWENA generate an itinerary?')");
-    await expect(faqTrigger).toBeVisible();
-    await faqTrigger.click();
-    await expect(page.locator("text=SWENA uses constraint-based optimization")).toBeVisible();
   });
 
   test("2. Unauthenticated Route Protection via Middleware & Fail-Closed OAuth Diagnostics", async ({
