@@ -4,8 +4,8 @@ from datetime import date
 
 import pytest
 
-from travel.domain.trips import DestinationPoint, TransportMode, TripBrief
-from travel.workflows.trip_planning import trip_planning_workflow
+from contracts.trips import DestinationPoint, TransportMode, TripBrief
+from functions.orchestrator.graphs.trip_planner.graph import trip_planning_workflow
 
 
 @pytest.mark.asyncio

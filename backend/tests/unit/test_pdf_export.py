@@ -4,9 +4,9 @@ import uuid
 from datetime import date
 from decimal import Decimal
 
-from travel.application.services.export_service import PdfExportService
-from travel.domain.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
-from travel.domain.trips import DestinationPoint, TransportMode, TripBrief
+from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
+from contracts.trips import DestinationPoint, TransportMode, TripBrief
+from functions.api.service import PdfExportService
 
 
 def test_pdf_export_basic_brief() -> None:

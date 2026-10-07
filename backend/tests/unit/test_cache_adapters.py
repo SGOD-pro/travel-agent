@@ -4,8 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from travel.application.ports.cache import CachePort
-from travel.infrastructure.redis.adapters import AsyncRedisAdapter, UpstashRedisAdapter
+from utils.cache import AsyncRedisAdapter, CachePort, UpstashRedisAdapter
 
 
 @pytest.mark.asyncio

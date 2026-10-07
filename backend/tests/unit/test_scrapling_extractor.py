@@ -15,9 +15,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from travel.domain.evidence import EvidenceClass, FareObservation, HotelObservation
-from travel.domain.trips import TransportMode
-from travel.infrastructure.scraping.scrapling_adapter import (
+from contracts.evidence import EvidenceClass, FareObservation, HotelObservation
+from contracts.trips import TransportMode
+from functions.evidence_collector.scrape import (
     ScraplingExtractionAdapter,
     parse_inr_price,
 )

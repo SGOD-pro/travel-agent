@@ -3,8 +3,8 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from travel.benchmarks.runner import BenchmarkRunner
-from travel.runtime.fastapi.app import app
+from functions.api.app import app
+from functions.api.benchmarks.runner import BenchmarkRunner
 
 
 def test_benchmark_runner_executes_all_50_cases() -> None:

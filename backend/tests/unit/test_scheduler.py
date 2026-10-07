@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from travel.application.services.scheduler import ItineraryScheduler
+from functions.optimizer.solver import ItineraryScheduler
 
 
 def test_ortools_schedule_solver_ordering() -> None:

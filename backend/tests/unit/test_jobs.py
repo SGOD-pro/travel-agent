@@ -3,7 +3,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from travel.domain.jobs import Job, JobStatus, OutboxEvent
+from contracts.jobs import Job, JobStatus, OutboxEvent
 
 
 def test_job_claimable_states() -> None:

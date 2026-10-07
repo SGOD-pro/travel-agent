@@ -2,7 +2,7 @@
 
 import uuid
 
-from travel.domain.artifacts import Artifact, ArtifactStatus
+from contracts.artifacts import Artifact, ArtifactStatus
 
 
 def test_artifact_lifecycle() -> None:

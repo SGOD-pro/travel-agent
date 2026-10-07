@@ -7,18 +7,18 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from travel.application.ports.repository import (
+from contracts.artifacts import Artifact, ArtifactStatus
+from contracts.jobs import Job, JobStatus
+from contracts.trips import DestinationPoint, TransportMode, Trip, TripBrief, TripVersion
+from functions.api.app import app
+from functions.api.repository import (
     ArtifactRepositoryPort,
     JobRepositoryPort,
     TripRepositoryPort,
     TripVersionConflictError,
+    UnitOfWorkPort,
 )
-from travel.application.ports.unit_of_work import UnitOfWorkPort
-from travel.domain.artifacts import Artifact, ArtifactStatus
-from travel.domain.jobs import Job, JobStatus
-from travel.domain.trips import DestinationPoint, TransportMode, Trip, TripBrief, TripVersion
-from travel.runtime.fastapi.app import app
-from travel.runtime.fastapi.routes.exports import get_uow
+from functions.api.routes.exports import get_uow
 
 
 class InMemoryTripRepo(TripRepositoryPort):

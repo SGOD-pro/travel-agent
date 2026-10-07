@@ -6,18 +6,18 @@ from typing import Any
 
 import pytest
 
-from travel.application.ports.repository import (
+from contracts.artifacts import Artifact, ArtifactStatus
+from contracts.jobs import Job, JobStatus
+from contracts.trips import DestinationPoint, TransportMode, Trip, TripBrief, TripVersion
+from functions.api.repository import (
     ArtifactRepositoryPort,
     JobRepositoryPort,
     TripRepositoryPort,
     TripVersionConflictError,
+    UnitOfWorkPort,
 )
-from travel.application.ports.unit_of_work import UnitOfWorkPort
-from travel.domain.artifacts import Artifact, ArtifactStatus
-from travel.domain.jobs import Job, JobStatus
-from travel.domain.trips import DestinationPoint, TransportMode, Trip, TripBrief, TripVersion
-from travel.runtime.lambda_handler import dispatch_job_async
-from travel.workers.worker import JobWorker
+from functions.orchestrator.handler import dispatch_job_async
+from functions.orchestrator.worker import JobWorker
 
 
 class InMemoryTripRepo(TripRepositoryPort):

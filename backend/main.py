@@ -16,13 +16,13 @@ if str(src_dir) not in sys.path:
 
 import uvicorn  # noqa: E402
 
-from travel.runtime.fastapi.app import app  # noqa: E402
+from functions.api.app import app  # noqa: E402
 
 __all__ = ["app"]
 
 if __name__ == "__main__":
     uvicorn.run(
-        "travel.runtime.fastapi.app:app",
+        "functions.api.app:app",
         host="0.0.0.0",
         port=8000,
         reload=True,

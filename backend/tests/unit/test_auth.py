@@ -8,7 +8,7 @@ import uuid
 import pytest
 from fastapi import HTTPException
 
-from travel.runtime.fastapi.auth import AuthenticatedUser, get_current_user
+from middleware.auth import AuthenticatedUser, get_current_user
 
 
 @pytest.mark.asyncio

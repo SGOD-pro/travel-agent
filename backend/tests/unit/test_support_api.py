@@ -2,7 +2,7 @@
 
 from fastapi.testclient import TestClient
 
-from travel.runtime.fastapi.app import app
+from functions.api.app import app
 
 client = TestClient(app)
 

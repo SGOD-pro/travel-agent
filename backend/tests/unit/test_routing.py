@@ -2,9 +2,9 @@
 
 from decimal import Decimal
 
-from travel.domain.money import BudgetCategory, Currency
-from travel.domain.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
-from travel.domain.trips import TransportMode
+from contracts.money import BudgetCategory, Currency
+from contracts.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
+from contracts.trips import TransportMode
 
 
 def test_car_fuel_budget_calculation() -> None:

@@ -6,23 +6,23 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from travel.application.ports.repository import (
-    ArtifactRepositoryPort,
-    JobRepositoryPort,
-    TripRepositoryPort,
-    TripVersionConflictError,
-)
-from travel.application.ports.unit_of_work import UnitOfWorkPort
-from travel.domain.artifacts import ArtifactStatus
-from travel.domain.jobs import Job, JobStatus
-from travel.domain.trips import (
+from contracts.artifacts import ArtifactStatus
+from contracts.jobs import Job, JobStatus
+from contracts.trips import (
     Trip,
     TripBrief,
     TripState,
     TripVersion,
 )
-from travel.runtime.fastapi.app import app
-from travel.runtime.fastapi.routes.trips import get_uow
+from functions.api.app import app
+from functions.api.repository import (
+    ArtifactRepositoryPort,
+    JobRepositoryPort,
+    TripRepositoryPort,
+    TripVersionConflictError,
+    UnitOfWorkPort,
+)
+from functions.api.routes.trips import get_uow
 
 
 class InMemoryTripRepository(TripRepositoryPort):

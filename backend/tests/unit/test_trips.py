@@ -6,7 +6,7 @@ from datetime import date
 import pytest
 from pydantic import ValidationError
 
-from travel.domain.trips import (
+from contracts.trips import (
     DestinationPoint,
     TransportMode,
     Trip,

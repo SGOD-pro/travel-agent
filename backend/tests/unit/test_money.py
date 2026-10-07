@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from travel.domain.money import BudgetCategory, BudgetLine, BudgetSummary, Currency, Money
+from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency, Money
 
 
 def test_money_decimal_precision() -> None:
