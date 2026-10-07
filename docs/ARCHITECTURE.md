@@ -1,131 +1,91 @@
-# SWENA Architecture & System Design
+# Architecture — component ownership
 
-**Version:** 2.0  
-**Status:** Canonical Architectural Baseline  
-**Pattern:** Hexagonal / Clean Architecture (Ports and Adapters) with Next.js BFF and PostgreSQL Outbox.
+## Topology
+Next.js frontend → FastAPI API Gateway/Lambda → durable job → LangGraph orchestrator → policy-approved task dispatch → SQS workers → durable completion → resume → owner-scoped result.
 
----
+LLM proposes plan/evidence interpretation/report. LAYA proposes finite decisions. Deterministic Policy owns authorization, budgets, freshness transitions and constraints. Routing provider owns road geometry/costs; OR-Tools owns stop-order solving; MapCN/MapLibre renders output. DIAGRAMS.md shows the branches.
 
-## 1. Current Baseline vs. Target Production Architecture
+## Module boundaries
+| Deployment module | Owns | Does not own |
+|---|---|---|
+| api | HTTP validation, auth, owner-scoped queries and upload grants | Research/model/solver computation |
+| orchestrator | Job lifecycle, graph resume, fan-out/join, policy, canonical places/claims, trip logic | Browser/media native runtime or stop-order solver |
+| decision_router | Bounded LAYA inference | Authorization, final verification or direct dispatch |
+| evidence_collector | Search, permitted extraction, provenance | Final truth or browser invocation |
+| browser | Approved dynamic rendering, DOM/metadata/screenshots | Access-control bypass or open-ended autonomous browsing |
+| media_extractor | Probe, audio/frame extraction/filtering | Guaranteed semantic scene/location identification |
+| media_analyzer | OCR/ASR signals and optional evaluated vision | Final verified identity |
+| optimizer | Supported restriction-aware routing, solver and cost output | Full destination trip research or payment |
 
-### 1.1 Current Implementation State (Commit `8b7592f`)
-```
-[Browser Client]
-   │
-   ├── (1. Direct fetch to FastAPI: bypasses auth header) ────────┐
-   │                                                             │
-   └── (2. Session Cookie) ──► [Next.js BFF / proxy.ts]          │
-                                  │                              │
-                                  └── (Base64 decode only)       │
-                                                                 ▼
-[FastAPI Runtime: routes/trips.py] ◄─────────────────────────────┘
-   │ (Trusts client-supplied owner_id; no auth dependency)
-   ├── Enqueues Job in DB (never claimed by worker)
-   └── Synchronously calls trip_planning_workflow.ainvoke() inline
-          │
-          └── [Linear LangGraph Graph] (No checkpoints, static hotel estimate)
-```
+Research subagents are scoped graph tasks, not one Lambda each. Destination intelligence is trip_planner graph logic, not a compulsory ninth worker. Eight modules are the target decomposition; build only the current verified slice.
 
-### 1.2 Target Production Architecture (Milestone C1–C8)
-```
-[Browser Client: Next.js 16 + GSAP]
-       │
-       ▼ (HttpOnly, Secure, SameSite=Lax Session Cookie)
-[Next.js BFF Gateway: App Router]
-       │
-       ├── Auth: Validates RS256 JWT Signature against SWYRA Auth JWKS (/.well-known/jwks.json)
-       └── API Proxy: Forwards Authorization: Bearer <validated_jwt> to Backend
-              │
-              ▼
-[FastAPI HTTP Resource Server]
-       │
-       ├── Auth Dependency: Validates Token & Extracts user_id (Rejects client owner_id)
-       ├── Unit of Work: Validates Ownership & Commits TripBrief Version N
-       └── Job Enqueue: Inserts Job into PostgreSQL & returns 202 Accepted { run_id }
-              │
-              ▼
-[Authoritative PostgreSQL 16 + PostGIS (Aiven)]
-   ├── trips, trip_versions, itineraries, budget_lines, public_shares
-   └── jobs (claimed via SELECT ... FOR UPDATE SKIP LOCKED)
-              │
-              ▼
-[Asynchronous Background Worker Pool (ECS Tasks)]
-       │
-       ├── LangGraph Execution Engine (PostgreSQL Checkpoints)
-       ├── Bounded Provider Adapters (Mapbox, OSRM, Places, SerpAPI)
-       └── Constraint Solver: Google OR-Tools (Time Windows & Depot Return Legs)
-              │
-              ▼
-[Server-Sent Events (SSE) / Polling] ──► [Browser Planning Workspace]
-```
-
----
-
-## 2. Domain Modules, Ports, and Adapters
-
+## Folder ownership
 ```text
-backend/src/travel/
-  ├── domain/                     # Pure business logic, zero external framework imports
-  │     ├── money.py              # Decimal arithmetic, BudgetLine, BudgetSummary, Currency
-  │     ├── trips.py              # Trip, TripBrief, TripVersion, TripState, TransportMode
-  │     ├── routing.py            # VehicleFuelProfile, RoadSegment, RoadBudgetCalculator
-  │     ├── jobs.py               # Job, JobStatus, OutboxEvent
-  │     └── artifacts.py          # Artifact, ArtifactStatus, ArtifactFormat
-  ├── application/
-  │     ├── ports/                # Abstract interfaces (Clean Architecture Boundaries)
-  │     │     ├── repository.py   # TripRepositoryPort, JobRepositoryPort, ArtifactRepositoryPort
-  │     │     ├── unit_of_work.py # UnitOfWorkPort
-  │     │     ├── cache.py        # CachePort
-  │     │     ├── providers.py    # RoutingProviderPort, PlacesProviderPort, LodgingProviderPort
-  │     │     └── llm.py          # LLMPort (Structured inference interface)
-  │     └── services/
-  │           ├── scheduler.py    # OR-Tools TSPTW itinerary solver
-  │           └── pdf_export.py   # ReportLab publication generator
-  ├── workflows/
-  │     └── trip_planning.py      # LangGraph state graph definition & checkpoints
-  ├── persistence/                # Implementations of application repository ports
-  │     ├── models.py             # SQLAlchemy 2.0 ORM entity definitions
-  │     ├── repositories.py       # SqlAlchemyTripRepository, SqlAlchemyJobRepository
-  │     └── unit_of_work.py       # SqlAlchemyUnitOfWork
-  └── runtime/
-        ├── fastapi/              # HTTP delivery adapter
-        │     ├── app.py          # FastAPI application factory & CORS configuration
-        │     ├── auth.py         # OAuth 2.1 / OIDC Bearer token validation dependency
-        │     └── routes/         # trips.py, exports.py, health.py, benchmarks.py
-        └── workers/
-              └── worker.py       # JobWorker executing SKIP LOCKED claiming loop
+backend/
+  src/
+    functions/
+      api/                      # app.py, routes/, service.py, repository.py
+      orchestrator/             # handler, dispatcher, lifecycle, checkpoints
+        execution/              # leases, idempotency, outbox, recovery
+        evidence/               # claim verification and freshness policies
+        places/                 # canonical identity, geocoding policies/repository
+        graphs/
+          route_optimizer/      # graph.py, nodes.py, state.py, policies.py
+          media_location/       # graph.py, nodes.py, state.py, policies.py
+          trip_planner/         # graph, research, ranking, schedule, budget, prompts
+        tools/                  # weather/geocoder/imagery provider clients
+        prompts/
+      decision_router/          # LAYA service, schemas, policies
+      evidence_collector/       # search.py, scrape.py, repository.py
+      browser/                  # handler.ts, service.ts, schemas.ts
+      media_extractor/          # audio.py, frames.py, repository.py
+      media_analyzer/           # ocr.py, transcription.py, scene_filter.py
+      optimizer/                # routing.py, constraints.py, solver.py, costs.py
+    config/
+      config.py                 # settings only; secrets from environment
+      aws.py                    # client factories; no clients on import
+      db.py                     # connection factory; no queries/business rules
+    middleware/
+      auth.py                   # HTTP middleware used by API only
+      request_id.py
+      exception_handler.py
+    contracts/                  # Pydantic v2 source; generated JSON Schema/TS
+    utils/                      # logger, error types, bounded retry helpers
+  infrastructure/
+    shared/template.yaml        # queues, bucket policies, shared resource IDs
+    migrations/                 # ordered, forward-safe PostgreSQL migrations
+  scripts/                      # detect_changes, package, size checks
+  tests/integration/
+  tests/e2e/
 ```
+Every function folder owns handler, service, schemas, tests, dependency lock, template.yaml and samconfig.toml. Python uses requirements.txt plus a reproducible lock; browser uses package.json/package-lock.json/tsconfig.json. repository.py exists only where the module writes/reads owned records. Per-module helpers stay there. Shared folders contain no feature/provider/model business logic.
 
----
+No worker imports another worker implementation. The orchestrator owns feature graphs and adapters. Each deployment includes only its module and explicitly declared shared files. Preserve import paths consistently in local tests and ZIP builds. See DEVELOPMENT.md for packaging and CI/CD.
 
-## 3. Identity & Authentication Architecture (SWYRA Auth Integration)
 
-1. **Sovereignty & Separation of Concerns:**
-   * SWYRA Auth ([SGOD-pro/OAuth2.1](https://github.com/SGOD-pro/OAuth2.1)) is the external OpenID Connect identity provider.
-   * Zero passwords, user credentials, or password hashes are ever stored in the `travel-agent` PostgreSQL database.
-   * Users are identified internally purely by the immutable subject claim (`sub`) mapped to an internal user UUID.
-2. **Next.js BFF Authentication Flow:**
-   * Browser requests `/api/auth/login` $\to$ BFF generates PKCE $S256$ code challenge and cryptographically secure state cookie, redirecting to SWYRA Auth.
-   * User authenticates at SWYRA Auth $\to$ redirects back to `/api/auth/callback?code=...&state=...`.
-   * BFF validates state, exchanges authorization code for tokens via backchannel POST with client credentials.
-   * BFF sets an encrypted, HttpOnly, Secure, SameSite=Lax session cookie (`swena_session`).
-3. **FastAPI Resource Server Verification:**
-   * Next.js forwards requests with `Authorization: Bearer <token>`.
-   * FastAPI dependency `get_current_user` validates token offline against cached JWKS (`/.well-known/jwks.json`).
-   * Validates RS256 signature, expiry (`exp`), not-before (`nbf`), issuer (`iss`), and audience (`aud` / `azp`).
-   * Extracts user UUID and injects into route handlers. All trip mutations check `trip.owner_id == user.id`.
+## State and communication
+Aiven PostgreSQL/PostGIS stores executions, checkpoints, sources/claims, place identity and route versions. S3 stores raw media/evidence and large results. Upstash Redis is an optional ephemeral cache/rate coordinator. Durable protocol/table details belong to TECHNICAL_SPEC.md.
 
----
+No worker-to-worker business imports or direct downstream invocations. A collector requests browser escalation through a result; orchestrator validates and dispatches. Shared Python folders contain settings, client factories, contracts and tiny utilities. Browser consumes generated TS/JSON Schema contracts.
 
-## 4. Geospatial Canvas & Voice Architecture
+Three product graphs are independently testable; they compose only under accepted scope. Travel may invoke routing as a necessary internal dependency. Media-only does not research a complete trip after identification.
 
-### 4.1 Geospatial Corridor Engine
-* **Leaflet & CartoDB Dark Matter:** Renders high-contrast dark vector tiles matching SWENA 2.0 Forest Night (`#0D1915`).
-* **PostGIS Authority:** Spatial points are indexed using GiST on `geography(Point, 4326)`. Spatial queries extract POIs within calculated corridor bounding boxes.
-* **Network vs. Straight Line:** True driving paths use polyline vectors returned by routing adapters (Mapbox / OSRM). If live routing is unavailable, fallback lines are explicitly labeled "Illustrative Straight Line".
+## Architectural decisions
+| ID | Decision | Reason |
+|---|---|---|
+| AD-01 | Three independent capabilities | Avoid automatic irrelevant execution and cost |
+| AD-02 | LangGraph is the single execution owner | Recoverable state and controlled joins/resume |
+| AD-03 | LLM/LAYA proposals pass Policy | Model output cannot become deterministic authority |
+| AD-04 | Module-owned code/repositories; slim shared folders | Readability, independent ZIPs and selective CI |
+| AD-05 | ZIP-first Lambda + SAM; API uses FastAPI/Mangum only | Bounded serverless work without assumed ECR/ECS |
+| AD-06 | PostgreSQL authority, S3 blobs, Redis ephemeral | Recoverability without cache dependence |
+| AD-07 | Evidence verification and freshness are separate | A previously verified fact can become stale |
+| AD-08 | Routing adapter + OR-Tools | Stop ordering does not replace road-network routing |
+| AD-09 | Report candidate/partial/infeasible results honestly | No forced media match or fake route/price |
+| AD-10 | Hosted generative inference; local bounded CPU candidates | Avoid large LLM weights in ordinary ZIP Lambda |
+| AD-11 | Tests/modules before composition | Limit change scope and catch contract mismatch |
 
-### 4.2 Voice Briefing & Guide Architecture
-* **Web Speech API:** Leverages client-native `SpeechRecognition` (speech-to-text) and `SpeechSynthesis` (text-to-speech).
-* **Transparent Privacy Boundary:**
-  * **Browser Reality:** In Chromium-based browsers (Google Chrome, Microsoft Edge), speech audio waveforms are processed remotely by browser vendor cloud infrastructure. The UI explicitly notifies travelers: *"Speech recognition is processed by your browser engine. Audio is not recorded or stored on SWENA servers."*
-  * **Backend Authority:** Zero raw audio is transmitted to or stored on SWENA backend servers. SWENA receives only the finalized text transcript submitted by the user.
+Append architectural changes here with date, reason, alternatives and migration impact. Update dependent diagrams/tests; do not create a competing decisions document.
+
+## Open readiness gates
+Production Valhalla endpoint/hosting and exact exclusion capabilities; lawful public-media retrieval; geocoder scale policy; weather/tile commercial use; auth issuer; OCR-language/vision suitability; LAYA/FFmpeg/Chromium/OR-Tools package and CPU measurements. These do not block Phase 0 fixtures, but block dependent live-release claims. No public Valhalla demo is production infrastructure. No container migration is automatic if packaging fails.

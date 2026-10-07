@@ -1,5 +1,5 @@
 ---
-name: lenis-react-nextjs
+name: lenis
 description: >
   Production-safe Lenis smooth-scroll integration for React and Next.js
   applications. Use when implementing, debugging, reviewing, or extending
