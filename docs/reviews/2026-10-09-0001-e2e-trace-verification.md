@@ -43,12 +43,12 @@ The connected end-to-end trace (`backend/tests/integration/verify_e2e_trace.py`)
 ## Separation of Local Verification vs Deployed AWS Evidence
 
 > [!IMPORTANT]
-> Local integration and connected component tests verify the software contracts, database transactions, LangGraph checkpointing, daemon failure supervision, and SAM template syntax locally. They do NOT constitute deployed AWS evidence. Spec 0001 must not be marked complete until actual AWS resources are deployed and verified.
+> Local integration and connected component tests verify the software contracts, database transactions, LangGraph checkpointing, daemon failure supervision, and SAM template syntax locally. They do NOT constitute deployed AWS evidence. Development acceptance is complete, while deployed AWS verification remains deferred until live cloud deployment.
 
 ### Local Verification Status (Complete)
 - **PostgreSQL Persistence & Fencing**: Verified against live PostgreSQL container (AC-1..14).
 - **LangGraph Checkpoint Safety**: 8/8 checkpoint isolation and buffering behaviors verified.
-- **Connected E2E Trace**: 6-step cross-consumer trace verified end-to-end.
+- **Connected E2E Trace**: 6-step cross-consumer trace verified end to end.
 - **Daemon Failure Supervision**: `BackgroundDaemon` supervision, crash-detection, exponential backoff restart, stability reset, and clean shutdown verified.
 - **SAM Infrastructure Specification**: `backend/src/functions/orchestrator/template.yaml` defines SQS consumers with `ReportBatchItemFailures`, DLQ redrive policies (`maxReceiveCount: 5`), and EventBridge scheduled functions. Validated via `sam validate --lint`.
 
@@ -56,6 +56,6 @@ The connected end-to-end trace (`backend/tests/integration/verify_e2e_trace.py`)
 - Deployed AWS CloudFormation/SAM stack execution in target AWS account.
 - Live AWS SQS visibility timeouts, partial batch redrive, and DLQ message movement under live AWS runtime.
 - AWS EventBridge Schedule triggering Lambda handlers with real IAM execution role permissions.
-- Live AWS SecretManager / RDS network routing (VPC, security groups, subnets).
+- Live network routing and secret resolution for Aiven PostgreSQL / PostGIS from Lambda execution environments.
 
-**Spec 0001 status remains `in-progress` pending deployed AWS evidence.**
+**Development acceptance for spec 0001 is complete; deployed AWS verification remains deferred pending cloud rollout.**

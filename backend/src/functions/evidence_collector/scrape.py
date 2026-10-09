@@ -76,7 +76,13 @@ def parse_inr_price(price_text: str | None) -> Decimal | None:
 
 
 class ScraplingExtractionAdapter(WebExtractionPort):
-    """Adapter executing web extraction via Scrapling Fetcher and Selector."""
+    """Adapter executing web extraction via Scrapling Fetcher and Selector.
+
+    Note: Live provider adapters are excluded from 0002 Slice 1 and deferred to Slice 2+.
+    Slice 1 uses test-only offline fixture adapters (FixtureSearchAdapter).
+    """
+
+    is_live_provider: bool = True
 
     def __init__(
         self,

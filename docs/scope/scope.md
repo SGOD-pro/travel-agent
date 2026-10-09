@@ -10,6 +10,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 | # | Feature | Phase | Status |
 |---|---------|-------|--------|
 | 1 | Orchestrator execution engine, transactional outbox, and reconciliation | Foundation | done |
+| 2 | Evidence collection with provenance and canonical place/claim verification | Phase 4: Evidence & Verification | in-progress |
 
 ## Foundations
 
@@ -44,3 +45,26 @@ Durable execution engine, transactional outbox relay, worker lease fencing, sche
 - [x] Test it: `/test 0001-orchestrator-execution-engine` (90 tests passing)
 
 Spec 0001 (`docs/specs/0001-orchestrator-execution-engine.md`, Status: Accepted) · code in `backend/src/functions/orchestrator/execution/`
+
+## Phase 4: Evidence & Verification
+
+### 2. Evidence collection with provenance and canonical place/claim verification · in-progress
+Collect source evidence with immutable provenance and verify canonical places and claims following Phase 4 in `docs/DEVELOPMENT.md`, depending on accepted 0001 execution infrastructure. Strictly excludes routing, media, browser automation, full itinerary generation, and live AWS deployment.
+**Done when:** evidence search and permitted page extraction store immutable source observations, link claims to canonical places, evaluate deterministic verification policy states, preserve contradictory or stale assertions, and execute via the 0001 worker registry on live PostgreSQL.
+- [x] Design it (spec): [0002](../specs/0002-evidence-collection-and-verification.md)
+- [ ] Build it: `/develop evidence collection with provenance and canonical place/claim verification`
+   - [x] Offline source-backed vertical slice with fixture adapter, SQS handler, and immutable observation persistence (AC-3, AC-14, AC-15, AC-16)
+   - [ ] Claim and place persistence models with PostGIS extensions (AC-5, AC-8)
+   - [ ] Live provider adapters for SerpAPI and Scrapling with SSRF checks (AC-1, AC-2, AC-4, AC-13, AC-18)
+   - [ ] Canonical place resolution service with spatial band discovery (AC-6, AC-7)
+   - [ ] Deterministic Policy Engine for claim verification, freshness windows, and conflict preservation (AC-9, AC-10, AC-11, AC-12)
+   - [ ] Standalone SAM packaging template and verification suites (AC-17)
+- [ ] Verify it: `/check verify 0002-evidence-collection-and-verification`
+   - [x] Fixture evidence verification: [verify.md](../specs/0002-evidence-collection-and-verification/verify.md)
+   - [ ] Live provider smoke test (credentialed with SERPAPI_API_KEY)
+   - [ ] Deployed AWS infrastructure evidence (deferred)
+- [x] Review it: `/check review 0002-evidence-collection-and-verification` (2026-10-10, Approve with nits)
+- [x] Test it: `/test 0002-evidence-collection-and-verification` (15 tests passing)
+- [ ] Document it: `/document 0002-evidence-collection-and-verification`
+
+Spec 0002 (`docs/specs/0002-evidence-collection-and-verification.md`, Status: Proposed) · code in `backend/src/functions/evidence_collector/` and `backend/src/functions/orchestrator/evidence/`

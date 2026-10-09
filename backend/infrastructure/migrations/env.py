@@ -1,5 +1,8 @@
 import asyncio
+import socket
+import time
 from logging.config import fileConfig
+from typing import Any
 
 from alembic import context
 from sqlalchemy import pool
@@ -7,9 +10,36 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 import functions.api.models  # noqa: F401
+import functions.evidence_collector.models  # noqa: F401
 import functions.orchestrator.execution.models  # noqa: F401
 from config.base_model import Base
 from config.config import settings
+
+_orig_getaddrinfo = socket.getaddrinfo
+_dns_cache: dict[tuple[Any, ...], Any] = {}
+
+
+def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
+    key = (host, port)
+    if key in _dns_cache:
+        return _dns_cache[key]
+    last_err: Exception | None = None
+    for _ in range(5):
+        try:
+            res = _orig_getaddrinfo(host, port, *args, **kwargs)
+            _dns_cache[key] = res
+            return res
+        except socket.gaierror as e:
+            last_err = e
+            time.sleep(0.3)
+    if key in _dns_cache:
+        return _dns_cache[key]
+    if last_err:
+        raise last_err
+    raise socket.gaierror(-5, "No address associated with hostname")
+
+
+socket.getaddrinfo = _resilient_getaddrinfo
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -67,7 +97,7 @@ async def run_async_migrations() -> None:
 
     section = config.get_section(config.config_ini_section, {})
     url = settings.DATABASE_URL
-    connect_args = {}
+    connect_args = {"command_timeout": 60, "timeout": 30}
     if "sslmode=require" in url or "ssl=require" in url or "aivencloud.com" in url or settings.DB_SSL:
         connect_args["ssl"] = "require"
     if "sslmode=" in url:
