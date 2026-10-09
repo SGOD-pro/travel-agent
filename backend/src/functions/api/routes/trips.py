@@ -5,14 +5,19 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from config.db import get_session_factory
+from config.db import get_session, get_session_factory
 from contracts.jobs import Job, JobStatus
 from contracts.trips import Trip, TripBrief, TripState
+from functions.api.idempotency import IdempotencyConflictError, IdempotencyRepository
+from functions.api.models import TripModel
 from functions.api.repository import SqlAlchemyUnitOfWork, TripVersionConflictError
 from functions.orchestrator.graphs.trip_planner.graph import trip_planning_workflow
+from middleware.auth import AuthenticatedUser, get_current_user
 
 router = APIRouter(prefix="/api/v1/trips", tags=["trips"])
 
@@ -52,6 +57,17 @@ class PlanJobResponse(BaseModel):
     version: int
     status: str
     result: dict[str, Any] | None = None
+
+
+class StartPlanRequest(BaseModel):
+    planning_options: dict[str, Any] = Field(default_factory=dict)
+    workflow: str = "TRAVEL"
+
+
+class AcceptedPlanResponse(BaseModel):
+    job_id: uuid.UUID
+    status: str
+    status_url: str
 
 
 # --- Route Handlers ---
@@ -195,3 +211,54 @@ async def plan_trip(
         status="completed" if result.get("status") == "completed" else "failed",
         result=result.get("proposal"),
     )
+
+
+@router.post(
+    "/{trip_id}/plans",
+    response_model=AcceptedPlanResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def start_trip_plan(
+    trip_id: uuid.UUID,
+    request: StartPlanRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> AcceptedPlanResponse:
+    """Accepts a trip planning job with owner-scoped idempotency reservation."""
+    if not idempotency_key or not idempotency_key.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Idempotency-Key header is required for job acceptance.",
+        )
+
+    trip_stmt = select(TripModel).where(TripModel.id == trip_id)
+    trip_res = await session.execute(trip_stmt)
+    trip = trip_res.scalar_one_or_none()
+    if not trip or trip.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip {trip_id} not found",
+        )
+
+    idempotency_repo = IdempotencyRepository(session)
+    payload_dict = {
+        "trip_id": str(trip_id),
+        **request.model_dump(mode="json"),
+    }
+    try:
+        response_json, status_code_res, is_cached = await idempotency_repo.accept_job(
+            owner_id=current_user.id,
+            operation=f"start_trip_plan:{trip_id}",
+            idempotency_key=idempotency_key.strip(),
+            payload=payload_dict,
+            trip_id=trip_id,
+            workflow=request.workflow,
+        )
+    except IdempotencyConflictError as e:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(e),
+        ) from e
+
+    return AcceptedPlanResponse(**response_json)

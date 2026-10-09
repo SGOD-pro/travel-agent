@@ -18,11 +18,9 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-
-class Base(DeclarativeBase):
-    pass
+from config.base_model import Base
 
 
 class TripModel(Base):
@@ -116,24 +114,6 @@ class JobModel(Base):
     )
 
 
-class OutboxEventModel(Base):
-    __tablename__ = "outbox_events"
-
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    aggregate_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-
-    __table_args__ = (
-        Index("ix_outbox_pending", "delivered_at", postgresql_where=(delivered_at.is_(None))),
-    )
-
-
 class BudgetLineModel(Base):
     __tablename__ = "budget_lines"
 
@@ -174,3 +154,20 @@ class ArtifactModel(Base):
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ApiIdempotencyModel(Base):
+    __tablename__ = "api_idempotency"
+
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    operation: Mapped[str] = mapped_column(String(64), primary_key=True)
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        PrimaryKeyConstraint("owner_id", "operation", "key", name="pk_api_idempotency"),
+        Index("ix_api_idempotency_expires_at", "expires_at"),
+    )

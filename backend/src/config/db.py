@@ -6,7 +6,9 @@ No queries or business logic belong here.
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -24,10 +26,24 @@ _session_factory: async_sessionmaker[AsyncSession] | None = None
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
+        url = settings.DATABASE_URL
+        connect_args: dict[str, Any] = {}
+        if (
+            "sslmode=require" in url
+            or "ssl=require" in url
+            or "aivencloud.com" in url
+            or settings.DB_SSL
+        ):
+            connect_args["ssl"] = "require"
+        if "sslmode=" in url:
+            url = re.sub(r"[?&]sslmode=[^&]+", "", url)
+            if "?" not in url and "&" in url:
+                url = url.replace("&", "?", 1)
         _engine = create_async_engine(
-            settings.DATABASE_URL,
+            url,
             echo=settings.DEBUG,
             future=True,
+            connect_args=connect_args,
         )
     return _engine
 

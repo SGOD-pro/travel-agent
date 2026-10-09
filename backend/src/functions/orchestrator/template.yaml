@@ -1,0 +1,204 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Orchestrator Execution Engine SAM Template with SQS Partial Batch Responses, DLQ Redrive Policies, and Bounded Scheduled Triggers.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - test
+      - staging
+      - prod
+    Description: Deployment target environment
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: PostgreSQL connection string with asyncpg dialect
+  OutboxQueueUrl:
+    Type: String
+    Default: ''
+    Description: Optional override for outbox queue URL
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 512
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        DATABASE_URL: !Ref DatabaseUrl
+        OUTBOX_QUEUE_URL: !Ref OutboxQueueUrl
+
+Resources:
+  # ============================================================================
+  # Dead Letter Queues (DLQ)
+  # ============================================================================
+  ExecutionEventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'orchestrator-execution-events-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  CompletionEventsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'orchestrator-completion-events-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  TaskDispatchDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'orchestrator-task-dispatch-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  # ============================================================================
+  # Work Queues with Redrive Policies
+  # ============================================================================
+  ExecutionEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'orchestrator-execution-events-${Environment}'
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ExecutionEventsDLQ.Arn
+        maxReceiveCount: 5
+
+  CompletionEventsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'orchestrator-completion-events-${Environment}'
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt CompletionEventsDLQ.Arn
+        maxReceiveCount: 5
+
+  TaskDispatchQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'orchestrator-task-dispatch-${Environment}'
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt TaskDispatchDLQ.Arn
+        maxReceiveCount: 5
+
+  # ============================================================================
+  # Lambda SQS Consumers with Partial Batch Failure Reporting
+  # ============================================================================
+  GraphRunnerConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'orchestrator-graph-runner-${Environment}'
+      Handler: functions.orchestrator.execution.consumer.lambda_handler
+      CodeUri: ../../
+      Description: SQS consumer for EXECUTION_START and EXECUTION_RESUME events
+      Events:
+        ExecutionEventsBatch:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ExecutionEventsQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  CompletionReceiptConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'orchestrator-completion-consumer-${Environment}'
+      Handler: functions.orchestrator.execution.completion_consumer.lambda_handler
+      CodeUri: ../../
+      Description: SQS consumer for TASK_COMPLETED and TASK_FAILED receipts
+      Events:
+        CompletionEventsBatch:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt CompletionEventsQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  WorkerTaskConsumerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'orchestrator-worker-consumer-${Environment}'
+      Handler: functions.orchestrator.execution.worker_consumer.lambda_handler
+      CodeUri: ../../
+      Description: SQS consumer for TASK_DISPATCH messages claiming worker tasks
+      Events:
+        TaskDispatchBatch:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt TaskDispatchQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+  # ============================================================================
+  # Bounded Scheduled EventBridge Functions
+  # ============================================================================
+  ScheduledRelayFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'orchestrator-scheduled-relay-${Environment}'
+      Handler: functions.orchestrator.execution.scheduled.relay_handler
+      CodeUri: ../../
+      Description: Bounded scheduled outbox relay execution loop
+      Timeout: 60
+      Events:
+        RelaySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Enabled: true
+
+  ScheduledRecoveryFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'orchestrator-scheduled-recovery-${Environment}'
+      Handler: functions.orchestrator.execution.scheduled.recovery_handler
+      CodeUri: ../../
+      Description: Bounded scheduled task and execution lease recovery loop
+      Timeout: 60
+      Events:
+        RecoverySchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Enabled: true
+
+  ScheduledReconciliationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'orchestrator-scheduled-reconciliation-${Environment}'
+      Handler: functions.orchestrator.execution.scheduled.reconciliation_handler
+      CodeUri: ../../
+      Description: Bounded scheduled stalled completion receipt reconciliation loop
+      Timeout: 60
+      Events:
+        ReconciliationSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Enabled: true
+
+Outputs:
+  ExecutionEventsQueueUrl:
+    Description: URL of SQS Execution Events Queue
+    Value: !Ref ExecutionEventsQueue
+  ExecutionEventsQueueArn:
+    Description: ARN of SQS Execution Events Queue
+    Value: !GetAtt ExecutionEventsQueue.Arn
+  CompletionEventsQueueUrl:
+    Description: URL of SQS Completion Events Queue
+    Value: !Ref CompletionEventsQueue
+  CompletionEventsQueueArn:
+    Description: ARN of SQS Completion Events Queue
+    Value: !GetAtt CompletionEventsQueue.Arn
+  TaskDispatchQueueUrl:
+    Description: URL of SQS Task Dispatch Queue
+    Value: !Ref TaskDispatchQueue
+  TaskDispatchQueueArn:
+    Description: ARN of SQS Task Dispatch Queue
+    Value: !GetAtt TaskDispatchQueue.Arn

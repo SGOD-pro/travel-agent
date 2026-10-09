@@ -24,18 +24,28 @@ class Settings(BaseSettings):
     DEBUG: bool = False
 
     # Database (PostgreSQL + PostGIS)
-    # Default to local docker postgres
     DATABASE_URL: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/travel_planning",
         description="SQLAlchemy asyncpg PostgreSQL connection URL",
     )
+    HOST: str | None = None
+    PORT: int | None = None
+    USER: str | None = None
+    PASSWORD: str | None = None
+    DB_NAME: str | None = None
+    DB_SSL: bool = False
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def default_database_url_if_empty(cls, v: Any) -> str:
         if not v or not str(v).strip():
             return "postgresql+asyncpg://postgres:postgres@localhost:5432/travel_planning"
-        return str(v).strip()
+        url = str(v).strip()
+        if url.startswith("postgres://"):
+            url = "postgresql+asyncpg://" + url[len("postgres://") :]
+        elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+            url = "postgresql+asyncpg://" + url[len("postgresql://") :]
+        return url
 
     # Redis configuration
     REDIS_BACKEND: Literal["local", "upstash"] = Field(
@@ -67,6 +77,16 @@ class Settings(BaseSettings):
     CLIENT_ID: str = Field(
         default="swena_travel_agent_client",
         description="OAuth 2.1 client ID for audience enforcement",
+    )
+
+    # AWS Configuration
+    AWS_REGION: str = Field(
+        default="ap-south-1",
+        description="AWS region name",
+    )
+    SQS_QUEUE_URL: str | None = Field(
+        default=None,
+        description="Amazon SQS queue URL for outbox relay events",
     )
 
 

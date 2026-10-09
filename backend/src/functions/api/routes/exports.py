@@ -179,25 +179,3 @@ async def download_artifact(
         filename=f"SWENA_Itinerary_Trip_{artifact.trip_id}_v{artifact.trip_version}.pdf",
     )
 
-
-@router.post("/jobs/{job_id}/cancel", response_model=CancelJobResponse)
-async def cancel_job(
-    job_id: uuid.UUID,
-    uow: UowDep,
-) -> CancelJobResponse:
-    """Cancels a pending or running job."""
-    async with uow:
-        cancelled = await uow.jobs.cancel(job_id, reason="User cancellation request")
-        await uow.commit()
-
-    if not cancelled:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Job {job_id} cannot be cancelled (may be completed or does not exist)",
-        )
-
-    return CancelJobResponse(
-        job_id=job_id,
-        status="cancelled",
-        cancelled=True,
-    )

@@ -6,8 +6,10 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from travel.infrastructure.config import settings
-from travel.persistence.models import Base
+import functions.api.models  # noqa: F401
+import functions.orchestrator.execution.models  # noqa: F401
+from config.base_model import Base
+from config.config import settings
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -64,11 +66,21 @@ async def run_async_migrations() -> None:
     """
 
     section = config.get_section(config.config_ini_section, {})
-    section["sqlalchemy.url"] = settings.DATABASE_URL
+    url = settings.DATABASE_URL
+    connect_args = {}
+    if "sslmode=require" in url or "ssl=require" in url or "aivencloud.com" in url or settings.DB_SSL:
+        connect_args["ssl"] = "require"
+    if "sslmode=" in url:
+        import re
+        url = re.sub(r"[?&]sslmode=[^&]+", "", url)
+        if "?" not in url and "&" in url:
+            url = url.replace("&", "?", 1)
+    section["sqlalchemy.url"] = url
     connectable = async_engine_from_config(
         section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     async with connectable.connect() as connection:

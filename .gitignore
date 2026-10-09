@@ -10,3 +10,4 @@ node_modules
 dist
 *.pyc
 __pycache__
+.aws-sam

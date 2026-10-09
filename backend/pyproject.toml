@@ -24,6 +24,8 @@ dependencies = [
     "curl-cffi>=0.7.0",
     "playwright>=1.40.0",
     "email-validator>=2.3.0",
+    "langgraph-checkpoint-postgres>=3.1.2",
+    "psycopg-binary>=3.3.6",
 ]
 
 [project.optional-dependencies]
@@ -65,7 +67,7 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 asyncio_mode = "auto"
 filterwarnings = [
     "ignore::DeprecationWarning",

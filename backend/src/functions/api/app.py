@@ -7,6 +7,7 @@ from config.config import settings
 from functions.api.routes.benchmarks import router as benchmarks_router
 from functions.api.routes.exports import router as exports_router
 from functions.api.routes.health import router as health_router
+from functions.api.routes.jobs import router as jobs_router
 from functions.api.routes.support import router as support_router
 from functions.api.routes.trips import router as trips_router
 
@@ -30,6 +31,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(trips_router)
+    app.include_router(jobs_router)
     app.include_router(exports_router)
     app.include_router(benchmarks_router)
     app.include_router(support_router)
