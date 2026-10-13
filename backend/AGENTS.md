@@ -13,8 +13,11 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/config/config.py` | Environment configuration using Pydantic Settings |
 | `src/contracts/money.py` | Strict Decimal money representation, budget lines, and zero coercion rules |
 | `src/functions/optimizer/solver.py` | OR Tools routing and scheduling solver |
+| `src/functions/evidence_collector/` | Evidence collection, immutable observation snapshots, fixture adapters, and SQS consumer |
 | `src/functions/evidence_collector/scrape.py` | Scrapling adapter for web evidence retrieval |
 | `src/functions/orchestrator/execution/` | Orchestrator execution engine, worker fencing, outbox relay, lease recovery, and reconciliation |
+| `src/functions/orchestrator/places/` | Canonical places persistence, PostGIS geometry models, schemas, and spatial lookup |
+| `src/functions/orchestrator/evidence/` | Claim models, schemas, claim evidence junction, and verification policies |
 
 ## Commands
 
@@ -44,6 +47,11 @@ uv run alembic upgrade head
 - Validate incoming tokens using SWYRA Auth JWKS. Reject client supplied owner identifiers.
 - Route solving uses OR Tools for stop sequencing while keeping road network geometry from routing providers.
 - Orchestrator operations enforce parent first lock ordering (executions then tasks) and savepoint transaction isolation on fencing mutations.
+- Source observations in PostgreSQL are write once and immutable, keyed by (execution_id, canonical_url, content_hash) with zero in place mutations.
+- Evidence collection and worker fencing commit atomically in transaction 4; any failure rolls back staged observations cleanly.
+- Canonical places persist reviewed public identity with PostGIS Point geometry and GiST spatial indexes.
+- Claims link to source observations through claim evidence and preserve contradictory assertions as conflicted without overwriting.
+- Offline development and CI use test only fixture adapters (FixtureSearchAdapter); live provider adapters are deferred to Slice 3+.
 
 ## Gotchas
 

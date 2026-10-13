@@ -89,5 +89,24 @@ class Settings(BaseSettings):
         description="Amazon SQS queue URL for outbox relay events",
     )
 
+    # Evidence Collector and External Providers
+    SERPAPI_API_KEY: str | None = Field(
+        default=None,
+        description="API key for SerpAPI provider",
+    )
+    SERPAPI_BASE_URL: str = Field(
+        default="https://serpapi.com",
+        description="Base URL for SerpAPI requests",
+    )
+    HTTP_REQUEST_TIMEOUT_SECONDS: int = Field(
+        default=20,
+        description="Request timeout in seconds for external HTTP fetches",
+    )
+    MAX_SOURCE_PAYLOAD_BYTES: int = Field(
+        default=5242880,
+        description="Maximum allowed payload download size in bytes",
+    )
+
 
 settings = Settings()
+

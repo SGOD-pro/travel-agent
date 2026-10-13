@@ -54,17 +54,18 @@ Collect source evidence with immutable provenance and verify canonical places an
 - [x] Design it (spec): [0002](../specs/0002-evidence-collection-and-verification.md)
 - [ ] Build it: `/develop evidence collection with provenance and canonical place/claim verification`
    - [x] Offline source-backed vertical slice with fixture adapter, SQS handler, and immutable observation persistence (AC-3, AC-14, AC-15, AC-16)
-   - [ ] Claim and place persistence models with PostGIS extensions (AC-5, AC-8)
-   - [ ] Live provider adapters for SerpAPI and Scrapling with SSRF checks (AC-1, AC-2, AC-4, AC-13, AC-18)
+   - [x] Claim and place persistence models with PostGIS extensions (AC-5, AC-8)
+   - [x] Live provider adapters for SerpAPI and Scrapling with SSRF checks (AC-1, AC-2, AC-4, AC-13, AC-14, AC-18)
    - [ ] Canonical place resolution service with spatial band discovery (AC-6, AC-7)
    - [ ] Deterministic Policy Engine for claim verification, freshness windows, and conflict preservation (AC-9, AC-10, AC-11, AC-12)
    - [ ] Standalone SAM packaging template and verification suites (AC-17)
 - [ ] Verify it: `/check verify 0002-evidence-collection-and-verification`
    - [x] Fixture evidence verification: [verify.md](../specs/0002-evidence-collection-and-verification/verify.md)
-   - [ ] Live provider smoke test (credentialed with SERPAPI_API_KEY)
+   - [x] Claim and place persistence verification: [verify.md](../specs/0002-evidence-collection-and-verification/verify.md) (9 behaviors verified on live PostgreSQL)
+   - [x] Live provider smoke test (credentialed with SERPAPI_API_KEY)
    - [ ] Deployed AWS infrastructure evidence (deferred)
-- [x] Review it: `/check review 0002-evidence-collection-and-verification` (2026-10-10, Approve with nits)
-- [x] Test it: `/test 0002-evidence-collection-and-verification` (15 tests passing)
+- [x] Review it: `/check review 0002-evidence-collection-and-verification` (2026-10-10 Slice 1 Approve with nits · 2026-10-11 Slice 2 Approve with nits · 2026-10-14 Slice 3 Approve)
+- [x] Test it: `/test 0002-evidence-collection-and-verification` (51 tests passing across Slice 2 persistence and schemas · 15 tests Slice 1)
 - [ ] Document it: `/document 0002-evidence-collection-and-verification`
 
-Spec 0002 (`docs/specs/0002-evidence-collection-and-verification.md`, Status: Proposed) · code in `backend/src/functions/evidence_collector/` and `backend/src/functions/orchestrator/evidence/`
+Spec 0002 (`docs/specs/0002-evidence-collection-and-verification.md`, Status: In Progress) · code in `backend/src/functions/evidence_collector/`, `backend/src/functions/orchestrator/places/`, and `backend/src/functions/orchestrator/evidence/`

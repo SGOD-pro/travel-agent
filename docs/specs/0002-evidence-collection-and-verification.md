@@ -511,13 +511,13 @@ The build plan establishes a thin end to end thread across persistence, adapter,
    - Slice 1 acceptance boundary: Confirms offline collection, persisted source observations, and durable task completion through 0001 fencing; strictly excludes claim verification, place resolution, and metered live dispatch.
    - Satisfies AC-3, AC-15, AC-16 (Tests: test_fixture_isolation, test_retry_persistence, test_fenced_completion_boundary).
 
-2. [Slice 2: Claim and place persistence models]
+2. [x] [Slice 2: Claim and place persistence models]
    - Write Alembic migration for `canonical_places`, `claims`, and `claim_evidence`.
    - Implement SQLAlchemy ORM models and Pydantic schemas.
    - Verify on live PostgreSQL with PostGIS extension.
    - Satisfies AC-5, AC-8 (Test: test_persistence_layer).
 
-3. [Slice 3: Live provider adapters]
+3. [x] [Slice 3: Live provider adapters]
    - Implement SerpAPI HTTP client adapter with rate limiting and timeout handling.
    - Implement Scrapling extraction adapter for permitted web sources with safe price parsing.
    - Implement metered dispatch and durable pre call budget reservations across concurrent tasks.
