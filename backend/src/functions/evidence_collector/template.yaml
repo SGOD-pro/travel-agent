@@ -5,21 +5,20 @@ Description: Evidence Collector Function SAM Template with SQS Partial Batch Res
 Parameters:
   Environment:
     Type: String
-    Default: dev
+    Default: staging
     AllowedValues:
-      - dev
-      - test
+      - local
       - staging
-      - prod
-    Description: Deployment target environment
+      - production
+    Description: Deployment target environment matching application Settings
   DatabaseUrl:
     Type: String
     NoEcho: true
     Description: PostgreSQL connection string with asyncpg dialect
   OutboxQueueUrl:
     Type: String
-    Default: ''
-    Description: Optional override for outbox queue URL
+    Default: 'https://sqs.ap-south-1.amazonaws.com/123456789012/swena-outbox-events'
+    Description: Amazon SQS queue URL for outbox relay events (defaults to local mock queue URL)
   SerpApiKey:
     Type: String
     Default: ''
@@ -36,7 +35,11 @@ Globals:
         ENVIRONMENT: !Ref Environment
         DATABASE_URL: !Ref DatabaseUrl
         OUTBOX_QUEUE_URL: !Ref OutboxQueueUrl
+        SQS_QUEUE_URL: !Ref OutboxQueueUrl
         SERPAPI_API_KEY: !Ref SerpApiKey
+        SERPAPI_BASE_URL: https://serpapi.com
+        HTTP_REQUEST_TIMEOUT_SECONDS: '20'
+        MAX_SOURCE_PAYLOAD_BYTES: '5242880'
 
 Resources:
   # Dead Letter Queue for failed task attempts
@@ -62,7 +65,7 @@ Resources:
     Properties:
       FunctionName: !Sub 'evidence-collector-${Environment}'
       Handler: functions.evidence_collector.consumer.lambda_handler
-      CodeUri: ../../
+      CodeUri: ../../../build/evidence_collector
       Runtime: python3.12
       Timeout: 120
       MemorySize: 512

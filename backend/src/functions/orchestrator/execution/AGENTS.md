@@ -30,3 +30,4 @@ uv run python tests/integration/verify_e2e_trace.py
 - **SQS Partial Batch Responses**: Message handlers appropriately return `{ "itemIdentifier": message_id }` for individual message failures inside an `asyncio.gather` loop to leverage AWS Lambda's partial batch failure contract.
 - **Stalled Receipts**: Recovery relies on `event_type` from `CompletionReceiptModel` instead of hardcoded strings to accurately identify the stalled event type (e.g., `TASK_COMPLETED`).
 - **Orphan Tasks Cleanup**: The daemon uses a bounded timeout (`asyncio.wait(..., timeout=2.0)`) during shutdown cancellation to prevent zombie asyncio tasks while avoiding indefinite hangs.
+- **Boundary Isolation**: Generic worker consumer dispatches only registered workers via executor registry; dedicated worker domains such as evidence collection route via dedicated queues and consumers without reverse imports into orchestrator.

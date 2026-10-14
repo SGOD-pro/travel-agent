@@ -15,6 +15,7 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/optimizer/solver.py` | OR Tools routing and scheduling solver |
 | `src/functions/evidence_collector/` | Evidence collection, immutable observation snapshots, fixture adapters, and SQS consumer |
 | `src/functions/evidence_collector/scrape.py` | Scrapling adapter for web evidence retrieval |
+| `src/functions/evidence_collector/packaging.py` | Standalone Lambda packaging, dependency inclusive artifact builder, and clean environment verification |
 | `src/functions/orchestrator/execution/` | Orchestrator execution engine, worker fencing, outbox relay, lease recovery, and reconciliation |
 | `src/functions/orchestrator/places/` | Canonical places persistence, PostGIS geometry models, schemas, and spatial lookup |
 | `src/functions/orchestrator/evidence/` | Claim models, schemas, claim evidence junction, and verification policies |
@@ -34,6 +35,9 @@ uv run pytest -v
 # Run linter and type checker
 uv run ruff check . && uv run mypy src
 
+# Package isolated evidence collector Lambda
+uv run python -m functions.evidence_collector.packaging
+
 # Run database migrations
 uv run alembic upgrade head
 ```
@@ -52,6 +56,8 @@ uv run alembic upgrade head
 - Canonical places persist reviewed public identity with PostGIS Point geometry and GiST spatial indexes.
 - Claims link to source observations through claim evidence and preserve contradictory assertions as conflicted without overwriting.
 - Offline tests use explicit fixture adapter injection; production runtime path constructs live SerpApi and Scrapling adapters with missing credentials producing explicit unavailable records.
+- Evidence collector packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed, excluding orchestrator, optimizer, and heavy third party libraries.
+- Orchestrator modules must not import evidence collector business code; task dispatch routes via dedicated SQS queues.
 
 ## Gotchas
 

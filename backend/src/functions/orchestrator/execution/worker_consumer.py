@@ -54,13 +54,6 @@ async def process_record(record: dict[str, Any], session_factory: Any) -> None:
     worker_role = payload.get("worker", "EVIDENCE")
     action = payload.get("action", "collect")
 
-    # Route EVIDENCE.collect tasks through real collection with one owner of claim/completion
-    if worker_role == "EVIDENCE" and action == "collect":
-        from functions.evidence_collector.consumer import process_record as process_evidence_record
-
-        await process_evidence_record(record, session_factory)
-        return
-
     message = TaskQueueMessage(
         task_id=task_id,
         execution_id=execution_id,

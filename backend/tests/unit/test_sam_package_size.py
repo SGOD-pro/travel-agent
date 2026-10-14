@@ -1,39 +1,37 @@
-"""Unit tests verifying SAM packaging configuration and artifact size limits.
+"""Unit tests verifying standalone SAM packaging, isolated artifact boundaries, and Lambda size limits.
 
 Conforms to spec 0002 AC 17.
-Validates template structure, dependency exclusions, and Lambda package size bounds.
+Validates:
+1. SAM template validity, CodeUri alignment, and environment variables matching application Settings.
+2. Lean dependency boundaries in requirements.txt (excluding heavy libraries like OR-Tools, LangGraph, Playwright).
+3. Dependency-inclusive artifact building with strict module isolation and size measurement against AWS limits:
+   - Compressed ZIP package <= 50 MB
+   - Unpacked artifact <= 250 MB
+4. Lambda-compatible clean environment handler import proof.
+5. SAM build artifact verification.
 """
 
 from __future__ import annotations
 
-import io
-import os
-import zipfile
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 import yaml
 
+from functions.evidence_collector.packaging import (
+    FORBIDDEN_APP_MODULES,
+    FORBIDDEN_HEAVY_PACKAGES,
+    MAX_COMPRESSED_BYTES,
+    MAX_UNCOMPRESSED_BYTES,
+    build_isolated_collector_artifact,
+    verify_handler_in_clean_environment,
+)
+
 COLLECTOR_DIR = Path(__file__).resolve().parents[2] / "src" / "functions" / "evidence_collector"
 TEMPLATE_PATH = COLLECTOR_DIR / "template.yaml"
 REQUIREMENTS_PATH = COLLECTOR_DIR / "requirements.txt"
-BACKEND_SRC_DIR = Path(__file__).resolve().parents[2] / "src"
-
-MAX_COMPRESSED_BYTES = 50 * 1024 * 1024  # 50 MB
-MAX_UNCOMPRESSED_BYTES = 250 * 1024 * 1024  # 250 MB
-
-FORBIDDEN_HEAVY_PACKAGES = {
-    "langgraph",
-    "langchain",
-    "playwright",
-    "ortools",
-    "geopandas",
-    "shapely",
-    "reportlab",
-    "fastapi",
-    "uvicorn",
-}
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 REQUIRED_LEAN_PACKAGES = {
     "pydantic",
@@ -65,16 +63,32 @@ def _load_cfn_template(path: Path) -> dict[str, Any]:
         return cast(dict[str, Any], yaml.load(f, Loader=CfnSafeLoader))
 
 
-
-
-def test_template_existence_and_validity() -> None:
-    """Verifies that the SAM template exists and contains valid serverless definitions."""
+def test_template_existence_validity_and_settings_alignment() -> None:
+    """Verifies that the SAM template exists, is valid, and aligns environment values with Settings."""
     assert TEMPLATE_PATH.exists(), f"SAM template missing at {TEMPLATE_PATH}"
 
     template = _load_cfn_template(TEMPLATE_PATH)
 
     assert template.get("AWSTemplateFormatVersion") == "2010-09-09"
     assert template.get("Transform") == "AWS::Serverless-2016-10-31"
+
+    # Verify Environment parameter aligns with Settings.ENVIRONMENT literal values
+    parameters = template.get("Parameters", {})
+    env_param = parameters.get("Environment", {})
+    assert env_param.get("AllowedValues") == ["local", "staging", "production"]
+    assert env_param.get("Default") in ["local", "staging", "production"]
+
+    # Verify Globals Function environment variables align with Settings
+    globals_sec = template.get("Globals", {})
+    fn_globals = globals_sec.get("Function", {})
+    env_vars = fn_globals.get("Environment", {}).get("Variables", {})
+    assert "ENVIRONMENT" in env_vars
+    assert "DATABASE_URL" in env_vars
+    assert "SQS_QUEUE_URL" in env_vars
+    assert "SERPAPI_API_KEY" in env_vars
+    assert "SERPAPI_BASE_URL" in env_vars
+    assert "HTTP_REQUEST_TIMEOUT_SECONDS" in env_vars
+    assert "MAX_SOURCE_PAYLOAD_BYTES" in env_vars
 
     resources = template.get("Resources", {})
     assert "EvidenceCollectorFunction" in resources
@@ -86,6 +100,7 @@ def test_template_existence_and_validity() -> None:
     assert fn_props.get("Handler") == "functions.evidence_collector.consumer.lambda_handler"
     assert fn_props.get("Runtime") == "python3.12"
     assert fn_props.get("MemorySize") == 512
+    assert fn_props.get("CodeUri") == "../../../build/evidence_collector"
 
     # Queue configuration with DLQ redrive
     queue_props = resources["EvidenceCollectorQueue"].get("Properties", {})
@@ -118,60 +133,62 @@ def test_requirements_lean_dependencies() -> None:
         )
 
 
-def test_staged_source_package_size_within_limits() -> None:
-    """AC 17: Verifies that staged collector source and ZIP package strictly satisfy size limits."""
-    # Build in memory zip archive of staged source files
-    zip_buffer = io.BytesIO()
-    total_uncompressed_bytes = 0
+def test_dependency_inclusive_package_size_and_isolated_artifact() -> None:
+    """AC 17: Verifies that the actual dependency-inclusive artifact and ZIP archive satisfy Lambda size limits."""
+    output_dir, zip_path, uncompressed_bytes, compressed_bytes = build_isolated_collector_artifact()
 
-    staged_subpaths = [
-        "functions/evidence_collector",
-        "config",
-        "contracts",
-        "functions/orchestrator/execution/fencing.py",
-        "functions/orchestrator/execution/models.py",
-        "functions/orchestrator/execution/job_events.py",
-    ]
+    assert output_dir.exists()
+    assert zip_path.exists()
 
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for subpath in staged_subpaths:
-            full_path = BACKEND_SRC_DIR / subpath
-            if full_path.is_file():
-                file_bytes = full_path.read_bytes()
-                zf.writestr(subpath, file_bytes)
-                total_uncompressed_bytes += len(file_bytes)
-            elif full_path.is_dir():
-                for root, _, files in os.walk(full_path):
-                    if "__pycache__" in root:
-                        continue
-                    for f in files:
-                        if f.endswith(".pyc"):
-                            continue
-                        f_path = Path(root) / f
-                        rel_archive_path = str(f_path.relative_to(BACKEND_SRC_DIR))
-                        file_bytes = f_path.read_bytes()
-                        zf.writestr(rel_archive_path, file_bytes)
-                        total_uncompressed_bytes += len(file_bytes)
+    # Verify presence of installed dependencies
+    assert (output_dir / "pydantic").exists()
+    assert (output_dir / "sqlalchemy").exists()
+    assert (output_dir / "asyncpg").exists()
+    assert (output_dir / "httpx").exists()
+    assert (output_dir / "scrapling").exists()
 
-    compressed_bytes = zip_buffer.tell()
+    # Verify presence of permitted collector and shared execution files
+    assert (output_dir / "functions" / "evidence_collector" / "consumer.py").exists()
+    assert (output_dir / "functions" / "evidence_collector" / "service.py").exists()
+    assert (output_dir / "functions" / "orchestrator" / "execution" / "fencing.py").exists()
+    assert (output_dir / "functions" / "orchestrator" / "execution" / "models.py").exists()
+    assert (output_dir / "config" / "config.py").exists()
+    assert (output_dir / "contracts" / "evidence.py").exists()
+    assert (output_dir / "contracts" / "money.py").exists()
 
-    # AC 17 size assertions
-    assert total_uncompressed_bytes < MAX_UNCOMPRESSED_BYTES, (
-        f"Uncompressed size {total_uncompressed_bytes} exceeds limit of {MAX_UNCOMPRESSED_BYTES} bytes"
+    # Strict isolation: forbidden application modules must be excluded
+    for mod_path in FORBIDDEN_APP_MODULES:
+        rel_parts = mod_path.split(".")
+        target_path = output_dir.joinpath(*rel_parts)
+        assert not target_path.exists(), f"Forbidden app module {mod_path} found in artifact: {target_path}"
+
+    # Strict isolation: forbidden heavy third-party packages must be excluded
+    for pkg in FORBIDDEN_HEAVY_PACKAGES:
+        pkg_dir = output_dir / pkg
+        assert not pkg_dir.exists(), f"Forbidden heavy package {pkg} found in artifact: {pkg_dir}"
+
+    # AC 17 size assertions on the actual dependency-inclusive package
+    assert uncompressed_bytes < MAX_UNCOMPRESSED_BYTES, (
+        f"Dependency-inclusive uncompressed size {uncompressed_bytes} bytes exceeds {MAX_UNCOMPRESSED_BYTES} bytes"
     )
     assert compressed_bytes < MAX_COMPRESSED_BYTES, (
-        f"Compressed size {compressed_bytes} exceeds limit of {MAX_COMPRESSED_BYTES} bytes"
+        f"Dependency-inclusive compressed ZIP size {compressed_bytes} bytes exceeds {MAX_COMPRESSED_BYTES} bytes"
     )
 
-    # Uncompressed source should be lean (under 10 MB for staged source files)
-    assert total_uncompressed_bytes < 10 * 1024 * 1024
-    # Compressed archive should be under 5 MB for source files
-    assert compressed_bytes < 5 * 1024 * 1024
+
+def test_verify_handler_import_clean_lambda_environment() -> None:
+    """Verifies that the consumer handler imports cleanly in a Lambda-compatible environment with only artifact on PYTHONPATH."""
+    output_dir = BACKEND_DIR / "build" / "evidence_collector"
+    if not output_dir.exists():
+        output_dir, _, _, _ = build_isolated_collector_artifact()
+
+    result = verify_handler_in_clean_environment(output_dir)
+    assert result["status"] == "SUCCESS"
 
 
 def test_sam_build_artifact_inspection() -> None:
     """Verifies build artifact directory generated during sam build."""
-    build_dir = Path(__file__).resolve().parents[3] / ".aws-sam" / "build" / "EvidenceCollectorFunction"
+    build_dir = BACKEND_DIR / ".aws-sam" / "build" / "EvidenceCollectorFunction"
     if not build_dir.exists():
         pytest.skip("sam build artifact not generated yet; run sam build first")
 
@@ -179,8 +196,35 @@ def test_sam_build_artifact_inspection() -> None:
     entrypoint = build_dir / "functions" / "evidence_collector" / "consumer.py"
     assert entrypoint.exists(), f"Entrypoint missing in built artifact: {entrypoint}"
 
+    # Forbidden modules must not exist in built SAM artifact
+    assert not (build_dir / "functions" / "optimizer").exists()
+    assert not (build_dir / "functions" / "api").exists()
+    assert not (build_dir / "functions" / "orchestrator" / "evidence").exists()
+    assert not (build_dir / "functions" / "orchestrator" / "places").exists()
+    assert not (build_dir / "functions" / "orchestrator" / "graphs").exists()
+
     # Calculate actual size of the built artifact directory
     total_size = sum(f.stat().st_size for f in build_dir.rglob("*") if f.is_file())
     assert total_size < MAX_UNCOMPRESSED_BYTES, (
         f"SAM built artifact size {total_size} exceeds {MAX_UNCOMPRESSED_BYTES} bytes"
     )
+
+
+def test_cached_artifact_build_avoids_reinstallation() -> None:
+    """Verifies that subsequent builds reuse cached dependencies when requirements.txt has not changed."""
+    import time
+
+    start_time = time.perf_counter()
+    output_dir, zip_path, uncompressed_bytes, compressed_bytes = build_isolated_collector_artifact(
+        force_reinstall=False
+    )
+    elapsed = time.perf_counter() - start_time
+
+    assert output_dir.exists()
+    assert (output_dir / ".requirements.hash").exists()
+    assert (output_dir / "pydantic").exists()
+    assert (output_dir / "contracts" / "money.py").exists()
+    assert uncompressed_bytes < MAX_UNCOMPRESSED_BYTES
+    # Cached run should complete in under 5 seconds (typically ~0.5s without pip)
+    assert elapsed < 5.0, f"Cached build took too long ({elapsed:.2f}s); dependency caching failed"
+

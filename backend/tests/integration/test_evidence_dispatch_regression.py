@@ -24,6 +24,7 @@ from sqlalchemy import select
 
 from config.config import settings
 from functions.api.models import TripModel
+from functions.evidence_collector.consumer import process_record as evidence_process_record
 from functions.evidence_collector.models import SourceObservationModel
 from functions.orchestrator.execution.models import (
     ExecutionModel,
@@ -32,7 +33,6 @@ from functions.orchestrator.execution.models import (
     WorkerResultModel,
 )
 from functions.orchestrator.execution.transport import OutboxMessage, SqsTransportAdapter
-from functions.orchestrator.execution.worker_consumer import process_record as worker_process_record
 
 
 async def _create_test_task_and_execution(
@@ -175,8 +175,8 @@ async def test_offline_evidence_dispatch_envelope_runtime_persistence_and_fencin
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = mock_resp
 
-        # Invoke runtime entrypoint with NO injected adapters or fixtures
-        await worker_process_record(sqs_record, session_factory)
+        # Invoke dedicated collector consumer with NO injected adapters or fixtures
+        await evidence_process_record(sqs_record, session_factory)
 
     # 1. Verify immutable observation persistence in PostgreSQL
     async with session_factory() as session:
@@ -266,8 +266,8 @@ async def test_offline_evidence_dispatch_missing_config_produces_unavailable_res
         ),
     }
 
-    # Execute runtime entrypoint without any injected adapters
-    await worker_process_record(sqs_record, session_factory)
+    # Execute dedicated collector consumer without any injected adapters
+    await evidence_process_record(sqs_record, session_factory)
 
     async with session_factory() as session:
         # Zero synthetic observations persisted

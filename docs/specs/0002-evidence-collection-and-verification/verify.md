@@ -36,7 +36,7 @@ Steps derived from spec 0002 acceptance criteria and specced surfaces. `/check v
 - [x] Policy `ClaimVerificationPolicy` in `backend/src/functions/orchestrator/evidence/policy.py`.
 - [x] Service `ClaimVerificationService` in `backend/src/functions/orchestrator/evidence/service.py`.
 - [x] Worker service `EvidenceCollectorService` in `backend/src/functions/evidence_collector/service.py`.
-- [x] Routing delegation in `backend/src/functions/orchestrator/execution/worker_consumer.py` routing `("EVIDENCE", "collect")` to `EvidenceCollectorService` without synthetic echo stubs in `executor_registry.py`.
+- [x] Dedicated SQS queue routing in `backend/src/functions/orchestrator/execution/transport.py` routing worker `EVIDENCE` to dedicated collector queue, and dedicated consumer in `backend/src/functions/evidence_collector/consumer.py` executing `EvidenceCollectorService` without synthetic echo stubs in `executor_registry.py` and with zero reverse imports into orchestrator.
 - [x] Template `backend/src/functions/evidence_collector/template.yaml` validating under `sam validate`.
 
 ## Verification evidence gates
@@ -104,3 +104,12 @@ Live AWS infrastructure operations are tracked separately and deferred until ful
 - [x] `uv run pytest tests/unit/test_executor_registry.py tests/integration/test_evidence_dispatch_regression.py -v`: 7 tests pass on live PostgreSQL verifying removal of echo stub, live adapter runtime construction, immutable observation persistence, fenced completion, missing credential handling, and dedicated SQS queue routing
 - [x] Live runtime proof: executed `verify_evidence_runtime_proof.py` against live PostgreSQL, verifying observation persistence, fenced task completion, and explicit unavailable source handling
 - [x] `uv run pytest`: all 288 tests pass across the full suite on live PostgreSQL
+
+## Standalone collector packaging and boundary verification commands
+- [x] `sam validate -t src/functions/evidence_collector/template.yaml --region ap-south-1`: verified valid SAM template aligning Environment allowed values (local, staging, production) and Settings variables (AC-17)
+- [x] `sam build -t src/functions/evidence_collector/template.yaml`: verified build succeeds cleanly with CopySource into `.aws-sam/build/EvidenceCollectorFunction` (AC-17)
+- [x] `uv run python -m functions.evidence_collector.packaging`: builds isolated artifact (86.3 MB uncompressed, 33.47 MB compressed ZIP) meeting Lambda size limits (250 MB and 50 MB) and verifies clean environment handler import in an isolated subprocess with zero forbidden modules (AC-17)
+- [x] `uv run pytest tests/unit/test_sam_package_size.py tests/integration/test_evidence_dispatch_regression.py tests/unit/test_executor_registry.py -v`: 12 tests pass verifying SAM packaging, clean Lambda environment import, isolated artifact boundaries, echo stub removal, and dedicated queue dispatch (AC-15, AC-17)
+- [x] `uv run python scratch/verify_evidence_runtime_proof.py`: verified live PostgreSQL persistence of immutable observations, fenced task completion, explicit missing configuration handling, transport routing to dedicated queue, and clean environment handler import (AC-3, AC-15, AC-16, AC-17)
+- [x] `uv run ruff check` and `uv run mypy`: all checks pass with zero issues found in touched source and test files
+
