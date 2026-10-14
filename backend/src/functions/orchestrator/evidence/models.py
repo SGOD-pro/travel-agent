@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy import (
@@ -19,10 +19,8 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from config.base_model import Base
-
-if TYPE_CHECKING:
-    from functions.evidence_collector.models import SourceObservationModel
-    from functions.orchestrator.places.models import CanonicalPlaceModel
+from functions.evidence_collector.models import SourceObservationModel
+from functions.orchestrator.places.models import CanonicalPlaceModel
 
 
 class ClaimModel(Base):

@@ -1,7 +1,6 @@
 """Configuration settings using pydantic-settings.
 
 Supports environments: local, staging, production.
-Supports both Upstash HTTP Redis (prod) and Local Docker Redis (local).
 """
 
 from __future__ import annotations
@@ -28,42 +27,19 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/travel_planning",
         description="SQLAlchemy asyncpg PostgreSQL connection URL",
     )
-    HOST: str | None = None
-    PORT: int | None = None
-    USER: str | None = None
-    PASSWORD: str | None = None
-    DB_NAME: str | None = None
     DB_SSL: bool = False
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
     def default_database_url_if_empty(cls, v: Any) -> str:
-        if not v or not str(v).strip():
+        url = str(v).strip() if v else ""
+        if not url:
             return "postgresql+asyncpg://postgres:postgres@localhost:5432/travel_planning"
-        url = str(v).strip()
         if url.startswith("postgres://"):
-            url = "postgresql+asyncpg://" + url[len("postgres://") :]
-        elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
-            url = "postgresql+asyncpg://" + url[len("postgresql://") :]
+            return "postgresql+asyncpg://" + url[len("postgres://") :]
+        if url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+            return "postgresql+asyncpg://" + url[len("postgresql://") :]
         return url
-
-    # Redis configuration
-    REDIS_BACKEND: Literal["local", "upstash"] = Field(
-        default="local",
-        description="Redis provider to use: 'local' for standard async TCP redis, 'upstash' for HTTP REST SDK",
-    )
-    REDIS_URL: str = Field(
-        default="redis://localhost:6379/0",
-        description="Connection URL for local Docker Redis",
-    )
-    UPSTASH_REDIS_URL: str = Field(
-        default="",
-        description="REST URL for Upstash Redis (e.g. https://xyz.upstash.io)",
-    )
-    UPSTASH_REDIS_TOKEN: str = Field(
-        default="",
-        description="REST Token for Upstash Redis",
-    )
 
     # SWYRA Auth (OAuth 2.1 / OIDC)
     AUTH_ISSUER: str = Field(

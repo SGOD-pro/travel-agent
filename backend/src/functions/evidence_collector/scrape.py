@@ -30,7 +30,7 @@ from functions.evidence_collector.fixtures import (
     compute_content_hash,
     normalize_url,
 )
-from functions.evidence_collector.ssrf import safe_fetch_page, validate_url_ssrf
+from functions.evidence_collector.ssrf import safe_fetch_page
 
 logger = logging.getLogger(__name__)
 

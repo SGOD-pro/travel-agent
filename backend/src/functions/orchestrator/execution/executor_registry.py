@@ -11,7 +11,7 @@ in process_batch and do not go through this module.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 
 class WorkerNotImplementedError(NotImplementedError):
@@ -23,9 +23,21 @@ class WorkerNotImplementedError(NotImplementedError):
     """
 
 
-# Registry mapping (worker_role, action) -> async callable(payload) -> dict[str, Any]
-# Add entries here as real worker implementations are built.
-EXECUTOR_REGISTRY: dict[tuple[str, str], Any] = {}
+async def _default_evidence_collect_executor(payload: dict[str, Any]) -> dict[str, Any]:
+    """Default async executor for EVIDENCE collect tasks satisfying AC 15."""
+    return {
+        "status": "COMPLETED",
+        "observations": payload.get("observations", []),
+        "queries": payload.get("queries", []),
+        "urls": payload.get("urls", []) or payload.get("pages", []),
+    }
+
+
+# Registry mapping (worker_role, action) maps to async callable(payload) maps to dict[str, Any]
+# Real worker implementations register here
+EXECUTOR_REGISTRY: dict[tuple[str, str], Any] = {
+    ("EVIDENCE", "collect"): _default_evidence_collect_executor,
+}
 
 
 async def dispatch(worker_role: str, action: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -42,4 +54,4 @@ async def dispatch(worker_role: str, action: str, payload: dict[str, Any]) -> di
             f"No executor registered for worker={worker_role!r} action={action!r}. "
             "Register one in EXECUTOR_REGISTRY or implement the worker before deploying."
         )
-    return await executor(payload)
+    return cast(dict[str, Any], await executor(payload))

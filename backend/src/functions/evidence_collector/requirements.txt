@@ -1,0 +1,10 @@
+# Evidence Collector Lambda runtime dependencies
+# Heavy packages (LangGraph, Playwright, ortools, Shapely, ReportLab) are excluded
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29.0
+httpx>=0.27.0
+scrapling>=0.4.15
+orjson>=3.10.0
+boto3>=1.34.0

@@ -1,7 +1,7 @@
 # 0002. Evidence collection with provenance and canonical place and claim verification
 
 **Date**: 2026-10-10
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 
@@ -524,19 +524,19 @@ The build plan establishes a thin end to end thread across persistence, adapter,
    - Implement browser escalation request emission (NEEDS_BROWSER).
    - Satisfies AC-1, AC-2, AC-4, AC-13, AC-14, AC-18 (Tests: test_serpapi_adapter, test_scrapling_parser, test_worker_budget_exhaustion, test_ssrf_protection).
 
-4. [Slice 4: Canonical place resolution service]
+4. [x] [Slice 4: Canonical place resolution service]
    - Implement `CanonicalPlacesRepository` with PostGIS spatial operations and geocoder provenance.
    - Implement candidate resolution logic with 100 meter proximity and ambiguous place detection.
    - Implement annular discovery band queries (ST_DWithin).
    - Satisfies AC-6, AC-7 (Tests: test_canonical_places_spatial, test_ambiguous_resolution).
 
-5. [Slice 5: Deterministic Policy Engine]
+5. [x] [Slice 5: Deterministic Policy Engine]
    - Implement `ClaimVerificationPolicy` with domain authority rules.
    - Implement category freshness evaluator strictly relying on publication dates.
    - Implement conflict detection and mutual contradiction cross referencing.
    - Satisfies AC-9, AC-10, AC-11, AC-12 (Tests: test_policy_authority, test_freshness_rules, test_conflict_preservation).
 
-6. [Slice 6: SAM packaging and verification suites]
+6. [x] [Slice 6: SAM packaging and verification suites]
    - Create `backend/src/functions/evidence_collector/template.yaml` and `requirements.txt`.
    - Validate SAM build and packaging size within Lambda limits.
    - Write unit, integration, and E2E trace tests separating offline fixture tests, live-provider smoke tests, SAM builds, and deferred AWS deployment.

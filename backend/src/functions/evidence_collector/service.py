@@ -176,13 +176,8 @@ class EvidenceCollectorService:
             return False
 
         budget = dict(execution.budget or {})
-        remaining_calls = budget.get("remaining_tool_calls")
-        if remaining_calls is None:
-            remaining_calls = 999999
-
-        remaining_cost = budget.get("remaining_cost_minor")
-        if remaining_cost is None:
-            remaining_cost = 999999999
+        remaining_calls = 999999 if budget.get("remaining_tool_calls") is None else int(budget["remaining_tool_calls"])
+        remaining_cost = 999999999 if budget.get("remaining_cost_minor") is None else int(budget["remaining_cost_minor"])
 
         reserved_calls = int(budget.get("reserved_tool_calls", 0))
         reserved_cost = int(budget.get("reserved_cost_minor", 0))
@@ -241,6 +236,23 @@ class EvidenceCollectorService:
 
         execution.budget = budget
         await self._session.commit()
+
+    async def _safe_reconcile_budget(
+        self,
+        execution_id: uuid.UUID,
+        cost_minor: int,
+        *,
+        success: bool,
+    ) -> None:
+        """Reconciles budget safely in finally blocks without suppressing caller exceptions."""
+        try:
+            await self.reconcile_budget(execution_id, cost_minor, success=success)
+        except Exception as reconcile_err:
+            logger.error(
+                "Failed to reconcile budget for execution %s: %s",
+                execution_id,
+                reconcile_err,
+            )
 
     async def stage_observations_and_complete(
         self,
@@ -483,25 +495,11 @@ class EvidenceCollectorService:
                 cost_spent += cost_per_call
                 call_success = True
             finally:
-                # Reconcile budget reservation safely without masking original exceptions
-                try:
-                    if getattr(self._session, "is_active", True):
-                        await self.reconcile_budget(
-                            envelope.execution_id,
-                            cost_per_call,
-                            success=call_success,
-                        )
-                    else:
-                        logger.warning(
-                            "Database session inactive; skipping budget reconciliation for %s",
-                            envelope.execution_id,
-                        )
-                except Exception as reconcile_err:
-                    logger.error(
-                        "Failed to reconcile budget for execution %s: %s",
-                        envelope.execution_id,
-                        reconcile_err,
-                    )
+                await self._safe_reconcile_budget(
+                    envelope.execution_id,
+                    cost_per_call,
+                    success=call_success,
+                )
 
         # 4. Process web page extractions if provided
         if target_urls and extraction_adapter is not None:
@@ -535,25 +533,11 @@ class EvidenceCollectorService:
                     cost_spent += cost_per_call
                     call_success = True
                 finally:
-                    # Reconcile budget reservation safely without masking original exceptions
-                    try:
-                        if getattr(self._session, "is_active", True):
-                            await self.reconcile_budget(
-                                envelope.execution_id,
-                                cost_per_call,
-                                success=call_success,
-                            )
-                        else:
-                            logger.warning(
-                                "Database session inactive; skipping budget reconciliation for %s",
-                                envelope.execution_id,
-                            )
-                    except Exception as reconcile_err:
-                        logger.error(
-                            "Failed to reconcile budget for execution %s: %s",
-                            envelope.execution_id,
-                            reconcile_err,
-                        )
+                    await self._safe_reconcile_budget(
+                        envelope.execution_id,
+                        cost_per_call,
+                        success=call_success,
+                    )
 
         usage_summary = {
             "tool_calls_made": calls_made,

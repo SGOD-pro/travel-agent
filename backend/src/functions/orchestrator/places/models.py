@@ -91,6 +91,11 @@ class CanonicalPlaceModel(Base):
 
     __table_args__ = (
         Index("idx_canonical_places_point", "point", postgresql_using="gist"),
+        Index(
+            "idx_canonical_places_point_geog",
+            sa.text("((point)::geography)"),
+            postgresql_using="gist",
+        ),
         Index("ix_canonical_places_provider_ids", "provider_ids", postgresql_using="gin"),
         Index(
             "uq_canonical_places_osm_id",

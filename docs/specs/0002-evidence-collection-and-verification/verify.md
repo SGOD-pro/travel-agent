@@ -9,18 +9,18 @@ Steps derived from spec 0002 acceptance criteria and specced surfaces. `/check v
 - [x] AC-3: Source pages and searches persist immutable `source_observations` records with SHA256 content hashes, canonical URLs, and excerpts.
 - [x] AC-4: Copied or syndicated articles sharing identical content hashes are linked but flagged as non independent corroboration.
 - [x] AC-5: Canonical places persist in `canonical_places` with reviewed names, locality, PostGIS `geometry(Point, 4326)`, and GiST indexing.
-- [ ] AC-6: Spatial queries filter nearby places across configurable annular bands (2000 to 3000 meters and 5000 to 7000 meters) using `ST_DWithin`.
-- [ ] AC-7: Candidate place matching resolves observations against canonical places within 100 meters and name similarity without destructive entity merging.
+- [x] AC-6: Spatial queries filter nearby places across configurable annular bands (2000 to 3000 meters and 5000 to 7000 meters) using `ST_DWithin`.
+- [x] AC-7: Candidate place matching resolves observations against canonical places within 100 meters and name similarity without destructive entity merging.
 - [x] AC-8: Extracted claims persist in `claims` linked to observations via `claim_evidence` junction table with typed values and geographic scope.
-- [ ] AC-9: Deterministic Policy Engine evaluates claim verification states; generative model proposals cannot directly transition a claim to `VERIFIED`.
-- [ ] AC-10: Critical road closures and festival advisories require authoritative government or police domain evidence to reach `VERIFIED`.
-- [ ] AC-11: Contradictory assertions for the same subject and category are preserved side by side as `CONFLICTED` claims cross referencing each other.
-- [ ] AC-12: Claim freshness is evaluated against category policies, transitioning expired claims to `STALE` without altering historical records.
+- [x] AC-9: Deterministic Policy Engine evaluates claim verification states; generative model proposals cannot directly transition a claim to `VERIFIED`.
+- [x] AC-10: Critical road closures and festival advisories require authoritative government or police domain evidence to reach `VERIFIED`.
+- [x] AC-11: Contradictory assertions for the same subject and category are preserved side by side as `CONFLICTED` claims cross referencing each other.
+- [x] AC-12: Claim freshness is evaluated against category policies, transitioning expired claims to `STALE` without altering historical records.
 - [x] AC-13: Dynamic pages requiring JavaScript emit `browser_requests` without attempting headless browser execution.
 - [x] AC-14: Metered tasks stop dispatching external calls when tool call or cost budgets are exhausted, returning partial results.
 - [x] AC-15: Worker handler registers in 0001 `EXECUTOR_REGISTRY` under `("EVIDENCE", "collect")` and commits results through worker fencing.
 - [x] AC-16: Local tests run entirely offline using canned fixture adapters without requiring network access or `SERPAPI_API_KEY`.
-- [ ] AC-17: Evidence collector packages independently via SAM `template.yaml` within AWS Lambda compressed and uncompressed size limits.
+- [x] AC-17: Evidence collector packages independently via SAM `template.yaml` within AWS Lambda compressed and uncompressed size limits.
 
 ## Specced surfaces
 
@@ -31,12 +31,13 @@ Steps derived from spec 0002 acceptance criteria and specced surfaces. `/check v
 - [x] Adapter `SerpApiAdapter` in `backend/src/functions/evidence_collector/serpapi_adapter.py`.
 - [x] Adapter `ScraplingExtractionAdapter` in `backend/src/functions/evidence_collector/scrape.py`.
 - [x] Adapter `FixtureSearchAdapter` and `FixtureWebExtractionAdapter` in `backend/src/functions/evidence_collector/fixtures.py`.
-- [ ] Repository `CanonicalPlacesRepository` in `backend/src/functions/orchestrator/places/repository.py`.
-- [ ] Repository `ClaimsRepository` in `backend/src/functions/orchestrator/evidence/repository.py`.
-- [ ] Policy `ClaimVerificationPolicy` in `backend/src/functions/orchestrator/evidence/policy.py`.
+- [x] Repository `CanonicalPlacesRepository` in `backend/src/functions/orchestrator/places/repository.py`.
+- [x] Repository `ClaimsRepository` in `backend/src/functions/orchestrator/evidence/repository.py`.
+- [x] Policy `ClaimVerificationPolicy` in `backend/src/functions/orchestrator/evidence/policy.py`.
+- [x] Service `ClaimVerificationService` in `backend/src/functions/orchestrator/evidence/service.py`.
 - [x] Worker service `EvidenceCollectorService` in `backend/src/functions/evidence_collector/service.py`.
-- [ ] Registration `EXECUTOR_REGISTRY[("EVIDENCE", "collect")]` in `backend/src/functions/orchestrator/execution/executor_registry.py`.
-- [ ] Template `backend/src/functions/evidence_collector/template.yaml` validating under `sam validate`.
+- [x] Registration `EXECUTOR_REGISTRY[("EVIDENCE", "collect")]` in `backend/src/functions/orchestrator/execution/executor_registry.py`.
+- [x] Template `backend/src/functions/evidence_collector/template.yaml` validating under `sam validate`.
 
 ## Verification evidence gates
 
@@ -80,4 +81,22 @@ Live AWS infrastructure operations are tracked separately and deferred until ful
 - [x] `uv run ruff check src/functions/evidence_collector tests/unit/test_ssrf_protection.py tests/unit/test_serpapi_adapter.py tests/unit/test_scrapling_parser.py tests/integration/test_worker_budget_and_providers.py` -> all checks pass -> AC-1, AC-2, AC-18
 - [x] `uv run mypy src/functions/evidence_collector` -> no issues found in 9 source files -> AC-1, AC-2, AC-18
 
+## Slice 4 canonical place resolution and spatial verification commands
+- [x] `uv run pytest tests/unit/test_places_resolution_unit.py -v` -> 9 tests pass covering pure Python token similarity (invariant 7), single token containment safety, spelling variations, and candidate schemas -> AC-7
+- [x] `uv run pytest tests/integration/test_canonical_places_spatial.py -v` -> 5 tests pass on live PostgreSQL covering PostGIS ST_DWithin annular bands (2000-3000m and 5000-7000m), geocoder provenance, and provider IDs -> AC-6
+- [x] `uv run pytest tests/integration/test_ambiguous_resolution.py -v` -> 5 tests pass on live PostgreSQL covering candidate resolution within 100m, provider ID matches, and non destructive ambiguous place flagging across localities -> AC-7
+- [x] Live PostGIS runtime proof: executed annular band discovery and candidate place resolution queries against live database with verified distance calculations, index scan execution, and non destructive entity coexistence -> AC-6, AC-7
+- [x] `uv run mypy src/functions/orchestrator/places tests/unit/test_places_resolution_unit.py tests/integration/test_canonical_places_spatial.py tests/integration/test_ambiguous_resolution.py infrastructure/migrations/versions/0010_places_geog_gist.py` -> no issues found in 9 source files -> AC-6, AC-7
 
+## Slice 5 deterministic policy engine verification commands
+- [x] `uv run pytest tests/unit/test_claim_policy_engine_unit.py -v` -> 7 tests pass covering domain authority whitelists, critical road closure gates, freshness windows, and contradiction detection -> AC-9, AC-10, AC-11, AC-12
+- [x] `uv run pytest tests/integration/test_claim_verification_policy.py -v` -> 5 tests pass on live PostgreSQL covering authoritative advisory verification, secondary blog non verification, side by side conflict preservation, and freshness expiration to stale without altering verification -> AC-9, AC-10, AC-11, AC-12
+- [x] `uv run ruff check src/functions/orchestrator/evidence tests/unit/test_claim_policy_engine_unit.py tests/integration/test_claim_verification_policy.py` -> all checks pass -> AC-9, AC-10, AC-11, AC-12
+- [x] `uv run mypy src/functions/orchestrator/evidence tests/unit/test_claim_policy_engine_unit.py tests/integration/test_claim_verification_policy.py` -> no issues found in 8 source files -> AC-9, AC-10, AC-11, AC-12
+
+## Slice 6 SAM packaging and verification commands
+- [x] `sam validate -t src/functions/evidence_collector/template.yaml --region ap-south-1`: verified valid SAM template.
+- [x] `sam build -t src/functions/evidence_collector/template.yaml`: verified build succeeds cleanly with CopySource.
+- [x] `uv run pytest tests/unit/test_sam_package_size.py -v`: 4 tests pass covering template validity, lean dependencies, staged source sizes under 50 MB compressed and 250 MB uncompressed, and build artifacts: AC-17
+- [x] `uv run pytest tests/integration/test_e2e_connected_source.py -v`: 1 test passes on live PostgreSQL verifying end to end collection, PostGIS spatial candidate resolution within 100 meters, claim generation, domain authority verification, and side by side conflict preservation
+- [x] `uv run ruff check` and `uv run mypy`: clean across all touched source and test files

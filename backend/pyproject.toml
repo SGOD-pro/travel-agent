@@ -10,8 +10,6 @@ dependencies = [
     "asyncpg>=0.29.0",
     "geoalchemy2>=0.15.0",
     "alembic>=1.13.0",
-    "upstash-redis>=1.0.0",
-    "redis[hiredis]>=5.0.0",
     "shapely>=2.0.0",
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
@@ -47,7 +45,6 @@ packages = [
     "src/contracts",
     "src/functions",
     "src/middleware",
-    "src/utils",
 ]
 
 [tool.ruff]

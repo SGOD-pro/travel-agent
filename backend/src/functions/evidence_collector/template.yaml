@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Evidence Collector Function SAM Template with SQS Partial Batch Responses and DLQ Redrive Policies
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - test
+      - staging
+      - prod
+    Description: Deployment target environment
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: PostgreSQL connection string with asyncpg dialect
+  OutboxQueueUrl:
+    Type: String
+    Default: ''
+    Description: Optional override for outbox queue URL
+  SerpApiKey:
+    Type: String
+    Default: ''
+    NoEcho: true
+    Description: Optional SerpAPI secret key for external search queries
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 120
+    MemorySize: 512
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        DATABASE_URL: !Ref DatabaseUrl
+        OUTBOX_QUEUE_URL: !Ref OutboxQueueUrl
+        SERPAPI_API_KEY: !Ref SerpApiKey
+
+Resources:
+  # Dead Letter Queue for failed task attempts
+  EvidenceCollectorDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'evidence-collector-task-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  # Work Queue with Redrive Policy
+  EvidenceCollectorQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'evidence-collector-task-dispatch-${Environment}'
+      VisibilityTimeout: 240
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt EvidenceCollectorDLQ.Arn
+        maxReceiveCount: 5
+
+  # Dedicated Evidence Collector SQS Consumer Function
+  EvidenceCollectorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'evidence-collector-${Environment}'
+      Handler: functions.evidence_collector.consumer.lambda_handler
+      CodeUri: ../../
+      Runtime: python3.12
+      Timeout: 120
+      MemorySize: 512
+      Description: SQS consumer for evidence collector TASK_DISPATCH messages
+      Events:
+        TaskDispatchBatch:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt EvidenceCollectorQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+Outputs:
+  EvidenceCollectorQueueUrl:
+    Description: URL of SQS Evidence Collector Task Dispatch Queue
+    Value: !Ref EvidenceCollectorQueue
+  EvidenceCollectorQueueArn:
+    Description: ARN of SQS Evidence Collector Task Dispatch Queue
+    Value: !GetAtt EvidenceCollectorQueue.Arn
+  EvidenceCollectorDLQUrl:
+    Description: URL of SQS Evidence Collector DLQ
+    Value: !Ref EvidenceCollectorDLQ
+  EvidenceCollectorDLQArn:
+    Description: ARN of SQS Evidence Collector DLQ
+    Value: !GetAtt EvidenceCollectorDLQ.Arn
+  EvidenceCollectorFunctionArn:
+    Description: ARN of Evidence Collector Lambda Function
+    Value: !GetAtt EvidenceCollectorFunction.Arn

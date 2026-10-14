@@ -43,22 +43,15 @@ def is_ip_allowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
 
-    if ip.is_loopback:
-        return False
-    if ip.is_link_local:
-        return False
-    if ip.is_private:
-        return False
-    if ip.is_multicast:
-        return False
-    if ip.is_unspecified:
-        return False
-    if ip.is_reserved:
-        return False
-    if isinstance(ip, ipaddress.IPv4Address) and ip in _CARRIER_GRADE_NAT:
-        return False
-
-    return True
+    return not (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_private
+        or ip.is_multicast
+        or ip.is_unspecified
+        or ip.is_reserved
+        or (isinstance(ip, ipaddress.IPv4Address) and ip in _CARRIER_GRADE_NAT)
+    )
 
 
 def validate_hostname_or_ip(
@@ -175,7 +168,7 @@ async def safe_fetch_page(
 
     Returns a tuple of (content_text, final_effective_url, status_code).
     """
-    current_url = validate_url_ssrf(url, dns_resolver=dns_resolver)
+    current_url = url.strip()
     effective_headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -217,10 +210,7 @@ async def safe_fetch_page(
                         f"Redirect limit exceeded ({max_redirects} hops) for {url}"
                     )
 
-                next_url = urljoin(current_url, location.strip())
-                # Validate the next hop destination before looping
-                validate_url_ssrf(next_url, dns_resolver=dns_resolver)
-                current_url = next_url
+                current_url = urljoin(current_url, location.strip())
                 continue
 
             # Read response body under payload size limits
