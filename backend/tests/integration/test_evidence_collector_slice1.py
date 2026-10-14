@@ -232,7 +232,10 @@ async def test_fenced_atomic_completion_boundary(session_factory) -> None:
 
     async with session_factory() as session:
         service = EvidenceCollectorService(session)
-        result_id, obs_ids = await service.execute_collection_task(envelope)
+        result_id, obs_ids = await service.execute_collection_task(
+            envelope,
+            adapter=FixtureSearchAdapter(),
+        )
         assert result_id is not None
         assert len(obs_ids) >= 1
 

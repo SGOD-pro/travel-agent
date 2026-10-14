@@ -66,9 +66,10 @@ Collect source evidence with immutable provenance and verify canonical places an
    - [x] Canonical place resolution and annular band spatial verification: [verify.md](../specs/0002-evidence-collection-and-verification/verify.md) (19 tests, index scan proof, and live PostGIS query proof)
    - [x] Deterministic policy engine verification: [verify.md](../specs/0002-evidence-collection-and-verification/verify.md) (12 tests and live database proof for authority, conflicts, and freshness)
    - [x] SAM packaging and connected source verification: [verify.md](../specs/0002-evidence-collection-and-verification/verify.md) (AC-17, package size limits, and end to end trace)
+   - [x] Production evidence dispatch and adapter wiring verification: [verify.md](../specs/0002-evidence-collection-and-verification/verify.md) (single owner claim and completion, echo stub removal, live adapter wiring, and observation persistence)
    - [ ] Deployed AWS infrastructure evidence (deferred)
-- [x] Review it: `/check review 0002-evidence-collection-and-verification` (2026-10-10 Slice 1 Approve with nits · 2026-10-11 Slice 2 Approve with nits · 2026-10-14 Slice 3 Approve · 2026-10-14 Slice 4 Approve · 2026-10-14 Slice 5 Approve with nits · 2026-10-14 Slice 6 Approve with nits)
-- [x] Test it: `/test 0002-evidence-collection-and-verification` (287 tests passing across entire system · 181 tests for spec 0002 across Slices 1 to 6)
+- [x] Review it: `/check review 0002-evidence-collection-and-verification` (2026-10-10 Slice 1 Approve with nits · 2026-10-11 Slice 2 Approve with nits · 2026-10-14 Slice 3 Approve · 2026-10-14 Slice 4 Approve · 2026-10-14 Slice 5 Approve with nits · 2026-10-14 Slice 6 Approve with nits · 2026-10-15 Production Dispatch Wiring Approve with nits)
+- [x] Test it: `/test 0002-evidence-collection-and-verification` (288 tests passing across entire system · 182 tests for spec 0002)
 - [x] Document it: `/document 0002-evidence-collection-and-verification`
 
 Spec 0002 (`docs/specs/0002-evidence-collection-and-verification.md`, Status: Accepted) · code in `backend/src/functions/evidence_collector/`, `backend/src/functions/orchestrator/places/`, and `backend/src/functions/orchestrator/evidence/`

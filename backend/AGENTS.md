@@ -51,7 +51,7 @@ uv run alembic upgrade head
 - Evidence collection and worker fencing commit atomically in transaction 4; any failure rolls back staged observations cleanly.
 - Canonical places persist reviewed public identity with PostGIS Point geometry and GiST spatial indexes.
 - Claims link to source observations through claim evidence and preserve contradictory assertions as conflicted without overwriting.
-- Offline development and CI use test only fixture adapters (FixtureSearchAdapter); live provider adapters are deferred to Slice 3+.
+- Offline tests use explicit fixture adapter injection; production runtime path constructs live SerpApi and Scrapling adapters with missing credentials producing explicit unavailable records.
 
 ## Gotchas
 

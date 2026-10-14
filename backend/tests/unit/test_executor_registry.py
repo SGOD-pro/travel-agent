@@ -1,7 +1,7 @@
 """Unit tests for worker executor registry and dispatch mechanism.
 
-Conforms to spec 0002 AC-15.
-Validates executor registration, default evidence collection dispatch, and missing executor errors.
+Validates executor registration, dynamic dispatch, and missing executor errors
+after removing the echo-success stub.
 """
 
 from __future__ import annotations
@@ -18,49 +18,18 @@ from functions.orchestrator.execution.executor_registry import (
 
 
 @pytest.mark.asyncio
-async def test_evidence_collect_executor_registered() -> None:
-    """AC-15: Verifies that ('EVIDENCE', 'collect') is registered in EXECUTOR_REGISTRY."""
-    assert ("EVIDENCE", "collect") in EXECUTOR_REGISTRY
-    executor = EXECUTOR_REGISTRY[("EVIDENCE", "collect")]
-    assert callable(executor)
+async def test_echo_success_executor_removed_from_registry() -> None:
+    """Verifies that ('EVIDENCE', 'collect') has no synthetic echo stub in EXECUTOR_REGISTRY."""
+    assert ("EVIDENCE", "collect") not in EXECUTOR_REGISTRY
 
 
 @pytest.mark.asyncio
-async def test_dispatch_evidence_collect_happy_path() -> None:
-    """AC-15: Verifies default dispatch execution for EVIDENCE collect task."""
-    payload = {
-        "observations": ["obs_1", "obs_2"],
-        "queries": ["hotels in Kolkata"],
-        "urls": ["https://example.com/hotels"],
-    }
-    result = await dispatch("EVIDENCE", "collect", payload)
+async def test_dispatch_evidence_collect_without_registered_executor_raises_error() -> None:
+    """Verifies that dispatching ('EVIDENCE', 'collect') raises WorkerNotImplementedError when unregistered."""
+    with pytest.raises(WorkerNotImplementedError) as exc_info:
+        await dispatch("EVIDENCE", "collect", {"queries": ["hotels in Kolkata"]})
 
-    assert result["status"] == "COMPLETED"
-    assert result["observations"] == ["obs_1", "obs_2"]
-    assert result["queries"] == ["hotels in Kolkata"]
-    assert result["urls"] == ["https://example.com/hotels"]
-
-
-@pytest.mark.asyncio
-async def test_dispatch_evidence_collect_empty_payload() -> None:
-    """AC-15: Verifies default dispatch execution when payload fields are absent."""
-    result = await dispatch("EVIDENCE", "collect", {})
-
-    assert result["status"] == "COMPLETED"
-    assert result["observations"] == []
-    assert result["queries"] == []
-    assert result["urls"] == []
-
-
-@pytest.mark.asyncio
-async def test_dispatch_evidence_collect_pages_fallback() -> None:
-    """AC-15: Verifies payload fallback when pages key is provided instead of urls."""
-    payload = {
-        "pages": ["https://example.com/page1"],
-    }
-    result = await dispatch("EVIDENCE", "collect", payload)
-
-    assert result["urls"] == ["https://example.com/page1"]
+    assert "No executor registered for worker='EVIDENCE' action='collect'" in str(exc_info.value)
 
 
 @pytest.mark.asyncio

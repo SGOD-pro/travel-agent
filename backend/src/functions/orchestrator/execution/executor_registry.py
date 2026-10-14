@@ -23,21 +23,9 @@ class WorkerNotImplementedError(NotImplementedError):
     """
 
 
-async def _default_evidence_collect_executor(payload: dict[str, Any]) -> dict[str, Any]:
-    """Default async executor for EVIDENCE collect tasks satisfying AC 15."""
-    return {
-        "status": "COMPLETED",
-        "observations": payload.get("observations", []),
-        "queries": payload.get("queries", []),
-        "urls": payload.get("urls", []) or payload.get("pages", []),
-    }
-
-
 # Registry mapping (worker_role, action) maps to async callable(payload) maps to dict[str, Any]
 # Real worker implementations register here
-EXECUTOR_REGISTRY: dict[tuple[str, str], Any] = {
-    ("EVIDENCE", "collect"): _default_evidence_collect_executor,
-}
+EXECUTOR_REGISTRY: dict[tuple[str, str], Any] = {}
 
 
 async def dispatch(worker_role: str, action: str, payload: dict[str, Any]) -> dict[str, Any]:

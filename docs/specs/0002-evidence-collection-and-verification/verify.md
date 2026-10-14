@@ -18,7 +18,7 @@ Steps derived from spec 0002 acceptance criteria and specced surfaces. `/check v
 - [x] AC-12: Claim freshness is evaluated against category policies, transitioning expired claims to `STALE` without altering historical records.
 - [x] AC-13: Dynamic pages requiring JavaScript emit `browser_requests` without attempting headless browser execution.
 - [x] AC-14: Metered tasks stop dispatching external calls when tool call or cost budgets are exhausted, returning partial results.
-- [x] AC-15: Worker handler registers in 0001 `EXECUTOR_REGISTRY` under `("EVIDENCE", "collect")` and commits results through worker fencing.
+- [x] AC-15: Worker routing dispatches EVIDENCE collect tasks through dedicated EvidenceCollectorService under single claim and completion fencing; echo success stub removed.
 - [x] AC-16: Local tests run entirely offline using canned fixture adapters without requiring network access or `SERPAPI_API_KEY`.
 - [x] AC-17: Evidence collector packages independently via SAM `template.yaml` within AWS Lambda compressed and uncompressed size limits.
 
@@ -36,7 +36,7 @@ Steps derived from spec 0002 acceptance criteria and specced surfaces. `/check v
 - [x] Policy `ClaimVerificationPolicy` in `backend/src/functions/orchestrator/evidence/policy.py`.
 - [x] Service `ClaimVerificationService` in `backend/src/functions/orchestrator/evidence/service.py`.
 - [x] Worker service `EvidenceCollectorService` in `backend/src/functions/evidence_collector/service.py`.
-- [x] Registration `EXECUTOR_REGISTRY[("EVIDENCE", "collect")]` in `backend/src/functions/orchestrator/execution/executor_registry.py`.
+- [x] Routing delegation in `backend/src/functions/orchestrator/execution/worker_consumer.py` routing `("EVIDENCE", "collect")` to `EvidenceCollectorService` without synthetic echo stubs in `executor_registry.py`.
 - [x] Template `backend/src/functions/evidence_collector/template.yaml` validating under `sam validate`.
 
 ## Verification evidence gates
@@ -97,6 +97,10 @@ Live AWS infrastructure operations are tracked separately and deferred until ful
 ## Slice 6 SAM packaging and verification commands
 - [x] `sam validate -t src/functions/evidence_collector/template.yaml --region ap-south-1`: verified valid SAM template.
 - [x] `sam build -t src/functions/evidence_collector/template.yaml`: verified build succeeds cleanly with CopySource.
-- [x] `uv run pytest tests/unit/test_sam_package_size.py -v`: 4 tests pass covering template validity, lean dependencies, staged source sizes under 50 MB compressed and 250 MB uncompressed, and build artifacts: AC-17
 - [x] `uv run pytest tests/integration/test_e2e_connected_source.py -v`: 1 test passes on live PostgreSQL verifying end to end collection, PostGIS spatial candidate resolution within 100 meters, claim generation, domain authority verification, and side by side conflict preservation
 - [x] `uv run ruff check` and `uv run mypy`: clean across all touched source and test files
+
+## Production evidence dispatch and adapter wiring verification commands
+- [x] `uv run pytest tests/unit/test_executor_registry.py tests/integration/test_evidence_dispatch_regression.py -v`: 7 tests pass on live PostgreSQL verifying removal of echo stub, live adapter runtime construction, immutable observation persistence, fenced completion, missing credential handling, and dedicated SQS queue routing
+- [x] Live runtime proof: executed `verify_evidence_runtime_proof.py` against live PostgreSQL, verifying observation persistence, fenced task completion, and explicit unavailable source handling
+- [x] `uv run pytest`: all 288 tests pass across the full suite on live PostgreSQL

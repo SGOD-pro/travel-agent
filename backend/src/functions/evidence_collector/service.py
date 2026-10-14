@@ -19,10 +19,16 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from functions.evidence_collector.fixtures import (
-    FixtureSearchAdapter,
     RawObservation,
 )
 from functions.evidence_collector.models import SourceObservationModel
+from functions.evidence_collector.scrapling_adapter import (
+    ScraplingExtractionAdapter,
+)
+from functions.evidence_collector.serpapi_adapter import (
+    SerpApiAdapter,
+    SerpApiAdapterError,
+)
 from functions.orchestrator.execution.fencing import (
     TaskClaimResult,
     TaskQueueMessage,
@@ -76,7 +82,7 @@ def parse_task_dispatch_envelope(record_or_body: dict[str, Any] | str) -> TaskDi
 
     outbox_delivery_attempts = int(body.get("attempts", 0))
 
-    payload_container = body.get("payload") or {}
+    payload_container = body.get("payload") or body.get("payload_ref") or {}
     task_id_raw = body.get("task_id") or payload_container.get("task_id")
     execution_id_raw = body.get("execution_id") or payload_container.get("execution_id")
 
@@ -85,11 +91,11 @@ def parse_task_dispatch_envelope(record_or_body: dict[str, Any] | str) -> TaskDi
 
     task_id = uuid.UUID(str(task_id_raw))
     execution_id = uuid.UUID(str(execution_id_raw))
-    task_attempt = int(payload_container.get("attempt", 0))
-    context_version = int(payload_container.get("context_version", 1))
-    worker = str(payload_container.get("worker", "EVIDENCE"))
-    action = str(payload_container.get("action", "collect"))
-    inner_payload = payload_container.get("payload") or {}
+    task_attempt = int(payload_container.get("attempt", body.get("attempt", 0)))
+    context_version = int(payload_container.get("context_version", body.get("context_version", 1)))
+    worker = str(payload_container.get("worker", body.get("worker", "EVIDENCE")))
+    action = str(payload_container.get("action", body.get("action", "collect")))
+    inner_payload = payload_container.get("payload") or payload_container
 
     event_id_raw = body.get("event_id")
     if not event_id_raw:
@@ -454,84 +460,73 @@ class EvidenceCollectorService:
         # Initialize shared executions.budget if needed
         await self.initialize_execution_budget_if_needed(envelope.execution_id, budget)
 
-        active_adapter = adapter or FixtureSearchAdapter()
+        active_adapter = adapter if adapter is not None else SerpApiAdapter()
+        active_extraction_adapter = (
+            extraction_adapter if extraction_adapter is not None else ScraplingExtractionAdapter()
+        )
         calls_made = 0
         cost_spent = 0
         budget_exhausted = False
         collected_observations: list[RawObservation] = []
         emitted_browser_requests: list[dict[str, Any]] = []
+        unavailable_sources: list[dict[str, Any]] = []
 
-        # 3. Process search queries with durable pre call budget reservations (AC 14)
-        for q in queries:
-            # Check deadline before dispatch
-            now = datetime.now(UTC)
-            stmt = select(ExecutionModel).where(ExecutionModel.id == envelope.execution_id)
-            res = await self._session.execute(stmt)
-            exec_model = res.scalar_one_or_none()
-            if exec_model:
-                if exec_model.status == "CANCELLED" or exec_model.cancelled_at is not None:
-                    logger.info("Parent execution cancelled; halting collection loop")
-                    break
-                if (
-                    exec_model.deadline_at
-                    and (now + timedelta(seconds=DEADLINE_ADVANCE_GUARD_SECONDS)) >= exec_model.deadline_at
-                ):
-                    logger.warning("Execution deadline approaching; halting collection loop")
-                    break
+        try:
+            # 3. Process search queries with durable pre call budget reservations (AC 14)
+            for q in queries:
+                # Check deadline before dispatch
+                now = datetime.now(UTC)
+                stmt = select(ExecutionModel).where(ExecutionModel.id == envelope.execution_id)
+                res = await self._session.execute(stmt)
+                exec_model = res.scalar_one_or_none()
+                if exec_model:
+                    if exec_model.status == "CANCELLED" or exec_model.cancelled_at is not None:
+                        logger.info("Parent execution cancelled; halting collection loop")
+                        break
+                    if (
+                        exec_model.deadline_at
+                        and (now + timedelta(seconds=DEADLINE_ADVANCE_GUARD_SECONDS)) >= exec_model.deadline_at
+                    ):
+                        logger.warning("Execution deadline approaching; halting collection loop")
+                        break
 
-            # Atomically reserve budget in executions.budget
-            has_budget = await self.reserve_budget(envelope.execution_id, cost_per_call)
-            if not has_budget:
-                budget_exhausted = True
-                logger.info("Budget exhausted for execution %s; stopping queries", envelope.execution_id)
-                break
-
-            # Execute provider call outside database transaction
-            call_success = False
-            try:
-                results = await active_adapter.search(q, limit=5)
-                collected_observations.extend(results)
-                calls_made += 1
-                cost_spent += cost_per_call
-                call_success = True
-            finally:
-                await self._safe_reconcile_budget(
-                    envelope.execution_id,
-                    cost_per_call,
-                    success=call_success,
-                )
-
-        # 4. Process web page extractions if provided
-        if target_urls and extraction_adapter is not None:
-            for url_entry in target_urls:
-                if isinstance(url_entry, dict):
-                    page_url = str(url_entry.get("url") or "")
-                    page_cat = str(url_entry.get("category") or "general")
-                else:
-                    page_url = str(url_entry)
-                    page_cat = "general"
-
-                if not page_url:
+                # Missing configuration must produce explicit failure or unavailable result
+                if isinstance(active_adapter, SerpApiAdapter) and not active_adapter._api_key:
+                    logger.warning(
+                        "SERPAPI_API_KEY is not configured; search provider unavailable for query '%s'",
+                        q,
+                    )
+                    unavailable_sources.append({
+                        "source_type": "SEARCH",
+                        "query": q,
+                        "status": "UNAVAILABLE",
+                        "error": "SERPAPI_API_KEY is not configured; live search requires valid credentials",
+                    })
                     continue
 
+                # Atomically reserve budget in executions.budget
                 has_budget = await self.reserve_budget(envelope.execution_id, cost_per_call)
                 if not has_budget:
                     budget_exhausted = True
+                    logger.info("Budget exhausted for execution %s; stopping queries", envelope.execution_id)
                     break
 
+                # Execute provider call outside database transaction
                 call_success = False
                 try:
-                    if hasattr(extraction_adapter, "extract_page"):
-                        obs_list, b_reqs = await extraction_adapter.extract_page(page_url, category=page_cat)
-                        collected_observations.extend(obs_list)
-                        emitted_browser_requests.extend(b_reqs)
-                    elif hasattr(extraction_adapter, "extract"):
-                        extracted_obs = await extraction_adapter.extract(page_url)
-                        if extracted_obs:
-                            collected_observations.append(extracted_obs)
+                    results = await active_adapter.search(q, limit=5)
+                    collected_observations.extend(results)
                     calls_made += 1
                     cost_spent += cost_per_call
                     call_success = True
+                except SerpApiAdapterError as e:
+                    logger.warning("SerpApi search failed for query '%s': %s", q, e)
+                    unavailable_sources.append({
+                        "source_type": "SEARCH",
+                        "query": q,
+                        "status": "UNAVAILABLE",
+                        "error": str(e),
+                    })
                 finally:
                     await self._safe_reconcile_budget(
                         envelope.execution_id,
@@ -539,17 +534,79 @@ class EvidenceCollectorService:
                         success=call_success,
                     )
 
-        usage_summary = {
-            "tool_calls_made": calls_made,
-            "cost_minor": cost_spent,
-            "currency": currency,
-        }
+            # 4. Process web page extractions if provided
+            if target_urls:
+                for url_entry in target_urls:
+                    if isinstance(url_entry, dict):
+                        page_url = str(url_entry.get("url") or "")
+                        page_cat = str(url_entry.get("category") or "general")
+                    else:
+                        page_url = str(url_entry)
+                        page_cat = "general"
 
-        # 5. Stage observations and complete atomically
-        return await self.stage_observations_and_complete(
-            claim_result=claim_result,
-            observations=collected_observations,
-            usage=usage_summary,
-            browser_requests=emitted_browser_requests,
-            budget_exhausted=budget_exhausted,
-        )
+                    if not page_url:
+                        continue
+
+                    has_budget = await self.reserve_budget(envelope.execution_id, cost_per_call)
+                    if not has_budget:
+                        budget_exhausted = True
+                        break
+
+                    call_success = False
+                    try:
+                        if hasattr(active_extraction_adapter, "extract_page"):
+                            obs_list, b_reqs = await active_extraction_adapter.extract_page(
+                                page_url, category=page_cat
+                            )
+                            collected_observations.extend(obs_list)
+                            emitted_browser_requests.extend(b_reqs)
+                        elif hasattr(active_extraction_adapter, "extract"):
+                            extracted_obs = await active_extraction_adapter.extract(page_url)
+                            if extracted_obs:
+                                collected_observations.append(extracted_obs)
+                        calls_made += 1
+                        cost_spent += cost_per_call
+                        call_success = True
+                    except Exception as e:
+                        logger.warning("Extraction failed for URL '%s': %s", page_url, e)
+                        unavailable_sources.append({
+                            "source_type": "WEB_EXTRACTION",
+                            "url": page_url,
+                            "status": "UNAVAILABLE",
+                            "error": str(e),
+                        })
+                    finally:
+                        await self._safe_reconcile_budget(
+                            envelope.execution_id,
+                            cost_per_call,
+                            success=call_success,
+                        )
+
+            usage_summary = {
+                "tool_calls_made": calls_made,
+                "cost_minor": cost_spent,
+                "currency": currency,
+            }
+
+            # 5. Stage observations and complete atomically
+            return await self.stage_observations_and_complete(
+                claim_result=claim_result,
+                observations=collected_observations,
+                usage=usage_summary,
+                browser_requests=emitted_browser_requests,
+                unavailable_sources=unavailable_sources,
+                budget_exhausted=budget_exhausted,
+            )
+        except Exception as e:
+            logger.exception("Evidence collection execution failed for task %s: %s", envelope.task_id, e)
+            try:
+                await self._fencing_service.fail_task(
+                    task_id=envelope.task_id,
+                    execution_id=envelope.execution_id,
+                    lease_token=claim_result.lease_token,
+                    expected_context_version=envelope.context_version,
+                    error={"message": str(e), "error_type": type(e).__name__},
+                )
+            except Exception as fail_err:
+                logger.error("Failed to fence-fail task %s: %s", envelope.task_id, fail_err)
+            raise

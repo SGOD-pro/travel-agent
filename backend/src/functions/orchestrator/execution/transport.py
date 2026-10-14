@@ -109,6 +109,7 @@ class SqsTransportAdapter(TransportAdapter):
         queue_url: str,
         sqs_client: Any,
         is_fifo: bool = False,
+        worker_queues: dict[str, str] | None = None,
     ) -> None:
         if sqs_client is None:
             raise ValueError(
@@ -118,11 +119,17 @@ class SqsTransportAdapter(TransportAdapter):
         self.queue_url = queue_url
         self.sqs_client = sqs_client
         self.is_fifo = is_fifo
+        self.worker_queues = worker_queues or {}
 
     async def publish(self, message: OutboxMessage) -> None:
+        target_queue_url = self.queue_url
+        if message.kind == "TASK_DISPATCH" and self.worker_queues:
+            worker = message.payload.get("worker")
+            if worker and worker in self.worker_queues:
+                target_queue_url = self.worker_queues[worker]
 
         params: dict[str, Any] = {
-            "QueueUrl": self.queue_url,
+            "QueueUrl": target_queue_url,
             "MessageBody": message.to_json(),
             "MessageAttributes": {
                 "EventId": {
@@ -163,10 +170,15 @@ def build_sqs_transport() -> TransportAdapter:
 
     Use SqsTransportAdapter directly only when you already hold a configured client.
     """
-    queue_url = os.environ.get("OUTBOX_QUEUE_URL", "")
+    queue_url = os.environ.get("OUTBOX_QUEUE_URL") or os.environ.get("SQS_QUEUE_URL", "")
     if not queue_url:
         logger.warning("OUTBOX_QUEUE_URL not set; using NullTransportAdapter (messages discarded)")
         return NullTransportAdapter()
+
+    worker_queues: dict[str, str] = {}
+    evidence_queue = os.environ.get("EVIDENCE_COLLECTOR_QUEUE_URL")
+    if evidence_queue:
+        worker_queues["EVIDENCE"] = evidence_queue
 
     try:
         import boto3
@@ -178,6 +190,7 @@ def build_sqs_transport() -> TransportAdapter:
             queue_url=queue_url,
             sqs_client=sqs_client,
             is_fifo=queue_url.endswith(".fifo"),
+            worker_queues=worker_queues,
         )
     except ImportError:
         logger.warning(

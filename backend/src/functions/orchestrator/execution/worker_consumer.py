@@ -23,7 +23,7 @@ from functions.orchestrator.execution.fencing import (
 logger = logging.getLogger(__name__)
 
 
-async def process_record(record: dict[str, Any], session_factory) -> None:
+async def process_record(record: dict[str, Any], session_factory: Any) -> None:
     """Parses and validates a TASK_DISPATCH record and executes the worker claim loop."""
     body_str = record.get("body", "{}")
     try:
@@ -50,9 +50,16 @@ async def process_record(record: dict[str, Any], session_factory) -> None:
 
     # In a real worker, these would match the worker's assigned role
     # For this trace, we derive them from the payload if possible, or use a dummy
-    payload = body.get("payload_ref") or {}
+    payload = body.get("payload_ref") or body.get("payload") or {}
     worker_role = payload.get("worker", "EVIDENCE")
     action = payload.get("action", "collect")
+
+    # Route EVIDENCE.collect tasks through real collection with one owner of claim/completion
+    if worker_role == "EVIDENCE" and action == "collect":
+        from functions.evidence_collector.consumer import process_record as process_evidence_record
+
+        await process_evidence_record(record, session_factory)
+        return
 
     message = TaskQueueMessage(
         task_id=task_id,
