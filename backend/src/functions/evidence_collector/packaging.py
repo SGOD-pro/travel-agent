@@ -286,13 +286,14 @@ import os, sys, platform
 assert sys.version_info[:2] == (3, 12), f"Expected Python 3.12 runtime, got {sys.version}"
 assert platform.machine().lower() in ("x86_64", "amd64"), f"Expected x86_64 architecture, got {platform.machine()}"
 
-# 2. Confirm host site-packages and virtualenv paths are strictly excluded from sys.path
+# 2. Confirm dependencies come only from artifact and site-packages is completely excluded
 for path_entry in sys.path:
     assert ".venv" not in path_entry, f"Host virtualenv path found in sys.path: {path_entry}"
-    if "site-packages" in path_entry:
-        assert "cpython-3.12" in path_entry or path_entry == os.environ.get("PYTHONPATH"), (
-            f"Unexpected host site-packages found in sys.path: {path_entry}"
-        )
+    assert "site-packages" not in path_entry, f"Forbidden site-packages found in sys.path: {path_entry}"
+
+# Verify standard library paths are retained and artifact directory is present
+assert any("lib/python3.12" in p or "lib-dynload" in p for p in sys.path), "Standard library missing from sys.path"
+assert any(os.path.realpath(p) == os.path.realpath(os.environ["PYTHONPATH"]) for p in sys.path), "Artifact dir missing from sys.path"
 
 # 3. Verify handler import from isolated artifact
 from functions.evidence_collector.consumer import lambda_handler, process_batch, process_record
@@ -338,7 +339,7 @@ print("OK")
     }
 
     res = subprocess.run(
-        [runtime_python, "-s", "-P", "-c", verify_script],
+        [runtime_python, "-S", "-P", "-c", verify_script],
         cwd=str(artifact_dir.resolve()),
         env=clean_env,
         capture_output=True,
