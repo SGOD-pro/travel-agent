@@ -55,7 +55,10 @@ PERMITTED_CONTRACT_FILES: tuple[str, ...] = (
 
 
 def resolve_python_runtime_binary() -> str:
-    """Finds a compatible Python runtime binary for building and verifying the artifact."""
+    """Finds a compatible Python runtime binary for building and verifying the artifact.
+
+    Fails explicitly if Python 3.12 is not available.
+    """
     # Check uv managed Python 3.12 installations
     candidates = [
         Path.home() / ".local" / "share" / "uv" / "python" / "cpython-3.12-linux-x86_64-gnu" / "bin" / "python3.12",
@@ -80,8 +83,20 @@ def resolve_python_runtime_binary() -> str:
     except Exception:
         pass
 
-    # Fallback to current virtualenv or sys.executable
-    return sys.executable
+    # Check which python3.12 in PATH
+    which_py = shutil.which("python3.12")
+    if which_py and os.access(which_py, os.X_OK):
+        return which_py
+
+    # Check if active interpreter is Python 3.12
+    if sys.version_info[:2] == (3, 12):
+        return sys.executable
+
+    raise RuntimeError(
+        f"Required Python 3.12 runtime is unavailable. "
+        f"Active interpreter is Python {sys.version_info[0]}.{sys.version_info[1]} ({sys.executable}). "
+        f"Standalone collector artifact packaging and verification strictly requires Python 3.12."
+    )
 
 
 def build_isolated_collector_artifact(
@@ -265,15 +280,27 @@ def verify_handler_in_clean_environment(
     runtime_python = str(python_bin) if python_bin else resolve_python_runtime_binary()
 
     verify_script = """
-import os, sys
+import os, sys, platform
 
-# 1. Verify handler import from isolated artifact
+# 1. Confirm runtime and architecture compatibility
+assert sys.version_info[:2] == (3, 12), f"Expected Python 3.12 runtime, got {sys.version}"
+assert platform.machine().lower() in ("x86_64", "amd64"), f"Expected x86_64 architecture, got {platform.machine()}"
+
+# 2. Confirm host site-packages and virtualenv paths are strictly excluded from sys.path
+for path_entry in sys.path:
+    assert ".venv" not in path_entry, f"Host virtualenv path found in sys.path: {path_entry}"
+    if "site-packages" in path_entry:
+        assert "cpython-3.12" in path_entry or path_entry == os.environ.get("PYTHONPATH"), (
+            f"Unexpected host site-packages found in sys.path: {path_entry}"
+        )
+
+# 3. Verify handler import from isolated artifact
 from functions.evidence_collector.consumer import lambda_handler, process_batch, process_record
 assert callable(lambda_handler), "lambda_handler must be callable"
 assert callable(process_batch), "process_batch must be callable"
 assert callable(process_record), "process_record must be callable"
 
-# 2. Verify all forbidden heavy and orchestrator modules fail to import
+# 4. Verify all forbidden heavy and orchestrator modules fail to import
 forbidden_modules = [
     "functions.optimizer",
     "functions.api",
@@ -299,6 +326,7 @@ print("OK")
     clean_env = {
         "PATH": os.environ.get("PATH", ""),
         "PYTHONPATH": str(artifact_dir.resolve()),
+        "PYTHONNOUSERSITE": "1",
         "ENVIRONMENT": "staging",
         "DATABASE_URL": "postgresql+asyncpg://postgres:postgres@localhost:5432/travel_planning",
         "SQS_QUEUE_URL": "https://sqs.ap-south-1.amazonaws.com/123/evidence-queue",
@@ -310,7 +338,7 @@ print("OK")
     }
 
     res = subprocess.run(
-        [runtime_python, "-P", "-c", verify_script],
+        [runtime_python, "-s", "-P", "-c", verify_script],
         cwd=str(artifact_dir.resolve()),
         env=clean_env,
         capture_output=True,

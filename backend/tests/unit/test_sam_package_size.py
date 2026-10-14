@@ -25,6 +25,7 @@ from functions.evidence_collector.packaging import (
     MAX_COMPRESSED_BYTES,
     MAX_UNCOMPRESSED_BYTES,
     build_isolated_collector_artifact,
+    resolve_python_runtime_binary,
     verify_handler_in_clean_environment,
 )
 
@@ -99,6 +100,7 @@ def test_template_existence_validity_and_settings_alignment() -> None:
     fn_props = resources["EvidenceCollectorFunction"].get("Properties", {})
     assert fn_props.get("Handler") == "functions.evidence_collector.consumer.lambda_handler"
     assert fn_props.get("Runtime") == "python3.12"
+    assert fn_props.get("Architectures") == ["x86_64"]
     assert fn_props.get("MemorySize") == 512
     assert fn_props.get("CodeUri") == "../../../build/evidence_collector"
 
@@ -227,4 +229,20 @@ def test_cached_artifact_build_avoids_reinstallation() -> None:
     assert uncompressed_bytes < MAX_UNCOMPRESSED_BYTES
     # Cached run should complete in under 5 seconds (typically ~0.5s without pip)
     assert elapsed < 5.0, f"Cached build took too long ({elapsed:.2f}s); dependency caching failed"
+
+
+def test_resolve_python_runtime_binary_fails_when_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AC 17: Verifies that runtime resolution fails explicitly when Python 3.12 is unavailable."""
+    from unittest.mock import MagicMock
+
+    # Simulate missing uv managed paths and failed which
+    monkeypatch.setattr("pathlib.Path.exists", lambda self: False)
+    mock_run = MagicMock(return_value=type("SubResult", (), {"returncode": 1, "stdout": ""})())
+    monkeypatch.setattr("subprocess.run", mock_run)
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+    monkeypatch.setattr("sys.version_info", (3, 13, 0, "final", 0))
+
+    with pytest.raises(RuntimeError, match="Required Python 3.12 runtime is unavailable"):
+        resolve_python_runtime_binary()
+
 

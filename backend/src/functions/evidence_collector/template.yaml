@@ -67,6 +67,8 @@ Resources:
       Handler: functions.evidence_collector.consumer.lambda_handler
       CodeUri: ../../../build/evidence_collector
       Runtime: python3.12
+      Architectures:
+        - x86_64
       Timeout: 120
       MemorySize: 512
       Description: SQS consumer for evidence collector TASK_DISPATCH messages
