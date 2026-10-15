@@ -5,7 +5,7 @@
 
 ## Summary
 
-This specification defines the browser escalation worker and orchestrator workflow integration for dynamic web pages that require JavaScript rendering. When static evidence collection detects a client side application or bot verification challenge, the orchestrator inspects the resulting requests and dispatches targeted browser rendering tasks under strict concurrency and budget limits. A dedicated browser worker executes these tasks using Playwright and an external Chromium layer within an independent AWS Lambda package, ensuring the primary evidence collector stays lean and zero container infrastructure is introduced. All rendered page captures are persisted as immutable source observations linked to original placeholder records, guaranteeing graceful degradation when pages time out or block automation.
+This specification defines the browser escalation worker and orchestrator workflow integration for dynamic web pages that require JavaScript rendering. When static evidence collection detects a client side application or bot verification challenge, the orchestrator inspects the resulting requests and dispatches targeted browser rendering tasks under strict replay safe concurrency and budget limits. A dedicated browser worker executes these tasks using Playwright and an external Chromium layer within an independent AWS Lambda package, ensuring the primary evidence collector stays lean and zero container infrastructure is introduced. All rendered page captures are persisted as immutable source observations linked to original placeholder records, guaranteeing graceful degradation when pages time out or block automation.
 
 ## Context
 
@@ -25,14 +25,14 @@ A dedicated serverless browser escalation worker is required. It must operate un
 - As a system observer, I want rendered page snapshots saved with immutable provenance and clear error boundaries so that failed renders degrade gracefully without failing the entire trip planning workflow.
 
 **Acceptance criteria**:
-- **AC-1**: When an evidence collection task completes with `browser_requests` records in its output, the orchestrator LangGraph workflow evaluates the remaining execution budget and enqueues up to 3 `BROWSER` worker tasks in request emission order for asynchronous dispatch.
+- **AC-1**: When an evidence collection task completes with `browser_requests` records in its output, the orchestrator LangGraph workflow evaluates the remaining execution budget and enqueues up to 3 `BROWSER` worker tasks in request emission order for asynchronous dispatch with replay safe slot limits.
 - **AC-2**: The orchestrator transport layer routes `worker="BROWSER"` task dispatches to the dedicated browser queue URL via `BROWSER_WORKER_QUEUE_URL` environment configuration, preserving modular boundaries without importing browser code into orchestrator modules.
 - **AC-3**: The browser worker claims and executes tasks under `WorkerFencingService` lease fencing, validating parent execution status, context version, and monotonic attempt counters before starting browser automation.
-- **AC-4**: Target URLs and dynamic subresource requests are evaluated against SSRF security policies using self contained browser network route filtering without cross worker imports, blocking access to private network ranges, loopback addresses, and cloud metadata services (169.254.169.254).
-- **AC-5**: The browser worker uses an abstract `BrowserExtractionPort` with a `PlaywrightBrowserAdapter` for live execution and a `FixtureBrowserAdapter` for offline tests, navigating with bounded page timeouts and capturing rendered DOM HTML.
-- **AC-6**: Rendered content is parsed into clean entity observations using Scrapling and persisted as an immutable `SourceObservationModel` with `extraction_method="BROWSER_HTML"`, referencing the original `NEEDS_BROWSER` placeholder observation ID in `artifact_ref` without in place row mutations.
-- **AC-7**: When browser navigation times out, crashes, or encounters bot verification challenges, the worker records an explicit unavailable source entry in `worker_results` and completes the task successfully under lease fencing, allowing the parent workflow to continue without failing the overall execution.
-- **AC-8**: The browser worker packages independently into an isolated AWS Lambda artifact adhering to the 250 MB uncompressed ceiling, relying on an external precompiled Chromium layer in `/opt` and isolating browser dependencies from the evidence collector and orchestrator.
+- **AC-4**: Target URLs and all dynamic subresource requests are evaluated against SSRF security policies using live Playwright route level interception in the driver adapter, aborting navigation to private IP ranges, loopback addresses, and cloud metadata services (169.254.169.254).
+- **AC-5**: The browser worker uses an abstract `BrowserExtractionPort`, verified offline via `FixtureBrowserAdapter` with canned HTML fixtures, and executed live via `PlaywrightBrowserAdapter` with bounded page timeouts and rendered DOM capture.
+- **AC-6**: Rendered content is parsed into clean entity observations using Scrapling and persisted as an immutable `SourceObservationModel` in `source_observations` with `extraction_method="BROWSER_HTML"`, referencing the original `NEEDS_BROWSER` placeholder observation ID in `artifact_ref` without in place row mutations.
+- **AC-7**: When browser navigation times out, crashes, or encounters bot verification challenges, the worker records an explicit unavailable source entry in `worker_results`, completes the task under lease fencing as a success outcome, and allows the parent workflow to continue without failing the overall execution.
+- **AC-8**: The browser worker packages independently into an isolated AWS Lambda artifact where the combined unpacked size of the function package plus external Chromium layer strictly complies with the 250 MB AWS Lambda ceiling, verified under isolated Python 3.12 with `-S -P`.
 
 ## Options considered
 
@@ -89,146 +89,230 @@ Reusing the established 0001 execution engine infrastructure guarantees consiste
 
 ## Feature design
 
-**Data model sketch**:
-Zero schema migrations are required. The feature completely reuses existing canonical PostgreSQL tables:
+### Concrete domain contracts
 
-1. `tasks`:
-   - `worker`: `'BROWSER'`
-   - `action`: `'render'`
-   - `payload_ref`: JSONB holding `url`, `canonical_url`, `category`, `reason`, `wait_until`, `timeout_seconds`, `selector_target`, and `placeholder_observation_id`
-   - `idempotency_key`: `f"{execution_id}:render:{canonical_url_hash}"`
-   - `status`: `PENDING` -> `CLAIMED` -> `RUNNING` -> `COMPLETED` or `FAILED`
-2. `worker_results`:
-   - `output_ref`: JSONB holding `status`, `canonical_url`, `effective_url`, `observation_id`, `render_duration_ms`, `rendered_html_bytes`, `unavailable_reason`, and `usage`
-3. `source_observations`:
-   - `extraction_method`: `'BROWSER_HTML'`
-   - `artifact_ref`: JSONB holding `supersedes_placeholder_id`, `render_duration_ms`, `viewport`, `wait_until`, and `rendered_html_snippet`
-   - `excerpt_text`: substantive rendered text up to 1000 characters
-   - `content_hash`: SHA256 of rendered text
-   - Unique constraint: `(execution_id, canonical_url, content_hash)`
-4. `outbox_events`:
-   - Emits `TASK_DISPATCH` (`worker="BROWSER"`, `action="render"`) and `TASK_COMPLETED`
+All browser data types are strictly typed Pydantic models in `backend/src/contracts/browser.py`:
 
-**State transitions**:
-The browser escalation flow executes across eight distinct phases:
+```python
+from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from enum import StrEnum
+from typing import Any
+from pydantic import BaseModel, ConfigDict, Field
+
+from contracts.evidence import FareObservation, HotelObservation
+
+
+class BrowserRenderStatus(StrEnum):
+    SUCCESS = "SUCCESS"
+    UNAVAILABLE = "UNAVAILABLE"
+    TIMED_OUT = "TIMED_OUT"
+    BLOCKED = "BLOCKED"
+
+
+class BrowserTaskPayload(BaseModel):
+    """Input payload dispatched to the BROWSER worker."""
+
+    model_config = ConfigDict(frozen=True)
+
+    url: str = Field(..., min_length=1, description="Target web page URL to render")
+    canonical_url: str = Field(..., min_length=1, description="Normalized canonical URL")
+    category: str = Field(..., min_length=1, description="Evidence category, e.g. lodging, transit, advisory")
+    reason: str = Field(..., min_length=1, description="Dynamic detection reason, e.g. NOSCRIPT_JAVASCRIPT_REQUIRED")
+    wait_until: str = Field(default="networkidle", description="Navigation completion strategy")
+    timeout_seconds: int = Field(default=20, ge=1, le=60, description="Maximum navigation timeout in seconds")
+    selector_target: str | None = Field(default=None, description="Optional CSS selector required before DOM capture")
+    placeholder_observation_id: str | None = Field(default=None, description="Original NEEDS_BROWSER observation UUID")
+
+
+class BrowserResourceUsage(BaseModel):
+    """Resource consumption metrics for browser page execution."""
+
+    model_config = ConfigDict(frozen=True)
+
+    duration_ms: int = Field(..., ge=0, description="Elapsed execution duration in milliseconds")
+    memory_mb: int | None = Field(default=None, ge=0, description="Estimated memory consumption in megabytes")
+
+
+class BrowserRenderResult(BaseModel):
+    """Normalized output produced by the browser extraction port."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: BrowserRenderStatus = Field(default=BrowserRenderStatus.SUCCESS)
+    canonical_url: str = Field(..., min_length=1)
+    effective_url: str = Field(..., min_length=1)
+    content_hash: str = Field(..., min_length=64, max_length=64, description="SHA256 hex digest of clean rendered text")
+    excerpt_text: str = Field(..., min_length=1, description="Clean substantive text excerpt up to 1000 characters")
+    excerpt_locator: str = Field(..., min_length=1, description="CSS selector or locator for extracted content")
+    rendered_html_snippet: str | None = Field(default=None, description="Bounded excerpt of raw rendered HTML")
+    render_duration_ms: int = Field(..., ge=0)
+    unavailable_reason: str | None = Field(default=None)
+    usage: BrowserResourceUsage
+    parsed_lodging_observations: list[HotelObservation] = Field(default_factory=list)
+    parsed_transit_observations: list[FareObservation] = Field(default_factory=list)
+
+
+class BrowserExtractionPort(ABC):
+    """Abstract port for browser page rendering and dynamic entity extraction."""
+
+    @abstractmethod
+    async def render_page(self, payload: BrowserTaskPayload) -> BrowserRenderResult:
+        """Renders dynamic page content and returns normalized render outcome."""
+        ...
 ```
-[Evidence Collector Task]
-         |
-         v (detects dynamic page)
-[Placeholder Observation (NEEDS_BROWSER)]
-         |
-         v (task complete with browser_requests)
-[Outbox Relay: TASK_COMPLETED]
-         |
-         v
-[Completion Reconciliation Service]
-         |
-         v (LangGraph resume)
-[Dynamic Escalation Node in Graph]
-         | (evaluates budget, enqueues up to 3 tasks)
-[Pending BROWSER Tasks in DB]
-         |
-         v (Outbox Relay: TASK_DISPATCH)
-[BROWSER SQS Queue]
-         |
-         v
-[Browser Worker Consumer]
-         | (claims task under lease fencing)
-[Playwright Chromium Navigation (with SSRF Route Interception)]
-         |
-         v
-[Hydrated DOM HTML Captured]
-         |
-         v
-[Scrapling Entity Extraction]
-         |
-         v
-[Save Observation (BROWSER_HTML) & Complete Task Atomically]
-         |
-         v (Outbox Relay: TASK_COMPLETED)
-[Orchestrator Graph Resumes with Rendered Observations]
+
+The worker task output stored in `WorkerResultModel.output_ref` adheres to this exact schema:
+
+```json
+{
+  "status": "SUCCESS",
+  "canonical_url": "https://example.com/hotels/resort",
+  "effective_url": "https://example.com/hotels/resort",
+  "observation_id": "550e8400-e29b-41d4-a716-446655440000",
+  "content_hash": "a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0",
+  "rendered_html_bytes": 48200,
+  "render_duration_ms": 1420,
+  "unavailable_sources": [],
+  "parsed_observations": [
+    {
+      "property_name": "Grand Palace Resort",
+      "price_per_night": "4500.00",
+      "currency": "INR"
+    }
+  ],
+  "usage": {
+    "duration_ms": 1420,
+    "memory_mb": 512
+  }
+}
 ```
 
-**API surface**:
-The browser worker exposes zero public HTTP endpoints. It operates entirely as an asynchronous SQS consumer with partial batch failure reporting:
+### Durable escalation integration and state transitions
 
-| Component | Interface | Inputs | Outputs | Auth / Scope | Key Errors |
-|---|---|---|---|---|---|
-| Browser Consumer | SQS Event Handler | SQS Batch (`Records` with `TASK_DISPATCH` payload) | `{"batchItemFailures": [{"itemIdentifier": id}]}` | IAM Lambda SQS execution role | Malformed JSON, unparseable envelope |
-| Browser Service | `execute_render_task` | `TaskDispatchEnvelope`, `session`, `driver` | `tuple[UUID, UUID | None]` (`result_id`, `observation_id`) | Worker lease fencing token | LeaseFencingError, ParentCancelledError |
-| Escalation Node | LangGraph Node | `TripPlanningState` with `task_outputs` | `{"pending_tasks": [task_specs], "current_step": "browser_escalated"}` | Internal workflow execution | BudgetExhausted, InvalidState |
+Escalation integrates directly into the orchestrator execution engine across eight distinct transactional steps:
 
-**Value sourcing**:
-Every value required by the acceptance criteria and worker tasks is explicitly sourced:
+1. **Evidence Task Emits Dynamic Requests**: `EvidenceCollectorService` completes an evidence task where Scrapling detected a single page application or noscript tag. It stages a placeholder `SourceObservationModel` (`extraction_method="NEEDS_BROWSER"`) and commits `complete_task(..., output={"browser_requests": [...], "observations": [...]})`.
+2. **Completion Reconciliation and Graph Continuation**: `CompletionReconciliationService` processes `TASK_COMPLETED`. It updates the LangGraph checkpoint with `task_outputs[str(task_id)] = output_payload`. When all initial evidence tasks reach completion, the reconciler transitions `executions.status = "RUNNING"` and emits `EXECUTION_RESUME`.
+3. **Escalation Node Evaluates Replay Safe Slot Limits**: `escalate_dynamic_evidence_node` executes in `trip_planner/graph.py`. It inspects `state["task_outputs"]` for emitted `browser_requests`. It computes available escalation slots:
+   `already_dispatched = set(state.get("dispatched_browser_urls", []))`
+   `available_slots = max(0, 3 - len(already_dispatched))`
+   If `available_slots > 0`, it takes up to `available_slots` unhandled requests in emission order and creates `pending_tasks` specifications:
+   `{"worker": "BROWSER", "action": "render", "payload": BrowserTaskPayload(...).model_dump(mode="json"), "idempotency_key": f"{execution_id}:render:{canonical_url_hash[:16]}", "deadline_seconds": 60, "max_attempts": 3}`.
+   State records `dispatched_browser_urls = list(already_dispatched | new_urls)`.
+4. **Outbox Dispatch Creation**: `GraphRunnerService._apply_graph_outcome` sees `pending_tasks`. In a single atomic database transaction, it inserts `TaskModel(worker="BROWSER", action="render", ...)` rows with unique idempotency keys, inserts `OutboxEventModel(kind="TASK_DISPATCH", ...)` records, and transitions `executions.status = "WAITING_TASKS"`.
+5. **Dedicated SQS Transport Routing**: `OutboxRelayService` relays outbox events. `SqsTransportAdapter` routes messages with `worker="BROWSER"` directly to `BROWSER_WORKER_QUEUE_URL` using configured environment variables without reverse importing browser code.
+6. **Browser Worker Claims Task Under Fencing**: `BrowserWorkerConsumer` receives the SQS message and calls `BrowserWorkerService.execute_render_task`. The service invokes `WorkerFencingService.claim_task(worker="BROWSER", action="render")` under parent first row locking, acquiring an exclusive `lease_token`.
+7. **Render Execution and Atomic Observation Persistence**: The worker executes navigation via `BrowserExtractionPort`. On render success, Scrapling extracts clean text and domain entities. In a single savepoint transaction, the worker inserts a new `SourceObservationModel` (`extraction_method="BROWSER_HTML"`), links `placeholder_observation_id` inside `artifact_ref`, and calls `WorkerFencingService.complete_task`, committing observations and emitting `TASK_COMPLETED` outbox event atomically.
+8. **Reconciliation and Workflow Completion**: `CompletionReconciliationService` applies the browser task output into `state["task_outputs"]`. When all browser tasks finish, the reconciler emits `EXECUTION_RESUME`, allowing the planning graph to resume and compute itineraries with full rendered evidence.
 
-| Action | Value produced / displayed | Source |
-|---|---|---|
-| Graph Escalation | `browser_task.url` | `evidence_task.output_ref["browser_requests"][i]["url"]` |
-| Graph Escalation | `browser_task.canonical_url` | `evidence_task.output_ref["browser_requests"][i]["canonical_url"]` |
-| Graph Escalation | `browser_task.category` | `evidence_task.output_ref["browser_requests"][i]["category"]` |
-| Graph Escalation | `browser_task.reason` | `evidence_task.output_ref["browser_requests"][i]["reason"]` |
-| Graph Escalation | `browser_task.wait_until` | Configured strategy (defaults to `"networkidle"`) |
-| Graph Escalation | `browser_task.timeout_seconds` | Derived from remaining execution deadline or fixed 20 seconds |
-| Graph Escalation | `browser_task.placeholder_id` | Matched from `evidence_task.output_ref["observations"]` where `extraction_method="NEEDS_BROWSER"` |
-| Browser Worker | `source_observations.excerpt_text` | Clean text extracted from hydrated DOM body (up to 1000 characters) |
-| Browser Worker | `source_observations.content_hash` | SHA256 hex digest of clean rendered excerpt text |
-| Browser Worker | `source_observations.artifact_ref` | Dict containing `supersedes_placeholder_id`, `render_duration_ms`, and render metadata |
-| Browser Worker | `worker_results.output_ref` | Dict containing `status`, `observation_id`, `rendered_html_bytes`, and parsed domain entities |
+### Persistence ownership
 
-**Key invariants**:
-- **Strict Budget Ceiling**: A single execution cannot spawn more than 3 browser escalation tasks total.
+To preserve the strict modular boundary convention ("Do not import worker implementations across different function folders"), persistence ownership is defined as follows:
+
+1. **Shared PostgreSQL Storage Table**: `source_observations` in PostgreSQL is the single canonical source of truth for all observations, both static and dynamic.
+2. **Self Contained Browser Model Definition**: Rather than importing `functions.evidence_collector.models` across function directories, `backend/src/functions/browser/models.py` defines `SourceObservationModel` mapped to the existing `source_observations` table using the shared `Base` from `config.base_model`. This ensures the browser package remains fully self contained and isolated during standalone packaging.
+3. **Atomic Worker Commits**: `BrowserWorkerService` writes observations directly in its active database session alongside `WorkerFencingService.complete_task`. If any error occurs before completion, the transaction rolls back cleanly, leaving zero orphaned observation records.
+
+### Replay safe limits
+
+To prevent task multiplication during workflow resumes, crash recovery sweeps, or SQS redeliveries, the 3 task escalation ceiling is enforced with dual layer protection:
+
+1. **State Level Deduplication**: LangGraph checkpoint state maintains `dispatched_browser_urls: list[str]`. When `escalate_dynamic_evidence_node` executes, it only considers URLs not already present in this list. If the workflow resumes or replays, existing URLs are skipped immediately.
+2. **Database Level Idempotency**: Each browser task receives a deterministic idempotency key:
+   `idempotency_key = f"{execution_id}:render:{hashlib.sha256(canonical_url.encode()).hexdigest()[:16]}"`
+   When `GraphRunnerService` inserts tasks, it checks `existing_keys = select(TaskModel.idempotency_key).where(TaskModel.execution_id == execution_id)`. Any duplicate task specification generated during re evaluation is discarded, guaranteeing that no more than 3 browser tasks can ever exist for an execution.
+
+### Browser network controls
+
+Offline tests and unit fixtures do not make real network requests and therefore cannot prove network security against live SSRF vulnerabilities. Live browser network security is enforced in the driver adapter layer during live page execution:
+
+1. **Pre Navigation Address Validation**: Before launching page navigation, `PlaywrightBrowserAdapter` parses the target URL scheme and resolves the destination hostname via system DNS. It rejects non HTTP(S) schemes and aborts immediately if the IP address falls within private, loopback, or link local subnets (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.169.254`, and IPv6 equivalents).
+2. **In Flight Playwright Route Interception**: Attackers can bypass initial URL validation using HTTP 301/302 redirects, dynamic JavaScript `fetch` calls, iframes, or DNS rebinding. To eliminate this vulnerability, `PlaywrightBrowserAdapter` registers a route interception handler on the browser context:
+   `await context.route("**/*", handle_route)`
+   The route handler inspects the target URL of EVERY outgoing subresource request. It resolves the destination IP address and immediately calls `route.abort("blockedbyclient")` if the target points to AWS metadata services (`169.254.169.254`), internal container endpoints, or private networks.
+3. **Bounded Page Lifecycle**: Navigation enforces strict timeouts: `page.goto(url, timeout=timeout_ms, wait_until=wait_until)`. If navigation exceeds 20 seconds, the browser halts navigation cleanly and records a timeout outcome.
+
+### Combined function plus layer packaging acceptance
+
+In AWS Lambda, the 250 MB uncompressed limit applies to the combined sum of the function code package PLUS all uncompressed Lambda Layers. Packaging acceptance is budgeted and verified as follows:
+
+1. **Function Package Budget**:
+   - Compressed ZIP size: strictly beneath 50 MB (target: beneath 35 MB).
+   - Uncompressed directory size: strictly beneath 80 MB.
+2. **Chromium Layer Budget**:
+   - Uncompressed Chromium layer (Sparticuz Chromium in `/opt`): approximately 130 MB.
+3. **Combined Packaging Acceptance Gate**:
+   - `Total Unpacked Size = size(Function Unpacked) + size(Chromium Layer Unpacked) <= 250 MB (262,144,000 bytes)`.
+   - Budget allocation: 80 MB function + 130 MB layer = 210 MB, providing 40 MB safety margin below the AWS Lambda ceiling.
+4. **Packaging Isolation Verification**:
+   - Subprocess execution using `-S -P` with `PYTHONNOUSERSITE=1` and `VIRTUAL_ENV` stripped.
+   - Asserts `lambda_handler`, `process_batch`, and `process_record` import cleanly.
+   - Asserts zero site packages directories on `sys.path`.
+   - Asserts forbidden modules (`ortools`, `functions.optimizer`, `functions.api`, `functions.orchestrator.graphs`, `functions.evidence_collector`) raise `ModuleNotFoundError`.
+   - Fails explicitly if Python 3.12 is missing.
+
+### Key invariants
+
+- **Strict Budget Ceiling**: A single trip execution cannot spawn more than 3 browser escalation tasks total across its entire lifecycle.
 - **Write Once Immutability**: Existing `NEEDS_BROWSER` placeholder observations in PostgreSQL are never mutated in place or deleted. Rendered observations are inserted as new rows with `extraction_method="BROWSER_HTML"`.
-- **SSRF Safety**: Pre navigation DNS checks and Playwright route filtering abort any requests targeting private IP subnets, loopback interfaces, or cloud metadata IP addresses.
+- **Live Route Level Network Security**: All live network requests initiated by headless Chromium are intercepted and filtered against private IP ranges and cloud metadata endpoints.
 - **Fail Safe Graceful Degradation**: Page render timeouts, navigation aborts, or bot challenge blocks record an explicit unavailable source record and complete the task successfully under lease fencing without failing the parent execution.
 - **Independent Packaging**: The browser worker artifact contains only browser consumer code and permitted shared contracts. It never imports optimizer, API, or orchestrator graph code, and evidence collector never imports browser code.
 
-**Security model**:
-- **Network Boundaries**: Pre navigation URL validation using `validate_safe_url`. During page execution, Playwright route interception inspects every HTTP request URL and aborts any subresource targeting forbidden hostnames or non public IP ranges.
+### Security model
+
+- **Network Boundaries**: Pre navigation DNS resolution checks combined with Playwright route level interception aborting private IP and metadata requests.
 - **Fenced Execution**: Task claims require valid parent execution status (`RUNNING` or `WAITING_TASKS`), matching context versions, and unexpired lease tokens.
 - **Zero Secrets in Code**: Environment configuration manages queue URLs and browser binary paths.
 
-**Configuration required**:
+### Configuration required
+
 - `BROWSER_WORKER_QUEUE_URL`: Amazon SQS queue URL for browser task dispatch.
 - `CHROMIUM_PATH`: Path to Chromium executable (defaults to `/opt/bin/chromium` in Lambda, or local system binary in development).
 - `BROWSER_NAVIGATION_TIMEOUT_SECONDS`: Maximum seconds allowed for page navigation (default: 20).
 - `BROWSER_MAX_ESCALATION_TASKS`: Maximum browser tasks permitted per trip execution (default: 3).
 
-**Critical test scenarios**:
+### Critical test scenarios
+
 - Happy path: Evidence task outputs dynamic page request, orchestrator dispatches `BROWSER` task, browser worker captures hydrated DOM HTML, parses lodging entities, and records immutable observation, verifies **AC-1**, **AC-2**, **AC-3**, **AC-5**, **AC-6**.
-- SSRF route blocking: Target page or dynamic redirect attempts navigation to cloud metadata address (`http://169.254.169.254`), request is aborted by route filter and flagged as unsafe, verifies **AC-4**.
-- Navigation timeout and anti bot challenge: Target page hangs or triggers Cloudflare verification, worker catches timeout, records unavailable source entry with descriptive reason, completes task, and workflow continues, verifies **AC-7**.
-- Packaging boundary verification: Clean environment subprocess check with `-S -P` verifies browser worker imports cleanly, meets package size limits, and raises `ModuleNotFoundError` for forbidden modules (`functions.optimizer`, `functions.api`, `functions.orchestrator.graphs`), verifies **AC-8**.
+- Live route level SSRF blocking: Target page or dynamic redirect attempts subresource request to cloud metadata address (`http://169.254.169.254`), request is aborted by Playwright route filter and flagged as unsafe, verifies **AC-4**.
+- Replay safe limit enforcement: Re executing the escalation node on a replayed checkpoint does not spawn duplicate tasks and strictly honors the 3 task maximum, verifies **AC-1**.
+- Navigation timeout and anti bot challenge: Target page hangs or triggers bot verification, worker catches timeout, records unavailable source entry with descriptive reason, completes task successfully, and workflow continues, verifies **AC-7**.
+- Combined packaging verification: Clean environment subprocess check with `-S -P` verifies browser worker imports cleanly, combined function plus layer size stays beneath 250 MB uncompressed, and raises `ModuleNotFoundError` for forbidden modules, verifies **AC-8**.
 
 ## Build plan
 
 The build plan follows the Tracer Bullet approach, standing up a thin vertical thread through contracts, transport, worker claiming, browser rendering, and packaging verification:
 
-1. **Slice 1: Browser Domain Contracts and Port Abstraction**
-   - Create `backend/src/contracts/browser.py` defining `BrowserTaskPayload`, `BrowserRenderResult`, and `BrowserExtractionPort`.
-   - Implement self contained SSRF URL validation in `backend/src/functions/browser/ssrf.py` without importing evidence collector code.
+1. **Slice 1: Browser Domain Contracts and Offline Fixture Adapter**
+   - Create `backend/src/contracts/browser.py` defining `BrowserRenderStatus`, `BrowserTaskPayload`, `BrowserResourceUsage`, `BrowserRenderResult`, and abstract `BrowserExtractionPort`.
    - Implement `FixtureBrowserAdapter` in `backend/src/functions/browser/fixtures.py` simulating dynamic page rendering with canned HTML fixtures for offline tests.
-   - Satisfies **AC-4**, **AC-5**.
+   - Add unit tests for contract serialization, immutability, and fixture adapter execution without live network calls.
+   - Satisfies **AC-5**.
 
 2. **Slice 2: Orchestrator Transport Routing and LangGraph Escalation Node**
    - Update `SqsTransportAdapter` in `functions/orchestrator/execution/transport.py` to route `worker="BROWSER"` to `BROWSER_WORKER_QUEUE_URL`.
-   - Implement `escalate_dynamic_evidence_node` in `functions/orchestrator/graphs/trip_planner/graph.py` to inspect completed evidence outputs, enforce the 3 task ceiling in emission order, and enqueue pending `BROWSER` tasks.
+   - Implement `escalate_dynamic_evidence_node` in `functions/orchestrator/graphs/trip_planner/graph.py` to inspect completed evidence outputs, enforce the 3 task ceiling in emission order, track `dispatched_browser_urls`, and enqueue pending `BROWSER` tasks with deterministic idempotency keys.
    - Satisfies **AC-1**, **AC-2**.
 
-3. **Slice 3: Fenced Browser Worker Service and Observation Persistence**
+3. **Slice 3: Fenced Browser Worker Service, Observation Persistence, and Graceful Degradation**
+   - Implement `SourceObservationModel` mapping in `backend/src/functions/browser/models.py` referencing `source_observations` table without cross worker imports.
    - Implement `BrowserWorkerService` in `backend/src/functions/browser/service.py` to claim tasks under `WorkerFencingService`, execute rendering via the driver port, parse rendered content with Scrapling, and persist `SourceObservationModel` records with `extraction_method="BROWSER_HTML"`.
    - Implement error handling for navigation timeouts and bot challenges, recording unavailable source records and completing tasks gracefully as success.
    - Satisfies **AC-3**, **AC-6**, **AC-7**.
 
-4. **Slice 4: Playwright Driver Adapter and SSRF Route Interception**
-   - Implement `PlaywrightBrowserAdapter` in `backend/src/functions/browser/driver.py` using Playwright async API with route filtering against private IPs and metadata endpoints.
+4. **Slice 4: Playwright Driver Adapter and Live Browser Network Controls**
+   - Implement `PlaywrightBrowserAdapter` in `backend/src/functions/browser/driver.py` using Playwright async API with pre navigation DNS validation and route level interception aborting private IP and metadata requests.
    - Configure headless launch options for Lambda environment compatibility (disabling sandbox, dev shm usage, and gpu).
+   - Add integration tests verifying live route interception and redirect aborts against cloud metadata endpoints.
    - Satisfies **AC-4**, **AC-5**.
 
-5. **Slice 5: SQS Consumer Handler and Standalone SAM Packaging**
+5. **Slice 5: SQS Consumer Handler, SAM Template, and Combined Packaging Acceptance**
    - Implement `lambda_handler`, `process_batch`, and `process_record` in `backend/src/functions/browser/consumer.py` with partial batch failure reporting.
    - Create `backend/src/functions/browser/template.yaml` declaring the browser worker Lambda function, SQS event trigger, DLQ, and Chromium layer binding.
-   - Create `backend/src/functions/browser/packaging.py` and `tests/unit/test_browser_packaging.py` validating package sizes beneath 250 MB uncompressed and verifying strict isolation under `-S -P`.
+   - Create `backend/src/functions/browser/packaging.py` and `tests/unit/test_browser_packaging.py` verifying function package size, combined function plus layer size under 250 MB uncompressed, and strict isolation under `-S -P`.
    - Satisfies **AC-8**.
 
 ## Consequences
@@ -238,6 +322,7 @@ The build plan follows the Tracer Bullet approach, standing up a thin vertical t
 - Zero ECS or ECR infrastructure overhead; the entire system remains strictly serverless and Lambda first.
 - Strict isolation prevents heavy browser dependencies from polluting the orchestrator or evidence collector packages.
 - Provenance and auditability are preserved through write once immutable observation records in PostgreSQL.
+- Replay safe limits guarantee predictable cost and execution bounds during workflow retries and crash recovery.
 
 **Negative / tradeoffs**:
 - Browser worker Lambda functions require 1536 MB of memory and experience higher cold start latency than static scraping Lambdas.
@@ -248,5 +333,5 @@ The build plan follows the Tracer Bullet approach, standing up a thin vertical t
 
 ## Follow-up
 
-- [ ] Enroll feature 3 in `docs/scope/scope.md` linking this specification.
 - [ ] Maintain precompiled Chromium Lambda Layer ARN configuration in SAM deployment parameters for live AWS verification.
+- [ ] Measure live CloudWatch memory and latency metrics during initial cloud deployment to fine tune memory allocations.

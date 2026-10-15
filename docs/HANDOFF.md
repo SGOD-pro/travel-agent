@@ -140,5 +140,5 @@ No live AWS deployment has been executed. The following checks remain deferred u
 ## 10. Next Phase: Browser Escalation
 
 * Next Task: Browser escalation worker service.
-* Purpose: Dynamic pages requiring JavaScript rendering emit `browser_requests` records (AC-13 in spec 0002). The evidence collector Lambda intentionally avoids bundling headless browser engines like Playwright or Chromium. The next phase introduces the browser escalation worker to consume `browser_requests`, execute browser automation in a dedicated container runtime, and feed rendered observation artifacts back into the evidence persistence pipeline.
+* Purpose: Dynamic pages requiring JavaScript rendering emit `browser_requests` records (AC-13 in spec 0002). The evidence collector Lambda intentionally avoids bundling headless browser engines like Playwright or Chromium. The next phase introduces the browser escalation worker to consume `browser_requests`, execute browser automation in a dedicated serverless Lambda runtime with an external Chromium layer, and feed rendered observation artifacts back into the evidence persistence pipeline.
 * Scope Boundaries: Keep the evidence collector Lambda lean and independent. Do not introduce Playwright into `evidence_collector/requirements.txt`. Browser automation must run in its own specialized environment.

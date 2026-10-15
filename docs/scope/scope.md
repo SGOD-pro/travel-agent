@@ -82,11 +82,11 @@ Dedicated serverless browser escalation worker to render dynamic client side web
 **Done when:** browser tasks are claimed and completed under lease fencing, target URLs navigate under SSRF protection, rendered DOM HTML is captured and parsed with Scrapling, immutable source observations are persisted with extraction_method BROWSER_HTML, and the browser worker packages independently beneath AWS Lambda size ceilings.
 - [x] Design it (spec): [0003](../specs/0003-browser-escalation.md)
 - [ ] Build it: `/develop browser escalation worker service and orchestrator dispatch`
-   - [ ] Browser domain contracts, self contained SSRF validator, and offline fixture adapter (AC-4, AC-5)
+   - [ ] Browser domain contracts and offline fixture adapter (AC-5)
    - [ ] Orchestrator SQS transport routing and LangGraph escalation node (AC-1, AC-2)
    - [ ] Fenced browser worker service, observation persistence, and graceful error degradation (AC-3, AC-6, AC-7)
    - [ ] Playwright driver adapter with route level private IP and metadata interception (AC-4, AC-5)
-   - [ ] SQS consumer Lambda handler, SAM template with Chromium layer, and isolated package verification (AC-8)
+   - [ ] SQS consumer Lambda handler, SAM template with Chromium layer, and combined packaging acceptance (AC-8)
 - [ ] Verify it: `/check verify 0003-browser-escalation`
 - [ ] Review it (fresh model): `/check review 0003-browser-escalation`
 - [ ] Test it: `/test 0003-browser-escalation`
