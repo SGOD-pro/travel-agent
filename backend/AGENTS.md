@@ -19,6 +19,7 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/orchestrator/execution/` | Orchestrator execution engine, worker fencing, outbox relay, lease recovery, and reconciliation |
 | `src/functions/orchestrator/places/` | Canonical places persistence, PostGIS geometry models, schemas, and spatial lookup |
 | `src/functions/orchestrator/evidence/` | Claim models, schemas, claim evidence junction, and verification policies |
+| `src/functions/browser/` | Browser escalation worker, page rendering, Scrapling entity parser, and fenced observation persistence |
 
 ## Commands
 
@@ -58,6 +59,9 @@ uv run alembic upgrade head
 - Offline tests use explicit fixture adapter injection; production runtime path constructs live SerpApi and Scrapling adapters with missing credentials producing explicit unavailable records.
 - Evidence collector packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed, excluding orchestrator, optimizer, and heavy third party libraries.
 - Orchestrator modules must not import evidence collector business code; task dispatch routes via dedicated SQS queues.
+- Browser escalation worker handles evidence extraction and rendering only; booking, payment, and transaction automation remain deferred.
+- Remote LAYA model is served from Kaggle through Cloudflare tunnel.
+- Route optimizer and trip planner end to end workflows precede media location development.
 
 ## Gotchas
 

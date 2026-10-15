@@ -78,18 +78,21 @@ Spec 0002 (`docs/specs/0002-evidence-collection-and-verification.md`, Status: Ac
 ## Phase 5: Browser Escalation
 
 ### 3. Browser escalation worker service and orchestrator dispatch · in-progress
-Dedicated serverless browser escalation worker to render dynamic client side web pages emitted from evidence collection, execute Playwright navigation with SSRF route filtering, and persist rendered observations under orchestrator lease fencing. Strictly excludes ECS or ECR container deployments and live AWS deployment.
+Dedicated serverless browser escalation worker to render dynamic client side web pages emitted from evidence collection, execute Playwright navigation with SSRF route filtering, and persist rendered observations under orchestrator lease fencing. Strictly excludes booking, payment, checkout, transaction automation, ECS or ECR container deployments, and live AWS deployment.
 **Done when:** browser tasks are claimed and completed under lease fencing, target URLs navigate under SSRF protection, rendered DOM HTML is captured and parsed with Scrapling, immutable source observations are persisted with extraction_method BROWSER_HTML, and the browser worker packages independently beneath AWS Lambda size ceilings.
 - [x] Design it (spec): [0003](../specs/0003-browser-escalation.md)
 - [ ] Build it: `/develop browser escalation worker service and orchestrator dispatch`
-   - [ ] Browser domain contracts and offline fixture adapter (AC-5)
-   - [ ] Orchestrator SQS transport routing and LangGraph escalation node (AC-1, AC-2)
-   - [ ] Fenced browser worker service, observation persistence, and graceful error degradation (AC-3, AC-6, AC-7)
+   - [x] Browser domain contracts and offline fixture adapter (AC-5)
+   - [x] Orchestrator SQS transport routing and LangGraph escalation node (AC-1, AC-2)
+   - [x] Fenced browser worker service, observation persistence, and graceful error degradation (AC-3, AC-6, AC-7)
    - [ ] Playwright driver adapter with route level private IP and metadata interception (AC-4, AC-5)
    - [ ] SQS consumer Lambda handler, SAM template with Chromium layer, and combined packaging acceptance (AC-8)
 - [ ] Verify it: `/check verify 0003-browser-escalation`
+   - [x] Slice 3 fenced worker service and observation persistence: [verify.md](../specs/0003-browser-escalation/verify.md) (passed all 5 behaviors on live PostgreSQL)
 - [ ] Review it (fresh model): `/check review 0003-browser-escalation`
+   - [x] Slice 2 orchestrator transport and escalation node: [2026-10-15-main.md](../reviews/2026-10-15-main.md) (Approve)
+   - [x] Slice 3 fenced worker service and observation persistence: [2026-10-16-main.md](../reviews/2026-10-16-main.md) (Approve)
 - [ ] Test it: `/test 0003-browser-escalation`
 - [ ] Document it: `/document 0003-browser-escalation`
 
-Spec 0003 (`docs/specs/0003-browser-escalation.md`, Status: Proposed) · code in `backend/src/functions/browser/` and `backend/src/functions/orchestrator/`
+Spec 0003 (`docs/specs/0003-browser-escalation.md`, Status: In Progress) · code in `backend/src/functions/browser/` and `backend/src/functions/orchestrator/`

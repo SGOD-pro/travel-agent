@@ -1,5 +1,5 @@
 """Configuration package."""
 
-from config.config import Settings, settings
+from config.config import Settings, get_settings, settings
 
-__all__ = ["Settings", "settings"]
+__all__ = ["Settings", "get_settings", "settings"]

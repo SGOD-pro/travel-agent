@@ -123,10 +123,18 @@ class SqsTransportAdapter(TransportAdapter):
 
     async def publish(self, message: OutboxMessage) -> None:
         target_queue_url = self.queue_url
-        if message.kind == "TASK_DISPATCH" and self.worker_queues:
+        if message.kind == "TASK_DISPATCH":
             worker = message.payload.get("worker")
-            if worker and worker in self.worker_queues:
+            if worker and self.worker_queues and worker in self.worker_queues:
                 target_queue_url = self.worker_queues[worker]
+            elif worker == "BROWSER":
+                browser_env = os.environ.get("BROWSER_WORKER_QUEUE_URL")
+                if browser_env:
+                    target_queue_url = browser_env
+            elif worker == "EVIDENCE":
+                evidence_env = os.environ.get("EVIDENCE_COLLECTOR_QUEUE_URL")
+                if evidence_env:
+                    target_queue_url = evidence_env
 
         params: dict[str, Any] = {
             "QueueUrl": target_queue_url,
@@ -179,6 +187,10 @@ def build_sqs_transport() -> TransportAdapter:
     evidence_queue = os.environ.get("EVIDENCE_COLLECTOR_QUEUE_URL")
     if evidence_queue:
         worker_queues["EVIDENCE"] = evidence_queue
+
+    browser_queue = os.environ.get("BROWSER_WORKER_QUEUE_URL")
+    if browser_queue:
+        worker_queues["BROWSER"] = browser_queue
 
     try:
         import boto3

@@ -3,6 +3,7 @@
 from functions.orchestrator.graphs.trip_planner.graph import (
     TripPlanningState,
     build_trip_planning_graph,
+    escalate_dynamic_evidence_node,
     trip_planning_workflow,
 )
 
@@ -12,5 +13,6 @@ __all__ = [
     "TripPlanningState",
     "build_trip_planning_graph",
     "build_trip_planning_workflow",
+    "escalate_dynamic_evidence_node",
     "trip_planning_workflow",
 ]

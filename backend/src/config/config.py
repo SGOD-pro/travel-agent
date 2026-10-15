@@ -83,6 +83,29 @@ class Settings(BaseSettings):
         description="Maximum allowed payload download size in bytes",
     )
 
+    # Browser Escalation Worker
+    BROWSER_WORKER_QUEUE_URL: str | None = Field(
+        default=None,
+        description="Amazon SQS queue URL for browser worker task dispatch",
+    )
+    CHROMIUM_PATH: str | None = Field(
+        default=None,
+        description="Path to Chromium executable for browser automation",
+    )
+    BROWSER_NAVIGATION_TIMEOUT_SECONDS: int = Field(
+        default=20,
+        description="Maximum seconds allowed for browser page navigation",
+    )
+    BROWSER_MAX_ESCALATION_TASKS: int = Field(
+        default=3,
+        description="Maximum browser tasks permitted per trip execution",
+    )
+
 
 settings = Settings()
+
+
+def get_settings() -> Settings:
+    """Returns the singleton application settings instance."""
+    return settings
 

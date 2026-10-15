@@ -16,13 +16,13 @@ Travelers, festival visitors, road trippers, food/culture explorers, families, s
 ## Scope
 V1 includes evidence research and verification, all three workflows, real geocoding/routing integration, maps, replanning, asynchronous progress and cancellation, owner isolation, estimates and merchant handoff links when useful. Travel research covers the categories in REQUIREMENTS.md; destination intelligence is not an optional marketing feature.
 
-Trip alternatives may compare duration, experience selection and cost basis. Live commercial search/booking requires separately enabled provider adapters; editorial links are not live offers. No v1 payment, reservation execution, price locks or guaranteed total when costs are unknown. Voice is v1.1. No new roadmap is introduced here.
+Trip alternatives may compare duration, experience selection, and cost basis. Live commercial search and booking requires separately enabled provider adapters; editorial links are not live offers. Browser escalation covers evidence rendering and extraction only; booking, payment, checkout, and transaction automation remain deferred. Route optimizer and trip planner end to end workflows precede media location development. Voice is v1.1. No new roadmap is introduced here.
 
 ## Constraints and principles
 - Next.js frontend; FastAPI API; module-owned backend folders; independent Lambda ZIP builds; AWS SAM and changed-module CI/CD.
 - Lambda-first; no assumed ECR/ECS/EC2 deployment. Heavy workers must pass measured packaging/runtime gates.
 - Aiven PostgreSQL/PostGIS authoritative state, S3 artifacts, Upstash Redis optional ephemeral cache/rate coordination.
-- LangGraph owns execution; hosted LLM proposes reasoning/plans; LAYA proposes bounded decisions; deterministic Policy controls execution and hard truth/math.
+- LangGraph owns execution; hosted LLM proposes reasoning and plans; remote LAYA served from Kaggle through Cloudflare proposes bounded decisions; deterministic Policy controls execution and hard truth or math.
 - Use the minimum requested capability set. An accepted itinerary may call routing internally. A new trip suggested after media identification needs acceptance.
 - No fabricated places, weather, hours, restrictions, prices, bookings or live traffic. Unknown means unknown.
 

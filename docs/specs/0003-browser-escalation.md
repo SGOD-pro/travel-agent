@@ -1,7 +1,7 @@
 # 0003. Browser Escalation Through the Orchestrator
 
 **Date**: 2026-10-15  
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 
@@ -96,12 +96,17 @@ All browser data types are strictly typed Pydantic models in `backend/src/contra
 ```python
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import Any
-from pydantic import BaseModel, ConfigDict, Field
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from contracts.evidence import FareObservation, HotelObservation
+
+_SHA256_HEX_REGEX = re.compile(r"^[0-9a-f]{64}$")
 
 
 class BrowserRenderStatus(StrEnum):
@@ -111,19 +116,26 @@ class BrowserRenderStatus(StrEnum):
     BLOCKED = "BLOCKED"
 
 
+class BrowserWaitUntil(StrEnum):
+    LOAD = "load"
+    DOMCONTENTLOADED = "domcontentloaded"
+    NETWORKIDLE = "networkidle"
+    COMMIT = "commit"
+
+
 class BrowserTaskPayload(BaseModel):
     """Input payload dispatched to the BROWSER worker."""
 
     model_config = ConfigDict(frozen=True)
 
-    url: str = Field(..., min_length=1, description="Target web page URL to render")
-    canonical_url: str = Field(..., min_length=1, description="Normalized canonical URL")
-    category: str = Field(..., min_length=1, description="Evidence category, e.g. lodging, transit, advisory")
-    reason: str = Field(..., min_length=1, description="Dynamic detection reason, e.g. NOSCRIPT_JAVASCRIPT_REQUIRED")
-    wait_until: str = Field(default="networkidle", description="Navigation completion strategy")
+    url: str = Field(..., min_length=1, max_length=2048, description="Target web page URL to render")
+    canonical_url: str = Field(..., min_length=1, max_length=2048, description="Normalized canonical URL")
+    category: str = Field(..., min_length=1, max_length=64, description="Evidence category, e.g. lodging, transit, advisory")
+    reason: str = Field(..., min_length=1, max_length=255, description="Dynamic detection reason, e.g. NOSCRIPT_JAVASCRIPT_REQUIRED")
+    wait_until: BrowserWaitUntil = Field(default=BrowserWaitUntil.NETWORKIDLE, description="Navigation completion strategy")
     timeout_seconds: int = Field(default=20, ge=1, le=60, description="Maximum navigation timeout in seconds")
-    selector_target: str | None = Field(default=None, description="Optional CSS selector required before DOM capture")
-    placeholder_observation_id: str | None = Field(default=None, description="Original NEEDS_BROWSER observation UUID")
+    selector_target: str | None = Field(default=None, max_length=255, description="Optional CSS selector required before DOM capture")
+    placeholder_observation_id: UUID | None = Field(default=None, description="Original NEEDS_BROWSER observation UUID")
 
 
 class BrowserResourceUsage(BaseModel):
@@ -136,22 +148,97 @@ class BrowserResourceUsage(BaseModel):
 
 
 class BrowserRenderResult(BaseModel):
-    """Normalized output produced by the browser extraction port."""
+    """Normalized output produced by the browser extraction port.
+
+    Distinguished from persisted worker output: this model captures the immediate
+    outcome of browser page rendering and extraction before database persistence.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     status: BrowserRenderStatus = Field(default=BrowserRenderStatus.SUCCESS)
-    canonical_url: str = Field(..., min_length=1)
-    effective_url: str = Field(..., min_length=1)
-    content_hash: str = Field(..., min_length=64, max_length=64, description="SHA256 hex digest of clean rendered text")
-    excerpt_text: str = Field(..., min_length=1, description="Clean substantive text excerpt up to 1000 characters")
-    excerpt_locator: str = Field(..., min_length=1, description="CSS selector or locator for extracted content")
-    rendered_html_snippet: str | None = Field(default=None, description="Bounded excerpt of raw rendered HTML")
+    canonical_url: str = Field(..., min_length=1, max_length=2048)
+    effective_url: str = Field(..., min_length=1, max_length=2048)
+    content_hash: str | None = Field(default=None, description="SHA256 hex digest of clean rendered text")
+    excerpt_text: str | None = Field(default=None, max_length=1000, description="Clean substantive text excerpt up to 1000 characters")
+    excerpt_locator: str | None = Field(default=None, max_length=256, description="CSS selector or locator for extracted content")
+    rendered_html_snippet: str | None = Field(default=None, max_length=50000, description="Bounded excerpt of raw rendered HTML")
     render_duration_ms: int = Field(..., ge=0)
-    unavailable_reason: str | None = Field(default=None)
+    unavailable_reason: str | None = Field(default=None, max_length=500)
     usage: BrowserResourceUsage
     parsed_lodging_observations: list[HotelObservation] = Field(default_factory=list)
     parsed_transit_observations: list[FareObservation] = Field(default_factory=list)
+
+    @field_validator("content_hash")
+    @classmethod
+    def validate_content_hash(cls, v: str | None) -> str | None:
+        if v is not None and not _SHA256_HEX_REGEX.match(v.lower()):
+            raise ValueError("content_hash must be a valid 64 character lowercase hex SHA256 digest")
+        return v.lower() if v is not None else None
+
+    @model_validator(mode="after")
+    def validate_status_contract(self) -> BrowserRenderResult:
+        if self.status == BrowserRenderStatus.SUCCESS:
+            if not self.content_hash:
+                raise ValueError("SUCCESS status requires a valid SHA256 content_hash")
+            if not self.excerpt_text or not self.excerpt_text.strip():
+                raise ValueError("SUCCESS status requires substantive non empty excerpt_text")
+            if not self.excerpt_locator or not self.excerpt_locator.strip():
+                raise ValueError("SUCCESS status requires non empty excerpt_locator")
+            if self.unavailable_reason is not None:
+                raise ValueError("SUCCESS status must not have an unavailable_reason")
+        else:
+            if not self.unavailable_reason or not self.unavailable_reason.strip():
+                raise ValueError(f"{self.status} status requires a descriptive non empty unavailable_reason")
+            if self.content_hash is not None or self.excerpt_text is not None or self.excerpt_locator is not None:
+                raise ValueError(
+                    f"{self.status} status permits absent content and must never fabricate excerpts, hashes, or locators"
+                )
+        return self
+
+
+class BrowserWorkerOutput(BaseModel):
+    """Persisted worker output stored in WorkerResultModel.output_ref upon task completion.
+
+    Distinguished from adapter results: this model captures the persisted database
+    observation_id UUID generated for successful renders and normalized unavailable source records.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: BrowserRenderStatus = Field(default=BrowserRenderStatus.SUCCESS)
+    canonical_url: str = Field(..., min_length=1, max_length=2048)
+    effective_url: str = Field(..., min_length=1, max_length=2048)
+    observation_id: UUID | None = Field(default=None, description="Persisted source observation UUID")
+    content_hash: str | None = Field(default=None, description="SHA256 hex digest of clean rendered text")
+    rendered_html_bytes: int | None = Field(default=None, ge=0)
+    render_duration_ms: int = Field(..., ge=0)
+    unavailable_sources: list[dict[str, Any]] = Field(default_factory=list)
+    parsed_observations: list[dict[str, Any]] = Field(default_factory=list)
+    usage: BrowserResourceUsage
+
+    @field_validator("content_hash")
+    @classmethod
+    def validate_content_hash(cls, v: str | None) -> str | None:
+        if v is not None and not _SHA256_HEX_REGEX.match(v.lower()):
+            raise ValueError("content_hash must be a valid 64 character lowercase hex SHA256 digest")
+        return v.lower() if v is not None else None
+
+    @model_validator(mode="after")
+    def validate_worker_output(self) -> BrowserWorkerOutput:
+        if self.status == BrowserRenderStatus.SUCCESS:
+            if self.observation_id is None:
+                raise ValueError("SUCCESS worker output requires a persisted observation_id UUID")
+            if not self.content_hash:
+                raise ValueError("SUCCESS worker output requires a valid SHA256 content_hash")
+        else:
+            if not self.unavailable_sources:
+                raise ValueError(f"{self.status} worker output requires non empty unavailable_sources records")
+            if self.observation_id is not None or self.content_hash is not None:
+                raise ValueError(
+                    f"{self.status} worker output permits absent content and must not fabricate observation_id or content_hash"
+                )
+        return self
 
 
 class BrowserExtractionPort(ABC):
@@ -163,7 +250,7 @@ class BrowserExtractionPort(ABC):
         ...
 ```
 
-The worker task output stored in `WorkerResultModel.output_ref` adheres to this exact schema:
+The persisted worker task output stored in `WorkerResultModel.output_ref` adheres to `BrowserWorkerOutput`. On successful renders, it captures the persisted `observation_id` UUID, rendered HTML byte size, and parsed entities:
 
 ```json
 {
@@ -184,6 +271,31 @@ The worker task output stored in `WorkerResultModel.output_ref` adheres to this 
   ],
   "usage": {
     "duration_ms": 1420,
+    "memory_mb": 512
+  }
+}
+```
+
+On failed or unavailable renders (`UNAVAILABLE`, `TIMED_OUT`, `BLOCKED`), the worker task output records the failure within `unavailable_sources`, leaving `observation_id` and `content_hash` absent without fabricating synthetic identifiers:
+
+```json
+{
+  "status": "TIMED_OUT",
+  "canonical_url": "https://example.com/hotels/resort",
+  "effective_url": "https://example.com/hotels/resort",
+  "observation_id": null,
+  "content_hash": null,
+  "rendered_html_bytes": 0,
+  "render_duration_ms": 20000,
+  "unavailable_sources": [
+    {
+      "url": "https://example.com/hotels/resort",
+      "reason": "Navigation timeout of 20 seconds exceeded"
+    }
+  ],
+  "parsed_observations": [],
+  "usage": {
+    "duration_ms": 20000,
     "memory_mb": 512
   }
 }
@@ -256,6 +368,7 @@ In AWS Lambda, the 250 MB uncompressed limit applies to the combined sum of the 
 ### Key invariants
 
 - **Strict Budget Ceiling**: A single trip execution cannot spawn more than 3 browser escalation tasks total across its entire lifecycle.
+- **Strict Evidence Scope Boundary**: Browser escalation is strictly limited to dynamic page rendering and evidence observation extraction. Booking, payment, checkout, or transaction automation are explicitly out of scope and forbidden.
 - **Write Once Immutability**: Existing `NEEDS_BROWSER` placeholder observations in PostgreSQL are never mutated in place or deleted. Rendered observations are inserted as new rows with `extraction_method="BROWSER_HTML"`.
 - **Live Route Level Network Security**: All live network requests initiated by headless Chromium are intercepted and filtered against private IP ranges and cloud metadata endpoints.
 - **Fail Safe Graceful Degradation**: Page render timeouts, navigation aborts, or bot challenge blocks record an explicit unavailable source record and complete the task successfully under lease fencing without failing the parent execution.
@@ -287,20 +400,20 @@ In AWS Lambda, the 250 MB uncompressed limit applies to the combined sum of the 
 The build plan follows the Tracer Bullet approach, standing up a thin vertical thread through contracts, transport, worker claiming, browser rendering, and packaging verification:
 
 1. **Slice 1: Browser Domain Contracts and Offline Fixture Adapter**
-   - Create `backend/src/contracts/browser.py` defining `BrowserRenderStatus`, `BrowserTaskPayload`, `BrowserResourceUsage`, `BrowserRenderResult`, and abstract `BrowserExtractionPort`.
-   - Implement `FixtureBrowserAdapter` in `backend/src/functions/browser/fixtures.py` simulating dynamic page rendering with canned HTML fixtures for offline tests.
-   - Add unit tests for contract serialization, immutability, and fixture adapter execution without live network calls.
+   - [x] Create `backend/src/contracts/browser.py` defining `BrowserRenderStatus`, `BrowserTaskPayload`, `BrowserResourceUsage`, `BrowserRenderResult`, and abstract `BrowserExtractionPort`.
+   - [x] Implement `FixtureBrowserAdapter` in `backend/src/functions/browser/fixtures.py` simulating dynamic page rendering with canned HTML fixtures for offline tests.
+   - [x] Add unit tests for contract serialization, immutability, and fixture adapter execution without live network calls.
    - Satisfies **AC-5**.
 
 2. **Slice 2: Orchestrator Transport Routing and LangGraph Escalation Node**
-   - Update `SqsTransportAdapter` in `functions/orchestrator/execution/transport.py` to route `worker="BROWSER"` to `BROWSER_WORKER_QUEUE_URL`.
-   - Implement `escalate_dynamic_evidence_node` in `functions/orchestrator/graphs/trip_planner/graph.py` to inspect completed evidence outputs, enforce the 3 task ceiling in emission order, track `dispatched_browser_urls`, and enqueue pending `BROWSER` tasks with deterministic idempotency keys.
+   - [x] Update `SqsTransportAdapter` in `functions/orchestrator/execution/transport.py` to route `worker="BROWSER"` to `BROWSER_WORKER_QUEUE_URL`.
+   - [x] Implement `escalate_dynamic_evidence_node` in `functions/orchestrator/graphs/trip_planner/graph.py` to inspect completed evidence outputs, enforce the 3 task ceiling in emission order, track `dispatched_browser_urls`, and enqueue pending `BROWSER` tasks with deterministic idempotency keys.
    - Satisfies **AC-1**, **AC-2**.
 
 3. **Slice 3: Fenced Browser Worker Service, Observation Persistence, and Graceful Degradation**
-   - Implement `SourceObservationModel` mapping in `backend/src/functions/browser/models.py` referencing `source_observations` table without cross worker imports.
-   - Implement `BrowserWorkerService` in `backend/src/functions/browser/service.py` to claim tasks under `WorkerFencingService`, execute rendering via the driver port, parse rendered content with Scrapling, and persist `SourceObservationModel` records with `extraction_method="BROWSER_HTML"`.
-   - Implement error handling for navigation timeouts and bot challenges, recording unavailable source records and completing tasks gracefully as success.
+   - [x] Implement `SourceObservationModel` mapping in `backend/src/functions/browser/models.py` referencing `source_observations` table without cross worker imports.
+   - [x] Implement `BrowserWorkerService` in `backend/src/functions/browser/service.py` to claim tasks under `WorkerFencingService`, execute rendering via the driver port, parse rendered content with Scrapling, and persist `SourceObservationModel` records with `extraction_method="BROWSER_HTML"`.
+   - [x] Implement error handling for navigation timeouts and bot challenges, recording unavailable source records and completing tasks gracefully as success.
    - Satisfies **AC-3**, **AC-6**, **AC-7**.
 
 4. **Slice 4: Playwright Driver Adapter and Live Browser Network Controls**

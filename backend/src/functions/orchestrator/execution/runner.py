@@ -246,6 +246,7 @@ class GraphRunnerService:
             "current_step": "start",
             "accepted_result_ids": [],
             "task_outputs": {},
+            "execution_id": str(execution_id),
             **(event_obj.payload or {}),
         }
 

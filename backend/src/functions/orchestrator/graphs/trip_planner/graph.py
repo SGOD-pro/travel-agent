@@ -10,16 +10,23 @@ Orchestrates:
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import os
+import uuid
 from datetime import UTC, datetime, time
 from decimal import Decimal
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from contracts.browser import BrowserTaskPayload, BrowserWaitUntil
 from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
 from contracts.trips import TransportMode, TripBrief
 from functions.optimizer.solver import ItineraryScheduler
+
+logger = logging.getLogger(__name__)
 
 
 class TripPlanningState(TypedDict, total=False):
@@ -34,6 +41,11 @@ class TripPlanningState(TypedDict, total=False):
     current_step: str
     status: str
     errors: list[str]
+    execution_id: str
+    task_outputs: dict[str, Any]
+    browser_requests: list[dict[str, Any]]
+    pending_tasks: list[dict[str, Any]]
+    dispatched_browser_urls: list[str]
 
 
 # --- Workflow Nodes ---
@@ -165,6 +177,132 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
     }
 
 
+def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
+    """Inspects completed evidence outputs, enforces replay-safe budget limits, and enqueues browser tasks.
+
+    Conforms to spec 0003 AC-1:
+    - Inspects state['task_outputs'] for emitted browser_requests records.
+    - Enforces a maximum 3-task escalation ceiling per execution.
+    - Deduplicates URLs already present in state['dispatched_browser_urls'].
+    - Takes unhandled requests in emission order up to available slots.
+    - Enqueues pending_tasks specifications with deterministic idempotency keys:
+      {execution_id}:render:{canonical_url_hash[:16]}.
+    """
+    task_outputs = state.get("task_outputs", {})
+    already_dispatched = set(state.get("dispatched_browser_urls", []))
+
+    # Resolve max escalation budget from environment or settings
+    max_slots = 3
+    env_max = os.environ.get("BROWSER_MAX_ESCALATION_TASKS")
+    if env_max and env_max.isdigit():
+        max_slots = int(env_max)
+    else:
+        try:
+            from config.config import get_settings
+
+            max_slots = int(get_settings().BROWSER_MAX_ESCALATION_TASKS)
+        except Exception:
+            max_slots = 3
+
+    available_slots = max(0, max_slots - len(already_dispatched))
+
+    if available_slots <= 0:
+        return {
+            "pending_tasks": [],
+            "dispatched_browser_urls": list(already_dispatched),
+        }
+
+    # Extract browser_requests in emission order
+    extracted_requests: list[dict[str, Any]] = []
+    for output in task_outputs.values():
+        if isinstance(output, dict):
+            reqs = output.get("browser_requests", [])
+            if isinstance(reqs, list):
+                extracted_requests.extend(reqs)
+
+    # Check top-level state if present
+    if "browser_requests" in state and isinstance(state["browser_requests"], list):
+        extracted_requests.extend(state["browser_requests"])
+
+    raw_exec_id = state.get("execution_id") or state.get("trip_id")
+    if raw_exec_id:
+        execution_id = str(raw_exec_id)
+    else:
+        logger.warning(
+            "Neither execution_id nor trip_id found in LangGraph state; using static fallback key prefix"
+        )
+        execution_id = "default-execution"
+    pending_tasks: list[dict[str, Any]] = []
+    newly_dispatched: list[str] = []
+
+    for req in extracted_requests:
+        if len(pending_tasks) >= available_slots:
+            break
+
+        url = req.get("url")
+        canonical_url = req.get("canonical_url", url)
+        if not canonical_url or not url:
+            continue
+
+        if canonical_url in already_dispatched or canonical_url in newly_dispatched:
+            continue
+        if url in already_dispatched or url in newly_dispatched:
+            continue
+
+        canonical_url_hash = hashlib.sha256(canonical_url.encode("utf-8")).hexdigest()
+        idempotency_key = f"{execution_id}:render:{canonical_url_hash[:16]}"
+
+        raw_wait_until = req.get("wait_until", BrowserWaitUntil.NETWORKIDLE)
+        try:
+            wait_until = (
+                raw_wait_until
+                if isinstance(raw_wait_until, BrowserWaitUntil)
+                else BrowserWaitUntil(str(raw_wait_until).lower())
+            )
+        except ValueError:
+            wait_until = BrowserWaitUntil.NETWORKIDLE
+
+        placeholder_id = req.get("placeholder_observation_id")
+        if placeholder_id is not None and not isinstance(placeholder_id, uuid.UUID):
+            try:
+                placeholder_id = uuid.UUID(str(placeholder_id))
+            except ValueError:
+                placeholder_id = None
+
+        payload = BrowserTaskPayload(
+            url=url,
+            canonical_url=canonical_url,
+            category=req.get("category", "lodging"),
+            reason=req.get("reason", "DYNAMIC_JAVASCRIPT_REQUIRED"),
+            wait_until=wait_until,
+            timeout_seconds=int(req.get("timeout_seconds", 20)),
+            selector_target=req.get("selector_target"),
+            placeholder_observation_id=placeholder_id,
+        )
+
+        task_spec = {
+            "worker": "BROWSER",
+            "action": "render",
+            "payload": payload.model_dump(mode="json"),
+            "idempotency_key": idempotency_key,
+            "deadline_seconds": int(req.get("deadline_seconds", 60)),
+            "max_attempts": int(req.get("max_attempts", 3)),
+        }
+
+        pending_tasks.append(task_spec)
+        newly_dispatched.append(canonical_url)
+
+    updated_dispatched = list(already_dispatched | set(newly_dispatched))
+    result: dict[str, Any] = {
+        "pending_tasks": pending_tasks,
+        "dispatched_browser_urls": updated_dispatched,
+    }
+    if pending_tasks:
+        result["current_step"] = "dynamic_evidence_escalated"
+
+    return result
+
+
 # --- Graph Construction ---
 
 
@@ -173,13 +311,15 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
 
     graph.add_node("parse_brief", parse_and_validate_brief_node)
     graph.add_node("discover_candidates", discover_candidates_node)
+    graph.add_node("escalate_dynamic_evidence", escalate_dynamic_evidence_node)
     graph.add_node("solve_schedule", solve_schedule_node)
     graph.add_node("compute_budget", compute_budget_node)
     graph.add_node("synthesize_proposal", synthesize_proposal_node)
 
     graph.add_edge(START, "parse_brief")
     graph.add_edge("parse_brief", "discover_candidates")
-    graph.add_edge("discover_candidates", "solve_schedule")
+    graph.add_edge("discover_candidates", "escalate_dynamic_evidence")
+    graph.add_edge("escalate_dynamic_evidence", "solve_schedule")
     graph.add_edge("solve_schedule", "compute_budget")
     graph.add_edge("compute_budget", "synthesize_proposal")
     graph.add_edge("synthesize_proposal", END)

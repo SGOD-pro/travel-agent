@@ -1,7 +1,7 @@
-# Context Handoff: SWENA Travel Intelligence (Slice 0001 and Slice 0002)
+# Context Handoff: SWENA Travel Intelligence (Slice 0001, Slice 0002, and Spec 0003 Slices 1 to 3)
 
-Date: 2026-10-15  
-Status: Slice 0001 and Slice 0002 development complete, verified, reviewed, and committed.
+Date: 2026-10-16  
+Status: Slice 0001 and Slice 0002 complete. Spec 0003 Slices 1, 2, and 3 development complete, verified on live PostgreSQL, and reviewed with Approve verdict. Full 0003 incomplete (Slices 4 and 5 pending); AWS deployment verification deferred across all features.
 
 ## 1. Project Purpose and Agreed Stack
 
@@ -11,12 +11,15 @@ Build the SWENA Travel Intelligence platform, an asynchronous travel intelligenc
 * Route Optimizer: Stops, visit windows, road and walking routes, parking hubs, and return times.
 * Media Location Identifier: Image and video evidence processing to identify geographical locations.
 
-### Agreed Stack
+### Agreed Stack and Architectural Decisions
 * Backend: Python 3.12 runtime for standalone workers with uv package manager, FastAPI API layer, modular Lambda first packaging.
 * Persistence: Aiven PostgreSQL 16 with PostGIS extensions (local container for development), asyncpg driver, SQLAlchemy 2.0 async, Alembic migrations.
 * Workflow Orchestration: LangGraph for stateful workflow graphs, backed by a custom TransactionBoundCheckpointer.
+* Remote Model Serving: Remote LAYA model is served from Kaggle through a Cloudflare tunnel.
+* Workflow Execution Sequence: Route optimizer and trip planner end to end workflows precede media location development.
+* Browser Milestone Boundary: Browser escalation milestone strictly covers dynamic web page rendering and evidence extraction only; booking, reservation execution, payment, checkout, and transaction automation remain deferred.
 * Messaging and Outbox: Transactional outbox table (`outbox_events`) claimed with `FOR UPDATE SKIP LOCKED`, AWS SQS for message delivery with partial batch failure reporting (`ReportBatchItemFailures`), and Dead Letter Queues (DLQ) with redrive policies.
-* Worker Routing: Dedicated SQS queue transport routing worker `EVIDENCE` dispatches to dedicated consumer with zero reverse imports into orchestrator modules.
+* Worker Routing: Dedicated SQS queue transport routing worker `EVIDENCE` and `BROWSER` dispatches to dedicated queues with zero reverse imports into orchestrator modules.
 * Evidence Collection: Scrapling CSS extraction adapter, SerpAPI search provider adapter, immutable content addressed observations in PostgreSQL.
 * Verification Engine: PostGIS spatial annular band filtering and candidate matching, deterministic ClaimVerificationPolicy with domain authority rules, side by side conflict preservation, and categorical freshness expiration.
 * Supervision and Scheduling: Continuous BackgroundDaemon supervision for local processes, AWS EventBridge schedules for periodic relay, lease recovery, and stale sweeps.
@@ -26,11 +29,9 @@ Build the SWENA Travel Intelligence platform, an asynchronous travel intelligenc
 ## 2. Git State
 
 * Branch: `main`
-* HEAD Commit: `c10145a` (`0002 sync`)
-* Remote Tracking: Up to date with `origin/main` (`c10145a`)
 * Working Tree: Clean application code and verified tests.
 
-## 3. What 0001 and 0002 Implement
+## 3. What 0001, 0002, and 0003 (Slices 1 to 3) Implement
 
 ### Slice 0001: Orchestrator Execution Engine
 Conforms to [0001-orchestrator-execution-engine.md](file:///home/swyra/projects/travel-agent/docs/specs/0001-orchestrator-execution-engine.md):
@@ -54,61 +55,53 @@ Conforms to [0002-evidence-collection-and-verification.md](file:///home/swyra/pr
 * Dedicated Worker Routing: Dedicated SQS transport routing in `SqsTransportAdapter` directing worker `EVIDENCE` tasks to a dedicated queue and consumer, removing the synthetic echo success executor stub while preserving orchestrator modular boundaries.
 * Standalone SAM Packaging: Dedicated [template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/evidence_collector/template.yaml) declaring `Runtime: python3.12` and `Architectures: [x86_64]`, packaging dependencies into an isolated artifact meeting AWS Lambda limits.
 
+### Spec 0003: Browser Escalation (Slices 1 to 3)
+Conforms to [0003-browser-escalation.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation.md):
+* Slice 1 (Domain Contracts & Offline Fixtures): `BrowserRenderStatus`, `BrowserWaitUntil`, `BrowserTaskPayload`, `BrowserResourceUsage`, `BrowserRenderResult`, `BrowserWorkerOutput`, and `BrowserExtractionPort` defined in [backend/src/contracts/browser.py](file:///home/swyra/projects/travel-agent/backend/src/contracts/browser.py). Offline `FixtureBrowserAdapter` simulates dynamic rendering for lodging and transit with zero network and zero browser binaries (67 unit tests).
+* Slice 2 (Transport Routing & Escalation Node): Dedicated SQS routing for `worker="BROWSER"` via `BROWSER_WORKER_QUEUE_URL` in [backend/src/functions/orchestrator/execution/transport.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/execution/transport.py) without importing browser worker modules. Dynamic evidence escalation node `escalate_dynamic_evidence_node` in [backend/src/functions/orchestrator/graphs/trip_planner/graph.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/graphs/trip_planner/graph.py) enforces a 3 task budget ceiling in emission order, maintains replay safe state deduplication via `dispatched_browser_urls`, and emits deterministic idempotency keys (`{execution_id}:render:{canonical_url_hash[:16]}`) (14 unit tests).
+* Slice 3 (Fenced Worker Service, Parser & Persistence):
+  * Fenced task claim and completion under `WorkerFencingService` in [backend/src/functions/browser/service.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/service.py), validating parent execution status, context version, and attempt counters before browser execution.
+  * Atomic database transaction committing immutable observation in `source_observations` and task completion in `worker_results` and `tasks` in the exact same transaction.
+  * Clean rollback on fencing rejection prior to commit, leaving zero orphaned observations.
+  * Replay safety using PostgreSQL `on_conflict_do_nothing` on `(execution_id, canonical_url, content_hash)` with defensive `scalar_one_or_none()` lookup fallback to generated UUID.
+  * Owner isolation scoping observations strictly to `execution_id` with foreign key cascade, using isolated `BrowserModelBase` declarative base in [backend/src/functions/browser/models.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/models.py) with zero imports from `functions.evidence_collector`.
+  * Scrapling entity parser in [backend/src/functions/browser/parser.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/parser.py) extracting lodging and transit observations with strict Decimal INR pricing (no zero or unparseable rate coercion).
+  * Graceful error degradation for timeouts and bot challenge blocks, recording structured `unavailable_sources` entries, leaving observation IDs absent without fabricating data, and completing as success in `worker_results` to allow the parent graph to continue uninterrupted (17 unit tests, 5 live PostgreSQL behaviors).
+
 ## 4. Verification Commands and Latest Confirmed Results
 
 All verification commands execute locally against live PostgreSQL:
 
-1. Full Backend Test Suite (`cd backend && uv run pytest -v`):
-   * Result: 289 passed in 58.74s across all unit, integration, and regression suites.
+1. Full Backend Test Suite (`cd backend && uv run pytest tests/unit/ -v`):
+   * Result: 247 passed in 11.34s with zero regressions across all unit suites.
 
-2. Evidence Collector Standalone Packaging and Boundary Suite (`cd backend && uv run pytest tests/unit/test_sam_package_size.py -v`):
-   * Result: 7 passed, 0 skipped in 9.83s.
-   * Coverage: SAM template validity, lean dependencies, actual dependency inclusive artifact size within limits, clean environment handler import, SAM build inspection, cached dependency build reuse, and explicit runtime resolution failure when Python 3.12 is missing.
+2. Combined Browser Test Suite (`cd backend && uv run pytest tests/unit/test_browser* -v`):
+   * Result: 98 passed in 1.02s across contracts, fixtures, escalation node, and worker service.
 
-3. Combined Dispatch Regression Suite (`cd backend && uv run pytest tests/unit/test_sam_package_size.py tests/integration/test_evidence_dispatch_regression.py tests/unit/test_executor_registry.py -v`):
-   * Result: 14 passed, 0 skipped in 23.85s on live PostgreSQL.
-   * Coverage: Isolated artifact boundaries, echo stub removal, missing credential handling producing explicit unavailable results, and dedicated queue routing.
+3. Slice 3 Worker Suite (`cd backend && uv run pytest tests/unit/test_browser_worker_slice3.py -v`):
+   * Result: 17 passed in 1.02s.
+   * Coverage: Price non coercion, lodging/transit Scrapling parsing, dispatch parsing, fencing rejection invariants, successful observation persistence with defensive fallback, graceful degradation on timeouts and bot challenges, and modular isolation.
 
-4. Connected Source End to End Lifecycle (`cd backend && uv run pytest tests/integration/test_e2e_connected_source.py -v`):
-   * Result: 1 passed in 18.57s on live PostgreSQL.
-   * Coverage: Source backed collection, PostGIS spatial candidate resolution within 100 meters, claim generation, domain authority verification, and side by side conflict preservation.
+4. Live PostgreSQL Runtime Verification (`cd backend && uv run python scratch/verify_slice3_live.py`):
+   * Result: PASS across all 5 live database behaviors.
+   * Confirms on live database: Fencing rejection on cancelled parent (0 observations), successful render persistence with `extraction_method='BROWSER_HTML'` and placeholder UUID link in `artifact_ref`, graceful degradation on timeout (0 observations, task completed), graceful degradation on bot challenge (0 observations, task completed), and Scrapling entity parsing with strict Decimal INR pricing.
+   * Evidence Ledger: Saved to `scratch/verify_slice3_ledger.json`.
 
-5. Live Persistence and Packaging Runtime Proof (`cd backend && uv run python scratch/verify_evidence_runtime_proof.py`):
-   * Result: PASS across all 6 validation checks.
-   * Confirms: Live PostgreSQL tables and GiST indexes, unregistered executor dispatch rejection, immutable observation persistence, fenced completion, outbox event generation, dedicated queue transport, and clean subprocess handler verification.
+5. Static Analysis and Type Checking:
+   * `cd backend && uv run ruff check src/contracts/browser.py src/functions/browser tests/unit/test_browser*`: PASS (0 warnings).
+   * `cd backend && uv run mypy src/functions/browser/ tests/unit/test_browser_worker_slice3.py`: PASS (0 type errors).
 
-6. SAM Template Validation and Build:
-   * `sam validate -t src/functions/evidence_collector/template.yaml --region ap-south-1`: PASS (valid template).
-   * `sam build -t src/functions/evidence_collector/template.yaml`: PASS (CopySource build targeting python3.12 and x86_64).
+## 5. Review Reports
 
-## 5. Artifact Evidence
+* Spec 0003 Slice 2 Review: [2026-10-15-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-15-main.md) (Verdict: Approve).
+* Spec 0003 Slice 3 Review: [2026-10-16-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-16-main.md) (Verdict: Approve, 0 blockers, 0 majors, 0 nits).
 
-The evidence collector deployment package was built and verified in a strictly isolated environment:
-* Target Runtime: Python 3.12 (Python 3.12.13 64 bit ELF binary)
-* Target Architecture: `x86_64`
-* Verification Invocation: Subprocess executed with `-S -P` flags, `PYTHONNOUSERSITE=1`, and `VIRTUAL_ENV` stripped from environment.
-* Isolation Proof: `sys.path` contains only the artifact directory and Python 3.12 standard library paths (`lib/python312.zip`, `lib/python3.12`, `lib/python3.12/lib-dynload`). All site packages directories are completely excluded.
-* Entrypoint Verification: `lambda_handler`, `process_batch`, and `process_record` import cleanly. All forbidden modules (`ortools`, `langgraph`, `playwright`, `functions.optimizer`, `functions.api`, `functions.orchestrator.evidence`, `functions.orchestrator.places`, `functions.orchestrator.graphs`, `functions.browser`) raise `ModuleNotFoundError`.
-* Unpacked Artifact Size: 80,871,491 bytes (77.13 MB, well within AWS Lambda 250 MB ceiling).
-* Compressed ZIP Size: 35,096,943 bytes (33.47 MB, well within AWS Lambda 50 MB ceiling).
-* Exact ZIP SHA256: `cc00cc2154794494be9c8e719bd6f2dc1c7f1d629033e88c32d360d79cfb21c8`.
+## 6. Development Acceptance versus Deferred AWS Verification
 
-## 6. Final Review Report and Unresolved Findings
-
-* Final Review Document: [2026-10-15-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-15-main.md)
-* Reviewer: Staff Reviewer (inline inspection on main, author on Gemini)
-* Scope: Packaging isolation closure and standalone boundary verification.
-* Verdict: Approve (0 blockers, 0 majors, 0 minors, 0 nits).
-* Status of Application Code: All findings resolved. Strict subprocess isolation under `-S -P` confirmed with zero site packages paths on `sys.path`.
-
-## 7. Development Acceptance versus Deferred AWS Verification
-
-### Development Acceptance (Complete)
-* All 17 acceptance criteria of spec 0002 (AC-1 through AC-17) verified against live PostgreSQL.
-* PostGIS spatial querying and GiST index scan plans verified.
-* Offline canned fixture execution and credentialed live provider smoke tests verified.
-* Isolated Lambda artifact built, measured, and verified under Python 3.12.
-* Reverse imports eliminated and dedicated queue transport verified.
+### Development Acceptance
+* Slices 1, 2, and 3 of spec 0003 are complete, verified, and reviewed.
+* Slices 4 (Playwright driver adapter with route level SSRF interception) and 5 (SQS consumer Lambda handler, SAM template with Chromium layer, and combined packaging acceptance) remain pending.
+* Spec 0003 remains `In Progress`.
 
 ### Deployed AWS Verification (Deferred)
 No live AWS deployment has been executed. The following checks remain deferred until full cloud deployment:
@@ -117,28 +110,16 @@ No live AWS deployment has been executed. The following checks remain deferred u
 * Live Aiven PostgreSQL and PostGIS connectivity from AWS Lambda VPC runtime.
 * CloudWatch memory utilization, cold start duration, and timeout telemetry in production.
 
-## 8. Status of Workflow Gates
+## 7. Status of Workflow Gates
 
-* Scope (`/scope`): Complete. [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md) records feature 2 as `done` with all milestones ticked.
-* Architect (`/architect`): Complete. [0002-evidence-collection-and-verification.md](file:///home/swyra/projects/travel-agent/docs/specs/0002-evidence-collection-and-verification.md) ratified with `Status: Accepted`.
-* Develop (`/develop`): Complete. Code implemented in `backend/src/functions/evidence_collector/`, `backend/src/functions/orchestrator/places/`, and `backend/src/functions/orchestrator/evidence/`.
-* Verify (`/check verify`): Complete. [verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0002-evidence-collection-and-verification/verify.md) records passing runtime proof across all 17 acceptance criteria.
-* Review (`/check review`): Complete. Approved in [2026-10-15-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-15-main.md).
-* Sync (`/sync`): Complete. Context files in [backend/AGENTS.md](file:///home/swyra/projects/travel-agent/backend/AGENTS.md) and [execution/AGENTS.md](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/execution/AGENTS.md) synchronized.
+* Scope (`/scope`): In Progress. [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md) records feature 3 as `in-progress` with Slices 1 to 3 verified and reviewed.
+* Architect (`/architect`): In Progress. [0003-browser-escalation.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation.md) in progress.
+* Develop (`/develop`): Slices 1, 2, and 3 complete in `backend/src/contracts/browser.py`, `backend/src/functions/orchestrator/graphs/trip_planner/graph.py`, `backend/src/functions/orchestrator/execution/transport.py`, and `backend/src/functions/browser/`.
+* Verify (`/check verify`): Slices 1, 2, and 3 verified. [verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation/verify.md) records passing runtime proof across AC-1, AC-2, AC-3, AC-5 (partial), AC-6, and AC-7.
+* Review (`/check review`): Slices 2 and 3 approved in [2026-10-15-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-15-main.md) and [2026-10-16-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-16-main.md).
+* Sync (`/sync`): Current state synchronized across canonical docs.
 
-## 9. Canonical Documentation Paths and Reading Order
+## 8. Next Steps
 
-1. [docs/PROJECT.md](file:///home/swyra/projects/travel-agent/docs/PROJECT.md): Project baseline, capabilities, constraints, and architecture.
-2. [backend/AGENTS.md](file:///home/swyra/projects/travel-agent/backend/AGENTS.md) and [backend/src/functions/orchestrator/execution/AGENTS.md](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/execution/AGENTS.md): Backend conventions, packaging constraints, and execution engine invariants.
-3. [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md): Milestone progress and roadmap tracker.
-4. [docs/specs/0001-orchestrator-execution-engine.md](file:///home/swyra/projects/travel-agent/docs/specs/0001-orchestrator-execution-engine.md): Orchestrator execution engine specification.
-5. [docs/specs/0002-evidence-collection-and-verification.md](file:///home/swyra/projects/travel-agent/docs/specs/0002-evidence-collection-and-verification.md): Evidence collection and verification specification.
-6. [docs/specs/0002-evidence-collection-and-verification/verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0002-evidence-collection-and-verification/verify.md): Complete verification steps and runtime evidence.
-7. [docs/reviews/2026-10-15-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-15-main.md): Latest code review report.
-8. [CHANGELOG.md](file:///home/swyra/projects/travel-agent/CHANGELOG.md): Project changelog and feature releases.
-
-## 10. Next Phase: Browser Escalation
-
-* Next Task: Browser escalation worker service.
-* Purpose: Dynamic pages requiring JavaScript rendering emit `browser_requests` records (AC-13 in spec 0002). The evidence collector Lambda intentionally avoids bundling headless browser engines like Playwright or Chromium. The next phase introduces the browser escalation worker to consume `browser_requests`, execute browser automation in a dedicated serverless Lambda runtime with an external Chromium layer, and feed rendered observation artifacts back into the evidence persistence pipeline.
-* Scope Boundaries: Keep the evidence collector Lambda lean and independent. Do not introduce Playwright into `evidence_collector/requirements.txt`. Browser automation must run in its own specialized environment.
+* Slice 4: Playwright driver adapter with route level private IP and cloud metadata interception (AC-4, AC-5).
+* Slice 5: SQS consumer Lambda handler, SAM template with Chromium layer, and combined packaging acceptance (AC-8).
