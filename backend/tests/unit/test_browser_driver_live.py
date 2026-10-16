@@ -128,6 +128,47 @@ class _LiveTestServerHandler(http.server.BaseHTTPRequestHandler):
             """
             self.wfile.write(html.encode("utf-8"))
 
+        elif self.path == "/delayed-dynamic-content":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            html = """
+            <!DOCTYPE html>
+            <html>
+            <head><title>Delayed Lodging Portal</title></head>
+            <body>
+              <div id="initial-container">Initial static content without entities</div>
+              <script>
+                // Dynamically insert hotel card after navigation completes
+                setTimeout(function() {
+                  var div = document.createElement('div');
+                  div.id = 'delayed-target';
+                  div.className = 'hotel-card';
+                  div.innerHTML = '<h2 class="hotel-name">Delayed Luxury Palms</h2><span class="price">INR 7500</span><span class="rating">4.9</span>';
+                  document.body.appendChild(div);
+                }, 150);
+              </script>
+            </body>
+            </html>
+            """
+            self.wfile.write(html.encode("utf-8"))
+
+        elif self.path == "/page-with-metadata-subresource":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.end_headers()
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head><title>Page With Subresource</title></head>
+            <body>
+              <div id="sub-target">Subresource Page Content</div>
+              <img src="http://{AWS_METADATA_IPV4}/subresource-probe.png" alt="probe" />
+            </body>
+            </html>
+            """
+            self.wfile.write(html.encode("utf-8"))
+
         else:
             self.send_response(404)
             self.end_headers()
@@ -343,3 +384,83 @@ class TestLiveBrowserExecution:
         # WebSocket initialization must fail or throw
         assert "WS_INITIALIZED" not in result.excerpt_text
         assert "WS_DISABLED" in result.excerpt_text
+
+    @pytest.mark.asyncio
+    async def test_live_post_wait_snapshot_consistency_with_dynamic_js_insertion(
+        self, live_server: str
+    ) -> None:
+        """C5: Verifies stored HTML, excerpt, and parsed entities match the post-wait DOM snapshot."""
+
+        def local_test_ip_validator(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+            return str(ip) != AWS_METADATA_IPV4
+
+        adapter = PlaywrightBrowserAdapter(
+            ip_validator=local_test_ip_validator,
+            headless=True,
+        )
+
+        payload = BrowserTaskPayload(
+            url=f"{live_server}/delayed-dynamic-content",
+            canonical_url="https://example.com/delayed-resort",
+            category="lodging",
+            reason="DYNAMIC_JS_INSERTION_TEST",
+            wait_until=BrowserWaitUntil.DOMCONTENTLOADED,
+            timeout_seconds=10,
+            selector_target="#delayed-target",
+        )
+
+        result = await adapter.render_page(payload)
+
+        assert result.status == BrowserRenderStatus.SUCCESS
+        assert result.content_hash is not None
+        assert result.excerpt_text is not None
+        assert "Delayed Luxury Palms" in result.excerpt_text
+        assert "INR 7500" in result.excerpt_text
+        assert result.excerpt_locator == "#delayed-target"
+
+        # Content hash must be SHA256 of excerpt_text
+        expected_hash = hashlib.sha256(result.excerpt_text.encode("utf-8")).hexdigest()
+        assert result.content_hash == expected_hash
+
+        # Stored rendered HTML snippet must contain the post-wait dynamically inserted content
+        assert result.rendered_html_snippet is not None
+        assert "Delayed Luxury Palms" in result.rendered_html_snippet
+        assert "hotel-card" in result.rendered_html_snippet
+
+        # Parsed entities must be derived from the exact same post-wait snapshot
+        assert len(result.parsed_lodging_observations) == 1
+        obs = result.parsed_lodging_observations[0]
+        assert obs.property_name == "Delayed Luxury Palms"
+        assert obs.price_per_night == 7500
+        assert obs.rating == 4.9
+
+    @pytest.mark.asyncio
+    async def test_live_egress_proxy_blocks_metadata_subresource(
+        self, live_server: str
+    ) -> None:
+        """C3: Verifies that egress proxy blocks outbound subresources targeting metadata."""
+
+        def local_test_ip_validator(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+            return str(ip) != AWS_METADATA_IPV4
+
+        adapter = PlaywrightBrowserAdapter(
+            ip_validator=local_test_ip_validator,
+            headless=True,
+        )
+
+        payload = BrowserTaskPayload(
+            url=f"{live_server}/page-with-metadata-subresource",
+            canonical_url="https://example.com/subresource-test",
+            category="lodging",
+            reason="SUBRESOURCE_METADATA_TEST",
+            wait_until=BrowserWaitUntil.LOAD,
+            timeout_seconds=10,
+            selector_target="#sub-target",
+        )
+
+        result = await adapter.render_page(payload)
+
+        # Page itself loaded successfully but subresource was intercepted and blocked by egress proxy
+        assert result.status == BrowserRenderStatus.SUCCESS
+        assert result.excerpt_text is not None
+        assert "Subresource Page Content" in result.excerpt_text

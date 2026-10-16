@@ -7,6 +7,7 @@ from functions.browser.models import SourceObservationModel
 from functions.browser.network import (
     BrowserSecurityError,
     RouteSecurityInterceptor,
+    SecureEgressProxy,
     is_ip_allowed,
     resolve_and_validate_host,
     validate_navigation_url,
@@ -25,6 +26,7 @@ __all__ = [
     "FixtureBrowserAdapter",
     "PlaywrightBrowserAdapter",
     "RouteSecurityInterceptor",
+    "SecureEgressProxy",
     "SourceObservationModel",
     "is_ip_allowed",
     "lambda_handler",

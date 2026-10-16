@@ -42,6 +42,7 @@ from contracts.browser import (
 from functions.browser.network import (
     BrowserSecurityError,
     RouteSecurityInterceptor,
+    SecureEgressProxy,
     validate_navigation_url,
 )
 from functions.browser.parser import parse_rendered_entities
@@ -84,6 +85,8 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         chromium_path: str | None = None,
         launch_args: list[str] | None = None,
         headless: bool = True,
+        egress_proxy: SecureEgressProxy | None = None,
+        enable_egress_proxy: bool = True,
     ) -> None:
         self._injected_browser = browser
         self._dns_resolver = dns_resolver
@@ -91,6 +94,8 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         self._chromium_path = chromium_path
         self._launch_args = launch_args or DEFAULT_CHROMIUM_ARGS
         self._headless = headless
+        self._egress_proxy = egress_proxy
+        self._enable_egress_proxy = enable_egress_proxy
 
     async def render_page(self, payload: BrowserTaskPayload) -> BrowserRenderResult:
         """Renders dynamic web page content under strict timeouts and network controls."""
@@ -172,14 +177,31 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
             dns_resolver=self._dns_resolver,
             ip_validator=self._ip_validator,
         )
+        proxy: SecureEgressProxy | None = None
+        proxy_started_here = False
+        if self._enable_egress_proxy:
+            proxy = self._egress_proxy or SecureEgressProxy(
+                dns_resolver=self._dns_resolver,
+                ip_validator=self._ip_validator,
+            )
+            if proxy.server is None:
+                await proxy.start()
+                proxy_started_here = True
 
         try:
-            # 1. Create context with Service Workers explicitly blocked
-            context = await browser.new_context(
-                service_workers="block",
-                ignore_https_errors=False,
-                viewport={"width": 1280, "height": 800},
-            )
+            # 1. Create context with Service Workers explicitly blocked and Egress Proxy configured
+            context_kwargs: dict[str, Any] = {
+                "service_workers": "block",
+                "ignore_https_errors": False,
+                "viewport": {"width": 1280, "height": 800},
+            }
+            if proxy is not None and proxy.port > 0:
+                context_kwargs["proxy"] = {
+                    "server": f"http://127.0.0.1:{proxy.port}",
+                    "bypass": "<-loopback>",
+                }
+
+            context = await browser.new_context(**context_kwargs)
 
             # 2. Register in flight route interception on context
             await context.route("**/*", interceptor)
@@ -214,12 +236,14 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
 
             effective_url = page.url or payload.url
 
-            # 5. Check if route interception blocked the target or redirect hops
-            if interceptor.blocked_requests:
+            # 5. Check if route interception or egress proxy blocked the target or redirect hops
+            all_blocked = interceptor.blocked_requests + (proxy.blocked_requests if proxy else [])
+            if all_blocked:
                 main_blocked = [
                     b
-                    for b in interceptor.blocked_requests
+                    for b in all_blocked
                     if b["url"] == payload.url or b["url"] == effective_url
+                    or payload.url.startswith(b["url"]) or effective_url.startswith(b["url"])
                 ]
                 if main_blocked:
                     duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -257,13 +281,10 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                     parsed_transit_observations=[],
                 )
 
-            # 7. Check for bot verification indicators in rendered page
+            # 7. Check for bot verification indicators in page title
             page_title = (await page.title() or "").lower()
-            rendered_html = await page.content()
-            html_lower = rendered_html.lower()
-
             for pattern in _BOT_CHALLENGE_PATTERNS:
-                if pattern in page_title or pattern in html_lower[:5000]:
+                if pattern in page_title:
                     duration_ms = int((time.monotonic() - start_time) * 1000)
                     return BrowserRenderResult(
                         status=BrowserRenderStatus.BLOCKED,
@@ -280,7 +301,7 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                         parsed_transit_observations=[],
                     )
 
-            # 8. Optional selector waiting
+            # 8. Optional selector waiting before capturing settled DOM snapshot (C5)
             if payload.selector_target:
                 try:
                     await page.wait_for_selector(payload.selector_target, timeout=timeout_ms)
@@ -301,7 +322,29 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                         parsed_transit_observations=[],
                     )
 
-            # 9. Extract substantive excerpt text and locator
+            # 9. Consistent post-wait DOM snapshot capture (C5)
+            rendered_html = await page.content()
+            html_lower = rendered_html.lower()
+
+            for pattern in _BOT_CHALLENGE_PATTERNS:
+                if pattern in html_lower[:5000]:
+                    duration_ms = int((time.monotonic() - start_time) * 1000)
+                    return BrowserRenderResult(
+                        status=BrowserRenderStatus.BLOCKED,
+                        canonical_url=payload.canonical_url,
+                        effective_url=effective_url,
+                        content_hash=None,
+                        excerpt_text=None,
+                        excerpt_locator=None,
+                        rendered_html_snippet=None,
+                        render_duration_ms=duration_ms,
+                        unavailable_reason="Bot verification or anti bot challenge detected",
+                        usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                        parsed_lodging_observations=[],
+                        parsed_transit_observations=[],
+                    )
+
+            # 9. Extract substantive excerpt text and locator from settled DOM
             excerpt_text: str | None = None
             excerpt_locator: str | None = None
 
@@ -338,7 +381,7 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                     parsed_transit_observations=[],
                 )
 
-            # 10. Extract entities and assemble successful result (AC-5, AC-6)
+            # 10. Extract entities and assemble successful result strictly from post-wait snapshot
             content_hash = hashlib.sha256(excerpt_text.encode("utf-8")).hexdigest()
             html_snippet = rendered_html[:50000] if rendered_html else None
 
@@ -403,8 +446,9 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
 
         except PlaywrightTimeoutError:
             duration_ms = int((time.monotonic() - start_time) * 1000)
-            if interceptor.blocked_requests:
-                reasons = "; ".join(b["reason"] for b in interceptor.blocked_requests)
+            all_blocked = interceptor.blocked_requests + (proxy.blocked_requests if proxy else [])
+            if all_blocked:
+                reasons = "; ".join(b["reason"] for b in all_blocked)
                 return BrowserRenderResult(
                     status=BrowserRenderStatus.BLOCKED,
                     canonical_url=payload.canonical_url,
@@ -435,8 +479,9 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
             )
         except PlaywrightError as exc:
             duration_ms = int((time.monotonic() - start_time) * 1000)
-            if interceptor.blocked_requests:
-                reasons = "; ".join(b["reason"] for b in interceptor.blocked_requests)
+            all_blocked = interceptor.blocked_requests + (proxy.blocked_requests if proxy else [])
+            if all_blocked:
+                reasons = "; ".join(b["reason"] for b in all_blocked)
                 return BrowserRenderResult(
                     status=BrowserRenderStatus.BLOCKED,
                     canonical_url=payload.canonical_url,
@@ -499,7 +544,7 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*background_tasks, return_exceptions=True)
-            if page is not None:
+            if page is not None and hasattr(page, "is_closed") and not page.is_closed():
                 try:
                     await page.close()
                 except Exception as exc:
@@ -509,3 +554,8 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                     await context.close()
                 except Exception as exc:
                     logger.debug("Error closing context: %s", exc)
+            if proxy_started_here and proxy is not None:
+                try:
+                    await proxy.stop()
+                except Exception as exc:
+                    logger.debug("Error stopping egress proxy: %s", exc)

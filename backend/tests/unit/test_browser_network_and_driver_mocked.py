@@ -31,6 +31,7 @@ from functions.browser.driver import PlaywrightBrowserAdapter
 from functions.browser.network import (
     BrowserSecurityError,
     RouteSecurityInterceptor,
+    SecureEgressProxy,
     is_ip_allowed,
     resolve_and_validate_host,
     validate_navigation_url,
@@ -610,3 +611,184 @@ class TestPlaywrightBrowserAdapterMocked:
 
         assert result.status == BrowserRenderStatus.SUCCESS
         assert "response" in registered_callbacks
+
+
+class TestSecureEgressProxy:
+    """C3: Verifies that SecureEgressProxy enforces destination safety at the socket boundary."""
+
+    @pytest.mark.asyncio
+    async def test_egress_proxy_blocks_direct_metadata_and_private_ips(self) -> None:
+        """Verifies proxy immediately returns HTTP 403 Forbidden for metadata or private IP requests."""
+        proxy = SecureEgressProxy()
+        port = await proxy.start()
+
+        try:
+            # 1. Request to metadata endpoint
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"GET http://169.254.169.254/latest/meta-data/ HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n")
+            await writer.drain()
+
+            resp = await reader.read(4096)
+            writer.close()
+            await writer.wait_closed()
+
+            assert b"403 Forbidden" in resp
+            assert b"Egress blocked by security policy" in resp
+            assert len(proxy.blocked_requests) == 1
+            assert "169.254.169.254" in proxy.blocked_requests[0]["url"]
+
+            # 2. Request to private IP
+            reader2, writer2 = await asyncio.open_connection("127.0.0.1", port)
+            writer2.write(b"GET http://10.0.0.1/admin HTTP/1.1\r\nHost: 10.0.0.1\r\n\r\n")
+            await writer2.drain()
+
+            resp2 = await reader2.read(4096)
+            writer2.close()
+            await writer2.wait_closed()
+
+            assert b"403 Forbidden" in resp2
+            assert len(proxy.blocked_requests) == 2
+        finally:
+            await proxy.stop()
+
+    @pytest.mark.asyncio
+    async def test_egress_proxy_blocks_dns_rebinding_attempts(self) -> None:
+        """Verifies proxy resolves hostnames before connecting and blocks rebinding to metadata."""
+        # Resolver returns metadata IP for a legitimate-looking domain
+        resolver_rebind = _mock_dns_resolver_for_ips("169.254.169.254")
+
+        proxy = SecureEgressProxy(dns_resolver=resolver_rebind)
+        port = await proxy.start()
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"GET http://rebind.attacker.com/data HTTP/1.1\r\nHost: rebind.attacker.com\r\n\r\n")
+            await writer.drain()
+
+            resp = await reader.read(4096)
+            writer.close()
+            await writer.wait_closed()
+
+            assert b"403 Forbidden" in resp
+            assert len(proxy.blocked_requests) == 1
+            assert "rebind.attacker.com" in proxy.blocked_requests[0]["url"]
+            assert "restricted IP" in proxy.blocked_requests[0]["reason"]
+        finally:
+            await proxy.stop()
+
+    @pytest.mark.asyncio
+    async def test_egress_proxy_blocks_websocket_upgrade(self) -> None:
+        """Verifies proxy blocks WebSocket upgrade handshakes with HTTP 403 Forbidden."""
+        proxy = SecureEgressProxy()
+        port = await proxy.start()
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            req = (
+                b"GET http://example.com/ws HTTP/1.1\r\n"
+                b"Host: example.com\r\n"
+                b"Upgrade: websocket\r\n"
+                b"Connection: Upgrade\r\n\r\n"
+            )
+            writer.write(req)
+            await writer.drain()
+
+            resp = await reader.read(4096)
+            writer.close()
+            await writer.wait_closed()
+
+            assert b"403 Forbidden" in resp
+            assert b"WebSockets are disabled" in resp
+            assert len(proxy.blocked_requests) == 1
+            assert "WebSocket upgrade" in proxy.blocked_requests[0]["reason"]
+        finally:
+            await proxy.stop()
+
+    @pytest.mark.asyncio
+    async def test_egress_proxy_binds_connection_to_validated_ip(self) -> None:
+        """Verifies proxy binds outbound connection to the validated IP literal and forwards request."""
+        # Spin up a small local target server
+        received_requests: list[str] = []
+
+        async def handle_target(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            line = await r.readline()
+            received_requests.append(line.decode("latin1"))
+            w.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK")
+            await w.drain()
+            w.close()
+            await w.wait_closed()
+
+        target_server = await asyncio.start_server(handle_target, "127.0.0.1", 0)
+        target_port = target_server.sockets[0].getsockname()[1]
+
+        # Validator allows 127.0.0.1 for this test
+        proxy = SecureEgressProxy(ip_validator=lambda ip: True)
+        proxy_port = await proxy.start()
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+            req = f"GET http://127.0.0.1:{target_port}/test-path HTTP/1.1\r\nHost: 127.0.0.1:{target_port}\r\n\r\n".encode("latin1")
+            writer.write(req)
+            await writer.drain()
+
+            resp = await reader.read(4096)
+            writer.close()
+            await writer.wait_closed()
+
+            assert b"200 OK" in resp
+            assert b"OK" in resp
+            assert len(received_requests) == 1
+            assert "GET /test-path HTTP/1.1" in received_requests[0]
+            assert len(proxy.blocked_requests) == 0
+        finally:
+            await proxy.stop()
+            target_server.close()
+            await target_server.wait_closed()
+
+    @pytest.mark.asyncio
+    async def test_egress_proxy_multi_homed_fallback_on_first_ip_failure(self) -> None:
+        """Verifies proxy falls back to second candidate IP if first candidate IP connection fails."""
+        received_requests: list[str] = []
+
+        async def handle_target(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            line = await r.readline()
+            received_requests.append(line.decode("latin1"))
+            w.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nSECONDARY")
+            await w.drain()
+            w.close()
+            await w.wait_closed()
+
+        target_server = await asyncio.start_server(handle_target, "127.0.0.1", 0)
+        target_port = target_server.sockets[0].getsockname()[1]
+
+        # DNS resolver returns two IPs: first IP 127.0.0.99 (nothing listening), second IP 127.0.0.1
+        fake_dns = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.99", target_port)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", target_port)),
+        ]
+        proxy = SecureEgressProxy(
+            dns_resolver=lambda host, port: fake_dns,
+            ip_validator=lambda ip: True,
+        )
+        proxy_port = await proxy.start()
+
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+            req = f"GET http://multihomed.example.com:{target_port}/resilient HTTP/1.1\r\nHost: multihomed.example.com:{target_port}\r\n\r\n".encode("latin1")
+            writer.write(req)
+            await writer.drain()
+
+            resp = await reader.read(4096)
+            writer.close()
+            await writer.wait_closed()
+
+            assert b"200 OK" in resp
+            assert b"SECONDARY" in resp
+            assert len(received_requests) == 1
+            assert "GET /resilient HTTP/1.1" in received_requests[0]
+            assert len(proxy.blocked_requests) == 0
+        finally:
+            await proxy.stop()
+            target_server.close()
+            await target_server.wait_closed()
+

@@ -296,3 +296,225 @@ class RouteSecurityInterceptor:
                             await page.close()
                         except Exception:
                             pass
+
+
+async def _pipe_stream(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    """Relays data bidirectionally between stream endpoints until EOF or error."""
+    try:
+        while True:
+            data = await reader.read(65536)
+            if not data:
+                break
+            writer.write(data)
+            await writer.drain()
+    except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+        pass
+    finally:
+        try:
+            writer.close()
+        except Exception:
+            pass
+
+
+class SecureEgressProxy:
+    """In process asynchronous HTTP/HTTPS egress security proxy.
+
+    Guarantees destination and connection safety:
+    1. Intercepts all Chromium outbound connections before any socket connects to destination hosts.
+    2. Resolves destination hostnames and validates that EVERY resolved IP is public and allowed.
+    3. Explicitly binds outbound TCP sockets to the validated IP address literal, eliminating the
+       validation to connection gap and defeating DNS rebinding.
+    4. Immediately rejects disallowed destinations (private IPs, loopback, carrier grade NAT,
+       and AWS metadata 169.254.169.254) with HTTP 403 Forbidden without transmitting external traffic.
+    5. Covers navigation, redirects, subresources, and WebSocket upgrade handshakes.
+    """
+
+    def __init__(
+        self,
+        dns_resolver: Callable[[str, int], list[Any]] | None = None,
+        ip_validator: Callable[[ipaddress.IPv4Address | ipaddress.IPv6Address], bool] | None = None,
+        port: int = 0,
+    ) -> None:
+        self.dns_resolver = dns_resolver
+        self.ip_validator = ip_validator
+        self.port = port
+        self.server: asyncio.Server | None = None
+        self.blocked_requests: list[dict[str, str]] = []
+        self._active_tasks: set[asyncio.Task[Any]] = set()
+
+    async def start(self) -> int:
+        """Starts the egress proxy server and returns the allocated port."""
+        self.server = await asyncio.start_server(
+            self._handle_client,
+            "127.0.0.1",
+            self.port,
+        )
+        self.port = self.server.sockets[0].getsockname()[1]
+        logger.info("SecureEgressProxy started on 127.0.0.1:%d", self.port)
+        return self.port
+
+    async def stop(self) -> None:
+        """Stops the egress proxy and terminates active connections."""
+        if self._active_tasks:
+            for task in list(self._active_tasks):
+                task.cancel()
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            self._active_tasks.clear()
+
+        if self.server is not None:
+            self.server.close()
+            await self.server.wait_closed()
+            self.server = None
+        logger.info("SecureEgressProxy stopped on 127.0.0.1:%d", self.port)
+
+    async def _handle_client(
+        self,
+        client_reader: asyncio.StreamReader,
+        client_writer: asyncio.StreamWriter,
+    ) -> None:
+        """Handles an incoming proxy connection from Chromium."""
+        task = asyncio.current_task()
+        if task:
+            self._active_tasks.add(task)
+            task.add_done_callback(self._active_tasks.discard)
+
+        try:
+            line = await client_reader.readline()
+            if not line:
+                client_writer.close()
+                return
+
+            parts = line.decode("latin1", errors="replace").strip().split()
+            if len(parts) < 2:
+                client_writer.close()
+                return
+
+            method, target = parts[0].upper(), parts[1]
+
+            # Read request headers until empty line
+            headers: list[bytes] = []
+            has_ws_upgrade = False
+            while True:
+                h = await client_reader.readline()
+                if not h or h in (b"\r\n", b"\n"):
+                    break
+                h_lower = h.lower()
+                if b"upgrade" in h_lower and b"websocket" in h_lower:
+                    has_ws_upgrade = True
+                headers.append(h)
+
+            # Block WebSocket upgrade handshakes at the egress boundary
+            if has_ws_upgrade:
+                msg = f"Egress proxy blocked WebSocket upgrade request: {target}"
+                logger.warning(msg)
+                self.blocked_requests.append({"url": target, "reason": msg})
+                client_writer.write(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nWebSockets are disabled\r\n"
+                )
+                await client_writer.drain()
+                client_writer.close()
+                return
+
+            if method == "CONNECT":
+                # HTTPS tunnel
+                if ":" in target:
+                    host, port_str = target.split(":", 1)
+                    try:
+                        port = int(port_str)
+                    except ValueError:
+                        port = 443
+                else:
+                    host, port = target, 443
+                is_https = True
+            else:
+                # HTTP request
+                parsed = urlparse(target)
+                host = parsed.hostname or target
+                port = parsed.port or (443 if parsed.scheme == "https" else 80)
+                is_https = False
+
+            # Validate host and resolve all candidate IPs
+            try:
+                allowed_ips = await asyncio.to_thread(
+                    resolve_and_validate_host,
+                    host,
+                    port=port,
+                    dns_resolver=self.dns_resolver,
+                    ip_validator=self.ip_validator,
+                )
+            except BrowserSecurityError as exc:
+                msg = f"Egress proxy blocked connection to {target}: {exc}"
+                logger.warning(msg)
+                self.blocked_requests.append({"url": target, "reason": msg})
+                client_writer.write(
+                    b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nEgress blocked by security policy\r\n"
+                )
+                await client_writer.drain()
+                client_writer.close()
+                return
+            except Exception as exc:
+                msg = f"Egress proxy DNS resolution failed for {target}: {exc}"
+                logger.warning(msg)
+                self.blocked_requests.append({"url": target, "reason": msg})
+                client_writer.write(
+                    b"HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain\r\n\r\nDNS resolution failed\r\n"
+                )
+                await client_writer.drain()
+                client_writer.close()
+                return
+
+            # Bind outbound connection strictly to a validated IP literal with multi homed fallback
+            remote_reader: asyncio.StreamReader | None = None
+            remote_writer: asyncio.StreamWriter | None = None
+            last_conn_exc: Exception | None = None
+            for candidate_ip in allowed_ips:
+                try:
+                    remote_reader, remote_writer = await asyncio.open_connection(
+                        host=candidate_ip,
+                        port=port,
+                    )
+                    break
+                except Exception as exc:
+                    last_conn_exc = exc
+                    logger.debug("Failed connecting to validated candidate IP %s:%d: %s", candidate_ip, port, exc)
+
+            if remote_reader is None or remote_writer is None:
+                logger.debug("Failed connecting to all validated IPs %s:%d: %s", allowed_ips, port, last_conn_exc)
+                client_writer.write(b"HTTP/1.1 504 Gateway Timeout\r\n\r\n")
+                await client_writer.drain()
+                client_writer.close()
+                return
+
+            if is_https:
+                # Establish tunnel for HTTPS
+                client_writer.write(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+                await client_writer.drain()
+                await asyncio.gather(
+                    _pipe_stream(client_reader, remote_writer),
+                    _pipe_stream(remote_reader, client_writer),
+                )
+            else:
+                # Forward plain HTTP request
+                path = parsed.path or "/"
+                if parsed.query:
+                    path += "?" + parsed.query
+                req_line = f"{method} {path} HTTP/1.1\r\n".encode("latin1")
+                remote_writer.write(req_line)
+                for h in headers:
+                    remote_writer.write(h)
+                remote_writer.write(b"\r\n")
+                await remote_writer.drain()
+                await asyncio.gather(
+                    _pipe_stream(client_reader, remote_writer),
+                    _pipe_stream(remote_reader, client_writer),
+                )
+        except (asyncio.CancelledError, ConnectionResetError, BrokenPipeError):
+            pass
+        except Exception as exc:
+            logger.debug("Error handling proxy client: %s", exc)
+        finally:
+            try:
+                client_writer.close()
+            except Exception:
+                pass
+

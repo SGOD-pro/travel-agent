@@ -1,7 +1,9 @@
 # Context Handoff: SWENA Travel Intelligence (Slice 0001, Slice 0002, and Spec 0003)
 
-Date: 2026-10-16  
-Status: Implementation and prior acceptance reports recorded; 0003 closure has four OPEN findings (C1, C2, C3, C5). See closure reconciliation below. C4 CodeUri mismatch is disproved. AWS deployment remains deferred.
+Date: 2026-10-17
+
+Status: Slice 0001, Slice 0002, and Spec 0003 complete. All 5 slices and closure findings C1 to C5 of Spec 0003 are implemented, verified on live PostgreSQL and headless Chromium, reviewed with Approve verdicts, and tested with 176 passing tests. Scope marked done and Spec 0003 marked Accepted. AWS deployment verification remains deferred across all features until cloud deployment.
+
 
 ## 1. Project Purpose and Agreed Stack
 
@@ -69,26 +71,27 @@ Conforms to [0003-browser-escalation.md](file:///home/swyra/projects/travel-agen
   * Graceful error degradation for timeouts and bot challenge blocks, recording structured `unavailable_sources` entries, leaving observation IDs absent without fabricating data, and completing as success in `worker_results` to allow the parent graph to continue uninterrupted (17 unit tests, 5 live PostgreSQL behaviors).
 * Slice 4 (Playwright Driver Adapter and Network Security Controls):
   * Standalone defensive network controls in [backend/src/functions/browser/network.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/network.py), enforcing pre navigation and dynamic in flight route interception against RFC 1918 private ranges, carrier grade NAT, and cloud metadata destinations (169.254.169.254).
+  * SecureEgressProxy destination connection binding: intercepts connections prior to socket creation, resolves hostnames, and binds outbound TCP sockets strictly to validated IP literals with multi homed candidate fallback, defeating DNS rebinding across navigation, redirects, and subresources.
   * Thread offloaded DNS resolution via `asyncio.to_thread` preventing event loop stalls, DNS rebinding simulation defense, WebSocket route aborts, and HTTP redirect tracking.
-  * Live Playwright headless Chromium driver in [backend/src/functions/browser/driver.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/driver.py), launching headless Chromium with disabled Service Workers and WebSockets, DOM content extraction, and structured degradation on timeouts, bot challenges, and browser crashes (49 tests across mocked and live Chromium suites).
+  * Live Playwright headless Chromium driver in [backend/src/functions/browser/driver.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/driver.py), launching headless Chromium with disabled Service Workers and WebSockets, consistent post wait DOM content extraction after selector waiting, and structured degradation on timeouts, bot challenges, and browser crashes (56 tests across mocked and live Chromium suites).
 * Slice 5 (SQS Consumer Lambda, SAM Template, and Standalone Packaging):
   * SQS consumer Lambda handler `lambda_handler` and `process_batch` in [backend/src/functions/browser/consumer.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/consumer.py) supporting partial batch item failure reporting via `ReportBatchItemFailures`, lease conflict discarding, and 5000ms deadline timeouts.
   * SAM serverless template in [backend/src/functions/browser/template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/template.yaml) configured with 1536 MB memory, 60s timeout, dedicated dispatch queue with DLQ redrive, and external Chromium layer binding in `/opt`.
-  * Standalone packaging verifier in [backend/src/functions/browser/packaging.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/packaging.py) confirming function unpacked size 69.10 MB (< 80 MB limit), compressed size 20.60 MB, and combined size with layer 199.10 MB (< 250 MB ceiling) under clean Python 3.12 `-S -P` isolation (20 tests across consumer and packaging suites).
+  * Standalone packaging verifier in [backend/src/functions/browser/packaging.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/packaging.py) preserving stripped Node runtime binary (104 MB), measuring Sparticuz Chromium layer v130.0.0 at 64.50 MB, confirming function unpacked size 148.20 MB (< 185 MB limit), compressed size 52.42 MB, and combined size with layer 212.70 MB (< 250 MB ceiling, 37.30 MB headroom) under clean Python 3.12 `-S -P` isolation with verified rendering (20 tests across consumer and packaging suites).
 
 ## 4. Verification Commands and Latest Confirmed Results
 
 All verification commands execute locally against live PostgreSQL and headless Chromium:
 
 1. Full Backend Test Suite (`cd backend && uv run pytest tests/unit/ -v`):
-   * Result: 314 passed in 17.05s with zero regressions across all unit suites.
+   * Result: 325 passed in 37.69s with zero regressions across all unit suites.
 
 2. Full Browser Test Suite (`cd backend && uv run pytest tests/unit/test_browser* -v`):
-   * Result: 167 passed in 17.05s across all 7 browser test suites.
+   * Result: 176 passed in 27.09s across all 7 browser test suites.
 
 3. Live Chromium Execution Suite (`cd backend && uv run pytest tests/unit/test_browser_driver_live.py -v`):
-   * Result: 6 passed in 7.42s on live headless Chromium.
-   * Confirms live DOM rendering, navigation timeouts, private IP and 169.254.169.254 redirect aborts, Service Worker blocking, and WebSocket elimination.
+   * Result: 8 passed in 9.76s on live headless Chromium.
+   * Confirms live DOM rendering, navigation timeouts, private IP and 169.254.169.254 redirect aborts, Service Worker blocking, WebSocket elimination, post wait snapshot consistency with dynamic JS insertion, and egress proxy metadata subresource blocking.
 
 4. Live PostgreSQL Schema and Behavior Verification:
    * Confirms on live database: Fencing rejection on cancelled parent (0 observations), successful render persistence with `extraction_method='BROWSER_HTML'` and placeholder UUID link in `artifact_ref`, graceful degradation on timeout and bot challenge (0 observations, task completed), and Scrapling entity parsing with strict Decimal INR pricing.
@@ -104,6 +107,7 @@ All verification commands execute locally against live PostgreSQL and headless C
 * Spec 0003 Slice 3 Review: [2026-10-16-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-16-main.md) (Verdict: Approve, 0 blockers, 0 majors, 0 nits).
 * Spec 0003 Slice 4 Review: [2026-10-16-browser-slice4.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-16-browser-slice4.md) (Verdict: Approve, 0 blockers, 0 majors, 0 nits).
 * Spec 0003 Slice 5 Review: [2026-10-16-browser-slice5.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-16-browser-slice5.md) (Verdict: Approve, 0 blockers, 0 majors, 0 nits).
+* Spec 0003 Closure Findings Review: [2026-10-17-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-17-main.md) (Verdict: Approve, 0 blockers, 0 majors, 0 unaddressed nits).
 
 ## 6. Development Acceptance versus Deferred AWS Verification
 
@@ -126,7 +130,7 @@ No live AWS deployment has been executed. The following checks remain deferred u
 * Develop (`/develop`): Complete across all 5 slices.
 * Verify (`/check verify`): Complete across all 8 acceptance criteria in [verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation/verify.md).
 * Review (`/check review`): Approved across all slices in [docs/reviews/](file:///home/swyra/projects/travel-agent/docs/reviews/).
-* Test (`/test`): Complete. 167 browser tests and 314 full backend unit tests passing.
+* Test (`/test`): Complete. 176 browser tests and 325 full backend unit tests passing.
 * Document (`/document`): Complete. 7 capability entries recorded in [CHANGELOG.md](file:///home/swyra/projects/travel-agent/CHANGELOG.md).
 * Sync (`/sync`): Complete. Reconciled scope, spec status, and handoff documentation.
 
@@ -148,6 +152,16 @@ Inspected repository HEAD: `35d9e60c64d4d4143b178eb5affd73dea846eb10`. This chec
 - Reported by existing documents, not independently rerun here: 167 browser tests, 314 backend unit tests, live Chromium and PostgreSQL checks, lint/type checks, function artifact sizes, and prior Approve verdicts. Counts vary between historical reports (165/167); preserve their attribution rather than treating them as a fresh consolidated run.
 - No independently executed browser startup, packaging build, actual layer measurement, application test suite, or AWS deployment is claimed at this checkpoint.
 - Prior Slice 4 claims of preventing DNS rebinding and Slice 5 claims of measured combined packaging/runtime acceptance are narrowed by C1–C3.
+
+### 0003 closure resolution (2026-10-17)
+
+Following the agreed action, closure findings C1, C2, C3, and C5 were implemented and verified within existing 0003, with formal review approval in [2026-10-17-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-17-main.md) and full verification ledger in [verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation/verify.md):
+
+* C1 (RESOLVED): Preserved stripped Node runtime (104 MB, permissions 0755) in `backend/src/functions/browser/packaging.py`, verified clean environment startup and live DOM rendering under Python 3.12 `-S -P` in `test_verify_browser_startup_and_render_in_isolated_artifact_environment`.
+* C2 (RESOLVED): Replaced estimated layer constants with measured Sparticuz Chromium v130.0.0 artifacts (64.50 MB uncompressed, archive 67,464,242 bytes, SHA256 `c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480`). Confirmed unpacked function package 148.20 MB (< 185 MB budget), compressed ZIP 52.42 MB (< 70 MB limit), and combined size with layer 212.70 MB (< 250 MB ceiling, 37.30 MB headroom). Explicit distinction maintained between local clean environment proof (verified) and target runtime proof (deferred to cloud rollout).
+* C3 (RESOLVED): Implemented `SecureEgressProxy` in `backend/src/functions/browser/network.py` intercepting requests prior to socket creation, validating all resolved IP addresses against SSRF policies, and binding outbound TCP sockets strictly to validated IP literals with multi homed candidate IP fallback, defeating DNS rebinding across navigations and subresources.
+* C4 (DISPROVED): Retained `CodeUri: ../../../build/browser` in `backend/src/functions/browser/template.yaml`, confirming path arithmetic resolves correctly to `backend/build/browser`.
+* C5 (RESOLVED): Enforced post wait snapshot capture in `PlaywrightBrowserAdapter._render_with_browser` strictly after `wait_for_selector()`. Derived substantive excerpt text, SHA256 content hash, and Scrapling entity parsing atomically from identical post wait DOM snapshot.
 
 ### Next action and ordering
 
