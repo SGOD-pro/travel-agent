@@ -1,0 +1,124 @@
+"""Dedicated Lambda consumer for browser escalation TASK_DISPATCH messages.
+
+Reuses permitted 0001 execution support without importing orchestrator evidence policy,
+canonical places, or graph runner workflows.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+from config.db import get_session_factory
+from contracts.browser import BrowserExtractionPort
+from functions.browser.driver import PlaywrightBrowserAdapter
+from functions.browser.service import (
+    BrowserWorkerService,
+    parse_browser_dispatch_message,
+)
+from functions.orchestrator.execution.fencing import (
+    ExecutionEngineError,
+    StaleQueueMessageError,
+    TaskAlreadyTerminalError,
+    TaskClaimConflictError,
+    TaskLeaseActiveError,
+)
+
+logger = logging.getLogger(__name__)
+
+
+async def process_record(
+    record: dict[str, Any],
+    session_factory: Any,
+    *,
+    adapter: BrowserExtractionPort | None = None,
+) -> None:
+    """Parses a TASK_DISPATCH message and executes browser rendering under lease fencing."""
+    envelope = parse_browser_dispatch_message(record)
+
+    if envelope.worker != "BROWSER" or envelope.action != "render":
+        logger.warning(
+            "Browser worker ignoring message for worker=%s action=%s",
+            envelope.worker,
+            envelope.action,
+        )
+        return
+
+    extraction_port: BrowserExtractionPort = (
+        adapter if adapter is not None else PlaywrightBrowserAdapter()
+    )
+
+    async with session_factory() as session:
+        service = BrowserWorkerService(session, extraction_port=extraction_port)
+        try:
+            await service.execute_render_task(envelope)
+        except (
+            TaskClaimConflictError,
+            TaskLeaseActiveError,
+            TaskAlreadyTerminalError,
+            StaleQueueMessageError,
+        ) as exc:
+            logger.info("Safely discarding task dispatch for %s: %s", envelope.task_id, exc)
+            return
+        except ExecutionEngineError:
+            logger.error(
+                "Terminal execution engine error for browser task %s; returning as batchItemFailure for DLQ",
+                envelope.task_id,
+                exc_info=True,
+            )
+            raise
+
+
+async def process_batch(
+    event: dict[str, Any],
+    context: Any = None,
+    session_factory: Any | None = None,
+    adapter: BrowserExtractionPort | None = None,
+) -> list[dict[str, str]]:
+    """Processes an SQS batch concurrently and returns failed item identifiers."""
+    if session_factory is None:
+        session_factory = get_session_factory()
+
+    records = event.get("Records", [])
+    if not records:
+        return []
+
+    deadline_failures: list[dict[str, str]] = []
+    processable: list[dict[str, Any]] = []
+
+    for record in records:
+        message_id = record.get("messageId", "")
+        if context and hasattr(context, "get_remaining_time_in_millis"):
+            if context.get_remaining_time_in_millis() < 5000:
+                logger.warning(
+                    "Lambda remaining time under 5000ms, failing message %s to trigger safe SQS redrive",
+                    message_id,
+                )
+                if message_id:
+                    deadline_failures.append({"itemIdentifier": message_id})
+                continue
+        processable.append(record)
+
+    async def _process_one(rec: dict[str, Any]) -> dict[str, str] | None:
+        message_id = rec.get("messageId", "")
+        try:
+            await process_record(
+                rec,
+                session_factory,
+                adapter=adapter,
+            )
+            return None
+        except Exception as exc:
+            logger.exception("Error processing browser record %s: %s", message_id, exc)
+            return {"itemIdentifier": message_id} if message_id else None
+
+    results = await asyncio.gather(*[_process_one(r) for r in processable])
+    failures = deadline_failures + [r for r in results if r is not None]
+    return failures
+
+
+def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
+    """Standard AWS Lambda entrypoint for browser escalation worker consumer."""
+    failures = asyncio.run(process_batch(event, context))
+    return {"batchItemFailures": failures}

@@ -11,7 +11,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 |---|---------|-------|--------|
 | 1 | Orchestrator execution engine, transactional outbox, and reconciliation | Foundation | done |
 | 2 | Evidence collection with provenance and canonical place/claim verification | Phase 4: Evidence & Verification | done |
-| 3 | Browser escalation worker service and orchestrator dispatch | Phase 5: Browser Escalation | in-progress |
+| 3 | Browser escalation worker service and orchestrator dispatch | Phase 5: Browser Escalation | done |
 
 ## Foundations
 
@@ -77,22 +77,25 @@ Spec 0002 (`docs/specs/0002-evidence-collection-and-verification.md`, Status: Ac
  
 ## Phase 5: Browser Escalation
 
-### 3. Browser escalation worker service and orchestrator dispatch · in-progress
+### 3. Browser escalation worker service and orchestrator dispatch · done
 Dedicated serverless browser escalation worker to render dynamic client side web pages emitted from evidence collection, execute Playwright navigation with SSRF route filtering, and persist rendered observations under orchestrator lease fencing. Strictly excludes booking, payment, checkout, transaction automation, ECS or ECR container deployments, and live AWS deployment.
 **Done when:** browser tasks are claimed and completed under lease fencing, target URLs navigate under SSRF protection, rendered DOM HTML is captured and parsed with Scrapling, immutable source observations are persisted with extraction_method BROWSER_HTML, and the browser worker packages independently beneath AWS Lambda size ceilings.
 - [x] Design it (spec): [0003](../specs/0003-browser-escalation.md)
-- [ ] Build it: `/develop browser escalation worker service and orchestrator dispatch`
+- [x] Build it: `/develop browser escalation worker service and orchestrator dispatch`
    - [x] Browser domain contracts and offline fixture adapter (AC-5)
    - [x] Orchestrator SQS transport routing and LangGraph escalation node (AC-1, AC-2)
    - [x] Fenced browser worker service, observation persistence, and graceful error degradation (AC-3, AC-6, AC-7)
-   - [ ] Playwright driver adapter with route level private IP and metadata interception (AC-4, AC-5)
-   - [ ] SQS consumer Lambda handler, SAM template with Chromium layer, and combined packaging acceptance (AC-8)
-- [ ] Verify it: `/check verify 0003-browser-escalation`
+   - [x] Playwright driver adapter with route level private IP and metadata interception (AC-4, AC-5)
+   - [x] SQS consumer Lambda handler, SAM template with Chromium layer, and combined packaging acceptance (AC-8)
+- [x] Verify it: `/check verify 0003-browser-escalation`
    - [x] Slice 3 fenced worker service and observation persistence: [verify.md](../specs/0003-browser-escalation/verify.md) (passed all 5 behaviors on live PostgreSQL)
-- [ ] Review it (fresh model): `/check review 0003-browser-escalation`
+   - [x] Full feature and Slice 5 packaging verification: [verify.md](../specs/0003-browser-escalation/verify.md) (passed all 8 acceptance criteria, live Chromium execution, live PostgreSQL schema proof, and clean Python 3.12 -S -P isolation)
+- [x] Review it (fresh model): `/check review 0003-browser-escalation`
    - [x] Slice 2 orchestrator transport and escalation node: [2026-10-15-main.md](../reviews/2026-10-15-main.md) (Approve)
    - [x] Slice 3 fenced worker service and observation persistence: [2026-10-16-main.md](../reviews/2026-10-16-main.md) (Approve)
-- [ ] Test it: `/test 0003-browser-escalation`
-- [ ] Document it: `/document 0003-browser-escalation`
+   - [x] Slice 4 Playwright driver adapter and live network controls: [2026-10-16-browser-slice4.md](../reviews/2026-10-16-browser-slice4.md) (Approve)
+   - [x] Slice 5 SQS consumer Lambda, SAM template, and packaging acceptance: [2026-10-16-browser-slice5.md](../reviews/2026-10-16-browser-slice5.md) (Approve)
+- [x] Test it: `/test 0003-browser-escalation` (167 tests passing across 7 files)
+- [x] Document it: `/document 0003-browser-escalation`
 
-Spec 0003 (`docs/specs/0003-browser-escalation.md`, Status: In Progress) · code in `backend/src/functions/browser/` and `backend/src/functions/orchestrator/`
+Spec 0003 (`docs/specs/0003-browser-escalation.md`, Status: Accepted) · code in `backend/src/functions/browser/` and `backend/src/functions/orchestrator/`

@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Browser Escalation Worker Function SAM Template with SQS Partial Batch Responses, DLQ Redrive Policies, and Chromium Layer Binding
+
+Parameters:
+  Environment:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - local
+      - staging
+      - production
+    Description: Deployment target environment matching application Settings
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: PostgreSQL connection string with asyncpg dialect
+  OutboxQueueUrl:
+    Type: String
+    Default: 'https://sqs.ap-south-1.amazonaws.com/123456789012/swena-outbox-events'
+    Description: Amazon SQS queue URL for outbox relay events
+  BrowserWorkerQueueUrl:
+    Type: String
+    Default: 'https://sqs.ap-south-1.amazonaws.com/123456789012/swena-browser-escalation'
+    Description: Amazon SQS queue URL for browser worker task dispatches
+  ChromiumLayerArn:
+    Type: String
+    Default: 'arn:aws:lambda:ap-south-1:764866452832:layer:chromium:1'
+    Description: ARN for external precompiled Chromium Lambda Layer (e.g. Sparticuz Chromium)
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 60
+    MemorySize: 1536
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        DATABASE_URL: !Ref DatabaseUrl
+        OUTBOX_QUEUE_URL: !Ref OutboxQueueUrl
+        SQS_QUEUE_URL: !Ref OutboxQueueUrl
+        BROWSER_WORKER_QUEUE_URL: !Ref BrowserWorkerQueueUrl
+        CHROMIUM_PATH: /opt/chromium
+        BROWSER_NAVIGATION_TIMEOUT_SECONDS: '20'
+        BROWSER_MAX_ESCALATION_TASKS: '3'
+
+Resources:
+  # Dead Letter Queue for failed browser task attempts
+  BrowserEscalationDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'browser-escalation-task-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  # Work Queue with Redrive Policy
+  BrowserEscalationQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'browser-escalation-task-dispatch-${Environment}'
+      VisibilityTimeout: 240
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt BrowserEscalationDLQ.Arn
+        maxReceiveCount: 5
+
+  # Dedicated Browser Escalation SQS Consumer Function
+  BrowserEscalationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'browser-escalation-${Environment}'
+      Handler: functions.browser.consumer.lambda_handler
+      CodeUri: ../../../build/browser
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      Timeout: 60
+      MemorySize: 1536
+      Description: SQS consumer for browser escalation TASK_DISPATCH messages
+      Layers:
+        - !Ref ChromiumLayerArn
+      Events:
+        TaskDispatchBatch:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt BrowserEscalationQueue.Arn
+            BatchSize: 10
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+Outputs:
+  BrowserEscalationQueueUrl:
+    Description: URL of SQS Browser Escalation Task Dispatch Queue
+    Value: !Ref BrowserEscalationQueue
+  BrowserEscalationQueueArn:
+    Description: ARN of SQS Browser Escalation Task Dispatch Queue
+    Value: !GetAtt BrowserEscalationQueue.Arn
+  BrowserEscalationDLQUrl:
+    Description: URL of SQS Browser Escalation DLQ
+    Value: !Ref BrowserEscalationDLQ
+  BrowserEscalationDLQArn:
+    Description: ARN of SQS Browser Escalation DLQ
+    Value: !GetAtt BrowserEscalationDLQ.Arn
+  BrowserEscalationFunctionArn:
+    Description: ARN of Browser Escalation Lambda Function
+    Value: !GetAtt BrowserEscalationFunction.Arn

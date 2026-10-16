@@ -1,0 +1,511 @@
+"""Playwright driver adapter conforming to spec 0003 Slice 4.
+
+Provides live browser execution via Playwright Chromium with:
+1. Strict pre navigation URL and DNS address validation.
+2. In flight route interception evaluating all requests, redirects, and subresources.
+3. Explicit mitigation against DNS rebinding, Service Workers (service_workers="block"),
+   and WebSockets (protocol blocking and init script disabling).
+4. Graceful error degradation mapping timeouts to TIMED_OUT, security blocks and bot challenges
+   to BLOCKED, and crashes to UNAVAILABLE.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+import time
+from collections.abc import Callable
+from typing import Any
+
+from playwright.async_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    async_playwright,
+)
+from playwright.async_api import (
+    Error as PlaywrightError,
+)
+from playwright.async_api import (
+    TimeoutError as PlaywrightTimeoutError,
+)
+
+from config.config import Settings
+from contracts.browser import (
+    BrowserExtractionPort,
+    BrowserRenderResult,
+    BrowserRenderStatus,
+    BrowserResourceUsage,
+    BrowserTaskPayload,
+)
+from functions.browser.network import (
+    BrowserSecurityError,
+    RouteSecurityInterceptor,
+    validate_navigation_url,
+)
+from functions.browser.parser import parse_rendered_entities
+
+logger = logging.getLogger(__name__)
+
+# Default headless Chromium flags for serverless and containerized environments
+DEFAULT_CHROMIUM_ARGS: list[str] = [
+    "--no-sandbox",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    "--disable-gpu",
+    "--single-process",
+    "--no-zygote",
+]
+
+# Signatures for bot detection and anti scraping challenges
+_BOT_CHALLENGE_PATTERNS: tuple[str, ...] = (
+    "cf-challenge",
+    "cf-turnstile",
+    "challenge-running",
+    "just a moment...",
+    "verify you are human",
+    "attention required! | cloudflare",
+    "please verify you are a human",
+    "hcaptcha",
+    "g-recaptcha",
+)
+
+
+class PlaywrightBrowserAdapter(BrowserExtractionPort):
+    """Playwright extraction adapter executing dynamic page rendering with live network guards."""
+
+    def __init__(
+        self,
+        *,
+        browser: Browser | None = None,
+        dns_resolver: Callable[[str, int], list[Any]] | None = None,
+        ip_validator: Callable[[Any], bool] | None = None,
+        chromium_path: str | None = None,
+        launch_args: list[str] | None = None,
+        headless: bool = True,
+    ) -> None:
+        self._injected_browser = browser
+        self._dns_resolver = dns_resolver
+        self._ip_validator = ip_validator
+        self._chromium_path = chromium_path
+        self._launch_args = launch_args or DEFAULT_CHROMIUM_ARGS
+        self._headless = headless
+
+    async def render_page(self, payload: BrowserTaskPayload) -> BrowserRenderResult:
+        """Renders dynamic web page content under strict timeouts and network controls."""
+        start_time = time.monotonic()
+
+        # 1. Pre navigation URL and DNS address validation (AC-4)
+        try:
+            validate_navigation_url(
+                payload.url,
+                dns_resolver=self._dns_resolver,
+                ip_validator=self._ip_validator,
+            )
+        except BrowserSecurityError as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.warning("Pre navigation security check rejected %s: %s", payload.url, exc)
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.BLOCKED,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason=f"Pre navigation security policy blocked URL: {exc}",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
+            )
+
+        # 2. Browser session execution
+        if self._injected_browser is not None:
+            return await self._render_with_browser(self._injected_browser, payload, start_time)
+
+        # Launch dedicated browser instance
+        playwright_cm = async_playwright()
+        playwright = await playwright_cm.start()
+        browser: Browser | None = None
+        try:
+            executable_path = self._chromium_path
+            if not executable_path:
+                try:
+                    settings = Settings()
+                    executable_path = settings.CHROMIUM_PATH
+                except Exception:
+                    executable_path = None
+
+            launch_kwargs: dict[str, Any] = {
+                "headless": self._headless,
+                "args": self._launch_args,
+            }
+            if executable_path:
+                launch_kwargs["executable_path"] = executable_path
+
+            browser = await playwright.chromium.launch(**launch_kwargs)
+            return await self._render_with_browser(browser, payload, start_time)
+        finally:
+            if browser is not None:
+                try:
+                    await browser.close()
+                except Exception as exc:
+                    logger.debug("Error closing browser: %s", exc)
+            try:
+                await playwright.stop()
+            except Exception as exc:
+                logger.debug("Error stopping playwright: %s", exc)
+
+    async def _render_with_browser(
+        self,
+        browser: Browser,
+        payload: BrowserTaskPayload,
+        start_time: float,
+    ) -> BrowserRenderResult:
+        """Executes rendering inside an isolated, guarded browser context."""
+        context: BrowserContext | None = None
+        page: Page | None = None
+        background_tasks: set[asyncio.Task[Any]] = set()
+        interceptor = RouteSecurityInterceptor(
+            dns_resolver=self._dns_resolver,
+            ip_validator=self._ip_validator,
+        )
+
+        try:
+            # 1. Create context with Service Workers explicitly blocked
+            context = await browser.new_context(
+                service_workers="block",
+                ignore_https_errors=False,
+                viewport={"width": 1280, "height": 800},
+            )
+
+            # 2. Register in flight route interception on context
+            await context.route("**/*", interceptor)
+
+            # 3. Disable WebSockets and Service Worker API in page context
+            await context.add_init_script(
+                "delete window.WebSocket; "
+                "window.WebSocket = function() { throw new Error('WebSockets are disabled'); }; "
+                "try { Object.defineProperty(navigator, 'serviceWorker', { get: () => undefined, configurable: true }); } catch (e) {}"
+            )
+
+            page = await context.new_page()
+
+            # Register response listener to validate HTTP redirect destinations (AC-4)
+            def on_response(res: Any) -> None:
+                if getattr(res, "status", 0) in (301, 302, 303, 307, 308):
+                    task = asyncio.create_task(interceptor.check_response(res, page=page))
+                    background_tasks.add(task)
+                    task.add_done_callback(background_tasks.discard)
+
+            page.on("response", on_response)
+
+            timeout_ms = payload.timeout_seconds * 1000
+            wait_until_strategy: Any = payload.wait_until.value
+
+            # 4. Perform bounded navigation
+            response = await page.goto(
+                payload.url,
+                timeout=timeout_ms,
+                wait_until=wait_until_strategy,
+            )
+
+            effective_url = page.url or payload.url
+
+            # 5. Check if route interception blocked the target or redirect hops
+            if interceptor.blocked_requests:
+                main_blocked = [
+                    b
+                    for b in interceptor.blocked_requests
+                    if b["url"] == payload.url or b["url"] == effective_url
+                ]
+                if main_blocked:
+                    duration_ms = int((time.monotonic() - start_time) * 1000)
+                    reason = main_blocked[0]["reason"]
+                    return BrowserRenderResult(
+                        status=BrowserRenderStatus.BLOCKED,
+                        canonical_url=payload.canonical_url,
+                        effective_url=effective_url,
+                        content_hash=None,
+                        excerpt_text=None,
+                        excerpt_locator=None,
+                        rendered_html_snippet=None,
+                        render_duration_ms=duration_ms,
+                        unavailable_reason=f"Security policy blocked request: {reason}",
+                        usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                        parsed_lodging_observations=[],
+                        parsed_transit_observations=[],
+                    )
+
+            # 6. Check HTTP status code for bot challenge / forbidden
+            if response is not None and response.status in (403, 429):
+                duration_ms = int((time.monotonic() - start_time) * 1000)
+                return BrowserRenderResult(
+                    status=BrowserRenderStatus.BLOCKED,
+                    canonical_url=payload.canonical_url,
+                    effective_url=effective_url,
+                    content_hash=None,
+                    excerpt_text=None,
+                    excerpt_locator=None,
+                    rendered_html_snippet=None,
+                    render_duration_ms=duration_ms,
+                    unavailable_reason=f"HTTP {response.status} access denied or anti bot challenge",
+                    usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                    parsed_lodging_observations=[],
+                    parsed_transit_observations=[],
+                )
+
+            # 7. Check for bot verification indicators in rendered page
+            page_title = (await page.title() or "").lower()
+            rendered_html = await page.content()
+            html_lower = rendered_html.lower()
+
+            for pattern in _BOT_CHALLENGE_PATTERNS:
+                if pattern in page_title or pattern in html_lower[:5000]:
+                    duration_ms = int((time.monotonic() - start_time) * 1000)
+                    return BrowserRenderResult(
+                        status=BrowserRenderStatus.BLOCKED,
+                        canonical_url=payload.canonical_url,
+                        effective_url=effective_url,
+                        content_hash=None,
+                        excerpt_text=None,
+                        excerpt_locator=None,
+                        rendered_html_snippet=None,
+                        render_duration_ms=duration_ms,
+                        unavailable_reason="Bot verification or anti bot challenge detected",
+                        usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                        parsed_lodging_observations=[],
+                        parsed_transit_observations=[],
+                    )
+
+            # 8. Optional selector waiting
+            if payload.selector_target:
+                try:
+                    await page.wait_for_selector(payload.selector_target, timeout=timeout_ms)
+                except PlaywrightTimeoutError:
+                    duration_ms = int((time.monotonic() - start_time) * 1000)
+                    return BrowserRenderResult(
+                        status=BrowserRenderStatus.TIMED_OUT,
+                        canonical_url=payload.canonical_url,
+                        effective_url=effective_url,
+                        content_hash=None,
+                        excerpt_text=None,
+                        excerpt_locator=None,
+                        rendered_html_snippet=None,
+                        render_duration_ms=duration_ms,
+                        unavailable_reason=f"Timeout waiting for selector target '{payload.selector_target}'",
+                        usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                        parsed_lodging_observations=[],
+                        parsed_transit_observations=[],
+                    )
+
+            # 9. Extract substantive excerpt text and locator
+            excerpt_text: str | None = None
+            excerpt_locator: str | None = None
+
+            if payload.selector_target:
+                target_element = await page.query_selector(payload.selector_target)
+                if target_element:
+                    text_val = await target_element.inner_text()
+                    if text_val and text_val.strip():
+                        excerpt_text = " ".join(text_val.split())[:1000]
+                        excerpt_locator = payload.selector_target
+
+            if not excerpt_text:
+                body_element = await page.query_selector("body")
+                if body_element:
+                    text_val = await body_element.inner_text()
+                    if text_val and text_val.strip():
+                        excerpt_text = " ".join(text_val.split())[:1000]
+                        excerpt_locator = "body"
+
+            if not excerpt_text or not excerpt_text.strip():
+                duration_ms = int((time.monotonic() - start_time) * 1000)
+                return BrowserRenderResult(
+                    status=BrowserRenderStatus.UNAVAILABLE,
+                    canonical_url=payload.canonical_url,
+                    effective_url=effective_url,
+                    content_hash=None,
+                    excerpt_text=None,
+                    excerpt_locator=None,
+                    rendered_html_snippet=None,
+                    render_duration_ms=duration_ms,
+                    unavailable_reason="Rendered page contained no substantive text",
+                    usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                    parsed_lodging_observations=[],
+                    parsed_transit_observations=[],
+                )
+
+            # 10. Extract entities and assemble successful result (AC-5, AC-6)
+            content_hash = hashlib.sha256(excerpt_text.encode("utf-8")).hexdigest()
+            html_snippet = rendered_html[:50000] if rendered_html else None
+
+            parsed_lodging = []
+            parsed_transit = []
+            try:
+                raw_entities = parse_rendered_entities(
+                    html_content=rendered_html,
+                    category=payload.category,
+                    canonical_url=payload.canonical_url,
+                )
+                category_lower = payload.category.lower().strip()
+                if "lodging" in category_lower or "hotel" in category_lower:
+                    from decimal import Decimal
+                    from urllib.parse import urlparse
+
+                    from contracts.evidence import HotelObservation
+                    from contracts.money import Currency
+
+                    domain = urlparse(payload.canonical_url).netloc or "unknown"
+                    for item in raw_entities:
+                        try:
+                            obs = HotelObservation(
+                                property_name=item["property_name"],
+                                location_name=domain,
+                                price_per_night=Decimal(str(item["price_per_night"])),
+                                currency=Currency.INR,
+                                rating=item.get("rating"),
+                                provider=domain,
+                                source_url=payload.canonical_url,
+                                deep_link=payload.canonical_url,
+                            )
+                            parsed_lodging.append(obs)
+                        except Exception:
+                            pass
+                elif "transit" in category_lower or "fare" in category_lower:
+                    from contracts.evidence import FareObservation
+
+                    for item in raw_entities:
+                        try:
+                            parsed_transit.append(FareObservation.model_validate(item))
+                        except Exception:
+                            pass
+            except Exception as exc:
+                logger.debug("Entity parsing encountered exception: %s", exc)
+
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.SUCCESS,
+                canonical_url=payload.canonical_url,
+                effective_url=effective_url,
+                content_hash=content_hash,
+                excerpt_text=excerpt_text,
+                excerpt_locator=excerpt_locator,
+                rendered_html_snippet=html_snippet,
+                render_duration_ms=duration_ms,
+                unavailable_reason=None,
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=parsed_lodging,
+                parsed_transit_observations=parsed_transit,
+            )
+
+        except PlaywrightTimeoutError:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            if interceptor.blocked_requests:
+                reasons = "; ".join(b["reason"] for b in interceptor.blocked_requests)
+                return BrowserRenderResult(
+                    status=BrowserRenderStatus.BLOCKED,
+                    canonical_url=payload.canonical_url,
+                    effective_url=payload.url,
+                    content_hash=None,
+                    excerpt_text=None,
+                    excerpt_locator=None,
+                    rendered_html_snippet=None,
+                    render_duration_ms=duration_ms,
+                    unavailable_reason=f"Security policy blocked navigation: {reasons}",
+                    usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                    parsed_lodging_observations=[],
+                    parsed_transit_observations=[],
+                )
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.TIMED_OUT,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason=f"Navigation timeout of {payload.timeout_seconds} seconds exceeded",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
+            )
+        except PlaywrightError as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            if interceptor.blocked_requests:
+                reasons = "; ".join(b["reason"] for b in interceptor.blocked_requests)
+                return BrowserRenderResult(
+                    status=BrowserRenderStatus.BLOCKED,
+                    canonical_url=payload.canonical_url,
+                    effective_url=payload.url,
+                    content_hash=None,
+                    excerpt_text=None,
+                    excerpt_locator=None,
+                    rendered_html_snippet=None,
+                    render_duration_ms=duration_ms,
+                    unavailable_reason=f"Security policy blocked navigation: {reasons}",
+                    usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                    parsed_lodging_observations=[],
+                    parsed_transit_observations=[],
+                )
+
+            exc_str = str(exc)
+            is_timeout = "timeout" in exc_str.lower()
+            is_blocked = "blocked" in exc_str.lower() or "403" in exc_str
+
+            status = (
+                BrowserRenderStatus.TIMED_OUT
+                if is_timeout
+                else (
+                    BrowserRenderStatus.BLOCKED if is_blocked else BrowserRenderStatus.UNAVAILABLE
+                )
+            )
+            return BrowserRenderResult(
+                status=status,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason=f"Browser navigation error: {exc}",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
+            )
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.UNAVAILABLE,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason=f"Unexpected rendering error: {exc}",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
+            )
+        finally:
+            if background_tasks:
+                for task in list(background_tasks):
+                    if not task.done():
+                        task.cancel()
+                await asyncio.gather(*background_tasks, return_exceptions=True)
+            if page is not None:
+                try:
+                    await page.close()
+                except Exception as exc:
+                    logger.debug("Error closing page: %s", exc)
+            if context is not None:
+                try:
+                    await context.close()
+                except Exception as exc:
+                    logger.debug("Error closing context: %s", exc)

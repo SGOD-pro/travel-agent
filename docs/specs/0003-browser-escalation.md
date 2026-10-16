@@ -1,7 +1,7 @@
 # 0003. Browser Escalation Through the Orchestrator
 
 **Date**: 2026-10-15  
-**Status**: In Progress
+**Status**: Accepted
 
 ## Summary
 
@@ -417,15 +417,15 @@ The build plan follows the Tracer Bullet approach, standing up a thin vertical t
    - Satisfies **AC-3**, **AC-6**, **AC-7**.
 
 4. **Slice 4: Playwright Driver Adapter and Live Browser Network Controls**
-   - Implement `PlaywrightBrowserAdapter` in `backend/src/functions/browser/driver.py` using Playwright async API with pre navigation DNS validation and route level interception aborting private IP and metadata requests.
-   - Configure headless launch options for Lambda environment compatibility (disabling sandbox, dev shm usage, and gpu).
-   - Add integration tests verifying live route interception and redirect aborts against cloud metadata endpoints.
+   - [x] Implement `PlaywrightBrowserAdapter` in `backend/src/functions/browser/driver.py` using Playwright async API with pre navigation DNS validation and route level interception aborting private IP and metadata requests.
+   - [x] Configure headless launch options for Lambda environment compatibility (disabling sandbox, dev shm usage, and gpu).
+   - [x] Add integration tests verifying live route interception and redirect aborts against cloud metadata endpoints.
    - Satisfies **AC-4**, **AC-5**.
 
 5. **Slice 5: SQS Consumer Handler, SAM Template, and Combined Packaging Acceptance**
-   - Implement `lambda_handler`, `process_batch`, and `process_record` in `backend/src/functions/browser/consumer.py` with partial batch failure reporting.
-   - Create `backend/src/functions/browser/template.yaml` declaring the browser worker Lambda function, SQS event trigger, DLQ, and Chromium layer binding.
-   - Create `backend/src/functions/browser/packaging.py` and `tests/unit/test_browser_packaging.py` verifying function package size, combined function plus layer size under 250 MB uncompressed, and strict isolation under `-S -P`.
+   - [x] Implement `lambda_handler`, `process_batch`, and `process_record` in `backend/src/functions/browser/consumer.py` with partial batch failure reporting.
+   - [x] Create `backend/src/functions/browser/template.yaml` declaring the browser worker Lambda function, SQS event trigger, DLQ, and Chromium layer binding.
+   - [x] Create `backend/src/functions/browser/packaging.py` and `tests/unit/test_browser_packaging.py` verifying function package size, combined function plus layer size under 250 MB uncompressed, and strict isolation under `-S -P`.
    - Satisfies **AC-8**.
 
 ## Consequences

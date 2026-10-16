@@ -19,7 +19,9 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/orchestrator/execution/` | Orchestrator execution engine, worker fencing, outbox relay, lease recovery, and reconciliation |
 | `src/functions/orchestrator/places/` | Canonical places persistence, PostGIS geometry models, schemas, and spatial lookup |
 | `src/functions/orchestrator/evidence/` | Claim models, schemas, claim evidence junction, and verification policies |
-| `src/functions/browser/` | Browser escalation worker, page rendering, Scrapling entity parser, and fenced observation persistence |
+| `src/functions/browser/` | Browser escalation worker, Playwright adapter, live SSRF network controls, Scrapling parser, and fenced persistence |
+| `src/functions/browser/consumer.py` | SQS consumer Lambda handler with partial batch failure reporting and deadline timeouts |
+| `src/functions/browser/packaging.py` | Standalone Lambda packaging, 80 MB function budget, and clean environment verification |
 
 ## Commands
 
@@ -38,6 +40,9 @@ uv run ruff check . && uv run mypy src
 
 # Package isolated evidence collector Lambda
 uv run python -m functions.evidence_collector.packaging
+
+# Package isolated browser worker Lambda
+uv run python -m functions.browser.packaging
 
 # Run database migrations
 uv run alembic upgrade head
@@ -58,8 +63,10 @@ uv run alembic upgrade head
 - Claims link to source observations through claim evidence and preserve contradictory assertions as conflicted without overwriting.
 - Offline tests use explicit fixture adapter injection; production runtime path constructs live SerpApi and Scrapling adapters with missing credentials producing explicit unavailable records.
 - Evidence collector packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed, excluding orchestrator, optimizer, and heavy third party libraries.
+- Browser worker packages independently into an isolated Lambda artifact under 80 MB function unpacked, 50 MB compressed, and 250 MB combined with external Chromium layer, excluding orchestrator, optimizer, and evidence collector modules.
 - Orchestrator modules must not import evidence collector business code; task dispatch routes via dedicated SQS queues.
 - Browser escalation worker handles evidence extraction and rendering only; booking, payment, and transaction automation remain deferred.
+- Browser navigation enforces pre navigation DNS screening, in flight route interception against private and metadata IPs, Service Worker blocking, and WebSocket elimination.
 - Remote LAYA model is served from Kaggle through Cloudflare tunnel.
 - Route optimizer and trip planner end to end workflows precede media location development.
 

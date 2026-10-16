@@ -1,0 +1,9 @@
+# Browser Worker Lambda runtime dependencies
+# Playwright and Scrapling are included; heavy optimizer/API/graphs are excluded
+pydantic>=2.7.0
+pydantic-settings>=2.2.0
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29.0
+scrapling>=0.4.15
+playwright>=1.40.0
+orjson>=3.10.0
