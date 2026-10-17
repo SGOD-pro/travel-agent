@@ -12,6 +12,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 | 1 | Orchestrator execution engine, transactional outbox, and reconciliation | Foundation | done |
 | 2 | Evidence collection with provenance and canonical place/claim verification | Phase 4: Evidence & Verification | done |
 | 3 | Browser escalation worker service and orchestrator dispatch | Phase 5: Browser Escalation | done |
+| 4 | Remote LAYA decision router integration | Phase 6: Decision Routing | in-progress |
 
 ## Foundations
 
@@ -100,3 +101,22 @@ Dedicated serverless browser escalation worker to render dynamic client side web
 - [x] Document it: `/document 0003-browser-escalation`
 
 Spec 0003 (`docs/specs/0003-browser-escalation.md`, Status: Accepted) · code in `backend/src/functions/browser/` and `backend/src/functions/orchestrator/`
+
+## Phase 6: Decision Routing
+
+### 4. Remote LAYA decision router integration · in-progress
+Integrate the remote LAYA decision model hosted on Kaggle through a public Cloudflare tunnel to guide evidence collection strategies without generative drift. Validates all proposed actions deterministically, enforces timeouts, bounded retries, and privacy sanitization, with automatic fallback to static search on endpoint outages or budget limits. Strictly excludes route optimization, full trip planner, media generation, and AWS deployment.
+**Done when:** versioned decision contracts and HTTP client adapter communicate with LAYA, deterministic policy validator gates dispatch at or above 0.700 confidence, fallback to static search triggers reliably on errors or unconfigured URLs, sanitized telemetry is persisted in `laya_decisions`, and LangGraph evidence routing node executes end to end with offline and connected suites.
+- [x] Design it (spec): [0004](../specs/0004-remote-laya-decision-router.md)
+- [ ] Build it: `/develop remote LAYA decision router`
+   - [ ] Decision domain contracts, configuration, and offline mock adapter (AC-1, AC-2)
+   - [ ] Remote Cloudflare client adapter, retries, and telemetry sanitization (AC-4, AC-5, AC-6)
+   - [ ] Deterministic policy engine and explicit fallback routing (AC-2, AC-3, AC-5)
+   - [ ] Database migration, persistence repository, and state deduplication (AC-1, AC-6)
+   - [ ] LangGraph decision node, workflow wiring, and end to end acceptance scenario (AC-7)
+- [ ] Verify it: `/check verify 0004-remote-laya-decision-router`
+- [ ] Review it (fresh model): `/check review 0004-remote-laya-decision-router`
+- [ ] Test it: `/test 0004-remote-laya-decision-router`
+- [ ] Document it: `/document 0004-remote-laya-decision-router`
+
+Spec 0004 (`docs/specs/0004-remote-laya-decision-router.md`, Status: Proposed) · code in `backend/src/contracts/decision.py`, `backend/src/functions/orchestrator/decision/`, and `backend/src/functions/orchestrator/graphs/trip_planner/`
