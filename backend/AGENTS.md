@@ -63,7 +63,7 @@ uv run alembic upgrade head
 - Claims link to source observations through claim evidence and preserve contradictory assertions as conflicted without overwriting.
 - Offline tests use explicit fixture adapter injection; production runtime path constructs live SerpApi and Scrapling adapters with missing credentials producing explicit unavailable records.
 - Evidence collector packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed, excluding orchestrator, optimizer, and heavy third party libraries.
-- Browser worker packages independently into an isolated Lambda artifact preserving Node runtime under 185 MB function unpacked, 70 MB compressed, and 250 MB combined with external Sparticuz Chromium layer (64.50 MB), excluding orchestrator, optimizer, and evidence collector modules.
+- Browser worker packages independently into an isolated Lambda artifact preserving Node runtime under 185 MB function unpacked, 70 MB compressed intended for S3 deployment bucket staging, and 250 MB combined with external Sparticuz Chromium layer (64.50 MB); layer Brotli archives decompress to /tmp/chromium at startup via bundled Node runtime.
 - Orchestrator modules must not import evidence collector business code; task dispatch routes via dedicated SQS queues.
 - Browser escalation worker handles evidence extraction and rendering only; booking, payment, and transaction automation remain deferred.
 - Browser navigation enforces pre navigation DNS screening, SecureEgressProxy socket connection binding to validated IP literals defeating DNS rebinding, in flight route interception against private and metadata IPs, Service Worker blocking, and WebSocket elimination.

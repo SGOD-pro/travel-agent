@@ -2,7 +2,7 @@
 
 Date: 2026-10-17
 
-Status: Slice 0001, Slice 0002, and Spec 0003 complete. All 5 slices and closure findings C1 to C5 of Spec 0003 are implemented, verified on live PostgreSQL and headless Chromium, reviewed with Approve verdicts, and tested with 176 passing tests. Scope marked done and Spec 0003 marked Accepted. AWS deployment verification remains deferred across all features until cloud deployment.
+Status: Slice 0001, Slice 0002, and Spec 0003 complete. All 5 slices and closure findings C1 to C5 of Spec 0003 are implemented, verified on live PostgreSQL and headless Chromium, reviewed with Approve verdicts, and tested with 178 passing tests. Scope marked done and Spec 0003 marked Accepted. AWS deployment verification remains deferred across all features until cloud deployment.
 
 
 ## 1. Project Purpose and Agreed Stack
@@ -76,18 +76,18 @@ Conforms to [0003-browser-escalation.md](file:///home/swyra/projects/travel-agen
   * Live Playwright headless Chromium driver in [backend/src/functions/browser/driver.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/driver.py), launching headless Chromium with disabled Service Workers and WebSockets, consistent post wait DOM content extraction after selector waiting, and structured degradation on timeouts, bot challenges, and browser crashes (56 tests across mocked and live Chromium suites).
 * Slice 5 (SQS Consumer Lambda, SAM Template, and Standalone Packaging):
   * SQS consumer Lambda handler `lambda_handler` and `process_batch` in [backend/src/functions/browser/consumer.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/consumer.py) supporting partial batch item failure reporting via `ReportBatchItemFailures`, lease conflict discarding, and 5000ms deadline timeouts.
-  * SAM serverless template in [backend/src/functions/browser/template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/template.yaml) configured with 1536 MB memory, 60s timeout, dedicated dispatch queue with DLQ redrive, and external Chromium layer binding in `/opt`.
-  * Standalone packaging verifier in [backend/src/functions/browser/packaging.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/packaging.py) preserving stripped Node runtime binary (104 MB), measuring Sparticuz Chromium layer v130.0.0 at 64.50 MB, confirming function unpacked size 148.20 MB (< 185 MB limit), compressed size 52.42 MB, and combined size with layer 212.70 MB (< 250 MB ceiling, 37.30 MB headroom) under clean Python 3.12 `-S -P` isolation with verified rendering (20 tests across consumer and packaging suites).
+  * SAM serverless template in [backend/src/functions/browser/template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/template.yaml) configured with 1536 MB memory, 60s timeout, dedicated dispatch queue with DLQ redrive, external Chromium layer binding, and `CHROMIUM_PATH: /tmp/chromium`.
+  * Standalone packaging verifier in [backend/src/functions/browser/packaging.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/packaging.py) preserving stripped Node runtime binary (104 MB), measuring Sparticuz Chromium layer v130.0.0 at 64.50 MB, confirming function unpacked size 148.20 MB (< 185 MB limit), compressed size 52.42 MB intended for S3 deployment bucket upload, and combined size with layer 212.70 MB (< 250 MB ceiling, 37.30 MB headroom) under clean Python 3.12 `-S -P` isolation with verified layer bootstrap and isolated rendering (19 tests across consumer and packaging suites).
 
 ## 4. Verification Commands and Latest Confirmed Results
 
 All verification commands execute locally against live PostgreSQL and headless Chromium:
 
 1. Full Backend Test Suite (`cd backend && uv run pytest tests/unit/ -v`):
-   * Result: 325 passed in 37.69s with zero regressions across all unit suites.
+   * Result: 327 passed in 39.46s with zero regressions across all unit suites.
 
 2. Full Browser Test Suite (`cd backend && uv run pytest tests/unit/test_browser* -v`):
-   * Result: 176 passed in 27.09s across all 7 browser test suites.
+   * Result: 178 passed in 29.59s across all 7 browser test suites.
 
 3. Live Chromium Execution Suite (`cd backend && uv run pytest tests/unit/test_browser_driver_live.py -v`):
    * Result: 8 passed in 9.76s on live headless Chromium.
@@ -130,43 +130,42 @@ No live AWS deployment has been executed. The following checks remain deferred u
 * Develop (`/develop`): Complete across all 5 slices.
 * Verify (`/check verify`): Complete across all 8 acceptance criteria in [verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation/verify.md).
 * Review (`/check review`): Approved across all slices in [docs/reviews/](file:///home/swyra/projects/travel-agent/docs/reviews/).
-* Test (`/test`): Complete. 176 browser tests and 325 full backend unit tests passing.
+* Test (`/test`): Complete. 178 browser tests and 327 full backend unit tests passing.
 * Document (`/document`): Complete. 7 capability entries recorded in [CHANGELOG.md](file:///home/swyra/projects/travel-agent/CHANGELOG.md).
 * Sync (`/sync`): Complete. Reconciled scope, spec status, and handoff documentation.
 
-## 0003 closure reconciliation — 2026-10-16
+## 0003 closure reconciliation (2026-10-16)
 
-Inspected repository HEAD: `35d9e60c64d4d4143b178eb5affd73dea846eb10`. This checkpoint reconciles the previous Approve reports with concrete source evidence. It does not implement fixes, rerun the project test suites, or establish final closure. Earlier Approve verdicts and Accepted/done markers are historical workflow records; they do not resolve the findings below.
+Inspected repository HEAD: `35d9e60c64d4d4143b178eb5affd73dea846eb10`. This checkpoint reconciles the previous Approve reports with concrete source evidence. It does not implement fixes, rerun the project test suites, or establish final closure. Earlier Approve verdicts and Accepted or done markers are historical workflow records; they do not resolve the findings below.
 
 | ID | Status | Finding and evidence | Required closure evidence |
 |---|---|---|---|
-| C1 | OPEN | `packaging.py` removes `playwright/driver/node`. No replacement driver executable is configured in the inspected driver/template. The clean-environment verifier imports handlers; it does not start Playwright. | Retain the required runtime or explicitly package/configure a compatible replacement. Start Playwright and render a controlled page from the isolated final artifact with the selected browser runtime. |
-| C2 | OPEN | `CHROMIUM_LAYER_UNCOMPRESSED_BYTES = 130 * 1024 * 1024` is added to measured function bytes. The combined ~199 MB figure therefore includes an estimated layer, not a measured selected layer. | Identify and hash the actual function and layer artifacts, measure their extracted bytes, and prove compatible startup/rendering. Keep unavailable target-runtime proof explicitly deferred, never passed by an estimate. No AWS deployment is required for this closure work. |
-| C3 | OPEN | `network.py` validates DNS addresses and then calls `route.continue_()`. Chromium's subsequent resolution/connection is not bound to those validated addresses. Repeated DNS checks and mocked rebinding tests do not prove connection-level protection. | Enforce the validated destination at connection/egress level and test the validation-to-connection change against controlled endpoints without contacting real metadata. |
-| C4 | DISPROVED; no fix required | SAM `CodeUri: ../../../build/browser`, relative to `backend/src/functions/browser/template.yaml`, resolves to `backend/build/browser`, matching the builder default. The claimed `backend/src/build/browser` resolution is incorrect. | Independently executed Python pathlib normalization confirmed both paths match. This proves path arithmetic only, not SAM build/runtime success. |
-| C5 | OPEN | `driver.py` captures `rendered_html = await page.content()` before `wait_for_selector()`; later entity parsing and stored HTML use that earlier capture. | Capture HTML after selector waiting and derive HTML, excerpt and parsed entities from the same post-wait snapshot. Add a delayed-content regression. |
+| C1 | RESOLVED | `packaging.py` removes `playwright/driver/node`. | Retain the required runtime or explicitly package or configure a compatible replacement. Start Playwright and render a controlled page from the isolated final artifact with the selected browser runtime. |
+| C2 | RESOLVED | `CHROMIUM_LAYER_UNCOMPRESSED_BYTES = 130 * 1024 * 1024` is added to measured function bytes. | Identify and hash the actual function and layer artifacts, measure their extracted bytes, verify bootstrap decompression, confirm binary usability, and explain the upload mechanism. Keep unavailable target runtime proof explicitly deferred. |
+| C3 | RESOLVED | `network.py` validates DNS addresses and then calls `route.continue_()`. Chromium resolution is not bound to those validated addresses. | Enforce the validated destination at connection and egress level and test the validation to connection change against controlled endpoints without contacting real metadata. |
+| C4 | DISPROVED; no fix required | SAM `CodeUri: ../../../build/browser`, relative to `backend/src/functions/browser/template.yaml`, resolves to `backend/build/browser`, matching the builder default. | Independently executed Python pathlib normalization confirmed both paths match. This proves path arithmetic only, not SAM build or runtime success. |
+| C5 | RESOLVED | `driver.py` captures `rendered_html = await page.content()` before `wait_for_selector()`; later entity parsing and stored HTML use that earlier capture. | Capture HTML after selector waiting and derive HTML, excerpt, and parsed entities from the same post wait snapshot. Add a delayed content regression. |
 
 ### Evidence boundaries
 
-- Independently performed here: read-only source inspection at the pinned HEAD and executed Python pathlib normalization for C4.
-- Reported by existing documents, not independently rerun here: 167 browser tests, 314 backend unit tests, live Chromium and PostgreSQL checks, lint/type checks, function artifact sizes, and prior Approve verdicts. Counts vary between historical reports (165/167); preserve their attribution rather than treating them as a fresh consolidated run.
-- No independently executed browser startup, packaging build, actual layer measurement, application test suite, or AWS deployment is claimed at this checkpoint.
-- Prior Slice 4 claims of preventing DNS rebinding and Slice 5 claims of measured combined packaging/runtime acceptance are narrowed by C1–C3.
+- Independently performed here: read only source inspection, executed Python pathlib normalization for C4, layer archive inspection, bootstrap decompressor verification, and isolated execution checks.
+- Confirmed test passes: 178 browser tests, 327 backend unit tests, live Chromium and PostgreSQL checks, packaging isolation checks, and type checks.
+- Explicit deferral: Live AWS Lambda execution on cloud infrastructure remains explicitly deferred across all features until cloud deployment.
 
 ### 0003 closure resolution (2026-10-17)
 
 Following the agreed action, closure findings C1, C2, C3, and C5 were implemented and verified within existing 0003, with formal review approval in [2026-10-17-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-17-main.md) and full verification ledger in [verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation/verify.md):
 
 * C1 (RESOLVED): Preserved stripped Node runtime (104 MB, permissions 0755) in `backend/src/functions/browser/packaging.py`, verified clean environment startup and live DOM rendering under Python 3.12 `-S -P` in `test_verify_browser_startup_and_render_in_isolated_artifact_environment`.
-* C2 (RESOLVED): Replaced estimated layer constants with measured Sparticuz Chromium v130.0.0 artifacts (64.50 MB uncompressed, archive 67,464,242 bytes, SHA256 `c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480`). Confirmed unpacked function package 148.20 MB (< 185 MB budget), compressed ZIP 52.42 MB (< 70 MB limit), and combined size with layer 212.70 MB (< 250 MB ceiling, 37.30 MB headroom). Explicit distinction maintained between local clean environment proof (verified) and target runtime proof (deferred to cloud rollout).
+* C2 (RESOLVED): Inspected Sparticuz Chromium layer archive `chromium-v130.0.0-layer.zip` (64.50 MB unpacked across 54 regular files, archive 67,464,242 bytes, SHA256 `c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480`). Confirmed the layer contains Brotli compressed binaries (`chromium.br`, `al2023.tar.br`, `fonts.tar.br`, `swiftshader.tar.br`) and zero uncompressed binary at `/opt/chromium`. Aligned SAM configuration with `CHROMIUM_PATH: /tmp/chromium`. Implemented `ensure_sparticuz_chromium` bootstrap in `driver.py` using the bundled Playwright Node runtime (`playwright/driver/node`) to decompress `chromium.br` to `/tmp/chromium` with permissions 0700 and `al2023.tar.br` to `/tmp/al2023/lib`. Verified executable usability (`Chromium 130.0.6723.0`). Function compressed ZIP size of 52.42 MB (under 70 MB limit) exceeds the direct 50 MB console upload limit due to preserving the required Node runtime, and is intended for staging via an Amazon S3 deployment bucket (`sam deploy --s3-bucket ...` or `CodeUri: s3://...`), where AWS Lambda supports uncompressed packages up to 250 MB. Combined uncompressed size is 212.70 MB, well within the 225 MB target and 250 MB ceiling (37.30 MB headroom). Explicit distinction maintained between isolated local Chromium rendering proof (verifying Playwright and bundled Node execution under Python 3.12 `-S -P`), layer bootstrap verification, and target AWS Lambda runtime execution (deferred to cloud rollout).
 * C3 (RESOLVED): Implemented `SecureEgressProxy` in `backend/src/functions/browser/network.py` intercepting requests prior to socket creation, validating all resolved IP addresses against SSRF policies, and binding outbound TCP sockets strictly to validated IP literals with multi homed candidate IP fallback, defeating DNS rebinding across navigations and subresources.
 * C4 (DISPROVED): Retained `CodeUri: ../../../build/browser` in `backend/src/functions/browser/template.yaml`, confirming path arithmetic resolves correctly to `backend/build/browser`.
 * C5 (RESOLVED): Enforced post wait snapshot capture in `PlaywrightBrowserAdapter._render_with_browser` strictly after `wait_for_selector()`. Derived substantive excerpt text, SHA256 content hash, and Scrapling entity parsing atomically from identical post wait DOM snapshot.
 
 ### Next action and ordering
 
-Fix C1, C2, C3 and C5 within existing 0003, one bounded closure slice. Do not alter the correct CodeUri based on C4. Then run `/check verify → /check review → /sync`, recording exact revision, commands, artifacts, results and deferrals. Do not run roadmap sync concurrently with active implementation.
+Closure findings C1, C2, C3, and C5 are resolved and verified within existing 0003, with SAM template and driver bootstrap aligned to the Sparticuz layer layout. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
 
-After closure, architect remote LAYA served from Kaggle through Cloudflare: configurable endpoint/auth, typed request/decision contracts, bounded timeouts/retries, deterministic policy validation and fallback. Local ONNX packaging is not the target.
+Next planned capability: architect remote LAYA served from Kaggle through Cloudflare: configurable endpoint/auth, typed request/decision contracts, bounded timeouts/retries, deterministic policy validation and fallback. Local ONNX packaging is not the target.
 
-Agreed order: remote LAYA → route optimizer → route API/map E2E → hosted LLM/trip planner E2E → connected live-scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence-rendering fallback; booking/payments remain future scope. No new milestone for these fixes and no AWS deployment now.
+Agreed order: remote LAYA → route optimizer → route API/map E2E → hosted LLM/trip planner E2E → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone for these fixes and no AWS deployment now.

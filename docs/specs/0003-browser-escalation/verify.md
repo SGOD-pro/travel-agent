@@ -82,15 +82,15 @@ _Steps derived from spec 0003 acceptance criteria. /check verify runs these; /te
   - Asserts strict module isolation with forbidden modules (`functions.optimizer`, `functions.api`, `functions.evidence_collector`, `functions.orchestrator.graphs`, `ortools`, `langgraph`) raising `ModuleNotFoundError`.
 - [x] Unit test suites:
   - `backend/tests/unit/test_browser_consumer.py`: 9 tests verifying record routing, non browser message filtering, fencing conflict discarding, error redrives, deadline timeouts, partial batch failures, and synchronous Lambda handler execution.
-  - `backend/tests/unit/test_browser_packaging.py`: 6 tests verifying SAM template validity and settings alignment, lean requirements dependencies, dependency inclusive size limits, clean environment import under `-S -P`, cached rebuild speed, and missing Python 3.12 runtime detection.
+  - `backend/tests/unit/test_browser_packaging.py`: 10 tests verifying SAM template validity and settings alignment, lean requirements dependencies, dependency inclusive size limits, Sparticuz layer measurements and hash, layer bootstrap decompression and binary usability, clean environment import under `-S -P`, cached rebuild speed, and missing Python 3.12 runtime detection.
 
 ## Commands
 
 - [x] `uv run ruff check src/contracts/browser.py src/functions/browser tests/unit/test_browser*` passes cleanly with zero lint warnings.
 - [x] `uv run mypy src/functions/browser/ tests/unit/test_browser*` passes cleanly with zero type errors across all 16 source files.
-- [x] `uv run pytest tests/unit/test_browser_consumer.py tests/unit/test_browser_packaging.py -v` passes all 20 Slice 5 and packaging tests.
-- [x] `uv run pytest tests/unit/test_browser* -v` passes all 176 browser unit and live tests.
-- [x] `uv run pytest tests/unit` passes all 325 backend unit tests with zero regressions.
+- [x] `uv run pytest tests/unit/test_browser_consumer.py tests/unit/test_browser_packaging.py -v` passes all 19 Slice 5 and packaging tests.
+- [x] `uv run pytest tests/unit/test_browser* -v` passes all 178 browser unit and live tests.
+- [x] `uv run pytest tests/unit` passes all 327 backend unit tests with zero regressions.
 
 ## Acceptance criteria coverage
 
@@ -101,29 +101,30 @@ _Steps derived from spec 0003 acceptance criteria. /check verify runs these; /te
 - AC-5 covered offline by `test_browser_contracts_and_fixtures.py` and live by `test_browser_network_and_driver_mocked.py` and `test_browser_driver_live.py` (PlaywrightBrowserAdapter live execution, consistent post wait DOM capture, and Scrapling entity parsing).
 - AC-6 covered by `test_browser_worker_slice3.py` (Scrapling entity parsing, immutable `SourceObservationModel` persistence with `extraction_method="BROWSER_HTML"`, artifact reference linkage).
 - AC-7 covered by `test_browser_worker_slice3.py` and `test_browser_network_and_driver_mocked.py` (graceful degradation on timeout or bot block or driver exception, unavailable sources recording, successful task completion under lease fencing).
-- AC-8 covered by `test_browser_packaging.py` and `packaging.py` (unpacked function size 148.20 MB <= 185 MB, compressed ZIP 52.42 MB <= 70 MB, combined unpacked size 212.70 MB <= 225 MB target and 250 MB ceiling with measured Sparticuz Chromium layer, clean Python 3.12 isolation under `-S -P`, and verified isolated rendering).
+- AC-8 covered by `test_browser_packaging.py` and `packaging.py` (unpacked function size 148.20 MB <= 185 MB, compressed ZIP 52.42 MB <= 70 MB intended for S3 deployment bucket upload, combined unpacked size 212.70 MB <= 225 MB target and 250 MB ceiling with measured Sparticuz Chromium layer, clean Python 3.12 isolation under `-S -P`, and verified layer bootstrap).
 
 ## Closure findings resolution (C1, C2, C3, C4, C5)
 
 - [x] **C1: Playwright Node runtime preservation and isolated rendering proof**
   - **Status**: Resolved with concrete evidence.
   - **Mechanism**: The builder in `backend/src/functions/browser/packaging.py` preserves `playwright/driver/node`, sets executable permissions 0755, and strips unneeded binary symbols via `strip --strip-unneeded` to reduce binary size from 121 MB to 104 MB.
-  - **Evidence**: Verified by `verify_browser_startup_and_render_isolated_environment` in `test_browser_packaging.py::test_verify_browser_startup_and_render_in_isolated_artifact_environment`. Spawns an isolated Python 3.12 process with `-S -P`, `PYTHONNOUSERSITE=1`, zero host site packages, zero virtualenv paths on `sys.path`, and only the isolated artifact directory on `PYTHONPATH`. The test launches headless Chromium using the bundled Node runtime, navigates to an HTML page with JavaScript, and confirms DOM hydration (`rendered_text == 'HYDRATED_SUCCESS'`). Isolated execution passes; handler imports alone are rejected as insufficient acceptance proof.
+  - **Evidence**: Verified by `verify_browser_startup_and_render_isolated_environment` in `test_browser_packaging.py::test_verify_browser_startup_and_render_in_isolated_artifact_environment`. Spawns an isolated Python 3.12 process with `-S -P`, `PYTHONNOUSERSITE=1`, zero host site packages, zero virtualenv paths on `sys.path`, and only the isolated artifact directory on `PYTHONPATH`. The test launches headless local Chromium using the bundled Node runtime, navigates to an HTML page with JavaScript, and confirms DOM hydration (`rendered_text == 'HYDRATED_SUCCESS'`). Isolated execution passes; handler imports alone are rejected as insufficient acceptance proof.
 
-- [x] **C2: Measured layer packaging and runtime proof**
+- [x] **C2: Measured layer packaging, bootstrap decompressor, and runtime proof**
   - **Status**: Resolved with concrete evidence and explicit deferral distinction.
-  - **Mechanism**: Replaced the estimated 130 MB layer constant with measured artifacts for Sparticuz Chromium `v130.0.0` (`chromium-v130.0.0-layer.zip`).
-  - **Measured Artifacts**:
-    - Layer archive: `backend/build/layers/chromium-v130.0.0-layer.zip`
-    - Layer SHA256: `c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480`
-    - Layer compressed size: 67,464,242 bytes (64.34 MB)
-    - Layer uncompressed extracted size: 67,633,712 bytes (64.50 MB across 54 files)
-    - Function unpacked size: 148.20 MB (within 185 MB function budget)
-    - Function compressed ZIP size: 52.42 MB (within 70 MB limit)
-    - Combined uncompressed size: 212.70 MB (within 225 MB target and beneath 250 MB / 262,144,000 bytes hard ceiling, providing 37.30 MB headroom)
-  - **Distinction Between Local and Target Proof**:
-    - `local_proof`: VERIFIED. Headless Chromium startup and DOM rendering verified in isolated clean environment under Python 3.12 `-S -P`.
-    - `target_runtime_proof`: DEFERRED_TO_CLOUD_ROLLOUT. Sparticuz Chromium layer contains Linux binaries compiled for Amazon Linux 2023 with `/tmp/chromium` decompression during Lambda cold start. Live execution on real AWS Lambda infrastructure is deferred to cloud deployment.
+  - **Layer Layout Inspection**: The official Sparticuz Chromium layer archive `chromium-v130.0.0-layer.zip` contains Brotli compressed binaries (`nodejs/node_modules/@sparticuz/chromium/bin/chromium.br`, `al2023.tar.br`, `fonts.tar.br`, `swiftshader.tar.br`) totaling 67,633,712 bytes across 54 files (74 archive entries). It does not contain an uncompressed binary at `/opt/chromium`.
+  - **SAM Template Alignment**: Configured `CHROMIUM_PATH: /tmp/chromium` in `backend/src/functions/browser/template.yaml`, aligning SAM with the destination path where Sparticuz extracts the executable binary.
+  - **Decompression and Bootstrap Wiring**: Implemented `ensure_sparticuz_chromium` in `backend/src/functions/browser/driver.py`. When `/tmp/chromium` is present and executable, returns immediately. When unextracted, executes the bootstrap decompressor using the bundled Playwright Node runtime (`playwright/driver/node`), inflating `chromium.br` into `/tmp/chromium` with permissions 0700, inflating `al2023.tar.br` into `/tmp/al2023`, and updating `LD_LIBRARY_PATH` to include `/tmp/al2023/lib`.
+  - **Executable Usability Verification**: Verified by `verify_sparticuz_layer_bootstrap` in `test_browser_packaging.py::test_sparticuz_layer_bootstrap_and_binary_usability` and `test_ensure_sparticuz_chromium_bootstrap`. Confirms layer archive hash, verifies inflation via bundled Node, confirms ELF 64 bit x86_64 binary header, and executes `--version` reporting `Chromium 130.0.6723.0`.
+  - **Packaging Budget and Upload Mechanism**:
+    - Function unpacked size: 148.20 MB (within 185 MB function budget).
+    - Function compressed ZIP size: 52.42 MB (within 70 MB limit). Preserving the required Node runtime increased the compressed ZIP above 50 MB, which is intended for staging via an Amazon S3 deployment bucket (`sam deploy --s3-bucket ...` / `CodeUri: s3://...`), where AWS Lambda supports deployments up to the 250 MB uncompressed limit.
+    - Sparticuz layer unpacked size: 64.50 MB (67,633,712 bytes across 54 files).
+    - Combined unpacked size: 212.70 MB (within 225 MB target and beneath 250 MB / 262,144,000 bytes hard ceiling, providing 37.30 MB headroom).
+  - **Explicit Distinction of Proofs**:
+    - `local_proof`: VERIFIED. Headless local Chromium startup and dynamic DOM rendering verified in isolated clean environment under Python 3.12 `-S -P` proving Playwright and bundled Node execution.
+    - `layer_bootstrap_proof`: VERIFIED. Sparticuz Chromium layer archive layout, bootstrap inflation to `/tmp/chromium`, and binary usability (`Chromium 130.0.6723.0`) verified using bundled Node runtime.
+    - `target_runtime_proof`: DEFERRED_TO_CLOUD_ROLLOUT. Live execution of the Sparticuz Chromium layer on AWS Lambda infrastructure remains explicitly deferred to cloud deployment. Local Chromium rendering is not conflated with layer startup.
 
 - [x] **C3: Enforceable destination connection binding defeating DNS rebinding**
   - **Status**: Resolved with concrete evidence.

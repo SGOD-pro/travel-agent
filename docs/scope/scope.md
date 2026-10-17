@@ -96,7 +96,7 @@ Dedicated serverless browser escalation worker to render dynamic client side web
    - [x] Slice 4 Playwright driver adapter and live network controls: [2026-10-16-browser-slice4.md](../reviews/2026-10-16-browser-slice4.md) (Approve)
    - [x] Slice 5 SQS consumer Lambda, SAM template, and packaging acceptance: [2026-10-16-browser-slice5.md](../reviews/2026-10-16-browser-slice5.md) (Approve)
    - [x] Closure findings C1 to C5 resolution: [2026-10-17-main.md](../reviews/2026-10-17-main.md) (Approve)
-- [x] Test it: `/test 0003-browser-escalation` (176 tests passing across 7 files)
+- [x] Test it: `/test 0003-browser-escalation` (178 tests passing across 7 files)
 - [x] Document it: `/document 0003-browser-escalation`
 
 Spec 0003 (`docs/specs/0003-browser-escalation.md`, Status: Accepted) · code in `backend/src/functions/browser/` and `backend/src/functions/orchestrator/`

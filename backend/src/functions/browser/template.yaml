@@ -40,7 +40,7 @@ Globals:
         OUTBOX_QUEUE_URL: !Ref OutboxQueueUrl
         SQS_QUEUE_URL: !Ref OutboxQueueUrl
         BROWSER_WORKER_QUEUE_URL: !Ref BrowserWorkerQueueUrl
-        CHROMIUM_PATH: /opt/chromium
+        CHROMIUM_PATH: /tmp/chromium
         BROWSER_NAVIGATION_TIMEOUT_SECONDS: '20'
         BROWSER_MAX_ESCALATION_TASKS: '3'
 

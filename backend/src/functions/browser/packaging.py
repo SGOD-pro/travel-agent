@@ -32,7 +32,7 @@ SPARTICUZ_CHROMIUM_VERSION: str = "v130.0.0"
 SPARTICUZ_CHROMIUM_LAYER_FILENAME: str = "chromium-v130.0.0-layer.zip"
 SPARTICUZ_CHROMIUM_LAYER_SHA256: str = "c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480"
 SPARTICUZ_CHROMIUM_LAYER_ARCHIVE_BYTES: int = 67_464_242  # 64.34 MB compressed archive
-SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES: int = 67_633_712  # 64.50 MB across 54 extracted files
+SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES: int = 67_633_712  # 64.50 MB across 54 extracted files (74 archive entries)
 
 # Packaging size thresholds conforming to spec 0003 AC-8 and measured layer artifacts
 MAX_FUNCTION_COMPRESSED_BYTES: int = 70 * 1024 * 1024  # 70 MB
@@ -386,7 +386,7 @@ print("OK")
         "SQS_QUEUE_URL": "https://sqs.ap-south-1.amazonaws.com/123/outbox-queue",
         "BROWSER_WORKER_QUEUE_URL": "https://sqs.ap-south-1.amazonaws.com/123/browser-queue",
         "AWS_REGION": "ap-south-1",
-        "CHROMIUM_PATH": "/opt/chromium",
+        "CHROMIUM_PATH": "/tmp/chromium",
         "BROWSER_NAVIGATION_TIMEOUT_SECONDS": "20",
         "BROWSER_MAX_ESCALATION_TASKS": "3",
     }
@@ -506,6 +506,124 @@ print("LOCAL_RENDER_RESULT:", result)
     }
 
 
+def verify_sparticuz_layer_bootstrap(
+    layer_archive_path: Path | None = None,
+    node_binary: str | Path | None = None,
+) -> dict[str, Any]:
+    """C2: Verifies Sparticuz Chromium layer artifact layout, decompression, and executable usability."""
+    archive_path = layer_archive_path or (
+        Path(__file__).resolve().parents[3] / "build" / "layers" / SPARTICUZ_CHROMIUM_LAYER_FILENAME
+    )
+    if not archive_path.exists():
+        raise FileNotFoundError(f"Sparticuz Chromium layer archive missing at {archive_path}")
+
+    actual_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    if actual_hash != SPARTICUZ_CHROMIUM_LAYER_SHA256:
+        raise ValueError(
+            f"Layer hash mismatch: expected {SPARTICUZ_CHROMIUM_LAYER_SHA256}, got {actual_hash}"
+        )
+
+    with zipfile.ZipFile(archive_path, "r") as zf:
+        namelist = set(zf.namelist())
+        if "nodejs/node_modules/@sparticuz/chromium/bin/chromium.br" not in namelist:
+            raise AssertionError("Layer archive missing nodejs/node_modules/@sparticuz/chromium/bin/chromium.br")
+        if "nodejs/node_modules/@sparticuz/chromium/bin/al2023.tar.br" not in namelist:
+            raise AssertionError("Layer archive missing nodejs/node_modules/@sparticuz/chromium/bin/al2023.tar.br")
+        if "chromium" in namelist or "opt/chromium" in namelist:
+            raise AssertionError("Layer archive unexpectedly contains uncompressed chromium binary at root")
+
+    node_bin = node_binary
+    if node_bin is None:
+        try:
+            import playwright
+
+            cand = Path(playwright.__file__).parent / "driver" / "node"
+            if cand.exists() and os.access(cand, os.X_OK):
+                node_bin = cand
+        except Exception:
+            pass
+    if node_bin is None:
+        node_bin = shutil.which("node")
+    if node_bin is None or not os.access(node_bin, os.X_OK):
+        raise RuntimeError("No executable Node binary available to verify Sparticuz layer decompression")
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as opt_sim_dir:
+        with zipfile.ZipFile(archive_path, "r") as zf:
+            zf.extractall(opt_sim_dir)
+
+        sparticuz_pkg = Path(opt_sim_dir) / "nodejs" / "node_modules" / "@sparticuz" / "chromium"
+        if not sparticuz_pkg.exists():
+            raise RuntimeError(f"Extracted Sparticuz package directory missing at {sparticuz_pkg}")
+
+        script = (
+            "const chromium = require('@sparticuz/chromium');"
+            "async function main() {"
+            "  const p = await chromium.executablePath();"
+            "  console.log('BOOTSTRAPPED_PATH:' + p);"
+            "}"
+            "main().catch(err => {"
+            "  console.error(err);"
+            "  process.exit(1);"
+            "});"
+        )
+        env = os.environ.copy()
+        env["NODE_PATH"] = str(Path(opt_sim_dir) / "nodejs" / "node_modules")
+        env["AWS_EXECUTION_ENV"] = "AWS_Lambda_nodejs20.x"
+
+        res = subprocess.run(
+            [str(node_bin), "-e", script],
+            cwd=str(sparticuz_pkg),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"Sparticuz bootstrap failed:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
+
+        tmp_chromium = Path("/tmp/chromium")
+        if not tmp_chromium.exists() or not os.access(tmp_chromium, os.X_OK):
+            raise RuntimeError(f"Bootstrap completed but {tmp_chromium} is missing or not executable")
+
+        with open(tmp_chromium, "rb") as f:
+            magic = f.read(4)
+            if magic != b"\x7fELF":
+                raise RuntimeError(f"Expected ELF binary, got magic {magic!r}")
+
+        ver_res = subprocess.run(
+            [str(tmp_chromium), "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if ver_res.returncode != 0:
+            raise RuntimeError(f"Executing {tmp_chromium} --version failed:\n{ver_res.stderr}")
+        chromium_version = ver_res.stdout.strip()
+
+        try:
+            if tmp_chromium.exists():
+                tmp_chromium.unlink()
+            al2023_tmp = Path("/tmp/al2023")
+            if al2023_tmp.exists():
+                shutil.rmtree(al2023_tmp, ignore_errors=True)
+            fonts_tmp = Path("/tmp/fonts")
+            if fonts_tmp.exists():
+                shutil.rmtree(fonts_tmp, ignore_errors=True)
+        except Exception:
+            pass
+
+        return {
+            "layer_version": SPARTICUZ_CHROMIUM_VERSION,
+            "archive_bytes": archive_path.stat().st_size,
+            "archive_sha256": actual_hash,
+            "bootstrap_status": "VERIFIED",
+            "chromium_version": chromium_version,
+            "target_runtime_proof": "DEFERRED_TO_CLOUD_ROLLOUT",
+        }
+
+
 if __name__ == "__main__":
     out_dir, z_path, unpacked_func, comp, comb = build_isolated_browser_artifact()
     print(f"Artifact built at: {out_dir}")
@@ -517,4 +635,6 @@ if __name__ == "__main__":
     print(f"Handler verification: {verify_res['status']}")
     render_res = verify_browser_startup_and_render_isolated_environment(out_dir)
     print(f"Browser render verification: {render_res['local_proof']}")
+    layer_res = verify_sparticuz_layer_bootstrap()
+    print(f"Layer bootstrap verification: {layer_res['bootstrap_status']}")
 

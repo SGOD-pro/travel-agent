@@ -14,8 +14,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
+import shutil
+import subprocess
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from playwright.async_api import (
@@ -71,6 +75,112 @@ _BOT_CHALLENGE_PATTERNS: tuple[str, ...] = (
     "hcaptcha",
     "g-recaptcha",
 )
+
+
+def ensure_sparticuz_chromium(
+    *,
+    layer_dir: str | Path | None = None,
+    target_path: str | Path = "/tmp/chromium",
+) -> str | None:
+    """Ensures Sparticuz Chromium executable is decompressed and ready for execution."""
+    resolved_target = Path(target_path)
+    if resolved_target.exists() and os.access(resolved_target, os.X_OK):
+        return str(resolved_target)
+
+    candidate_layer_dirs: list[Path] = []
+    if layer_dir is not None:
+        candidate_layer_dirs.append(Path(layer_dir))
+    env_layer = os.environ.get("SPARTICUZ_LAYER_DIR")
+    if env_layer:
+        candidate_layer_dirs.append(Path(env_layer))
+    candidate_layer_dirs.extend([
+        Path("/opt/nodejs/node_modules/@sparticuz/chromium"),
+        Path("/opt"),
+    ])
+
+    resolved_sparticuz_dir: Path | None = None
+    for cand in candidate_layer_dirs:
+        if cand.name == "@sparticuz" and (cand / "chromium").is_dir():
+            resolved_sparticuz_dir = cand / "chromium"
+            break
+        if (cand / "nodejs" / "node_modules" / "@sparticuz" / "chromium").is_dir():
+            resolved_sparticuz_dir = cand / "nodejs" / "node_modules" / "@sparticuz" / "chromium"
+            break
+        if (cand / "bin" / "chromium.br").is_file():
+            resolved_sparticuz_dir = cand
+            break
+
+    if resolved_sparticuz_dir is None or not (resolved_sparticuz_dir / "bin" / "chromium.br").is_file():
+        return None
+
+    node_bin: str | Path | None = None
+    try:
+        import playwright
+
+        driver_node = Path(playwright.__file__).parent / "driver" / "node"
+        if driver_node.exists() and os.access(driver_node, os.X_OK):
+            node_bin = driver_node
+    except Exception:
+        pass
+
+    if node_bin is None:
+        node_bin = shutil.which("node")
+
+    if node_bin is None or not os.access(node_bin, os.X_OK):
+        logger.warning(
+            "Sparticuz Chromium layer detected but no executable Node runtime found for bootstrap decompression"
+        )
+        return None
+
+    node_modules_dir = resolved_sparticuz_dir.parent.parent
+    bootstrap_script = (
+        "const chromium = require('@sparticuz/chromium');"
+        "async function main() {"
+        "  const p = await chromium.executablePath();"
+        "  console.log(p);"
+        "}"
+        "main().catch(err => {"
+        "  console.error(err);"
+        "  process.exit(1);"
+        "});"
+    )
+
+    env = os.environ.copy()
+    existing_node_path = env.get("NODE_PATH", "")
+    env["NODE_PATH"] = f"{node_modules_dir}:{existing_node_path}" if existing_node_path else str(node_modules_dir)
+    if "AWS_EXECUTION_ENV" not in env:
+        env["AWS_EXECUTION_ENV"] = "AWS_Lambda_nodejs20.x"
+
+    try:
+        res = subprocess.run(
+            [str(node_bin), "-e", bootstrap_script],
+            cwd=str(resolved_sparticuz_dir),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if res.returncode == 0 and resolved_target.exists() and os.access(resolved_target, os.X_OK):
+            al2023_lib = Path("/tmp/al2023/lib")
+            if al2023_lib.exists():
+                curr_ld = os.environ.get("LD_LIBRARY_PATH", "")
+                if "/tmp/al2023/lib" not in curr_ld:
+                    os.environ["LD_LIBRARY_PATH"] = f"/tmp/al2023/lib:{curr_ld}" if curr_ld else "/tmp/al2023/lib"
+            fonts_dir = Path("/tmp/fonts")
+            if fonts_dir.exists() and "FONTCONFIG_PATH" not in os.environ:
+                os.environ["FONTCONFIG_PATH"] = "/tmp/fonts"
+            return str(resolved_target)
+        logger.warning(
+            "Sparticuz Chromium bootstrap execution failed (code %s): STDOUT: %s, STDERR: %s",
+            res.returncode,
+            res.stdout.strip(),
+            res.stderr.strip(),
+        )
+        return None
+    except Exception as exc:
+        logger.warning("Sparticuz Chromium bootstrap decompression failed: %s", exc)
+        return None
 
 
 class PlaywrightBrowserAdapter(BrowserExtractionPort):
@@ -142,6 +252,11 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                     executable_path = settings.CHROMIUM_PATH
                 except Exception:
                     executable_path = None
+
+            if executable_path == "/tmp/chromium" or (executable_path and not os.path.exists(executable_path)):
+                bootstrapped = ensure_sparticuz_chromium(target_path=executable_path or "/tmp/chromium")
+                if bootstrapped:
+                    executable_path = bootstrapped
 
             launch_kwargs: dict[str, Any] = {
                 "headless": self._headless,

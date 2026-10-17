@@ -15,7 +15,11 @@ Validates:
 from __future__ import annotations
 
 import os
+import shutil
+import sys
+import tempfile
 import time
+import zipfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -39,6 +43,7 @@ from functions.browser.packaging import (
     resolve_python_runtime_binary,
     verify_browser_startup_and_render_isolated_environment,
     verify_handler_in_clean_environment,
+    verify_sparticuz_layer_bootstrap,
 )
 
 BROWSER_DIR = Path(__file__).resolve().parents[2] / "src" / "functions" / "browser"
@@ -104,7 +109,7 @@ def test_browser_template_existence_validity_and_settings_alignment() -> None:
     assert "ENVIRONMENT" in env_vars
     assert "DATABASE_URL" in env_vars
     assert "BROWSER_WORKER_QUEUE_URL" in env_vars
-    assert "CHROMIUM_PATH" in env_vars
+    assert env_vars.get("CHROMIUM_PATH") == "/tmp/chromium"
     assert "BROWSER_NAVIGATION_TIMEOUT_SECONDS" in env_vars
     assert "BROWSER_MAX_ESCALATION_TASKS" in env_vars
 
@@ -246,13 +251,48 @@ def test_sparticuz_chromium_layer_artifact_measurements_and_hash() -> None:
     extracted_dir = BACKEND_DIR / "build" / "layers" / "extracted"
     assert extracted_dir.exists(), f"Extracted layer directory missing at {extracted_dir}"
 
-    extracted_bytes = sum(f.stat().st_size for f in extracted_dir.rglob("*") if f.is_file())
+    extracted_files = [f for f in extracted_dir.rglob("*") if f.is_file()]
+    extracted_bytes = sum(f.stat().st_size for f in extracted_files)
     assert extracted_bytes == SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES
     assert extracted_bytes == 67_633_712
+    assert len(extracted_files) == 54
+
+
+def test_sparticuz_layer_bootstrap_and_binary_usability() -> None:
+    """C2: Verifies Sparticuz Chromium layer decompressor produces usable binary and distinguishes deferrals."""
+    result = verify_sparticuz_layer_bootstrap()
+    assert result["bootstrap_status"] == "VERIFIED"
+    assert "Chromium 130." in result["chromium_version"]
+    assert result["target_runtime_proof"] == "DEFERRED_TO_CLOUD_ROLLOUT"
+
+
+def test_ensure_sparticuz_chromium_bootstrap() -> None:
+    """Verifies ensure_sparticuz_chromium returns existing binary or inflates layer artifact."""
+    from functions.browser.driver import ensure_sparticuz_chromium
+
+    # When target exists and is executable
+    assert ensure_sparticuz_chromium(target_path=sys.executable) == sys.executable
+
+    # When layer is not present, returns None safely without error
+    non_existent = Path("/nonexistent/directory")
+    assert ensure_sparticuz_chromium(layer_dir=non_existent, target_path="/tmp/nonexistent_chromium") is None
+
+    # When layer archive exists, bootstraps successfully from extracted layer
+    layer_archive = BACKEND_DIR / "build" / "layers" / SPARTICUZ_CHROMIUM_LAYER_FILENAME
+    with tempfile.TemporaryDirectory() as td:
+        with zipfile.ZipFile(layer_archive, "r") as zf:
+            zf.extractall(td)
+        result = ensure_sparticuz_chromium(layer_dir=Path(td), target_path="/tmp/chromium")
+        assert result == "/tmp/chromium"
+        assert Path("/tmp/chromium").exists()
+        # Clean up
+        Path("/tmp/chromium").unlink(missing_ok=True)
+        shutil.rmtree("/tmp/al2023", ignore_errors=True)
+        shutil.rmtree("/tmp/fonts", ignore_errors=True)
 
 
 def test_verify_browser_startup_and_render_in_isolated_artifact_environment() -> None:
-    """C1 & C2: Proves Playwright Node runtime and live headless rendering from isolated artifact."""
+    """C1: Proves Playwright Node runtime and live headless rendering from isolated artifact using local Chromium."""
     output_dir = BACKEND_DIR / "build" / "browser"
     if not output_dir.exists():
         output_dir, _, _, _, _ = build_isolated_browser_artifact()
