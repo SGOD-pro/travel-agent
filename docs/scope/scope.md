@@ -121,7 +121,8 @@ Integrate the remote LAYA decision model hosted on Kaggle through a public Cloud
    - [x] Slice 3 policy validator, confidence gating, and deterministic fallback: [2026-10-17-laya-slice3.md](../reviews/2026-10-17-laya-slice3.md) (Approve)
    - [x] Slice 4 canonical replay digest, migration, and persistence repository: [2026-10-18-laya-slice4.md](../reviews/2026-10-18-laya-slice4.md) (Approve)
    - [x] Slice 5 LangGraph node, connected acceptance, and benchmark suite: [2026-10-18-laya-slice5.md](../reviews/2026-10-18-laya-slice5.md) (Approve)
-- [x] Test it: `/test 0004-remote-laya-decision-router` (96 unit tests, 2 connected tests passing)
-- [x] Document it: `/document 0004-remote-laya-decision-router` (6 capability entries in CHANGELOG.md)
+   - [x] Full integration and lifecycle repair review: [2026-10-18-main.md](../reviews/2026-10-18-main.md) (Approve)
+- [x] Test it: `/test 0004-remote-laya-decision-router` (101 unit tests, 4 connected lifecycle tests, 2 connected live endpoint tests passing)
+- [x] Document it: `/document 0004-remote-laya-decision-router` (8 capability entries in CHANGELOG.md)
 
 Spec 0004 (`docs/specs/0004-remote-laya-decision-router.md`, Status: Accepted) · code in `backend/src/contracts/decision.py`, `backend/src/functions/decision_router/`, `backend/src/functions/orchestrator/decision/`, and `backend/src/functions/orchestrator/graphs/trip_planner/`

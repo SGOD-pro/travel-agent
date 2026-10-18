@@ -75,6 +75,7 @@ uv run alembic upgrade head
 - Remote LAYA decision client enforces cumulative retry deadlines, exponential backoff for 5xx errors, immediate failure on 4xx responses, and context PII sanitization.
 - Decision policy validator enforces four point revalidation for result reuse (matching phase, context version, policy version, active eligible choices) and deterministic fallback on errors, timeouts, or low confidence (< 0.700).
 - LangGraph evidence routing node records chronological decision envelopes in laya_decisions table and executes between candidate discovery and dynamic evidence escalation.
+- Trip planner workflow compiles with an interrupt before await_evidence_results, resuming back to route_evidence_decision once completed task results or persisted source observations arrive.
 - Route optimizer and trip planner end to end workflows precede media location development.
 
 ## Gotchas

@@ -35,7 +35,6 @@ from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
 from contracts.trips import TransportMode, TripBrief
 from functions.decision_router.client import RemoteLayaDecisionAdapter
-from functions.decision_router.fixtures import FixtureLayaDecisionAdapter
 from functions.optimizer.solver import ItineraryScheduler
 from functions.orchestrator.decision.policy import LayaPolicyValidator
 from functions.orchestrator.decision.repository import (
@@ -66,6 +65,7 @@ class TripPlanningState(TypedDict, total=False):
     laya_decisions: list[dict[str, Any]]
     evidence_routing_action: str
     static_search_completed: bool
+    required_evidence_satisfied: bool
     remaining_search_budget: int
     _laya_adapter: LayaDecisionPort
     _db_session: Any
@@ -255,11 +255,11 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
             "Neither execution_id nor trip_id found in LangGraph state; using static fallback key prefix"
         )
         execution_id = "default-execution"
-    pending_tasks: list[dict[str, Any]] = []
+    pending_tasks: list[dict[str, Any]] = list(state.get("pending_tasks", []))
     newly_dispatched: list[str] = []
 
     for req in extracted_requests:
-        if len(pending_tasks) >= available_slots:
+        if len(newly_dispatched) >= available_slots:
             break
 
         url = req.get("url")
@@ -320,7 +320,7 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
         "pending_tasks": pending_tasks,
         "dispatched_browser_urls": updated_dispatched,
     }
-    if pending_tasks:
+    if newly_dispatched:
         result["current_step"] = "dynamic_evidence_escalated"
 
     return result
@@ -378,27 +378,66 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
     remaining_browser_slots = max(0, max_slots - len(already_dispatched))
 
     # 2. Check search completion & required destination evidence prerequisites
+    # Derived strictly from persisted source-backed evidence, never candidate existence or coordinates alone
+    persisted_observations_count = 0
+    for output in task_outputs.values():
+        if isinstance(output, dict):
+            obs = output.get("observations")
+            if isinstance(obs, list):
+                persisted_observations_count += len(obs)
+            elif output.get("source_observations"):
+                persisted_observations_count += len(output["source_observations"])
+
+    db_session = state.get("_db_session")
+    if persisted_observations_count == 0:
+        if db_session is not None:
+            try:
+                from sqlalchemy import func, select
+
+                from functions.evidence_collector.models import SourceObservationModel
+
+                stmt = select(func.count(SourceObservationModel.id)).where(
+                    SourceObservationModel.execution_id == exec_uuid
+                )
+                count_res = await db_session.execute(stmt)
+                persisted_observations_count = count_res.scalar() or 0
+            except Exception as obs_exc:
+                logger.debug("Failed querying source observations from db_session: %s", obs_exc)
+        else:
+            try:
+                from sqlalchemy import func, select
+
+                from config.db import get_session_factory
+                from functions.evidence_collector.models import SourceObservationModel
+
+                factory = get_session_factory()
+                async with factory() as session:
+                    stmt = select(func.count(SourceObservationModel.id)).where(
+                        SourceObservationModel.execution_id == exec_uuid
+                    )
+                    count_res = await session.execute(stmt)
+                    persisted_observations_count = count_res.scalar() or 0
+            except Exception as obs_exc:
+                logger.debug("Failed querying source observations from database factory: %s", obs_exc)
+
+    has_evidence_task_output = any(
+        isinstance(output, dict) and (output.get("search_completed") or "observations" in output)
+        for output in task_outputs.values()
+    )
     static_search_completed = bool(
         state.get("static_search_completed")
-        or any(isinstance(output, dict) and output.get("search_completed") for output in task_outputs.values())
-        or len(discovered_places) > 0
+        or has_evidence_task_output
+        or persisted_observations_count > 0
     )
-
-    destinations = brief.get("destinations", [])
-    required_evidence_satisfied = False
-    if discovered_places:
-        required_evidence_satisfied = all(
-            p.get("lat") is not None and p.get("lng") is not None for p in discovered_places
-        )
-    elif destinations:
-        required_evidence_satisfied = all(
-            d.get("latitude") is not None and d.get("longitude") is not None for d in destinations
-        )
+    required_evidence_satisfied = bool(
+        state.get("required_evidence_satisfied")
+        or persisted_observations_count > 0
+    )
 
     remaining_search_budget = int(state.get("remaining_search_budget", 1 if not static_search_completed else 0))
 
     # 3. Determine explicit workflow phase
-    if not static_search_completed and not required_evidence_satisfied:
+    if not static_search_completed:
         phase = DecisionPhase.SEARCH_COMPLETION
     elif unhandled_browser_requests > 0 and remaining_browser_slots > 0:
         phase = DecisionPhase.BROWSER_ELIGIBILITY
@@ -416,6 +455,7 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
         remaining_search_budget=remaining_search_budget,
     )
 
+    destinations = brief.get("destinations", [])
     dest_name = (
         brief.get("destination_name")
         or (destinations[0].get("name") if destinations else "Unknown")
@@ -499,24 +539,37 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
                     rationale=recorded.get("rationale"),
                     latency_ms=recorded.get("latency_ms", 0),
                     request_digest=request_digest,
-                    created_at=datetime.now(UTC).isoformat(),
+                    created_at=recorded.get("created_at") or datetime.now(UTC).isoformat(),
                 )
                 break
+
+        if reused is None:
+            if db_session is not None:
+                try:
+                    repo = LayaDecisionRepository(session=db_session)
+                    reused = await repo.find_reusable_decision(decision_req, active_phase=phase)
+                except Exception as repo_exc:
+                    logger.debug("Database reusable decision lookup missed: %s", repo_exc)
+            else:
+                try:
+                    from config.db import get_session_factory
+
+                    factory = get_session_factory()
+                    async with factory() as session:
+                        repo = LayaDecisionRepository(session=session)
+                        reused = await repo.find_reusable_decision(decision_req, active_phase=phase)
+                except Exception as repo_exc:
+                    logger.debug("Database reusable decision lookup missed: %s", repo_exc)
 
         if reused is not None:
             envelope = reused
         else:
-
-            # Resolve adapter
             adapter = state.get("_laya_adapter")
             owns_adapter = False
             if adapter is None:
                 settings = get_settings()
-                if settings.LAYA_ENDPOINT_URL:
-                    adapter = RemoteLayaDecisionAdapter(settings=settings)
-                    owns_adapter = True
-                else:
-                    adapter = FixtureLayaDecisionAdapter()
+                adapter = RemoteLayaDecisionAdapter(settings=settings)
+                owns_adapter = True
 
             try:
                 envelope = await adapter.query_decision(decision_req)
@@ -535,17 +588,14 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
                 if owns_adapter and hasattr(adapter, "aclose"):
                     await adapter.aclose()
 
-    # 6. Optional database persistence if session provided
+    # 6. Database persistence when session provided
     if state.get("_db_session"):
-        try:
-            repo = LayaDecisionRepository(session=state["_db_session"])
-            await repo.persist_decision(
-                envelope=envelope,
-                context_version=context_version,
-                allowed_choices=eligible_choices,
-            )
-        except Exception as db_exc:
-            logger.warning("Failed to persist LAYA decision record in database: %s", db_exc)
+        repo = LayaDecisionRepository(session=state["_db_session"])
+        await repo.persist_decision(
+            envelope=envelope,
+            context_version=context_version,
+            allowed_choices=eligible_choices,
+        )
 
     # 7. Record decision telemetry in state
     record = {
@@ -561,6 +611,7 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
         "latency_ms": envelope.latency_ms,
         "idempotency_key": envelope.idempotency_key,
         "request_digest": envelope.request_digest,
+        "created_at": envelope.created_at,
     }
     updated_decisions = list(laya_decisions)
     updated_decisions.append(record)
@@ -570,13 +621,23 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
         dest_hash = hashlib.sha256(dest_name.encode("utf-8")).hexdigest()
         search_task = {
             "worker": "EVIDENCE",
-            "action": "search",
+            "action": "collect",
             "payload": {
+                "queries": [
+                    f"{dest_name} attractions activities",
+                    f"{dest_name} lodging hotels",
+                ],
+                "budget": {
+                    "cost_per_call_minor": 50,
+                    "currency": "INR",
+                    "remaining_tool_calls": 5,
+                    "remaining_cost_minor": 500,
+                },
                 "destination": dest_name,
                 "origin": brief.get("origin_name", ""),
                 "categories": ["attractions", "lodging", "transit"],
             },
-            "idempotency_key": f"{exec_uuid}:search:{dest_hash[:16]}",
+            "idempotency_key": f"{exec_uuid}:collect:{dest_hash[:16]}",
             "deadline_seconds": 60,
             "max_attempts": 3,
         }
@@ -604,12 +665,29 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
         }
 
 
+def await_evidence_results_node(state: TripPlanningState) -> dict[str, Any]:
+    """Clears dispatched pending tasks and yields control back to route_evidence_decision on resume."""
+    return {
+        "pending_tasks": [],
+        "current_step": "awaiting_evidence_results",
+    }
+
+
 def route_evidence_decision_edge(state: TripPlanningState) -> str:
-    """Routes to solve_schedule if evaluation approved, else to escalate_dynamic_evidence."""
+    """Routes based on evidence decision action."""
     action = state.get("evidence_routing_action")
-    if action == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value:
-        return "solve_schedule"
-    return "escalate_dynamic_evidence"
+    if action == DecisionAction.DISPATCH_BROWSER_ESCALATION.value:
+        return "escalate_dynamic_evidence"
+    elif action == DecisionAction.DISPATCH_EVIDENCE_SEARCH.value:
+        return "await_evidence_results"
+    return "solve_schedule"
+
+
+def escalate_dynamic_evidence_edge(state: TripPlanningState) -> str:
+    """Routes to await_evidence_results if browser tasks are pending, else to solve_schedule."""
+    if state.get("pending_tasks"):
+        return "await_evidence_results"
+    return "solve_schedule"
 
 
 # --- Graph Construction ---
@@ -621,6 +699,7 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_node("parse_brief", parse_and_validate_brief_node)
     graph.add_node("discover_candidates", discover_candidates_node)
     graph.add_node("route_evidence_decision", route_evidence_decision_node)
+    graph.add_node("await_evidence_results", await_evidence_results_node)
     graph.add_node("escalate_dynamic_evidence", escalate_dynamic_evidence_node)
     graph.add_node("solve_schedule", solve_schedule_node)
     graph.add_node("compute_budget", compute_budget_node)
@@ -633,11 +712,20 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
         "route_evidence_decision",
         route_evidence_decision_edge,
         {
+            "await_evidence_results": "await_evidence_results",
             "escalate_dynamic_evidence": "escalate_dynamic_evidence",
             "solve_schedule": "solve_schedule",
         },
     )
-    graph.add_edge("escalate_dynamic_evidence", "solve_schedule")
+    graph.add_conditional_edges(
+        "escalate_dynamic_evidence",
+        escalate_dynamic_evidence_edge,
+        {
+            "await_evidence_results": "await_evidence_results",
+            "solve_schedule": "solve_schedule",
+        },
+    )
+    graph.add_edge("await_evidence_results", "route_evidence_decision")
     graph.add_edge("solve_schedule", "compute_budget")
     graph.add_edge("compute_budget", "synthesize_proposal")
     graph.add_edge("synthesize_proposal", END)
@@ -645,4 +733,12 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     return graph
 
 
-trip_planning_workflow = build_trip_planning_graph().compile()
+def compile_trip_planning_workflow(checkpointer: Any | None = None) -> Any:
+    """Compiles the trip planning StateGraph with the required yield/interrupt boundaries."""
+    return build_trip_planning_graph().compile(
+        checkpointer=checkpointer,
+        interrupt_before=["await_evidence_results"],
+    )
+
+
+trip_planning_workflow = compile_trip_planning_workflow()

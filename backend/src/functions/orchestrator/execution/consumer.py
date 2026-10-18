@@ -15,7 +15,9 @@ from functions.orchestrator.execution.runner import (
     ExecutionStartEvent,
     GraphRunnerService,
 )
-from functions.orchestrator.graphs.trip_planner.graph import build_trip_planning_graph
+from functions.orchestrator.graphs.trip_planner import (
+    compile_trip_planning_workflow,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +78,7 @@ async def process_batch(
     if runner is None:
         session_factory = get_session_factory()
         checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
-        graph = build_trip_planning_graph().compile(checkpointer=checkpointer)
+        graph = compile_trip_planning_workflow(checkpointer=checkpointer)
         runner = GraphRunnerService(session_factory, default_graph=graph)
 
     records = event.get("Records", [])

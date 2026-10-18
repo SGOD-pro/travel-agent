@@ -87,14 +87,18 @@ _Steps derived from spec 0004 acceptance criteria. /check verify runs these; /te
 - [x] Conditional edge `route_evidence_decision_edge` in `backend/src/functions/orchestrator/graphs/trip_planner/graph.py`: directs execution flow to `solve_schedule` when deterministic evaluation is approved, or to `escalate_dynamic_evidence` on search/browser escalation.
 - [x] Graph state extension `TripPlanningState`: adds `laya_decisions: list[dict[str, Any]]`, `evidence_routing_action: str`, `static_search_completed: bool`, `remaining_search_budget: int`.
 - [x] Live connected acceptance test in `backend/tests/integration/test_laya_connected_acceptance.py`: verifies live Cloudflare tunnel communication against remote Kaggle endpoint with GET `/health` probe and POST `/v1/systemone` inference, latency tracking, and confidence gating.
-- [x] 25 scenario labeled routing quality evaluation benchmark suite in `backend/tests/unit/test_laya_evaluation_benchmark.py`: verifies 100% precision on canonical scenarios (accuracy >= 85%, abstention <= 10%), with connected live sample support.
-- [x] Unit test suite in `backend/tests/unit/test_laya_graph_node.py`: 6 passed tests.
+- [x] 25 scenario deterministic policy regression suite in `backend/tests/unit/test_laya_evaluation_benchmark.py`: verifies 100% precision on canonical deterministic scenarios (policy conformance >= 85%, simulated abstention <= 10%), with connected live sample support.
+- [x] Unit test suite in `backend/tests/unit/test_laya_graph_node.py`: 7 passed tests.
+- [x] Connected PostgreSQL lifecycle regression test suite in `backend/tests/integration/test_laya_lifecycle_regression.py`: 4 passed tests proving collect dispatch, task preservation, await_evidence_results interrupt and resumption, observation backed completion derivation, and atomic decision persistence under runner fencing.
 
 ## Commands
 
 ```bash
 # Run all LAYA unit and benchmark tests
 uv run pytest tests/unit/test_laya_*.py -v
+
+# Run connected PostgreSQL lifecycle regression test suite
+uv run pytest tests/integration/test_laya_lifecycle_regression.py -v
 
 # Run live connected acceptance test against Cloudflare tunnel
 RUN_CONNECTED_LAYA_TESTS=1 uv run pytest tests/integration/test_laya_connected_acceptance.py -v

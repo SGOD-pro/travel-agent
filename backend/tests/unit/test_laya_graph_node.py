@@ -70,7 +70,7 @@ class MockLayaDecisionAdapter(LayaDecisionPort):
 
 @pytest.mark.asyncio
 async def test_route_evidence_decision_phase1_static_search_dispatch() -> None:
-    """When static search is incomplete and required evidence is missing, enqueues static search task."""
+    """When static search is incomplete and required evidence is missing, enqueues collect task."""
     exec_id = str(uuid.uuid4())
     state: TripPlanningState = {
         "execution_id": exec_id,
@@ -96,14 +96,17 @@ async def test_route_evidence_decision_phase1_static_search_dispatch() -> None:
 
     search_task = result["pending_tasks"][0]
     assert search_task["worker"] == "EVIDENCE"
-    assert search_task["action"] == "search"
+    assert search_task["action"] == "collect"
+    assert "queries" in search_task["payload"]
+    assert len(search_task["payload"]["queries"]) >= 1
+    assert search_task["payload"]["budget"]["cost_per_call_minor"] == 50
     assert search_task["payload"]["destination"] == "Puri"
     assert search_task["payload"]["origin"] == "Kolkata"
     assert search_task["payload"]["categories"] == ["attractions", "lodging", "transit"]
 
-    # Verify edge routing directs to escalate_dynamic_evidence (which yields or handles tasks)
+    # Verify edge routing directs to await_evidence_results before scheduling
     merged_state = cast(TripPlanningState, {**state, **result})
-    assert route_evidence_decision_edge(merged_state) == "escalate_dynamic_evidence"
+    assert route_evidence_decision_edge(merged_state) == "await_evidence_results"
 
     # Verify decision telemetry recorded in laya_decisions
     decisions = result["laya_decisions"]
@@ -133,11 +136,21 @@ async def test_route_evidence_decision_phase2_browser_escalation_dispatch() -> N
         },
         "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
         "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "observation_id": str(uuid.uuid4()),
+                        "canonical_url": "https://example.com/digha",
+                        "content_hash": "hash123",
+                    }
+                ],
+                "search_completed": True,
+            },
             "task-1": {
                 "browser_requests": [
                     {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
                 ]
-            }
+            },
         },
         "dispatched_browser_urls": [],
         "static_search_completed": True,
@@ -202,11 +215,21 @@ async def test_route_evidence_decision_phase2_evaluation_bypass_to_solve_schedul
         },
         "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
         "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "observation_id": str(uuid.uuid4()),
+                        "canonical_url": "https://example.com/digha",
+                        "content_hash": "hash123",
+                    }
+                ],
+                "search_completed": True,
+            },
             "task-1": {
                 "browser_requests": [
                     {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
                 ]
-            }
+            },
         },
         "static_search_completed": True,
         "_laya_adapter": adapter,
@@ -283,11 +306,21 @@ async def test_route_evidence_decision_result_reuse_from_state() -> None:
         },
         "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
         "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "observation_id": str(uuid.uuid4()),
+                        "canonical_url": "https://example.com/digha",
+                        "content_hash": "hash123",
+                    }
+                ],
+                "search_completed": True,
+            },
             "task-1": {
                 "browser_requests": [
                     {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
                 ]
-            }
+            },
         },
         "static_search_completed": True,
         "laya_decisions": [prior_decision],
@@ -320,11 +353,21 @@ async def test_route_evidence_decision_fallback_on_adapter_exception() -> None:
         },
         "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
         "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "observation_id": str(uuid.uuid4()),
+                        "canonical_url": "https://example.com/digha",
+                        "content_hash": "hash123",
+                    }
+                ],
+                "search_completed": True,
+            },
             "task-1": {
                 "browser_requests": [
                     {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
                 ]
-            }
+            },
         },
         "static_search_completed": True,
         "_laya_adapter": failing_adapter,
@@ -362,11 +405,21 @@ async def test_route_evidence_decision_persists_to_db_session() -> None:
         },
         "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
         "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "observation_id": str(uuid.uuid4()),
+                        "canonical_url": "https://example.com/digha",
+                        "content_hash": "hash123",
+                    }
+                ],
+                "search_completed": True,
+            },
             "task-1": {
                 "browser_requests": [
                     {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
                 ]
-            }
+            },
         },
         "static_search_completed": True,
         "_laya_adapter": adapter,
@@ -378,4 +431,36 @@ async def test_route_evidence_decision_persists_to_db_session() -> None:
     assert len(result["laya_decisions"]) == 1
     # Verify execute was called on session to persist record
     assert mock_session.execute.called or mock_session.add.called
+
+
+@pytest.mark.asyncio
+async def test_escalate_dynamic_evidence_preserves_pending_tasks() -> None:
+    """Verifies that escalate_dynamic_evidence_node does not overwrite existing pending tasks."""
+    from functions.orchestrator.graphs.trip_planner.graph import escalate_dynamic_evidence_node
+
+    existing_task = {
+        "worker": "EVIDENCE",
+        "action": "collect",
+        "payload": {"queries": ["test"]},
+        "idempotency_key": "exec-1:collect:123",
+    }
+    state: TripPlanningState = {
+        "execution_id": str(uuid.uuid4()),
+        "pending_tasks": [existing_task],
+        "task_outputs": {
+            "search-1": {
+                "browser_requests": [
+                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                ]
+            }
+        },
+        "dispatched_browser_urls": [],
+    }
+
+    res = escalate_dynamic_evidence_node(state)
+    assert len(res["pending_tasks"]) == 2
+    assert res["pending_tasks"][0] == existing_task
+    assert res["pending_tasks"][1]["worker"] == "BROWSER"
+    assert res["pending_tasks"][1]["action"] == "render"
+
 

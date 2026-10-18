@@ -1,13 +1,11 @@
-"""25-Scenario Labeled Routing Quality Evaluation Benchmark Suite conforming to spec 0004 AC-10.
+"""25-Scenario Deterministic Policy Regression Suite for LAYA Decision Routing.
 
-Measures:
-- Routing decision accuracy (target >= 85%).
-- Policy validation calibration and probability constraint enforcement.
-- Abstention rate handling (target <= 10%).
-- Fallback determinism and zero/single choice bypass mechanics.
+Verifies deterministic policy validator rules, probability calibration constraints,
+abstention handling, and fallback mechanics against simulated model outputs.
 
-Can run offline via canned deterministic evaluation fixtures, or live against the
-connected remote endpoint when RUN_CONNECTED_LAYA_BENCHMARK=1.
+NOTE: Real-model routing quality remains pending until live labeled endpoint evaluation
+executes against remote inference; this offline suite verifies deterministic policy
+compliance and does not claim fixture accuracy as model accuracy.
 """
 
 from __future__ import annotations
@@ -491,7 +489,11 @@ def test_benchmark_suite_composition() -> None:
 
 
 def test_benchmark_suite_accuracy_and_abstention_offline() -> None:
-    """Runs all 25 benchmark scenarios offline, verifying accuracy >= 85% and abstention <= 10%."""
+    """Verifies deterministic policy validator regression coverage across 25 simulated scenarios.
+
+    Validates policy rule conformance >= 85% and abstention handling <= 10%.
+    Does not assert real-model inference accuracy, which remains pending live evaluation.
+    """
     correct_actions = 0
     total_evaluated = 0
     abstention_count = 0
@@ -519,9 +521,9 @@ def test_benchmark_suite_accuracy_and_abstention_offline() -> None:
     accuracy = correct_actions / total_evaluated
     abstention_rate = abstention_count / total_evaluated
 
-    assert accuracy >= 0.85, f"Benchmark decision accuracy {accuracy:.1%} fell below target 85.0%"
-    assert abstention_rate <= 0.10, f"Abstention rate {abstention_rate:.1%} exceeded maximum 10.0%"
-    assert accuracy == 1.0, f"Expected 100% precision on canonical deterministic benchmark set; got {accuracy:.1%}"
+    assert accuracy >= 0.85, f"Policy validation rule conformance {accuracy:.1%} fell below target 85.0%"
+    assert abstention_rate <= 0.10, f"Simulated abstention rate {abstention_rate:.1%} exceeded maximum 10.0%"
+    assert accuracy == 1.0, f"Expected 100% precision on deterministic policy regression set; got {accuracy:.1%}"
 
 
 @pytest.mark.asyncio

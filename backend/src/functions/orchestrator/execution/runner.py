@@ -507,6 +507,48 @@ class GraphRunnerService:
                 if checkpoint_id:
                     execution.checkpoint_id = checkpoint_id
 
+                # Persist LAYA decision envelopes atomically under execution lease fencing
+                decisions_to_persist = state_values.get("laya_decisions", [])
+                if decisions_to_persist:
+                    from contracts.decision import (
+                        DecisionAction,
+                        DecisionEnvelope,
+                        DecisionPhase,
+                        DecisionStatus,
+                        DecisionType,
+                    )
+                    from functions.orchestrator.decision.repository import (
+                        LayaDecisionRepository,
+                    )
+
+                    repo = LayaDecisionRepository(session=session)
+                    raw_trip_id = state_values.get("trip_id")
+                    trip_uuid = uuid.UUID(str(raw_trip_id)) if raw_trip_id else None
+                    for dec_dict in decisions_to_persist:
+                        envelope = DecisionEnvelope(
+                            decision_id=uuid.UUID(str(dec_dict["decision_id"])),
+                            decision_type=DecisionType.EVIDENCE_ROUTING,
+                            phase=DecisionPhase(dec_dict["phase"]),
+                            execution_id=execution_id,
+                            trip_id=trip_uuid,
+                            idempotency_key=dec_dict["idempotency_key"],
+                            allowed_choice=DecisionAction(dec_dict["action"]),
+                            status=DecisionStatus(dec_dict["status"]),
+                            confidence=dec_dict.get("confidence"),
+                            answer_confidence=dec_dict.get("answer_confidence"),
+                            model_version=dec_dict.get("model_version"),
+                            policy_version=dec_dict.get("policy_version", "laya-policy-v1"),
+                            rationale=dec_dict.get("rationale"),
+                            latency_ms=dec_dict.get("latency_ms", 0),
+                            request_digest=dec_dict.get("request_digest", ""),
+                            created_at=dec_dict.get("created_at") or datetime.now(UTC).isoformat(),
+                        )
+                        await repo.persist_decision(
+                            envelope=envelope,
+                            context_version=execution.context_version,
+                            allowed_choices=[envelope.allowed_choice],
+                        )
+
                 # Case A: Graph produced tasks to dispatch (Transaction 2)
                 if pending_tasks:
                     existing_keys_stmt = select(TaskModel.idempotency_key).where(

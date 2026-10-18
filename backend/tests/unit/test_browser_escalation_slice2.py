@@ -401,6 +401,20 @@ async def test_trip_planning_workflow_e2e_with_escalation_node() -> None:
             "rooms": 1,
             "budget": {"amount": "25000.00", "currency": "INR"},
         },
+        "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "observation_id": str(uuid.uuid4()),
+                        "canonical_url": "https://example.com/digha",
+                        "content_hash": "hash123",
+                    }
+                ],
+                "search_completed": True,
+            }
+        },
+        "static_search_completed": True,
+        "required_evidence_satisfied": True,
     }
 
     result = await workflow.ainvoke(state)
