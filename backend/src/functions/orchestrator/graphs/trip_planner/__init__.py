@@ -1,6 +1,7 @@
 """Trip planner graph."""
 
 from functions.orchestrator.graphs.trip_planner.graph import (
+    TripPlanningNode,
     TripPlanningState,
     build_trip_planning_graph,
     compile_trip_planning_workflow,
@@ -11,6 +12,7 @@ from functions.orchestrator.graphs.trip_planner.graph import (
 build_trip_planning_workflow = build_trip_planning_graph
 
 __all__ = [
+    "TripPlanningNode",
     "TripPlanningState",
     "build_trip_planning_graph",
     "build_trip_planning_workflow",

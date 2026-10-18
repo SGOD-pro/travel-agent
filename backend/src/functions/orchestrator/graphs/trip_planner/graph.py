@@ -16,6 +16,7 @@ import os
 import uuid
 from datetime import UTC, datetime, time
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -69,6 +70,19 @@ class TripPlanningState(TypedDict, total=False):
     remaining_search_budget: int
     _laya_adapter: LayaDecisionPort
     _db_session: Any
+
+
+class TripPlanningNode(StrEnum):
+    """Canonical node identifiers for the trip planning workflow graph."""
+
+    PARSE_BRIEF = "parse_brief"
+    DISCOVER_CANDIDATES = "discover_candidates"
+    ROUTE_EVIDENCE_DECISION = "route_evidence_decision"
+    AWAIT_EVIDENCE_RESULTS = "await_evidence_results"
+    ESCALATE_DYNAMIC_EVIDENCE = "escalate_dynamic_evidence"
+    SOLVE_SCHEDULE = "solve_schedule"
+    COMPUTE_BUDGET = "compute_budget"
+    SYNTHESIZE_PROPOSAL = "synthesize_proposal"
 
 
 # --- Workflow Nodes ---
@@ -767,17 +781,17 @@ def route_evidence_decision_edge(state: TripPlanningState) -> str:
     """Routes based on evidence decision action."""
     action = state.get("evidence_routing_action")
     if action == DecisionAction.DISPATCH_BROWSER_ESCALATION.value:
-        return "escalate_dynamic_evidence"
+        return TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE
     elif action == DecisionAction.DISPATCH_EVIDENCE_SEARCH.value:
-        return "await_evidence_results"
-    return "solve_schedule"
+        return TripPlanningNode.AWAIT_EVIDENCE_RESULTS
+    return TripPlanningNode.SOLVE_SCHEDULE
 
 
 def escalate_dynamic_evidence_edge(state: TripPlanningState) -> str:
     """Routes to await_evidence_results if browser tasks are pending, else to solve_schedule."""
     if state.get("pending_tasks"):
-        return "await_evidence_results"
-    return "solve_schedule"
+        return TripPlanningNode.AWAIT_EVIDENCE_RESULTS
+    return TripPlanningNode.SOLVE_SCHEDULE
 
 
 # --- Graph Construction ---
@@ -786,39 +800,39 @@ def escalate_dynamic_evidence_edge(state: TripPlanningState) -> str:
 def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph: StateGraph[TripPlanningState, Any, Any, Any] = StateGraph(TripPlanningState)
 
-    graph.add_node("parse_brief", parse_and_validate_brief_node)
-    graph.add_node("discover_candidates", discover_candidates_node)
-    graph.add_node("route_evidence_decision", route_evidence_decision_node)
-    graph.add_node("await_evidence_results", await_evidence_results_node)
-    graph.add_node("escalate_dynamic_evidence", escalate_dynamic_evidence_node)
-    graph.add_node("solve_schedule", solve_schedule_node)
-    graph.add_node("compute_budget", compute_budget_node)
-    graph.add_node("synthesize_proposal", synthesize_proposal_node)
+    graph.add_node(TripPlanningNode.PARSE_BRIEF, parse_and_validate_brief_node)
+    graph.add_node(TripPlanningNode.DISCOVER_CANDIDATES, discover_candidates_node)
+    graph.add_node(TripPlanningNode.ROUTE_EVIDENCE_DECISION, route_evidence_decision_node)
+    graph.add_node(TripPlanningNode.AWAIT_EVIDENCE_RESULTS, await_evidence_results_node)
+    graph.add_node(TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE, escalate_dynamic_evidence_node)
+    graph.add_node(TripPlanningNode.SOLVE_SCHEDULE, solve_schedule_node)
+    graph.add_node(TripPlanningNode.COMPUTE_BUDGET, compute_budget_node)
+    graph.add_node(TripPlanningNode.SYNTHESIZE_PROPOSAL, synthesize_proposal_node)
 
-    graph.add_edge(START, "parse_brief")
-    graph.add_edge("parse_brief", "discover_candidates")
-    graph.add_edge("discover_candidates", "route_evidence_decision")
+    graph.add_edge(START, TripPlanningNode.PARSE_BRIEF)
+    graph.add_edge(TripPlanningNode.PARSE_BRIEF, TripPlanningNode.DISCOVER_CANDIDATES)
+    graph.add_edge(TripPlanningNode.DISCOVER_CANDIDATES, TripPlanningNode.ROUTE_EVIDENCE_DECISION)
     graph.add_conditional_edges(
-        "route_evidence_decision",
+        TripPlanningNode.ROUTE_EVIDENCE_DECISION,
         route_evidence_decision_edge,
         {
-            "await_evidence_results": "await_evidence_results",
-            "escalate_dynamic_evidence": "escalate_dynamic_evidence",
-            "solve_schedule": "solve_schedule",
+            TripPlanningNode.AWAIT_EVIDENCE_RESULTS: TripPlanningNode.AWAIT_EVIDENCE_RESULTS,
+            TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE: TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE,
+            TripPlanningNode.SOLVE_SCHEDULE: TripPlanningNode.SOLVE_SCHEDULE,
         },
     )
     graph.add_conditional_edges(
-        "escalate_dynamic_evidence",
+        TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE,
         escalate_dynamic_evidence_edge,
         {
-            "await_evidence_results": "await_evidence_results",
-            "solve_schedule": "solve_schedule",
+            TripPlanningNode.AWAIT_EVIDENCE_RESULTS: TripPlanningNode.AWAIT_EVIDENCE_RESULTS,
+            TripPlanningNode.SOLVE_SCHEDULE: TripPlanningNode.SOLVE_SCHEDULE,
         },
     )
-    graph.add_edge("await_evidence_results", "route_evidence_decision")
-    graph.add_edge("solve_schedule", "compute_budget")
-    graph.add_edge("compute_budget", "synthesize_proposal")
-    graph.add_edge("synthesize_proposal", END)
+    graph.add_edge(TripPlanningNode.AWAIT_EVIDENCE_RESULTS, TripPlanningNode.ROUTE_EVIDENCE_DECISION)
+    graph.add_edge(TripPlanningNode.SOLVE_SCHEDULE, TripPlanningNode.COMPUTE_BUDGET)
+    graph.add_edge(TripPlanningNode.COMPUTE_BUDGET, TripPlanningNode.SYNTHESIZE_PROPOSAL)
+    graph.add_edge(TripPlanningNode.SYNTHESIZE_PROPOSAL, END)
 
     return graph
 
@@ -827,7 +841,7 @@ def compile_trip_planning_workflow(checkpointer: Any | None = None) -> Any:
     """Compiles the trip planning StateGraph with the required yield/interrupt boundaries."""
     return build_trip_planning_graph().compile(
         checkpointer=checkpointer,
-        interrupt_before=["await_evidence_results"],
+        interrupt_before=[TripPlanningNode.AWAIT_EVIDENCE_RESULTS],
     )
 
 
