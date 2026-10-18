@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -100,6 +100,61 @@ class Settings(BaseSettings):
         default=3,
         description="Maximum browser tasks permitted per trip execution",
     )
+
+    # Remote LAYA Decision Router
+    LAYA_ENDPOINT_URL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("LAYA_ENDPOINT_URL", "LAYA_ENDPOINT"),
+        description="HTTPS URL of remote LAYA service",
+    )
+    LAYA_API_KEY: str | None = Field(
+        default=None,
+        description="Optional Bearer authentication token for LAYA application server",
+    )
+    CF_ACCESS_CLIENT_ID: str | None = Field(
+        default=None,
+        description="Optional Cloudflare Access service token client identifier",
+    )
+    CF_ACCESS_CLIENT_SECRET: str | None = Field(
+        default=None,
+        description="Optional Cloudflare Access service token client secret",
+    )
+    LAYA_REQUEST_TIMEOUT_SECONDS: float = Field(
+        default=2.5,
+        ge=0.5,
+        le=30.0,
+        description="Individual socket request timeout in seconds",
+    )
+    LAYA_TOTAL_DEADLINE_SECONDS: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=60.0,
+        description="Cumulative request deadline across all retries in seconds",
+    )
+    LAYA_MAX_RETRIES: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="Maximum retry attempts for transient 5xx or network errors",
+    )
+    LAYA_CONFIDENCE_THRESHOLD: float = Field(
+        default=0.700,
+        ge=0.0,
+        le=1.0,
+        description="Minimum answer_confidence score required to accept proposal",
+    )
+    LAYA_MODEL_NAME: str = Field(
+        default="typed-decisions",
+        description="Target checkpoint name or empty to auto route",
+    )
+
+    @model_validator(mode="after")
+    def validate_laya_deadlines(self) -> Settings:
+        if self.LAYA_TOTAL_DEADLINE_SECONDS < self.LAYA_REQUEST_TIMEOUT_SECONDS:
+            raise ValueError(
+                "LAYA_TOTAL_DEADLINE_SECONDS must be greater than or equal to LAYA_REQUEST_TIMEOUT_SECONDS"
+            )
+        return self
 
 
 settings = Settings()

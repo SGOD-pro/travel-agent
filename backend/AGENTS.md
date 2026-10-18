@@ -22,6 +22,9 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/browser/` | Browser escalation worker, Playwright adapter, live SSRF network controls, Scrapling parser, and fenced persistence |
 | `src/functions/browser/consumer.py` | SQS consumer Lambda handler with partial batch failure reporting and deadline timeouts |
 | `src/functions/browser/packaging.py` | Standalone Lambda packaging, Node runtime preservation, 185 MB function budget, and clean environment verification |
+| `src/contracts/decision.py` | Internal decision domain models, action enums, envelope payloads, and port interfaces |
+| `src/functions/decision_router/` | Remote LAYA decision router client adapter, TypeSafe Jev wire schemas, sanitization, and offline fixtures |
+| `src/functions/orchestrator/decision/` | Decision policy validator, database models, canonical replay digests, and idempotent repository |
 
 ## Commands
 
@@ -68,6 +71,10 @@ uv run alembic upgrade head
 - Browser escalation worker handles evidence extraction and rendering only; booking, payment, and transaction automation remain deferred.
 - Browser navigation enforces pre navigation DNS screening, SecureEgressProxy socket connection binding to validated IP literals defeating DNS rebinding, in flight route interception against private and metadata IPs, Service Worker blocking, and WebSocket elimination.
 - Remote LAYA model is served from Kaggle through Cloudflare tunnel.
+- Decision router imports only contracts.decision, config.config, standard library, httpx, and pydantic, with zero database models or orchestrator dependencies.
+- Remote LAYA decision client enforces cumulative retry deadlines, exponential backoff for 5xx errors, immediate failure on 4xx responses, and context PII sanitization.
+- Decision policy validator enforces four point revalidation for result reuse (matching phase, context version, policy version, active eligible choices) and deterministic fallback on errors, timeouts, or low confidence (< 0.700).
+- LangGraph evidence routing node records chronological decision envelopes in laya_decisions table and executes between candidate discovery and dynamic evidence escalation.
 - Route optimizer and trip planner end to end workflows precede media location development.
 
 ## Gotchas

@@ -20,11 +20,28 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from config.config import get_settings
 from contracts.browser import BrowserTaskPayload, BrowserWaitUntil
+from contracts.decision import (
+    DecisionAction,
+    DecisionEnvelope,
+    DecisionPhase,
+    DecisionStatus,
+    DecisionType,
+    LayaDecisionPort,
+    LayaDecisionRequest,
+)
 from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
 from contracts.trips import TransportMode, TripBrief
+from functions.decision_router.client import RemoteLayaDecisionAdapter
+from functions.decision_router.fixtures import FixtureLayaDecisionAdapter
 from functions.optimizer.solver import ItineraryScheduler
+from functions.orchestrator.decision.policy import LayaPolicyValidator
+from functions.orchestrator.decision.repository import (
+    LayaDecisionRepository,
+    compute_canonical_replay_digest,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +63,12 @@ class TripPlanningState(TypedDict, total=False):
     browser_requests: list[dict[str, Any]]
     pending_tasks: list[dict[str, Any]]
     dispatched_browser_urls: list[str]
+    laya_decisions: list[dict[str, Any]]
+    evidence_routing_action: str
+    static_search_completed: bool
+    remaining_search_budget: int
+    _laya_adapter: LayaDecisionPort
+    _db_session: Any
 
 
 # --- Workflow Nodes ---
@@ -303,6 +326,292 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
     return result
 
 
+async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, Any]:
+    """Evaluates evidence collection strategy via remote LAYA router and deterministic policy gating.
+
+    Conforms to spec 0004 Slice 5:
+    - Placed between discover_candidates and escalate_dynamic_evidence.
+    - If DISPATCH_EVIDENCE_SEARCH is approved, enqueues static evidence search task in pending_tasks.
+    - If DISPATCH_BROWSER_ESCALATION is approved, passes to escalate_dynamic_evidence.
+    - If PROCEED_DETERMINISTIC_EVALUATION is approved, advances directly to schedule solving without task generation.
+    - Updates TripPlanningState with laya_decisions list.
+    """
+    raw_exec_id = state.get("execution_id") or state.get("trip_id") or "default-execution"
+    try:
+        exec_uuid = uuid.UUID(str(raw_exec_id))
+    except ValueError:
+        exec_uuid = uuid.uuid4()
+
+    trip_uuid: uuid.UUID | None = None
+    if state.get("trip_id"):
+        try:
+            trip_uuid = uuid.UUID(str(state["trip_id"]))
+        except ValueError:
+            trip_uuid = None
+
+    context_version = int(str(state.get("version") or state.get("context_version") or 1))
+    brief = state.get("brief", {})
+    discovered_places = state.get("discovered_places", [])
+    task_outputs = state.get("task_outputs", {})
+    already_dispatched = set(state.get("dispatched_browser_urls", []))
+    laya_decisions = list(state.get("laya_decisions", []))
+
+    # 1. Inspect unhandled browser requests
+    extracted_requests: list[dict[str, Any]] = []
+    for output in task_outputs.values():
+        if isinstance(output, dict):
+            reqs = output.get("browser_requests", [])
+            if isinstance(reqs, list):
+                extracted_requests.extend(reqs)
+    if "browser_requests" in state and isinstance(state["browser_requests"], list):
+        extracted_requests.extend(state["browser_requests"])
+
+    unhandled_browser_requests = len(
+        [r for r in extracted_requests if r.get("canonical_url", r.get("url")) not in already_dispatched]
+    )
+
+    max_slots = 3
+    try:
+        max_slots = int(get_settings().BROWSER_MAX_ESCALATION_TASKS)
+    except Exception:
+        max_slots = 3
+    remaining_browser_slots = max(0, max_slots - len(already_dispatched))
+
+    # 2. Check search completion & required destination evidence prerequisites
+    static_search_completed = bool(
+        state.get("static_search_completed")
+        or any(isinstance(output, dict) and output.get("search_completed") for output in task_outputs.values())
+        or len(discovered_places) > 0
+    )
+
+    destinations = brief.get("destinations", [])
+    required_evidence_satisfied = False
+    if discovered_places:
+        required_evidence_satisfied = all(
+            p.get("lat") is not None and p.get("lng") is not None for p in discovered_places
+        )
+    elif destinations:
+        required_evidence_satisfied = all(
+            d.get("latitude") is not None and d.get("longitude") is not None for d in destinations
+        )
+
+    remaining_search_budget = int(state.get("remaining_search_budget", 1 if not static_search_completed else 0))
+
+    # 3. Determine explicit workflow phase
+    if not static_search_completed and not required_evidence_satisfied:
+        phase = DecisionPhase.SEARCH_COMPLETION
+    elif unhandled_browser_requests > 0 and remaining_browser_slots > 0:
+        phase = DecisionPhase.BROWSER_ELIGIBILITY
+    else:
+        phase = DecisionPhase.EVALUATION
+
+    # 4. Calculate eligible choices via LayaPolicyValidator
+    eligible_choices = LayaPolicyValidator.compute_eligible_choices(
+        phase=phase,
+        parent_status=state.get("status", "RUNNING").upper(),
+        static_search_completed=static_search_completed,
+        required_evidence_satisfied=required_evidence_satisfied,
+        unhandled_browser_requests=unhandled_browser_requests,
+        remaining_browser_slots=remaining_browser_slots,
+        remaining_search_budget=remaining_search_budget,
+    )
+
+    dest_name = (
+        brief.get("destination_name")
+        or (destinations[0].get("name") if destinations else "Unknown")
+    )
+    sanitized_context = {
+        "execution_id": str(exec_uuid),
+        "phase": phase.value,
+        "category": "lodging",
+        "destination": dest_name,
+        "static_search_completed": static_search_completed,
+        "candidate_places_count": len(discovered_places),
+        "unhandled_browser_requests": unhandled_browser_requests,
+        "browser_escalation_slots_remaining": remaining_browser_slots,
+        "sanitized_summary": f"Discovered {len(discovered_places)} places. Unhandled dynamic requests: {unhandled_browser_requests}.",
+    }
+
+    request_digest, idempotency_key = compute_canonical_replay_digest(
+        execution_id=exec_uuid,
+        phase=phase,
+        context_version=context_version,
+        policy_version=LayaPolicyValidator.POLICY_VERSION,
+        question_version="evidence_routing:v1",
+        eligible_actions=eligible_choices if eligible_choices else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
+        sanitized_context=sanitized_context,
+    )
+
+    # 5. Resolve decision
+    envelope: DecisionEnvelope
+
+    decision_req = LayaDecisionRequest(
+        decision_id=uuid.uuid4(),
+        decision_type=DecisionType.EVIDENCE_ROUTING,
+        phase=phase,
+        execution_id=exec_uuid,
+        trip_id=trip_uuid,
+        context_version=context_version,
+        policy_version=LayaPolicyValidator.POLICY_VERSION,
+        question_version="evidence_routing:v1",
+        policy_derived_eligible_choices=eligible_choices if eligible_choices else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
+        budget_remaining=remaining_browser_slots,
+        context=sanitized_context,
+        idempotency_key=idempotency_key,
+    )
+
+    if len(eligible_choices) == 0:
+        envelope = LayaPolicyValidator.handle_zero_choices(
+            decision_req,
+            required_evidence_satisfied=required_evidence_satisfied,
+        )
+
+    elif len(eligible_choices) == 1:
+        # Deterministic singleton bypass
+        envelope = LayaPolicyValidator.create_singleton_decision(
+            decision_req,
+            eligible_choices[0],
+        )
+
+    else:
+        # Multi-choice evaluation (Phase 2)
+        # Check result reuse in state or database
+        reused: DecisionEnvelope | None = None
+        for recorded in laya_decisions:
+            if (
+                recorded.get("idempotency_key") == idempotency_key
+                and recorded.get("phase") == phase.value
+                and recorded.get("action") in [c.value for c in eligible_choices]
+            ):
+                reused = DecisionEnvelope(
+                    decision_id=uuid.UUID(str(recorded["decision_id"])),
+                    decision_type=DecisionType.EVIDENCE_ROUTING,
+                    phase=phase,
+                    execution_id=exec_uuid,
+                    trip_id=trip_uuid,
+                    idempotency_key=idempotency_key,
+                    allowed_choice=DecisionAction(recorded["action"]),
+                    status=DecisionStatus(recorded["status"]),
+                    confidence=recorded.get("confidence"),
+                    answer_confidence=recorded.get("answer_confidence"),
+                    model_version=recorded.get("model_version"),
+                    policy_version=recorded.get("policy_version", LayaPolicyValidator.POLICY_VERSION),
+                    rationale=recorded.get("rationale"),
+                    latency_ms=recorded.get("latency_ms", 0),
+                    request_digest=request_digest,
+                    created_at=datetime.now(UTC).isoformat(),
+                )
+                break
+
+        if reused is not None:
+            envelope = reused
+        else:
+
+            # Resolve adapter
+            adapter = state.get("_laya_adapter")
+            owns_adapter = False
+            if adapter is None:
+                settings = get_settings()
+                if settings.LAYA_ENDPOINT_URL:
+                    adapter = RemoteLayaDecisionAdapter(settings=settings)
+                    owns_adapter = True
+                else:
+                    adapter = FixtureLayaDecisionAdapter()
+
+            try:
+                envelope = await adapter.query_decision(decision_req)
+            except Exception as exc:
+                envelope = LayaPolicyValidator.resolve_fallback(
+                    decision_req,
+                    DecisionStatus.FALLBACK_ERROR,
+                    rationale=f"Fallback: {str(exc)}",
+                    latency_ms=0,
+                    required_evidence_satisfied=required_evidence_satisfied,
+                    unhandled_browser_requests=unhandled_browser_requests,
+                    remaining_browser_slots=remaining_browser_slots,
+                    remaining_search_budget=remaining_search_budget,
+                )
+            finally:
+                if owns_adapter and hasattr(adapter, "aclose"):
+                    await adapter.aclose()
+
+    # 6. Optional database persistence if session provided
+    if state.get("_db_session"):
+        try:
+            repo = LayaDecisionRepository(session=state["_db_session"])
+            await repo.persist_decision(
+                envelope=envelope,
+                context_version=context_version,
+                allowed_choices=eligible_choices,
+            )
+        except Exception as db_exc:
+            logger.warning("Failed to persist LAYA decision record in database: %s", db_exc)
+
+    # 7. Record decision telemetry in state
+    record = {
+        "decision_id": str(envelope.decision_id),
+        "phase": envelope.phase.value,
+        "action": envelope.allowed_choice.value,
+        "status": envelope.status.value,
+        "confidence": envelope.confidence,
+        "answer_confidence": envelope.answer_confidence,
+        "model_version": envelope.model_version,
+        "policy_version": envelope.policy_version,
+        "rationale": envelope.rationale,
+        "latency_ms": envelope.latency_ms,
+        "idempotency_key": envelope.idempotency_key,
+        "request_digest": envelope.request_digest,
+    }
+    updated_decisions = list(laya_decisions)
+    updated_decisions.append(record)
+
+    # 8. Action enactment
+    if envelope.allowed_choice == DecisionAction.DISPATCH_EVIDENCE_SEARCH:
+        dest_hash = hashlib.sha256(dest_name.encode("utf-8")).hexdigest()
+        search_task = {
+            "worker": "EVIDENCE",
+            "action": "search",
+            "payload": {
+                "destination": dest_name,
+                "origin": brief.get("origin_name", ""),
+                "categories": ["attractions", "lodging", "transit"],
+            },
+            "idempotency_key": f"{exec_uuid}:search:{dest_hash[:16]}",
+            "deadline_seconds": 60,
+            "max_attempts": 3,
+        }
+        return {
+            "pending_tasks": [search_task],
+            "current_step": "evidence_search_routed",
+            "evidence_routing_action": DecisionAction.DISPATCH_EVIDENCE_SEARCH.value,
+            "laya_decisions": updated_decisions,
+        }
+
+    elif envelope.allowed_choice == DecisionAction.DISPATCH_BROWSER_ESCALATION:
+        return {
+            "pending_tasks": [],
+            "current_step": "browser_escalation_routed",
+            "evidence_routing_action": DecisionAction.DISPATCH_BROWSER_ESCALATION.value,
+            "laya_decisions": updated_decisions,
+        }
+
+    else:
+        return {
+            "pending_tasks": [],
+            "current_step": "deterministic_evaluation_routed",
+            "evidence_routing_action": DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value,
+            "laya_decisions": updated_decisions,
+        }
+
+
+def route_evidence_decision_edge(state: TripPlanningState) -> str:
+    """Routes to solve_schedule if evaluation approved, else to escalate_dynamic_evidence."""
+    action = state.get("evidence_routing_action")
+    if action == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value:
+        return "solve_schedule"
+    return "escalate_dynamic_evidence"
+
+
 # --- Graph Construction ---
 
 
@@ -311,6 +620,7 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
 
     graph.add_node("parse_brief", parse_and_validate_brief_node)
     graph.add_node("discover_candidates", discover_candidates_node)
+    graph.add_node("route_evidence_decision", route_evidence_decision_node)
     graph.add_node("escalate_dynamic_evidence", escalate_dynamic_evidence_node)
     graph.add_node("solve_schedule", solve_schedule_node)
     graph.add_node("compute_budget", compute_budget_node)
@@ -318,7 +628,15 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
 
     graph.add_edge(START, "parse_brief")
     graph.add_edge("parse_brief", "discover_candidates")
-    graph.add_edge("discover_candidates", "escalate_dynamic_evidence")
+    graph.add_edge("discover_candidates", "route_evidence_decision")
+    graph.add_conditional_edges(
+        "route_evidence_decision",
+        route_evidence_decision_edge,
+        {
+            "escalate_dynamic_evidence": "escalate_dynamic_evidence",
+            "solve_schedule": "solve_schedule",
+        },
+    )
     graph.add_edge("escalate_dynamic_evidence", "solve_schedule")
     graph.add_edge("solve_schedule", "compute_budget")
     graph.add_edge("compute_budget", "synthesize_proposal")

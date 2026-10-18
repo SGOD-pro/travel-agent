@@ -1,8 +1,8 @@
-# Context Handoff: SWENA Travel Intelligence (Slice 0001, Slice 0002, and Spec 0003)
+# Context Handoff: SWENA Travel Intelligence (Specs 0001, 0002, 0003, and 0004)
 
-Date: 2026-10-17
+Date: 2026-10-18
 
-Status: Slice 0001, Slice 0002, and Spec 0003 complete. All 5 slices and closure findings C1 to C5 of Spec 0003 are implemented, verified on live PostgreSQL and headless Chromium, reviewed with Approve verdicts, and tested with 178 passing tests. Scope marked done and Spec 0003 marked Accepted. AWS deployment verification remains deferred across all features until cloud deployment.
+Status: Specs 0001, 0002, 0003, and 0004 complete. All 5 slices of Spec 0004 Remote LAYA decision router are implemented, verified on live PostgreSQL and connected Cloudflare tunnel endpoint, reviewed with Approve verdicts, and tested with 98 passing tests (96 unit tests, 2 connected tests). Scope marked done and Spec 0004 marked Accepted. AWS deployment verification remains deferred across all features until cloud deployment.
 
 
 ## 1. Project Purpose and Agreed Stack
@@ -79,6 +79,31 @@ Conforms to [0003-browser-escalation.md](file:///home/swyra/projects/travel-agen
   * SAM serverless template in [backend/src/functions/browser/template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/template.yaml) configured with 1536 MB memory, 60s timeout, dedicated dispatch queue with DLQ redrive, external Chromium layer binding, and `CHROMIUM_PATH: /tmp/chromium`.
   * Standalone packaging verifier in [backend/src/functions/browser/packaging.py](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/packaging.py) preserving stripped Node runtime binary (104 MB), measuring Sparticuz Chromium layer v130.0.0 at 64.50 MB, confirming function unpacked size 148.20 MB (< 185 MB limit), compressed size 52.42 MB intended for S3 deployment bucket upload, and combined size with layer 212.70 MB (< 250 MB ceiling, 37.30 MB headroom) under clean Python 3.12 `-S -P` isolation with verified layer bootstrap and isolated rendering (19 tests across consumer and packaging suites).
 
+### Spec 0004: Remote LAYA Decision Router Integration (Slices 1 to 5 Complete)
+Conforms to [0004-remote-laya-decision-router.md](file:///home/swyra/projects/travel-agent/docs/specs/0004-remote-laya-decision-router.md):
+* Slice 1 (Domain Contracts, Wire Schemas, Configuration, and Offline Fixtures):
+  * Internal typed domain contracts `LayaDecisionRequest`, `DecisionEnvelope`, `DecisionAction`, `DecisionStatus`, and port `LayaDecisionPort` in [backend/src/contracts/decision.py](file:///home/swyra/projects/travel-agent/backend/src/contracts/decision.py).
+  * Upstream Jev wire request and response schemas in [backend/src/functions/decision_router/schemas.py](file:///home/swyra/projects/travel-agent/backend/src/functions/decision_router/schemas.py) matching NandhaKishorM/laya release v0.4.9 with probability normalization and finite float validation.
+  * Settings configuration with separate Bearer and Cloudflare Access service tokens, socket timeouts, and cumulative retry deadlines in [backend/src/config/config.py](file:///home/swyra/projects/travel-agent/backend/src/config/config.py).
+  * Offline `FixtureLayaDecisionAdapter` in [backend/src/functions/decision_router/fixtures.py](file:///home/swyra/projects/travel-agent/backend/src/functions/decision_router/fixtures.py) simulating decision routing with zero network dependencies (25 unit tests).
+* Slice 2 (Remote HTTP Client Adapter and Privacy Sanitization):
+  * Asynchronous HTTP adapter `RemoteLayaDecisionAdapter` in [backend/src/functions/decision_router/client.py](file:///home/swyra/projects/travel-agent/backend/src/functions/decision_router/client.py) speaking `POST /v1/systemone`.
+  * Dual authentication headers attaching `Authorization: Bearer {LAYA_API_KEY}` and optional `CF-Access-Client-Id` / `CF-Access-Client-Secret`.
+  * Cumulative total retry deadline (5.0s default) with individual socket timeout (2.5s default), exponential backoff on transient 5xx errors, fast failure on 4xx client errors or unconfigured endpoints, and deterministic singleton bypass.
+  * Privacy sanitization in [backend/src/functions/decision_router/sanitization.py](file:///home/swyra/projects/travel-agent/backend/src/functions/decision_router/sanitization.py) stripping Bearer tokens, Cloudflare credentials, traveler PII, and bounding long context summaries client side (16 unit tests).
+* Slice 3 (Action Eligibility, Policy Validator, and Deterministic Fallback Table):
+  * Policy validator `LayaPolicyValidator` in [backend/src/functions/orchestrator/decision/policy.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/decision/policy.py) evaluating action eligibility across search completion, browser eligibility, and evaluation phases.
+  * Confidence threshold gating (default 0.700 answer confidence), rejection of tokenizer truncations and explicit abstentions, probability normalization and argmax consistency validation.
+  * Deterministic fallback table mapping timeouts, HTTP errors, policy rejections, and low confidence states to safe deterministic actions while preserving required destination evidence (27 unit tests).
+* Slice 4 (Database Migration, Model, Repository, and Four Point Result Reuse):
+  * Alembic migration `0011_add_laya_decisions.py` creating table `laya_decisions` with UUID primary key, foreign key on `executions.id` with CASCADE, numeric confidences, and unique constraint on `(execution_id, idempotency_key)`.
+  * SQLAlchemy model `LayaDecisionModel` in [backend/src/functions/orchestrator/decision/models.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/decision/models.py) with phase extraction and `to_envelope()` domain conversion.
+  * Repository `LayaDecisionRepository` in [backend/src/functions/orchestrator/decision/repository.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/decision/repository.py) implementing four point revalidation for result reuse (matching phase, context version, policy version, and active eligible choices) and idempotent persistence using PostgreSQL `pg_insert` with `on_conflict_do_nothing` (18 unit tests).
+* Slice 5 (LangGraph Decision Node, Conditional Edge, Connected Acceptance, and Evaluation Benchmark):
+  * Decision node `route_evidence_decision_node` and conditional edge `route_evidence_decision_edge` in [backend/src/functions/orchestrator/graphs/trip_planner/graph.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/graphs/trip_planner/graph.py), orchestrating evidence routing between candidate discovery and dynamic evidence escalation, routing to static search, browser escalation, or schedule solving, while preserving state history and database persistence (6 unit tests).
+  * Connected smoke acceptance test in [backend/tests/integration/test_laya_connected_acceptance.py](file:///home/swyra/projects/travel-agent/backend/tests/integration/test_laya_connected_acceptance.py) verifying live Cloudflare tunnel communication, GET /health probe, and POST /v1/systemone inference round trip with latency measurement.
+  * 25 scenario labeled routing quality evaluation benchmark in [backend/tests/unit/test_laya_evaluation_benchmark.py](file:///home/swyra/projects/travel-agent/backend/tests/unit/test_laya_evaluation_benchmark.py) confirming 100% precision on canonical scenarios with accuracy >= 85% and abstention <= 10% (3 benchmark tests).
+
 ## 4. Verification Commands and Latest Confirmed Results
 
 All verification commands execute locally against live PostgreSQL and headless Chromium:
@@ -101,6 +126,17 @@ All verification commands execute locally against live PostgreSQL and headless C
    * `cd backend && uv run ruff check src tests/unit/`: PASS (0 warnings).
    * `cd backend && uv run mypy src`: PASS (0 type errors).
 
+6. LAYA Unit and Benchmark Test Suite (`cd backend && uv run pytest tests/unit/test_laya_*.py -v`):
+   * Result: 96 passed, 1 skipped in 3.67s.
+   * Benchmark suite confirms 100% precision on canonical scenarios with >= 85% accuracy and <= 10% abstention.
+
+7. Live Connected Acceptance Test Suite (`cd backend && RUN_CONNECTED_LAYA_TESTS=1 uv run pytest tests/integration/test_laya_connected_acceptance.py -v`):
+   * Result: 1 passed in 2.22s against live Kaggle endpoint through Cloudflare tunnel.
+   * Confirms GET /health responds with 200 OK and POST /v1/systemone returns normalized DecisionEnvelope with recorded latency (~568 ms).
+
+8. Live PostgreSQL Migration for LAYA:
+   * Migration `0011_add_laya_decisions.py` upgraded and verified on live PostgreSQL; table `laya_decisions` present with foreign key cascade and unique constraint `uq_laya_execution_idempotency`.
+
 ## 5. Review Reports
 
 * Spec 0003 Slice 2 Review: [2026-10-15-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-15-main.md) (Verdict: Approve).
@@ -108,13 +144,18 @@ All verification commands execute locally against live PostgreSQL and headless C
 * Spec 0003 Slice 4 Review: [2026-10-16-browser-slice4.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-16-browser-slice4.md) (Verdict: Approve, 0 blockers, 0 majors, 0 nits).
 * Spec 0003 Slice 5 Review: [2026-10-16-browser-slice5.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-16-browser-slice5.md) (Verdict: Approve, 0 blockers, 0 majors, 0 nits).
 * Spec 0003 Closure Findings Review: [2026-10-17-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-17-main.md) (Verdict: Approve, 0 blockers, 0 majors, 0 unaddressed nits).
+* Spec 0004 Slice 1 Review: [2026-10-17-laya-slice1.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-17-laya-slice1.md) (Verdict: Approve).
+* Spec 0004 Slice 2 Review: [2026-10-17-laya-slice2.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-17-laya-slice2.md) (Verdict: Approve).
+* Spec 0004 Slice 3 Review: [2026-10-17-laya-slice3.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-17-laya-slice3.md) (Verdict: Approve).
+* Spec 0004 Slice 4 Review: [2026-10-18-laya-slice4.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-18-laya-slice4.md) (Verdict: Approve).
+* Spec 0004 Slice 5 Review: [2026-10-18-laya-slice5.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-18-laya-slice5.md) (Verdict: Approve).
 
 ## 6. Development Acceptance versus Deferred AWS Verification
 
 ### Development Acceptance
-* Slices 1 through 5 of Spec 0003 are complete, verified, reviewed, and tested.
-* Spec 0003 status is `Accepted`.
-* Feature 3 in `docs/scope/scope.md` is marked `done`.
+* Slices 1 through 5 of Spec 0003 and Spec 0004 are complete, verified, reviewed, and tested.
+* Spec 0003 and Spec 0004 status are `Accepted`.
+* Features 3 and 4 in `docs/scope/scope.md` are marked `done`.
 
 ### Deployed AWS Verification (Deferred)
 No live AWS deployment has been executed. The following checks remain deferred until full cloud deployment:
@@ -125,13 +166,13 @@ No live AWS deployment has been executed. The following checks remain deferred u
 
 ## 7. Status of Workflow Gates
 
-* Scope (`/scope`): Complete. [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md) records Features 1, 2, and 3 as `done`.
-* Architect (`/architect`): Complete. [0003-browser-escalation.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation.md) status is `Accepted`.
+* Scope (`/scope`): Complete. [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md) records Features 1, 2, 3, and 4 as `done`.
+* Architect (`/architect`): Complete. [0004-remote-laya-decision-router.md](file:///home/swyra/projects/travel-agent/docs/specs/0004-remote-laya-decision-router.md) status is `Accepted`.
 * Develop (`/develop`): Complete across all 5 slices.
-* Verify (`/check verify`): Complete across all 8 acceptance criteria in [verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0003-browser-escalation/verify.md).
+* Verify (`/check verify`): Complete across all 10 acceptance criteria in [verify.md](file:///home/swyra/projects/travel-agent/docs/specs/0004-remote-laya-decision-router/verify.md).
 * Review (`/check review`): Approved across all slices in [docs/reviews/](file:///home/swyra/projects/travel-agent/docs/reviews/).
-* Test (`/test`): Complete. 178 browser tests and 327 full backend unit tests passing.
-* Document (`/document`): Complete. 7 capability entries recorded in [CHANGELOG.md](file:///home/swyra/projects/travel-agent/CHANGELOG.md).
+* Test (`/test`): Complete. 98 LAYA tests (96 unit tests, 2 connected tests) and 423 full backend unit tests passing.
+* Document (`/document`): Complete. 6 capability entries recorded in [CHANGELOG.md](file:///home/swyra/projects/travel-agent/CHANGELOG.md).
 * Sync (`/sync`): Complete. Reconciled scope, spec status, and handoff documentation.
 
 ## 0003 closure reconciliation (2026-10-16)
