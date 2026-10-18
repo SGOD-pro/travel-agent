@@ -351,6 +351,19 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
 
     context_version = int(str(state.get("version") or state.get("context_version") or 1))
     brief = state.get("brief", {})
+    if isinstance(brief, dict):
+        destinations = brief.get("destinations", [])
+        primary_destination = (
+            brief.get("destination_name")
+            or (destinations[0].get("name") if destinations and isinstance(destinations[0], dict) else None)
+            or (destinations[0].name if destinations and hasattr(destinations[0], "name") else None)
+            or ""
+        )
+    else:
+        destinations = getattr(brief, "destinations", [])
+        primary_destination = getattr(brief, "destination_name", "") or ""
+    dest_name = primary_destination or (destinations[0].get("name") if destinations and isinstance(destinations[0], dict) else "Unknown")
+
     discovered_places = state.get("discovered_places", [])
     task_outputs = state.get("task_outputs", {})
     already_dispatched = set(state.get("dispatched_browser_urls", []))
@@ -378,47 +391,122 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
     remaining_browser_slots = max(0, max_slots - len(already_dispatched))
 
     # 2. Check search completion & required destination evidence prerequisites
-    # Derived strictly from persisted source-backed evidence, never candidate existence or coordinates alone
-    persisted_observations_count = 0
-    for output in task_outputs.values():
-        if isinstance(output, dict):
-            obs = output.get("observations")
-            if isinstance(obs, list):
-                persisted_observations_count += len(obs)
-            elif output.get("source_observations"):
-                persisted_observations_count += len(output["source_observations"])
-
+    # Validates actual required evidence: non-placeholder, destination-relevant, confirmed persisted
     db_session = state.get("_db_session")
-    if persisted_observations_count == 0:
-        if db_session is not None:
-            try:
-                from sqlalchemy import func, select
+    valid_persisted_count = 0
+    validated_evidence_satisfied = False
+    db_queried = False
 
-                from functions.evidence_collector.models import SourceObservationModel
+    # Extract required destination names
+    required_dest_names: list[str] = []
+    for d in destinations:
+        if isinstance(d, dict) and d.get("name"):
+            required_dest_names.append(d["name"].strip())
+        elif hasattr(d, "name") and d.name:
+            required_dest_names.append(d.name.strip())
+    if not required_dest_names and primary_destination:
+        required_dest_names.append(primary_destination.strip())
+    if not required_dest_names:
+        for p in discovered_places:
+            if isinstance(p, dict) and p.get("name"):
+                required_dest_names.append(p["name"].strip())
+            elif hasattr(p, "name") and p.name:
+                required_dest_names.append(p.name.strip())
 
-                stmt = select(func.count(SourceObservationModel.id)).where(
-                    SourceObservationModel.execution_id == exec_uuid
+    persisted_rows: list[Any] = []
+    if db_session is not None:
+        try:
+            from sqlalchemy import select
+
+            from functions.evidence_collector.models import SourceObservationModel
+
+            stmt = select(
+                SourceObservationModel.id,
+                SourceObservationModel.canonical_url,
+                SourceObservationModel.excerpt_text,
+                SourceObservationModel.extraction_method,
+                SourceObservationModel.content_hash,
+                SourceObservationModel.artifact_ref,
+            ).where(
+                SourceObservationModel.execution_id == exec_uuid,
+                SourceObservationModel.extraction_method != "NEEDS_BROWSER",
+            )
+            res = await db_session.execute(stmt)
+            persisted_rows = list(res.all())
+            db_queried = True
+        except Exception as obs_exc:
+            logger.debug("Failed querying source observations from db_session: %s", obs_exc)
+    else:
+        try:
+            from sqlalchemy import select
+
+            from config.db import get_session_factory
+            from functions.evidence_collector.models import SourceObservationModel
+
+            factory = get_session_factory()
+            async with factory() as session:
+                stmt = select(
+                    SourceObservationModel.id,
+                    SourceObservationModel.canonical_url,
+                    SourceObservationModel.excerpt_text,
+                    SourceObservationModel.extraction_method,
+                    SourceObservationModel.content_hash,
+                    SourceObservationModel.artifact_ref,
+                ).where(
+                    SourceObservationModel.execution_id == exec_uuid,
+                    SourceObservationModel.extraction_method != "NEEDS_BROWSER",
                 )
-                count_res = await db_session.execute(stmt)
-                persisted_observations_count = count_res.scalar() or 0
-            except Exception as obs_exc:
-                logger.debug("Failed querying source observations from db_session: %s", obs_exc)
+                res = await session.execute(stmt)
+                persisted_rows = list(res.all())
+                db_queried = True
+        except Exception as obs_exc:
+            logger.debug("Failed querying source observations from database factory: %s", obs_exc)
+
+    if db_queried:
+        matched_destinations: set[str] = set()
+        for row in persisted_rows:
+            url_str = (row.canonical_url or "").lower()
+            text_str = (row.excerpt_text or "").lower()
+            meta_str = str(row.artifact_ref or {}).lower()
+            for dest in required_dest_names:
+                d_lower = dest.lower()
+                if d_lower in url_str or d_lower in text_str or d_lower in meta_str:
+                    matched_destinations.add(dest)
+
+        valid_persisted_count = len(persisted_rows)
+        if required_dest_names:
+            validated_evidence_satisfied = len(matched_destinations) == len(required_dest_names)
         else:
-            try:
-                from sqlalchemy import func, select
+            validated_evidence_satisfied = valid_persisted_count > 0
+    else:
+        # Offline or disconnected fallback: inspect task_outputs in memory
+        offline_matched: set[str] = set()
+        offline_valid_count = 0
+        for output in task_outputs.values():
+            if isinstance(output, dict):
+                obs_list = output.get("observations") or output.get("source_observations") or []
+                if isinstance(obs_list, list):
+                    for obs in obs_list:
+                        if not isinstance(obs, dict):
+                            continue
+                        # Exclude JS placeholders
+                        if obs.get("extraction_method") == "NEEDS_BROWSER":
+                            continue
+                        if not obs.get("canonical_url"):
+                            continue
+                        url_str = str(obs.get("canonical_url", "")).lower()
+                        text_str = str(obs.get("excerpt_text", "")).lower()
+                        offline_valid_count += 1
+                        for dest in required_dest_names:
+                            d_lower = dest.lower()
+                            if d_lower in url_str or d_lower in text_str:
+                                offline_matched.add(dest)
 
-                from config.db import get_session_factory
-                from functions.evidence_collector.models import SourceObservationModel
-
-                factory = get_session_factory()
-                async with factory() as session:
-                    stmt = select(func.count(SourceObservationModel.id)).where(
-                        SourceObservationModel.execution_id == exec_uuid
-                    )
-                    count_res = await session.execute(stmt)
-                    persisted_observations_count = count_res.scalar() or 0
-            except Exception as obs_exc:
-                logger.debug("Failed querying source observations from database factory: %s", obs_exc)
+        valid_persisted_count = offline_valid_count
+        if required_dest_names:
+            validated_evidence_satisfied = len(offline_matched) == len(required_dest_names) and offline_valid_count > 0
+        else:
+            validated_evidence_satisfied = offline_valid_count > 0
 
     has_evidence_task_output = any(
         isinstance(output, dict) and (output.get("search_completed") or "observations" in output)
@@ -427,12 +515,12 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
     static_search_completed = bool(
         state.get("static_search_completed")
         or has_evidence_task_output
-        or persisted_observations_count > 0
+        or valid_persisted_count > 0
     )
-    required_evidence_satisfied = bool(
-        state.get("required_evidence_satisfied")
-        or persisted_observations_count > 0
-    )
+    if state.get("required_evidence_satisfied") is not None:
+        required_evidence_satisfied = bool(state["required_evidence_satisfied"])
+    else:
+        required_evidence_satisfied = validated_evidence_satisfied
 
     remaining_search_budget = int(state.get("remaining_search_budget", 1 if not static_search_completed else 0))
 
@@ -612,6 +700,8 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
         "idempotency_key": envelope.idempotency_key,
         "request_digest": envelope.request_digest,
         "created_at": envelope.created_at,
+        "context_version": context_version,
+        "allowed_choices": [a.value for a in eligible_choices],
     }
     updated_decisions = list(laya_decisions)
     updated_decisions.append(record)

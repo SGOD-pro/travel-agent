@@ -88,8 +88,8 @@ _Steps derived from spec 0004 acceptance criteria. /check verify runs these; /te
 - [x] Graph state extension `TripPlanningState`: adds `laya_decisions: list[dict[str, Any]]`, `evidence_routing_action: str`, `static_search_completed: bool`, `remaining_search_budget: int`.
 - [x] Live connected acceptance test in `backend/tests/integration/test_laya_connected_acceptance.py`: verifies live Cloudflare tunnel communication against remote Kaggle endpoint with GET `/health` probe and POST `/v1/systemone` inference, latency tracking, and confidence gating.
 - [x] 25 scenario deterministic policy regression suite in `backend/tests/unit/test_laya_evaluation_benchmark.py`: verifies 100% precision on canonical deterministic scenarios (policy conformance >= 85%, simulated abstention <= 10%), with connected live sample support.
-- [x] Unit test suite in `backend/tests/unit/test_laya_graph_node.py`: 7 passed tests.
-- [x] Connected PostgreSQL lifecycle regression test suite in `backend/tests/integration/test_laya_lifecycle_regression.py`: 4 passed tests proving collect dispatch, task preservation, await_evidence_results interrupt and resumption, observation backed completion derivation, and atomic decision persistence under runner fencing.
+- [x] Unit test suite in `backend/tests/unit/test_laya_graph_node.py`: 10 passed tests.
+- [x] Connected PostgreSQL lifecycle regression test suite in `backend/tests/integration/test_laya_lifecycle_regression.py`: 4 passed tests proving collect dispatch, task preservation, await_evidence_results interrupt and resumption, observation backed completion derivation, real consumer execution, runtime decision reuse, and atomic decision persistence under runner fencing.
 
 ## Commands
 

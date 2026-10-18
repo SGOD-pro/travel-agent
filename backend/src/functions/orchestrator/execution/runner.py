@@ -543,10 +543,20 @@ class GraphRunnerService:
                             request_digest=dec_dict.get("request_digest", ""),
                             created_at=dec_dict.get("created_at") or datetime.now(UTC).isoformat(),
                         )
+                        dec_choices_raw = dec_dict.get("allowed_choices")
+                        if dec_choices_raw:
+                            dec_allowed_choices = [DecisionAction(a) for a in dec_choices_raw]
+                        else:
+                            dec_allowed_choices = [envelope.allowed_choice]
+
+                        dec_ctx_version = dec_dict.get("context_version")
+                        if dec_ctx_version is None:
+                            dec_ctx_version = execution.context_version
+
                         await repo.persist_decision(
                             envelope=envelope,
-                            context_version=execution.context_version,
-                            allowed_choices=[envelope.allowed_choice],
+                            context_version=dec_ctx_version,
+                            allowed_choices=dec_allowed_choices,
                         )
 
                 # Case A: Graph produced tasks to dispatch (Transaction 2)

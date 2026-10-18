@@ -29,6 +29,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from config.config import get_settings
+from contracts.browser import (
+    BrowserExtractionPort,
+    BrowserRenderResult,
+    BrowserRenderStatus,
+    BrowserResourceUsage,
+    BrowserTaskPayload,
+)
 from contracts.decision import (
     DecisionAction,
     DecisionEnvelope,
@@ -37,6 +44,13 @@ from contracts.decision import (
     DecisionType,
     LayaDecisionPort,
     LayaDecisionRequest,
+)
+from functions.browser.consumer import process_record as browser_process_record
+from functions.evidence_collector.consumer import process_record as evidence_process_record
+from functions.evidence_collector.fixtures import (
+    FixtureSearchAdapter,
+    FixtureWebExtractionAdapter,
+    RawObservation,
 )
 from functions.evidence_collector.models import SourceObservationModel
 from functions.orchestrator.decision.models import LayaDecisionModel
@@ -54,11 +68,15 @@ from functions.orchestrator.execution import (
     OutboxEventModel,
     TaskCompletionEvent,
     TaskModel,
-    WorkerFencingService,
+    WorkerResultModel,
 )
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
 from functions.orchestrator.graphs.trip_planner import (
     compile_trip_planning_workflow,
+)
+from functions.orchestrator.graphs.trip_planner.graph import (
+    TripPlanningState,
+    route_evidence_decision_node,
 )
 
 
@@ -327,55 +345,53 @@ async def test_lifecycle_reconciliation_to_direct_resolution_resume(
     start_result = await runner.handle_execution_start(event=start_event, graph=graph)
     collect_task_id = start_result.task_ids[0]
 
-    # 1. Complete collect task with source observations (no browser requests)
-    now = datetime.now(UTC)
+    # 1. Complete collect task by executing the real evidence collector consumer
     async with session_factory() as session:
-        # Directly stage observation and complete task via WorkerFencingService
-        stmt = select(TaskModel).where(TaskModel.id == collect_task_id).with_for_update()
-        task = (await session.execute(stmt)).scalar_one()
-        lease_token = uuid.uuid4()
-        task.status = "CLAIMED"
-        task.lease_token = lease_token
-        task.lease_expiry = now + timedelta(seconds=60)
-        await session.commit()
+        outbox_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == exec_id,
+            OutboxEventModel.task_id == collect_task_id,
+            OutboxEventModel.kind == "TASK_DISPATCH",
+        )
+        dispatch_event = (await session.execute(outbox_stmt)).scalars().first()
+    assert dispatch_event is not None
 
+    digha_fixture = RawObservation.create(
+        source_url="https://example.com/digha-guide",
+        publisher="TravelGuide",
+        excerpt_text="Digha beach attractions, lodging and hotels guide",
+        excerpt_locator="p:1",
+        extraction_method="SCRAPLING_HTTP",
+    )
+    search_adapter = FixtureSearchAdapter(fixtures=[digha_fixture])
+    extraction_adapter = FixtureWebExtractionAdapter({
+        "https://example.com/digha-guide": digha_fixture,
+    })
+
+    await evidence_process_record(
+        record={
+            "body": {
+                "kind": "TASK_DISPATCH",
+                "event_id": str(dispatch_event.id),
+                "execution_id": str(exec_id),
+                "task_id": str(collect_task_id),
+                "payload": dispatch_event.payload,
+            }
+        },
+        session_factory=session_factory,
+        adapter=search_adapter,
+        extraction_adapter=extraction_adapter,
+    )
+
+    # Verify collector consumer committed observation and completed task under fencing
     async with session_factory() as session:
-        # Insert source observation into PostgreSQL
-        obs_id = uuid.uuid4()
-        obs = SourceObservationModel(
-            id=obs_id,
-            execution_id=exec_id,
-            source_url="https://example.com/digha-guide",
-            canonical_url="https://example.com/digha-guide",
-            publisher="TravelGuide",
-            content_hash=hashlib.sha256(b"digha attractions text").hexdigest(),
-            retrieved_at=now,
-            excerpt_text="Digha beach and lodging information",
-            excerpt_locator="p:1",
-            extraction_method="HTTP_SCRAPED",
-            created_at=now,
-        )
-        session.add(obs)
+        res_stmt = select(WorkerResultModel).where(WorkerResultModel.task_id == collect_task_id)
+        worker_res = (await session.execute(res_stmt)).scalar_one()
+        result_id = worker_res.id
 
-        # Complete task via fencing service
-        fencing = WorkerFencingService(session)
-        result_id = await fencing.complete_task(
-            execution_id=exec_id,
-            task_id=collect_task_id,
-            lease_token=lease_token,
-            output={
-                "observations": [
-                    {
-                        "observation_id": str(obs_id),
-                        "canonical_url": "https://example.com/digha-guide",
-                        "content_hash": obs.content_hash,
-                    }
-                ],
-                "search_completed": True,
-            },
-            expected_context_version=1,
-        )
-        await session.commit()
+        obs_stmt = select(SourceObservationModel).where(SourceObservationModel.execution_id == exec_id)
+        persisted_obs = (await session.execute(obs_stmt)).scalars().all()
+        assert len(persisted_obs) >= 1
+        assert "digha" in persisted_obs[0].canonical_url.lower()
 
     # 2. Reconcile task completion
     reconciler = CompletionReconciliationService(session_factory, default_graph=graph)
@@ -383,7 +399,7 @@ async def test_lifecycle_reconciliation_to_direct_resolution_resume(
         event_id=uuid.uuid4(),
         task_id=collect_task_id,
         execution_id=exec_id,
-        attempt=0,
+        attempt=worker_res.attempt,
         result_id=result_id,
     )
     rec_result = await reconciler.reconcile_task_event(event=reconcile_event, graph=graph)
@@ -472,54 +488,74 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
         start_result = await runner.handle_execution_start(event=start_event, graph=graph)
         collect_task_id = start_result.task_ids[0]
 
-        # 1. Complete collect task with browser_requests
-        now = datetime.now(UTC)
-        lease_token = uuid.uuid4()
+        # 1. Complete collect task with browser_requests via real evidence collector consumer
         async with session_factory() as session:
-            stmt = select(TaskModel).where(TaskModel.id == collect_task_id).with_for_update()
-            task = (await session.execute(stmt)).scalar_one()
-            task.status = "CLAIMED"
-            task.lease_token = lease_token
-            task.lease_expiry = now + timedelta(seconds=60)
+            t_stmt = select(TaskModel).where(TaskModel.id == collect_task_id)
+            t_row = (await session.execute(t_stmt)).scalar_one()
+            p_dict = dict(t_row.payload_ref)
+            p_dict["urls"] = ["https://hotel.example.com/rates"]
+            t_row.payload_ref = p_dict
             await session.commit()
 
         async with session_factory() as session:
-            obs_id = uuid.uuid4()
-            session.add(
-                SourceObservationModel(
-                    id=obs_id,
-                    execution_id=exec_id,
-                    source_url="https://hotel.example.com",
-                    canonical_url="https://hotel.example.com",
+            outbox_stmt = select(OutboxEventModel).where(
+                OutboxEventModel.execution_id == exec_id,
+                OutboxEventModel.task_id == collect_task_id,
+                OutboxEventModel.kind == "TASK_DISPATCH",
+            )
+            dispatch_event = (await session.execute(outbox_stmt)).scalars().first()
+        assert dispatch_event is not None
+        payload_container = dict(dispatch_event.payload or {})
+        payload_container["payload"]["urls"] = ["https://hotel.example.com/rates"]
+
+        class BrowserRequestExtractionAdapter:
+            async def extract_page(
+                self, page_url: str, category: str = "general"
+            ) -> tuple[list[RawObservation], list[dict[str, Any]]]:
+                obs = RawObservation.create(
+                    source_url=page_url,
                     publisher="HotelPortal",
-                    content_hash=hashlib.sha256(b"hotel page content").hexdigest(),
-                    retrieved_at=now,
-                    excerpt_text="Rates require dynamic JavaScript",
+                    excerpt_text="Digha hotel listing requires dynamic browser rendering",
                     excerpt_locator="p:1",
-                    extraction_method="HTTP_SCRAPED",
-                    created_at=now,
+                    extraction_method="SCRAPLING_HTTP",
                 )
-            )
-            fencing = WorkerFencingService(session)
-            result_id = await fencing.complete_task(
-                execution_id=exec_id,
-                task_id=collect_task_id,
-                lease_token=lease_token,
-                output={
-                    "observations": [{"observation_id": str(obs_id), "canonical_url": "https://hotel.example.com"}],
-                    "browser_requests": [
-                        {
-                            "url": "https://hotel.example.com/rates",
-                            "canonical_url": "https://hotel.example.com/rates",
-                            "category": "lodging",
-                            "reason": "DYNAMIC_JAVASCRIPT_REQUIRED",
-                        }
-                    ],
-                    "search_completed": True,
-                },
-                expected_context_version=1,
-            )
-            await session.commit()
+                b_reqs = [
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                        "category": "lodging",
+                        "reason": "DYNAMIC_JAVASCRIPT_REQUIRED",
+                    }
+                ]
+                return [obs], b_reqs
+
+        digha_stub = RawObservation.create(
+            source_url="https://hotel.example.com",
+            publisher="HotelPortal",
+            excerpt_text="Digha hotel directory",
+        )
+        search_adapter = FixtureSearchAdapter(fixtures=[digha_stub])
+        extraction_adapter = BrowserRequestExtractionAdapter()
+
+        await evidence_process_record(
+            record={
+                "body": {
+                    "kind": "TASK_DISPATCH",
+                    "event_id": str(dispatch_event.id),
+                    "execution_id": str(exec_id),
+                    "task_id": str(collect_task_id),
+                    "payload": payload_container,
+                }
+            },
+            session_factory=session_factory,
+            adapter=search_adapter,
+            extraction_adapter=extraction_adapter,
+        )
+
+        async with session_factory() as session:
+            res_stmt = select(WorkerResultModel).where(WorkerResultModel.task_id == collect_task_id)
+            worker_res = (await session.execute(res_stmt)).scalar_one()
+            result_id = worker_res.id
 
         # 2. Reconcile completion
         reconciler = CompletionReconciliationService(session_factory, default_graph=graph)
@@ -528,7 +564,7 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
                 event_id=uuid.uuid4(),
                 task_id=collect_task_id,
                 execution_id=exec_id,
-                attempt=0,
+                attempt=worker_res.attempt,
                 result_id=result_id,
             ),
             graph=graph,
@@ -563,26 +599,57 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
         snap = await graph.aget_state(config={"configurable": {"thread_id": str(exec_id)}})
         assert "optimized_schedule" not in snap.values
 
-        # 4. Complete browser task
-        browser_lease = uuid.uuid4()
+        # 4. Complete browser task via real browser consumer
         async with session_factory() as session:
-            b_stmt = select(TaskModel).where(TaskModel.id == browser_task_id).with_for_update()
-            b_task = (await session.execute(b_stmt)).scalar_one()
-            b_task.status = "CLAIMED"
-            b_task.lease_token = browser_lease
-            b_task.lease_expiry = now + timedelta(seconds=60)
-            await session.commit()
+            b_outbox_stmt = select(OutboxEventModel).where(
+                OutboxEventModel.execution_id == exec_id,
+                OutboxEventModel.task_id == browser_task_id,
+                OutboxEventModel.kind == "TASK_DISPATCH",
+            )
+            b_dispatch_event = (await session.execute(b_outbox_stmt)).scalars().first()
+        assert b_dispatch_event is not None
+
+        class MockBrowserExtractionPort(BrowserExtractionPort):
+            async def render_page(self, payload: BrowserTaskPayload) -> BrowserRenderResult:
+                return BrowserRenderResult(
+                    status=BrowserRenderStatus.SUCCESS,
+                    canonical_url=payload.canonical_url,
+                    effective_url=payload.url,
+                    content_hash=hashlib.sha256(b"digha rates 3500 INR").hexdigest(),
+                    rendered_html_snippet="<html><body>Digha luxury hotel rates: 3500 INR per night</body></html>",
+                    excerpt_text="Digha luxury hotel rates: 3500 INR per night",
+                    excerpt_locator="body",
+                    render_duration_ms=45,
+                    usage=BrowserResourceUsage(duration_ms=45, memory_mb=1),
+                )
+
+        await browser_process_record(
+            record={
+                "body": {
+                    "kind": "TASK_DISPATCH",
+                    "event_id": str(b_dispatch_event.id),
+                    "execution_id": str(exec_id),
+                    "task_id": str(browser_task_id),
+                    "payload": b_dispatch_event.payload,
+                }
+            },
+            session_factory=session_factory,
+            adapter=MockBrowserExtractionPort(),
+        )
 
         async with session_factory() as session:
-            b_fencing = WorkerFencingService(session)
-            b_result_id = await b_fencing.complete_task(
-                execution_id=exec_id,
-                task_id=browser_task_id,
-                lease_token=browser_lease,
-                output={"rendered_content": "Rates: 3500 INR/night"},
-                expected_context_version=1,
+            b_res_stmt = select(WorkerResultModel).where(WorkerResultModel.task_id == browser_task_id)
+            b_worker_res = (await session.execute(b_res_stmt)).scalar_one()
+            b_result_id = b_worker_res.id
+
+            # Verify browser observation was persisted in PostgreSQL with BROWSER_HTML
+            b_obs_stmt = select(SourceObservationModel).where(
+                SourceObservationModel.execution_id == exec_id,
+                SourceObservationModel.extraction_method == "BROWSER_HTML",
             )
-            await session.commit()
+            b_obs = (await session.execute(b_obs_stmt)).scalar_one_or_none()
+            assert b_obs is not None
+            assert "digha" in b_obs.excerpt_text.lower()
 
         # Reconcile browser task completion
         await reconciler.reconcile_task_event(
@@ -590,7 +657,7 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
                 event_id=uuid.uuid4(),
                 task_id=browser_task_id,
                 execution_id=exec_id,
-                attempt=0,
+                attempt=b_worker_res.attempt,
                 result_id=b_result_id,
             ),
             graph=graph,
@@ -612,7 +679,7 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
 async def test_durable_decision_reuse_runtime_path(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Verifies that existing decision in PostgreSQL is reused without invoking the remote adapter."""
+    """Verifies that existing decision in PostgreSQL is reused through graph node without invoking remote adapter."""
     exec_id, trip_id = await _create_test_execution(session_factory)
 
     # Compute expected idempotency key and store decision envelope in database
@@ -670,27 +737,51 @@ async def test_durable_decision_reuse_runtime_path(
         )
         await session.commit()
 
-    # Query repository directly via runtime path
-    decision_req = LayaDecisionRequest(
-        decision_id=uuid.uuid4(),
-        decision_type=DecisionType.EVIDENCE_ROUTING,
-        phase=phase,
-        execution_id=exec_id,
-        trip_id=trip_id,
-        context_version=1,
-        policy_version=LayaPolicyValidator.POLICY_VERSION,
-        question_version="evidence_routing:v1",
-        policy_derived_eligible_choices=eligible,
-        budget_remaining=3,
-        context=context,
-        idempotency_key=idemp_key,
-    )
+    # Create controllable adapter with call counter
+    mock_adapter = MockLifecycleLayaAdapter()
+    assert mock_adapter.call_count == 0
+
+    brief_data = {
+        "origin_name": "Kolkata",
+        "origin_lat": 22.5726,
+        "origin_lng": 88.3639,
+        "destinations": [
+            {
+                "name": "Digha",
+                "latitude": 21.6266,
+                "longitude": 87.5074,
+                "stay_days": 2,
+                "confidence": 0.95,
+            }
+        ],
+        "start_date": "2026-11-01",
+        "end_date": "2026-11-03",
+        "travelers": 2,
+        "rooms": 1,
+        "budget": {"amount": "25000.00", "currency": "INR"},
+    }
+
+    state: TripPlanningState = {
+        "execution_id": str(exec_id),
+        "trip_id": str(trip_id),
+        "brief": brief_data,
+        "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
+        "task_outputs": {},
+        "static_search_completed": True,
+        "required_evidence_satisfied": True,
+        "browser_requests": [{"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}],
+        "remaining_search_budget": 0,
+        "_laya_adapter": mock_adapter,
+    }
 
     async with session_factory() as session:
-        repo = LayaDecisionRepository(session=session)
-        reused = await repo.find_reusable_decision(decision_req, active_phase=phase)
+        state["_db_session"] = session
+        result = await route_evidence_decision_node(state)
 
-    assert reused is not None
-    assert reused.decision_id == stored_envelope.decision_id
-    assert reused.allowed_choice == DecisionAction.DISPATCH_BROWSER_ESCALATION
-    assert reused.model_version == "persisted-durable-laya"
+    # Crucial proof: Remote adapter was NOT queried because decision was reused from PostgreSQL
+    assert mock_adapter.call_count == 0, "Expected zero remote inference queries when reusable decision exists in database"
+    assert result["evidence_routing_action"] == DecisionAction.DISPATCH_BROWSER_ESCALATION.value
+    assert len(result["laya_decisions"]) == 1
+    reused_record = result["laya_decisions"][0]
+    assert reused_record["decision_id"] == str(stored_envelope.decision_id)
+    assert reused_record["model_version"] == "persisted-durable-laya"

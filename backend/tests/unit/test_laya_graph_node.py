@@ -464,3 +464,127 @@ async def test_escalate_dynamic_evidence_preserves_pending_tasks() -> None:
     assert res["pending_tasks"][1]["action"] == "render"
 
 
+@pytest.mark.asyncio
+async def test_evidence_sufficiency_rejects_js_placeholders() -> None:
+    """Verifies that NEEDS_BROWSER placeholder observations do NOT satisfy required evidence."""
+    exec_id = str(uuid.uuid4())
+    state: TripPlanningState = {
+        "execution_id": exec_id,
+        "trip_id": exec_id,
+        "version": 1,
+        "status": "in_progress",
+        "brief": {
+            "origin_name": "Kolkata",
+            "destination_name": "Digha",
+            "destinations": [{"name": "Digha", "latitude": 21.6266, "longitude": 87.5074}],
+        },
+        "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
+        "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "canonical_url": "https://hotel.example.com/rates",
+                        "extraction_method": "NEEDS_BROWSER",
+                        "excerpt_text": "Requires JavaScript",
+                    }
+                ],
+                "browser_requests": [
+                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                ],
+            }
+        },
+        "static_search_completed": True,
+        "remaining_search_budget": 0,
+        "_laya_adapter": MockLayaDecisionAdapter(),
+    }
+
+    result = await route_evidence_decision_node(state)
+    # Because evidence is not satisfied and unhandled browser requests exist,
+    # evaluation bypass is rejected and browser escalation is routed
+    assert result["evidence_routing_action"] == DecisionAction.DISPATCH_BROWSER_ESCALATION.value
+
+
+@pytest.mark.asyncio
+async def test_evidence_sufficiency_rejects_irrelevant_destination_observations() -> None:
+    """Verifies that observations for an unrelated destination do NOT satisfy required evidence."""
+    exec_id = str(uuid.uuid4())
+    state: TripPlanningState = {
+        "execution_id": exec_id,
+        "trip_id": exec_id,
+        "version": 1,
+        "status": "in_progress",
+        "brief": {
+            "origin_name": "Kolkata",
+            "destination_name": "Digha",
+            "destinations": [{"name": "Digha", "latitude": 21.6266, "longitude": 87.5074}],
+        },
+        "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
+        "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "canonical_url": "https://example.com/paris-guide",
+                        "extraction_method": "STATIC_HTML",
+                        "excerpt_text": "Top Eiffel Tower and Louvre attractions in Paris",
+                        "content_hash": "paris_hash",
+                    }
+                ],
+                "browser_requests": [
+                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                ],
+            }
+        },
+        "static_search_completed": True,
+        "remaining_search_budget": 0,
+        "_laya_adapter": MockLayaDecisionAdapter(),
+    }
+
+    result = await route_evidence_decision_node(state)
+    # Irrelevant destination observation means required evidence is NOT satisfied for Digha
+    assert result["evidence_routing_action"] == DecisionAction.DISPATCH_BROWSER_ESCALATION.value
+
+
+@pytest.mark.asyncio
+async def test_evidence_sufficiency_accepts_valid_destination_evidence() -> None:
+    """Verifies that substantive, destination-relevant observations satisfy required evidence."""
+    exec_id = str(uuid.uuid4())
+    state: TripPlanningState = {
+        "execution_id": exec_id,
+        "trip_id": exec_id,
+        "version": 2,
+        "status": "in_progress",
+        "brief": {
+            "origin_name": "Kolkata",
+            "destination_name": "Digha",
+            "destinations": [{"name": "Digha", "latitude": 21.6266, "longitude": 87.5074}],
+        },
+        "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
+        "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "canonical_url": "https://example.com/digha-sea-beach-hotels",
+                        "extraction_method": "STATIC_HTML",
+                        "excerpt_text": "Digha sea beach luxury hotels and resorts directory",
+                        "content_hash": "digha_hash",
+                    }
+                ],
+            }
+        },
+        "static_search_completed": True,
+        "remaining_search_budget": 0,
+        "_laya_adapter": MockLayaDecisionAdapter(),
+    }
+
+    result = await route_evidence_decision_node(state)
+    # Valid Digha observation satisfies required evidence -> singleton evaluation bypass
+    assert result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    assert result["current_step"] == "deterministic_evaluation_routed"
+    assert len(result["laya_decisions"]) == 1
+
+    dec = result["laya_decisions"][0]
+    assert dec["context_version"] == 2
+    assert dec["allowed_choices"] == [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value]
+
+
+
