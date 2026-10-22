@@ -136,11 +136,12 @@ Optimize multi stop itineraries across opening hours, dwell times, and transit m
 **Done when:** domain contracts and PostGIS tables persist routes and legs, OR Tools solver enforces time windows and stop priorities with drop penalties for optional stops, Valhalla adapter calculates road and pedestrian matrices with circuit breaking, parking hubs are injected for pedestrian restricted venues, mid trip replanning freezes completed stops from live GPS coordinates, and async worker executes under PostgreSQL lease fencing.
 - [x] Design it (spec): [0005](../specs/0005-route-optimizer.md)
 - [ ] Build it: `/develop route optimizer and multimodal itinerary planning`
-   - [ ] Domain contracts, Pydantic schemas, and PostGIS database migration (AC-1, AC-6)
-   - [ ] Google OR Tools constraint solver with time windows and priority partitioning (AC-2, AC-5)
-   - [ ] Valhalla matrix adapter, multimodal parking hub injection, and restriction masking (AC-3, AC-4, AC-7)
-   - [ ] Mid trip dynamic replanning engine and immutable version snapshotting (AC-8)
-   - [ ] Fenced SQS worker service, task recovery, and asynchronous REST endpoints (AC-9)
+   - [ ] Offline core solver vertical slice, routing contracts, and scheduler facade (AC-1, AC-2, AC-5)
+   - [ ] Database migration and PostGIS repository with UUID foreign keys (AC-6)
+   - [ ] Multimodal vehicle continuity and canonical parking hub service (AC-4)
+   - [ ] External Valhalla HTTP client, hard closure avoidance, and connected gate (AC-3, AC-7)
+   - [ ] Mid trip dynamic replanning engine and optimistic concurrency (AC-8)
+   - [ ] Fenced SQS worker service, job API polling, and standalone Lambda packaging (AC-7, AC-9)
 - [ ] Verify it: `/check verify 0005-route-optimizer`
 - [ ] Review it (fresh model): `/check review 0005-route-optimizer`
 - [ ] Test it: `/test 0005-route-optimizer`
