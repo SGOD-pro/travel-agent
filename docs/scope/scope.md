@@ -13,6 +13,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 | 2 | Evidence collection with provenance and canonical place/claim verification | Phase 4: Evidence & Verification | done |
 | 3 | Browser escalation worker service and orchestrator dispatch | Phase 5: Browser Escalation | done |
 | 4 | Remote LAYA decision router integration | Phase 6: Decision Routing | done |
+| 5 | Route optimizer and multimodal itinerary planning | Phase 7: Route Optimization | in-progress |
 
 ## Foundations
 
@@ -127,3 +128,22 @@ Integrate the remote LAYA decision model hosted on Kaggle through a public Cloud
 - [x] Document it: `/document 0004-remote-laya-decision-router` (8 capability entries in CHANGELOG.md)
 
 Spec 0004 (`docs/specs/0004-remote-laya-decision-router.md`, Status: Accepted) · code in `backend/src/contracts/decision.py`, `backend/src/functions/decision_router/`, `backend/src/functions/orchestrator/decision/`, and `backend/src/functions/orchestrator/graphs/trip_planner/`
+
+## Phase 7: Route Optimization
+
+### 5. Route optimizer and multimodal itinerary planning · in-progress
+Optimize multi stop itineraries across opening hours, dwell times, and transit modes using Google OR Tools constraint solving and Valhalla road matrices, with automated parking hub injection for pedestrian destinations, dynamic road closure avoidance, and mid trip replanning. Strictly excludes payments, booking checkout, client user interfaces, and live AWS deployment.
+**Done when:** domain contracts and PostGIS tables persist routes and legs, OR Tools solver enforces time windows and stop priorities with drop penalties for optional stops, Valhalla adapter calculates road and pedestrian matrices with circuit breaking, parking hubs are injected for pedestrian restricted venues, mid trip replanning freezes completed stops from live GPS coordinates, and async worker executes under PostgreSQL lease fencing.
+- [x] Design it (spec): [0005](../specs/0005-route-optimizer.md)
+- [ ] Build it: `/develop route optimizer and multimodal itinerary planning`
+   - [ ] Domain contracts, Pydantic schemas, and PostGIS database migration (AC-1, AC-6)
+   - [ ] Google OR Tools constraint solver with time windows and priority partitioning (AC-2, AC-5)
+   - [ ] Valhalla matrix adapter, multimodal parking hub injection, and restriction masking (AC-3, AC-4, AC-7)
+   - [ ] Mid trip dynamic replanning engine and immutable version snapshotting (AC-8)
+   - [ ] Fenced SQS worker service, task recovery, and asynchronous REST endpoints (AC-9)
+- [ ] Verify it: `/check verify 0005-route-optimizer`
+- [ ] Review it (fresh model): `/check review 0005-route-optimizer`
+- [ ] Test it: `/test 0005-route-optimizer`
+- [ ] Document it: `/document 0005-route-optimizer`
+
+Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: Proposed) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`

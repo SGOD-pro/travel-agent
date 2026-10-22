@@ -411,6 +411,7 @@ async def test_trip_planning_workflow_e2e_with_escalation_node() -> None:
                         "content_hash": "hash123",
                         "excerpt_text": "Digha beach resort hotel lodging and sightseeing travel guide",
                         "extraction_method": "SCRAPLING_HTTP",
+                        "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
                     }
                 ],
                 "search_completed": True,

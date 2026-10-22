@@ -149,6 +149,7 @@ async def test_route_evidence_decision_phase2_browser_escalation_dispatch() -> N
                         "content_hash": "hash123",
                         "excerpt_text": "Digha sea beach hotels and travel guide",
                         "extraction_method": "SCRAPLING_HTTP",
+                        "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
                     }
                 ],
                 "search_completed": True,
@@ -230,6 +231,7 @@ async def test_route_evidence_decision_phase2_evaluation_bypass_to_solve_schedul
                         "content_hash": "hash123",
                         "excerpt_text": "Digha sea beach hotels and travel guide",
                         "extraction_method": "SCRAPLING_HTTP",
+                        "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
                     }
                 ],
                 "search_completed": True,
@@ -323,6 +325,7 @@ async def test_route_evidence_decision_result_reuse_from_state() -> None:
                         "content_hash": "hash123",
                         "excerpt_text": "Digha sea beach hotels and travel guide",
                         "extraction_method": "SCRAPLING_HTTP",
+                        "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
                     }
                 ],
                 "search_completed": True,
@@ -373,6 +376,7 @@ async def test_route_evidence_decision_fallback_on_adapter_exception() -> None:
                         "content_hash": "hash123",
                         "excerpt_text": "Digha sea beach hotels and travel guide",
                         "extraction_method": "SCRAPLING_HTTP",
+                        "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
                     }
                 ],
                 "search_completed": True,
@@ -410,7 +414,7 @@ async def test_route_evidence_decision_persists_to_db_session() -> None:
     mock_obs.excerpt_text = "Digha sea beach hotels and travel guide"
     mock_obs.extraction_method = "SCRAPLING_HTTP"
     mock_obs.content_hash = "hash123"
-    mock_obs.artifact_ref = {}
+    mock_obs.artifact_ref = {"gps": {"lat": 21.6266, "lng": 87.5074}}
     mock_result.all.return_value = [mock_obs]
     mock_session.execute.return_value = mock_result
 
@@ -588,6 +592,7 @@ async def test_evidence_sufficiency_accepts_valid_destination_evidence() -> None
                         "extraction_method": "STATIC_HTML",
                         "excerpt_text": "Digha sea beach luxury hotels and resorts directory",
                         "content_hash": "digha_hash",
+                        "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
                     }
                 ],
             }
@@ -736,6 +741,66 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
     }
     assert _is_valid_source_evidence_for_destination(valid_obs, dest_name, dest_lat, dest_lng) is True
+
+    # 6. Missing source coordinates (valid substantive text, but artifact_ref has no coordinates)
+    missing_coords_obs = {
+        "canonical_url": "https://example.com/destinations/digha.html",
+        "content_hash": "hash_missing_coords",
+        "excerpt_text": "Digha is a beautiful coastal resort destination with clean beaches",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {},
+    }
+    assert _is_valid_source_evidence_for_destination(missing_coords_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 7. Malformed source coordinates (string conversion error)
+    malformed_coords_obs = {
+        "canonical_url": "https://example.com/destinations/digha.html",
+        "content_hash": "hash_malformed_coords",
+        "excerpt_text": "Digha is a beautiful coastal resort destination with clean beaches",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {"gps": {"lat": "malformed_lat", "lng": "invalid_lng"}},
+    }
+    assert _is_valid_source_evidence_for_destination(malformed_coords_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 8. Out-of-bounds coordinates (lat 120.0 > 90.0)
+    out_of_bounds_coords_obs = {
+        "canonical_url": "https://example.com/destinations/digha.html",
+        "content_hash": "hash_oob_coords",
+        "excerpt_text": "Digha is a beautiful coastal resort destination with clean beaches",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {"gps": {"lat": 120.0, "lng": 87.5074}},
+    }
+    assert _is_valid_source_evidence_for_destination(out_of_bounds_coords_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 9. Unavailable destination information in excerpt text
+    unavailable_text_obs = {
+        "canonical_url": "https://example.com/destinations/digha.html",
+        "content_hash": "hash_unavailable_text",
+        "excerpt_text": "Digha destination information is unavailable",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
+    }
+    assert _is_valid_source_evidence_for_destination(unavailable_text_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 10. Explicit unavailable status in artifact_ref
+    unavailable_status_obs = {
+        "canonical_url": "https://example.com/destinations/digha.html",
+        "content_hash": "hash_status_unavail",
+        "excerpt_text": "Digha luxury coastal beach resort booking and guide",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {"status": "UNAVAILABLE", "gps": {"lat": 21.6266, "lng": 87.5074}},
+    }
+    assert _is_valid_source_evidence_for_destination(unavailable_status_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 11. Unavailable reason in artifact_ref
+    unavailable_reason_obs = {
+        "canonical_url": "https://example.com/destinations/digha.html",
+        "content_hash": "hash_reason_unavail",
+        "excerpt_text": "Digha luxury coastal beach resort booking and guide",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {"unavailable_reason": "Blocked by target server", "gps": {"lat": 21.6266, "lng": 87.5074}},
+    }
+    assert _is_valid_source_evidence_for_destination(unavailable_reason_obs, dest_name, dest_lat, dest_lng) is False
 
 
 @pytest.mark.asyncio

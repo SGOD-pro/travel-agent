@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import os
 import re
 import uuid
@@ -350,6 +351,80 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
     return result
 
 
+_UNAVAILABLE_EXCERPT_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\b(?:destination\s+)?information\s+(?:is\s+)?unavailable\b", re.IGNORECASE),
+    re.compile(r"\b(?:content|details?|data|service|source)\s+(?:is\s+)?unavailable\b", re.IGNORECASE),
+    re.compile(r"\b(?:temporarily|currently)\s+unavailable\b", re.IGNORECASE),
+    re.compile(r"\bno\s+(?:results?|information|details?|data|records?)\s+(?:found|available)\b", re.IGNORECASE),
+    re.compile(r"\b(?:page\s+not\s+found|404\s+not\s+found|not\s+found)\b", re.IGNORECASE),
+    re.compile(r"\b(?:access\s+denied|403\s+forbidden|unauthorized)\b", re.IGNORECASE),
+    re.compile(r"\b(?:failed|unable)\s+to\s+(?:retrieve|load|fetch|find|locate)\b", re.IGNORECASE),
+]
+
+
+def _extract_coordinates_from_obs(obs: Any, artifact_ref: Any) -> tuple[float | None, float | None]:
+    """Extracts raw coordinates from observation artifact_ref or fields and validates them as floats."""
+    obs_lat_raw: Any = None
+    obs_lng_raw: Any = None
+
+    if isinstance(artifact_ref, dict):
+        gps = artifact_ref.get("gps")
+        if isinstance(gps, dict):
+            obs_lat_raw = gps.get("lat") if gps.get("lat") is not None else gps.get("latitude")
+            obs_lng_raw = gps.get("lng") if gps.get("lng") is not None else gps.get("longitude")
+        elif isinstance(gps, (list, tuple)) and len(gps) >= 2:
+            obs_lat_raw, obs_lng_raw = gps[0], gps[1]
+
+        if obs_lat_raw is None and "latitude" in artifact_ref:
+            obs_lat_raw = artifact_ref.get("latitude")
+        if obs_lng_raw is None and "longitude" in artifact_ref:
+            obs_lng_raw = artifact_ref.get("longitude")
+        if obs_lat_raw is None and "lat" in artifact_ref:
+            obs_lat_raw = artifact_ref.get("lat")
+        if obs_lng_raw is None and "lng" in artifact_ref:
+            obs_lng_raw = artifact_ref.get("lng")
+
+        if (obs_lat_raw is None or obs_lng_raw is None) and "parsed_observations" in artifact_ref:
+            parsed = artifact_ref.get("parsed_observations")
+            if isinstance(parsed, list):
+                for p in parsed:
+                    if isinstance(p, dict):
+                        p_lat, p_lng = _extract_coordinates_from_obs(p, p.get("artifact_ref") or p)
+                        if p_lat is not None and p_lng is not None:
+                            return p_lat, p_lng
+
+    if obs_lat_raw is None and isinstance(obs, dict):
+        obs_lat_raw = obs.get("latitude") if obs.get("latitude") is not None else obs.get("lat")
+    if obs_lng_raw is None and isinstance(obs, dict):
+        obs_lng_raw = obs.get("longitude") if obs.get("longitude") is not None else obs.get("lng")
+
+    if obs_lat_raw is None:
+        obs_lat_raw = getattr(obs, "latitude", None)
+    if obs_lat_raw is None:
+        obs_lat_raw = getattr(obs, "lat", None)
+    if obs_lng_raw is None:
+        obs_lng_raw = getattr(obs, "longitude", None)
+    if obs_lng_raw is None:
+        obs_lng_raw = getattr(obs, "lng", None)
+
+    if obs_lat_raw is None or obs_lng_raw is None:
+        return None, None
+
+    try:
+        lat_f = float(obs_lat_raw)
+        lng_f = float(obs_lng_raw)
+    except (ValueError, TypeError, OverflowError):
+        return None, None
+
+    if math.isnan(lat_f) or math.isnan(lng_f) or math.isinf(lat_f) or math.isinf(lng_f):
+        return None, None
+
+    if not (-90.0 <= lat_f <= 90.0 and -180.0 <= lng_f <= 180.0):
+        return None, None
+
+    return lat_f, lng_f
+
+
 def _is_valid_source_evidence_for_destination(
     obs: Any,
     dest_name: str,
@@ -365,6 +440,9 @@ def _is_valid_source_evidence_for_destination(
     - Destination-name-only URLs (where destination name is in URL but nowhere in substantive content).
     - Destination-name-only text (where excerpt text is just the destination name without substance).
     - Sparse excerpt text (<15 characters) unless structured observations are present in artifact_ref.
+    - Negative or unavailable destination content (e.g. 'information is unavailable', 404, blocked).
+    - Missing source coordinates (must extract valid latitude and longitude).
+    - Malformed source coordinates (conversion errors, NaN, inf, or out-of-bounds geographic ranges).
     - Conflicting coordinates (if both destination and observation coordinates exist and haversine distance > 100 km).
     """
     url = getattr(obs, "canonical_url", None) or (obs.get("canonical_url") if isinstance(obs, dict) else "")
@@ -373,11 +451,18 @@ def _is_valid_source_evidence_for_destination(
     excerpt = getattr(obs, "excerpt_text", None) or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
     artifact_ref = getattr(obs, "artifact_ref", None) or (obs.get("artifact_ref") if isinstance(obs, dict) else {})
 
-    # 1. Reject NEEDS_BROWSER dynamic rendering placeholders
+    # 1. Reject NEEDS_BROWSER dynamic rendering placeholders and error/unavailable metadata
     if method == "NEEDS_BROWSER":
         return False
-    if isinstance(artifact_ref, dict) and artifact_ref.get("browser_reason"):
-        return False
+    if isinstance(artifact_ref, dict):
+        if artifact_ref.get("browser_reason"):
+            return False
+        status_val = str(artifact_ref.get("status") or "").upper().strip()
+        if status_val in ("UNAVAILABLE", "BLOCKED", "TIMED_OUT", "FAILED", "ERROR", "NOT_FOUND"):
+            return False
+        if artifact_ref.get("unavailable_reason") or artifact_ref.get("unavailable_sources") or artifact_ref.get("error"):
+            return False
+
     if "[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED]" in (excerpt or ""):
         return False
 
@@ -397,7 +482,16 @@ def _is_valid_source_evidence_for_destination(
     if clean_excerpt.lower() == clean_dest.lower():
         return False
 
-    # 4. Destination name must appear as a word token in excerpt or structured metadata
+    # 4. Reject negative or unavailable content
+    for pattern in _UNAVAILABLE_EXCERPT_PATTERNS:
+        if pattern.search(clean_excerpt):
+            logger.debug(
+                "Source observation rejected: excerpt matches unavailability pattern '%s'",
+                pattern.pattern,
+            )
+            return False
+
+    # 5. Destination name must appear as a word token in excerpt or structured metadata
     dest_pattern = re.compile(rf"\b{re.escape(clean_dest)}\b", re.IGNORECASE)
     has_dest_in_excerpt = bool(dest_pattern.search(clean_excerpt))
 
@@ -415,7 +509,7 @@ def _is_valid_source_evidence_for_destination(
         # Destination-name substring matching in URL alone is rejected
         return False
 
-    # 5. Substantive content check: excerpt must have substance (>= 15 chars) or structured items in artifact_ref
+    # 6. Substantive content check: excerpt must have substance (>= 15 chars) or structured items in artifact_ref
     has_structured = isinstance(artifact_ref, dict) and bool(
         artifact_ref.get("parsed_observations")
         or artifact_ref.get("hotels")
@@ -424,38 +518,39 @@ def _is_valid_source_evidence_for_destination(
     if len(clean_excerpt) < 15 and not has_structured:
         return False
 
-    # 6. Coordinate distance check: reject irrelevant observations exceeding 100 km
-    if dest_lat is not None and dest_lng is not None and isinstance(artifact_ref, dict):
-        obs_lat = None
-        obs_lng = None
-        if "gps" in artifact_ref and isinstance(artifact_ref["gps"], dict):
-            obs_lat = artifact_ref["gps"].get("lat") or artifact_ref["gps"].get("latitude")
-            obs_lng = artifact_ref["gps"].get("lng") or artifact_ref["gps"].get("longitude")
-        elif "latitude" in artifact_ref and "longitude" in artifact_ref:
-            obs_lat = artifact_ref.get("latitude")
-            obs_lng = artifact_ref.get("longitude")
-        elif "lat" in artifact_ref and "lng" in artifact_ref:
-            obs_lat = artifact_ref.get("lat")
-            obs_lng = artifact_ref.get("lng")
+    # 7. Coordinate extraction and validation (fail-closed on missing or malformed coordinates)
+    obs_lat, obs_lng = _extract_coordinates_from_obs(obs, artifact_ref)
+    if obs_lat is None or obs_lng is None:
+        logger.debug(
+            "Observation rejected for destination %s: missing or malformed source coordinates",
+            clean_dest,
+        )
+        return False
 
-        if obs_lat is not None and obs_lng is not None:
-            try:
-                dist = ItineraryScheduler._haversine_distance_km(
-                    float(dest_lat), float(dest_lng), float(obs_lat), float(obs_lng)
-                )
-                if dist > 100.0:
-                    logger.debug(
-                        "Observation coordinates (%s, %s) exceed 100km distance (%s km) from destination %s (%s, %s)",
-                        obs_lat,
-                        obs_lng,
-                        dist,
-                        clean_dest,
-                        dest_lat,
-                        dest_lng,
-                    )
-                    return False
-            except (ValueError, TypeError):
-                pass
+    # 8. Coordinate distance check: reject irrelevant observations exceeding 100 km from destination
+    if dest_lat is not None and dest_lng is not None:
+        try:
+            d_lat = float(dest_lat)
+            d_lng = float(dest_lng)
+        except (ValueError, TypeError, OverflowError):
+            logger.debug("Destination coordinates malformed: (%s, %s)", dest_lat, dest_lng)
+            return False
+
+        if math.isnan(d_lat) or math.isnan(d_lng) or math.isinf(d_lat) or math.isinf(d_lng):
+            return False
+
+        dist = ItineraryScheduler._haversine_distance_km(d_lat, d_lng, obs_lat, obs_lng)
+        if dist > 100.0:
+            logger.debug(
+                "Observation coordinates (%s, %s) exceed 100km distance (%s km) from destination %s (%s, %s)",
+                obs_lat,
+                obs_lng,
+                dist,
+                clean_dest,
+                d_lat,
+                d_lng,
+            )
+            return False
 
     return True
 

@@ -362,6 +362,7 @@ async def test_lifecycle_reconciliation_to_direct_resolution_resume(
         excerpt_text="Digha beach attractions, lodging and hotels guide",
         excerpt_locator="p:1",
         extraction_method="SCRAPLING_HTTP",
+        artifact_ref={"gps": {"lat": 21.6266, "lng": 87.5074}},
     )
     search_adapter = FixtureSearchAdapter(fixtures=[digha_fixture])
     extraction_adapter = FixtureWebExtractionAdapter({
@@ -537,7 +538,15 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
                 ]
                 return [obs], b_reqs
 
-        search_adapter = FixtureSearchAdapter(fixtures=[])
+        digha_dest_obs = RawObservation.create(
+            source_url="https://example.com/digha-overview",
+            publisher="TravelGuide",
+            excerpt_text="Digha sea beach attractions and travel guide",
+            excerpt_locator="p:1",
+            extraction_method="SCRAPLING_HTTP",
+            artifact_ref={"gps": {"lat": 21.6266, "lng": 87.5074}},
+        )
+        search_adapter = FixtureSearchAdapter(fixtures=[digha_dest_obs])
         extraction_adapter = BrowserRequestExtractionAdapter()
 
         await evidence_process_record(
