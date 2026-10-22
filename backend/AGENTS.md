@@ -74,6 +74,7 @@ uv run alembic upgrade head
 - Decision router imports only contracts.decision, config.config, standard library, httpx, and pydantic, with zero database models or orchestrator dependencies.
 - Remote LAYA decision client enforces cumulative retry deadlines, exponential backoff for 5xx errors, immediate failure on 4xx responses, and context PII sanitization.
 - Decision policy validator enforces four point revalidation for result reuse (matching phase, context version, policy version, active eligible choices) and deterministic fallback on errors, timeouts, or low confidence (< 0.700).
+- Evidence routing validates required destination identity, canonical coordinates within 100 km, and substantive persisted sources; database query failures fail closed without falling back to unpersisted task outputs, and stale state flags cannot override authoritative validation.
 - LangGraph evidence routing node records chronological decision envelopes in laya_decisions table and executes between candidate discovery and dynamic evidence escalation.
 - Trip planner workflow compiles with an interrupt before await_evidence_results, resuming back to route_evidence_decision once completed task results or persisted source observations arrive.
 - Route optimizer and trip planner end to end workflows precede media location development.

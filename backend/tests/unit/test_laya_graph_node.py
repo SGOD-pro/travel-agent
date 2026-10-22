@@ -27,8 +27,10 @@ from contracts.decision import (
     LayaDecisionPort,
     LayaDecisionRequest,
 )
+from functions.orchestrator.decision.policy import InsufficientRequiredEvidenceError
 from functions.orchestrator.graphs.trip_planner.graph import (
     TripPlanningState,
+    _is_valid_source_evidence_for_destination,
     route_evidence_decision_edge,
     route_evidence_decision_node,
 )
@@ -36,6 +38,8 @@ from functions.orchestrator.graphs.trip_planner.graph import (
 
 class MockLayaDecisionAdapter(LayaDecisionPort):
     """Controllable test adapter for graph node testing."""
+
+    is_fixture: bool = True
 
     def __init__(self, envelope_to_return: DecisionEnvelope | None = None) -> None:
         self.envelope_to_return = envelope_to_return
@@ -77,6 +81,7 @@ async def test_route_evidence_decision_phase1_static_search_dispatch() -> None:
         "trip_id": exec_id,
         "version": 1,
         "status": "in_progress",
+        "_offline_fixture_mode": True,
         "brief": {
             "origin_name": "Kolkata",
             "destination_name": "Puri",
@@ -142,6 +147,8 @@ async def test_route_evidence_decision_phase2_browser_escalation_dispatch() -> N
                         "observation_id": str(uuid.uuid4()),
                         "canonical_url": "https://example.com/digha",
                         "content_hash": "hash123",
+                        "excerpt_text": "Digha sea beach hotels and travel guide",
+                        "extraction_method": "SCRAPLING_HTTP",
                     }
                 ],
                 "search_completed": True,
@@ -221,6 +228,8 @@ async def test_route_evidence_decision_phase2_evaluation_bypass_to_solve_schedul
                         "observation_id": str(uuid.uuid4()),
                         "canonical_url": "https://example.com/digha",
                         "content_hash": "hash123",
+                        "excerpt_text": "Digha sea beach hotels and travel guide",
+                        "extraction_method": "SCRAPLING_HTTP",
                     }
                 ],
                 "search_completed": True,
@@ -312,6 +321,8 @@ async def test_route_evidence_decision_result_reuse_from_state() -> None:
                         "observation_id": str(uuid.uuid4()),
                         "canonical_url": "https://example.com/digha",
                         "content_hash": "hash123",
+                        "excerpt_text": "Digha sea beach hotels and travel guide",
+                        "extraction_method": "SCRAPLING_HTTP",
                     }
                 ],
                 "search_completed": True,
@@ -339,6 +350,7 @@ async def test_route_evidence_decision_fallback_on_adapter_exception() -> None:
     """When adapter raises an exception, node gracefully falls back via deterministic table."""
     exec_id = str(uuid.uuid4())
     failing_adapter = MagicMock(spec=LayaDecisionPort)
+    failing_adapter.is_fixture = True
     failing_adapter.query_decision = AsyncMock(side_effect=RuntimeError("Connection timeout to remote LAYA"))
 
     state: TripPlanningState = {
@@ -359,6 +371,8 @@ async def test_route_evidence_decision_fallback_on_adapter_exception() -> None:
                         "observation_id": str(uuid.uuid4()),
                         "canonical_url": "https://example.com/digha",
                         "content_hash": "hash123",
+                        "excerpt_text": "Digha sea beach hotels and travel guide",
+                        "extraction_method": "SCRAPLING_HTTP",
                     }
                 ],
                 "search_completed": True,
@@ -391,6 +405,13 @@ async def test_route_evidence_decision_persists_to_db_session() -> None:
     mock_session = AsyncMock()
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = None
+    mock_obs = MagicMock()
+    mock_obs.canonical_url = "https://example.com/digha"
+    mock_obs.excerpt_text = "Digha sea beach hotels and travel guide"
+    mock_obs.extraction_method = "SCRAPLING_HTTP"
+    mock_obs.content_hash = "hash123"
+    mock_obs.artifact_ref = {}
+    mock_result.all.return_value = [mock_obs]
     mock_session.execute.return_value = mock_result
 
     state: TripPlanningState = {
@@ -585,6 +606,178 @@ async def test_evidence_sufficiency_accepts_valid_destination_evidence() -> None
     dec = result["laya_decisions"][0]
     assert dec["context_version"] == 2
     assert dec["allowed_choices"] == [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value]
+
+
+@pytest.mark.asyncio
+async def test_database_lookup_failure_with_in_memory_observations_fails_closed() -> None:
+    """Verifies that database lookup failure fails closed and does not permit evaluation, even if plausible in-memory observations exist."""
+    exec_id = str(uuid.uuid4())
+    mock_failing_session = AsyncMock()
+    mock_failing_session.execute.side_effect = RuntimeError("Database connection timed out")
+
+    state: TripPlanningState = {
+        "execution_id": exec_id,
+        "trip_id": exec_id,
+        "version": 1,
+        "status": "in_progress",
+        "brief": {
+            "origin_name": "Kolkata",
+            "destination_name": "Digha",
+            "destinations": [{"name": "Digha", "latitude": 21.6266, "longitude": 87.5074}],
+        },
+        "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
+        "task_outputs": {
+            "search-1": {
+                "observations": [
+                    {
+                        "observation_id": str(uuid.uuid4()),
+                        "canonical_url": "https://example.com/digha",
+                        "content_hash": "hash123",
+                        "excerpt_text": "Digha sea beach hotels and travel guide",
+                        "extraction_method": "SCRAPLING_HTTP",
+                    }
+                ],
+                "search_completed": True,
+            }
+        },
+        "static_search_completed": True,
+        "_db_session": mock_failing_session,
+    }
+
+    # Must raise persistence failure and fail closed without permitting evaluation
+    with pytest.raises((RuntimeError, InsufficientRequiredEvidenceError)):
+        await route_evidence_decision_node(state)
+
+
+@pytest.mark.asyncio
+async def test_stale_required_evidence_satisfied_flag_overridden_by_authoritative_validation() -> None:
+    """Verifies that a stale required_evidence_satisfied=True flag is overridden when authoritative evidence is missing."""
+    exec_id = str(uuid.uuid4())
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.all.return_value = []
+    mock_session.execute.return_value = mock_result
+
+    state: TripPlanningState = {
+        "execution_id": exec_id,
+        "trip_id": exec_id,
+        "version": 1,
+        "status": "in_progress",
+        "brief": {
+            "origin_name": "Kolkata",
+            "destination_name": "Digha",
+            "destinations": [{"name": "Digha", "latitude": 21.6266, "longitude": 87.5074}],
+        },
+        "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
+        "task_outputs": {},
+        "static_search_completed": True,
+        "required_evidence_satisfied": True,  # Stale flag in state
+        "remaining_search_budget": 0,
+        "_db_session": mock_session,
+    }
+
+    # Must reject stale flag, determine evidence is NOT satisfied, and raise InsufficientRequiredEvidenceError
+    with pytest.raises(InsufficientRequiredEvidenceError):
+        await route_evidence_decision_node(state)
+
+
+def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected() -> None:
+    """Verifies that destination-name-only URLs, destination-name-only text, NEEDS_BROWSER placeholders, and conflicting coordinates are rejected."""
+    dest_name = "Digha"
+    dest_lat = 21.6266
+    dest_lng = 87.5074
+
+    # 1. Destination-name-only URL (destination name in URL but missing from substantive text)
+    dest_url_only_obs = {
+        "canonical_url": "https://example.com/destinations/digha.html",
+        "content_hash": "hash_url_only",
+        "excerpt_text": "Click here to see more details and contact info",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {},
+    }
+    assert _is_valid_source_evidence_for_destination(dest_url_only_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 2. Destination-name-only text (excerpt text is just the destination name)
+    dest_name_only_text_obs = {
+        "canonical_url": "https://example.com/hotels",
+        "content_hash": "hash_name_only",
+        "excerpt_text": "Digha",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {},
+    }
+    assert _is_valid_source_evidence_for_destination(dest_name_only_text_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 3. NEEDS_BROWSER dynamic rendering placeholder
+    needs_browser_obs = {
+        "canonical_url": "https://hotel.example.com/digha-rates",
+        "content_hash": "hash_placeholder",
+        "excerpt_text": "[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED] Dynamic rendering required for https://hotel.example.com/digha-rates (DYNAMIC_JAVASCRIPT_REQUIRED)",
+        "extraction_method": "NEEDS_BROWSER",
+        "artifact_ref": {"browser_reason": "DYNAMIC_JAVASCRIPT_REQUIRED"},
+    }
+    assert _is_valid_source_evidence_for_destination(needs_browser_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 4. Conflicting coordinates (Mumbai coordinates for Digha destination, distance ~1600 km)
+    mumbai_coords_obs = {
+        "canonical_url": "https://example.com/hotels/digha-palace",
+        "content_hash": "hash_mumbai",
+        "excerpt_text": "Digha Palace Hotel luxury booking and suites",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {"gps": {"lat": 19.0760, "lng": 72.8777}},
+    }
+    assert _is_valid_source_evidence_for_destination(mumbai_coords_obs, dest_name, dest_lat, dest_lng) is False
+
+    # 5. Valid destination evidence with substantive excerpt and matching coordinates
+    valid_obs = {
+        "canonical_url": "https://example.com/hotels/digha-beach",
+        "content_hash": "hash_valid",
+        "excerpt_text": "Digha sea beach resort with deluxe sea view rooms and breakfast",
+        "extraction_method": "SCRAPLING_HTTP",
+        "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
+    }
+    assert _is_valid_source_evidence_for_destination(valid_obs, dest_name, dest_lat, dest_lng) is True
+
+
+@pytest.mark.asyncio
+async def test_valid_persisted_evidence_permits_evaluation() -> None:
+    """Verifies that valid persisted evidence permits PROCEED_DETERMINISTIC_EVALUATION."""
+    exec_id = str(uuid.uuid4())
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+
+    mock_obs = MagicMock()
+    mock_obs.canonical_url = "https://example.com/digha-beach-resort"
+    mock_obs.excerpt_text = "Digha Sea Beach luxury resort and suites"
+    mock_obs.extraction_method = "SCRAPLING_HTTP"
+    mock_obs.content_hash = "valid_hash_456"
+    mock_obs.artifact_ref = {"gps": {"lat": 21.6266, "lng": 87.5074}}
+    mock_result.all.return_value = [mock_obs]
+    mock_session.execute.return_value = mock_result
+
+    state: TripPlanningState = {
+        "execution_id": exec_id,
+        "trip_id": exec_id,
+        "version": 1,
+        "status": "in_progress",
+        "brief": {
+            "origin_name": "Kolkata",
+            "destination_name": "Digha",
+            "destinations": [{"name": "Digha", "latitude": 21.6266, "longitude": 87.5074}],
+        },
+        "discovered_places": [{"name": "Digha", "lat": 21.6266, "lng": 87.5074}],
+        "task_outputs": {},
+        "static_search_completed": True,
+        "remaining_search_budget": 0,
+        "_db_session": mock_session,
+    }
+
+    result = await route_evidence_decision_node(state)
+    assert result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    assert result["current_step"] == "deterministic_evaluation_routed"
+    assert len(result["laya_decisions"]) == 1
+    assert result["laya_decisions"][0]["action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+
 
 
 

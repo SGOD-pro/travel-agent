@@ -13,15 +13,19 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import re
 import uuid
 from datetime import UTC, datetime, time
 from decimal import Decimal
 from enum import StrEnum
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
+from sqlalchemy import select
 
 from config.config import get_settings
+from config.db import get_session_factory
 from contracts.browser import BrowserTaskPayload, BrowserWaitUntil
 from contracts.decision import (
     DecisionAction,
@@ -36,6 +40,8 @@ from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
 from contracts.trips import TransportMode, TripBrief
 from functions.decision_router.client import RemoteLayaDecisionAdapter
+from functions.decision_router.fixtures import FixtureLayaDecisionAdapter
+from functions.evidence_collector.models import SourceObservationModel
 from functions.optimizer.solver import ItineraryScheduler
 from functions.orchestrator.decision.policy import LayaPolicyValidator
 from functions.orchestrator.decision.repository import (
@@ -44,6 +50,8 @@ from functions.orchestrator.decision.repository import (
 )
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_RUNNABLE_CONFIG: RunnableConfig = cast(RunnableConfig, {})
 
 
 class TripPlanningState(TypedDict, total=False):
@@ -70,6 +78,8 @@ class TripPlanningState(TypedDict, total=False):
     remaining_search_budget: int
     _laya_adapter: LayaDecisionPort
     _db_session: Any
+    _session_factory: Any
+    _offline_fixture_mode: bool
 
 
 class TripPlanningNode(StrEnum):
@@ -340,7 +350,120 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
     return result
 
 
-async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, Any]:
+def _is_valid_source_evidence_for_destination(
+    obs: Any,
+    dest_name: str,
+    dest_lat: float | None = None,
+    dest_lng: float | None = None,
+) -> bool:
+    """Validates that a source observation satisfies canonical requirements for a destination.
+
+    Rejects:
+    - NEEDS_BROWSER dynamic rendering placeholders.
+    - Missing or non-http/https canonical URLs.
+    - Missing content hash.
+    - Destination-name-only URLs (where destination name is in URL but nowhere in substantive content).
+    - Destination-name-only text (where excerpt text is just the destination name without substance).
+    - Sparse excerpt text (<15 characters) unless structured observations are present in artifact_ref.
+    - Conflicting coordinates (if both destination and observation coordinates exist and haversine distance > 100 km).
+    """
+    url = getattr(obs, "canonical_url", None) or (obs.get("canonical_url") if isinstance(obs, dict) else "")
+    method = getattr(obs, "extraction_method", None) or (obs.get("extraction_method") if isinstance(obs, dict) else "")
+    content_hash = getattr(obs, "content_hash", None) or (obs.get("content_hash") if isinstance(obs, dict) else "")
+    excerpt = getattr(obs, "excerpt_text", None) or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
+    artifact_ref = getattr(obs, "artifact_ref", None) or (obs.get("artifact_ref") if isinstance(obs, dict) else {})
+
+    # 1. Reject NEEDS_BROWSER dynamic rendering placeholders
+    if method == "NEEDS_BROWSER":
+        return False
+    if isinstance(artifact_ref, dict) and artifact_ref.get("browser_reason"):
+        return False
+    if "[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED]" in (excerpt or ""):
+        return False
+
+    # 2. Reject missing or non-http/https canonical URLs and missing content hash
+    url_str = str(url or "").strip()
+    if not (url_str.startswith("http://") or url_str.startswith("https://")):
+        return False
+    if not content_hash or not str(content_hash).strip():
+        return False
+
+    clean_excerpt = str(excerpt or "").strip()
+    clean_dest = dest_name.strip()
+    if not clean_dest:
+        return False
+
+    # 3. Reject destination-name-only text
+    if clean_excerpt.lower() == clean_dest.lower():
+        return False
+
+    # 4. Destination name must appear as a word token in excerpt or structured metadata
+    dest_pattern = re.compile(rf"\b{re.escape(clean_dest)}\b", re.IGNORECASE)
+    has_dest_in_excerpt = bool(dest_pattern.search(clean_excerpt))
+
+    has_dest_in_meta = False
+    if isinstance(artifact_ref, dict):
+        meta_str = " ".join(
+            str(v)
+            for k, v in artifact_ref.items()
+            if k not in ("browser_reason", "html_snippet", "raw_html")
+        )
+        if dest_pattern.search(meta_str):
+            has_dest_in_meta = True
+
+    if not has_dest_in_excerpt and not has_dest_in_meta:
+        # Destination-name substring matching in URL alone is rejected
+        return False
+
+    # 5. Substantive content check: excerpt must have substance (>= 15 chars) or structured items in artifact_ref
+    has_structured = isinstance(artifact_ref, dict) and bool(
+        artifact_ref.get("parsed_observations")
+        or artifact_ref.get("hotels")
+        or artifact_ref.get("fares")
+    )
+    if len(clean_excerpt) < 15 and not has_structured:
+        return False
+
+    # 6. Coordinate distance check: reject irrelevant observations exceeding 100 km
+    if dest_lat is not None and dest_lng is not None and isinstance(artifact_ref, dict):
+        obs_lat = None
+        obs_lng = None
+        if "gps" in artifact_ref and isinstance(artifact_ref["gps"], dict):
+            obs_lat = artifact_ref["gps"].get("lat") or artifact_ref["gps"].get("latitude")
+            obs_lng = artifact_ref["gps"].get("lng") or artifact_ref["gps"].get("longitude")
+        elif "latitude" in artifact_ref and "longitude" in artifact_ref:
+            obs_lat = artifact_ref.get("latitude")
+            obs_lng = artifact_ref.get("longitude")
+        elif "lat" in artifact_ref and "lng" in artifact_ref:
+            obs_lat = artifact_ref.get("lat")
+            obs_lng = artifact_ref.get("lng")
+
+        if obs_lat is not None and obs_lng is not None:
+            try:
+                dist = ItineraryScheduler._haversine_distance_km(
+                    float(dest_lat), float(dest_lng), float(obs_lat), float(obs_lng)
+                )
+                if dist > 100.0:
+                    logger.debug(
+                        "Observation coordinates (%s, %s) exceed 100km distance (%s km) from destination %s (%s, %s)",
+                        obs_lat,
+                        obs_lng,
+                        dist,
+                        clean_dest,
+                        dest_lat,
+                        dest_lng,
+                    )
+                    return False
+            except (ValueError, TypeError):
+                pass
+
+    return True
+
+
+async def route_evidence_decision_node(
+    state: TripPlanningState,
+    config: RunnableConfig = _DEFAULT_RUNNABLE_CONFIG,
+) -> dict[str, Any]:
     """Evaluates evidence collection strategy via remote LAYA router and deterministic policy gating.
 
     Conforms to spec 0004 Slice 5:
@@ -364,6 +487,11 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
             trip_uuid = None
 
     context_version = int(str(state.get("version") or state.get("context_version") or 1))
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    session_factory = cast(
+        Any,
+        state.get("_session_factory") or configurable.get("session_factory"),
+    )
     brief = state.get("brief", {})
     if isinstance(brief, dict):
         destinations = brief.get("destinations", [])
@@ -382,6 +510,7 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
     task_outputs = state.get("task_outputs", {})
     already_dispatched = set(state.get("dispatched_browser_urls", []))
     laya_decisions = list(state.get("laya_decisions", []))
+    adapter = state.get("_laya_adapter")
 
     # 1. Inspect unhandled browser requests
     extracted_requests: list[dict[str, Any]] = []
@@ -404,36 +533,56 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
         max_slots = 3
     remaining_browser_slots = max(0, max_slots - len(already_dispatched))
 
-    # 2. Check search completion & required destination evidence prerequisites
-    # Validates actual required evidence: non-placeholder, destination-relevant, confirmed persisted
-    db_session = state.get("_db_session")
-    valid_persisted_count = 0
-    validated_evidence_satisfied = False
-    db_queried = False
-
-    # Extract required destination names
-    required_dest_names: list[str] = []
+    # 2. Extract canonical destination requirements: identity and coordinates
+    destinations_info: list[dict[str, Any]] = []
     for d in destinations:
-        if isinstance(d, dict) and d.get("name"):
-            required_dest_names.append(d["name"].strip())
+        if isinstance(d, dict):
+            name = d.get("name")
+            if name and str(name).strip():
+                destinations_info.append({
+                    "name": str(name).strip(),
+                    "lat": d.get("latitude"),
+                    "lng": d.get("longitude"),
+                })
         elif hasattr(d, "name") and d.name:
-            required_dest_names.append(d.name.strip())
-    if not required_dest_names and primary_destination:
-        required_dest_names.append(primary_destination.strip())
-    if not required_dest_names:
+            destinations_info.append({
+                "name": str(d.name).strip(),
+                "lat": getattr(d, "latitude", None),
+                "lng": getattr(d, "longitude", None),
+            })
+
+    if not destinations_info and primary_destination:
+        destinations_info.append({"name": primary_destination.strip(), "lat": None, "lng": None})
+
+    if not destinations_info:
         for p in discovered_places:
             if isinstance(p, dict) and p.get("name"):
-                required_dest_names.append(p["name"].strip())
+                destinations_info.append({
+                    "name": str(p["name"]).strip(),
+                    "lat": p.get("lat") or p.get("latitude"),
+                    "lng": p.get("lng") or p.get("longitude"),
+                })
             elif hasattr(p, "name") and p.name:
-                required_dest_names.append(p.name.strip())
+                destinations_info.append({
+                    "name": str(p.name).strip(),
+                    "lat": getattr(p, "lat", None) or getattr(p, "latitude", None),
+                    "lng": getattr(p, "lng", None) or getattr(p, "longitude", None),
+                })
 
+    # 3. Check evidence prerequisites via fail-closed authoritative validation
+    db_session = state.get("_db_session")
+    is_offline_fixture = bool(
+        state.get("_offline_fixture_mode")
+        or configurable.get("offline_fixture_mode")
+        or isinstance(adapter, FixtureLayaDecisionAdapter)
+        or getattr(adapter, "is_fixture", False)
+    )
+    db_queried = False
+    db_lookup_failed = False
     persisted_rows: list[Any] = []
+
     if db_session is not None:
         try:
-            from sqlalchemy import select
-
-            from functions.evidence_collector.models import SourceObservationModel
-
             stmt = select(
                 SourceObservationModel.id,
                 SourceObservationModel.canonical_url,
@@ -449,15 +598,11 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
             persisted_rows = list(res.all())
             db_queried = True
         except Exception as obs_exc:
-            logger.debug("Failed querying source observations from db_session: %s", obs_exc)
-    else:
+            logger.error("Failed querying source observations from db_session: %s", obs_exc)
+            db_lookup_failed = True
+    elif not is_offline_fixture:
         try:
-            from sqlalchemy import select
-
-            from config.db import get_session_factory
-            from functions.evidence_collector.models import SourceObservationModel
-
-            factory = get_session_factory()
+            factory = session_factory if session_factory is not None else get_session_factory()
             async with factory() as session:
                 stmt = select(
                     SourceObservationModel.id,
@@ -474,53 +619,50 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
                 persisted_rows = list(res.all())
                 db_queried = True
         except Exception as obs_exc:
-            logger.debug("Failed querying source observations from database factory: %s", obs_exc)
+            logger.error("Failed querying source observations from database factory: %s", obs_exc)
+            db_lookup_failed = True
+
+    if db_lookup_failed:
+        # Handle unavailable persistence through execution failure / retry semantics without scheduling
+        raise RuntimeError("Persistence unavailable during authoritative evidence validation")
+
+    valid_persisted_count = 0
+    validated_evidence_satisfied = False
 
     if db_queried:
         matched_destinations: set[str] = set()
         for row in persisted_rows:
-            url_str = (row.canonical_url or "").lower()
-            text_str = (row.excerpt_text or "").lower()
-            meta_str = str(row.artifact_ref or {}).lower()
-            for dest in required_dest_names:
-                d_lower = dest.lower()
-                if d_lower in url_str or d_lower in text_str or d_lower in meta_str:
-                    matched_destinations.add(dest)
+            for dest in destinations_info:
+                if _is_valid_source_evidence_for_destination(
+                    row, dest["name"], dest.get("lat"), dest.get("lng")
+                ):
+                    matched_destinations.add(dest["name"])
+                    valid_persisted_count += 1
 
-        valid_persisted_count = len(persisted_rows)
-        if required_dest_names:
-            validated_evidence_satisfied = len(matched_destinations) == len(required_dest_names)
+        if destinations_info:
+            validated_evidence_satisfied = len(matched_destinations) == len(destinations_info)
         else:
             validated_evidence_satisfied = valid_persisted_count > 0
-    else:
-        # Offline or disconnected fallback: inspect task_outputs in memory
+
+    elif is_offline_fixture:
+        # Offline or fixture mode: inspect task_outputs in memory strictly when explicitly isolated
         offline_matched: set[str] = set()
-        offline_valid_count = 0
         for output in task_outputs.values():
             if isinstance(output, dict):
                 obs_list = output.get("observations") or output.get("source_observations") or []
                 if isinstance(obs_list, list):
                     for obs in obs_list:
-                        if not isinstance(obs, dict):
-                            continue
-                        # Exclude JS placeholders
-                        if obs.get("extraction_method") == "NEEDS_BROWSER":
-                            continue
-                        if not obs.get("canonical_url"):
-                            continue
-                        url_str = str(obs.get("canonical_url", "")).lower()
-                        text_str = str(obs.get("excerpt_text", "")).lower()
-                        offline_valid_count += 1
-                        for dest in required_dest_names:
-                            d_lower = dest.lower()
-                            if d_lower in url_str or d_lower in text_str:
-                                offline_matched.add(dest)
+                        for dest in destinations_info:
+                            if _is_valid_source_evidence_for_destination(
+                                obs, dest["name"], dest.get("lat"), dest.get("lng")
+                            ):
+                                offline_matched.add(dest["name"])
+                                valid_persisted_count += 1
 
-        valid_persisted_count = offline_valid_count
-        if required_dest_names:
-            validated_evidence_satisfied = len(offline_matched) == len(required_dest_names) and offline_valid_count > 0
+        if destinations_info:
+            validated_evidence_satisfied = len(offline_matched) == len(destinations_info) and valid_persisted_count > 0
         else:
-            validated_evidence_satisfied = offline_valid_count > 0
+            validated_evidence_satisfied = valid_persisted_count > 0
 
     has_evidence_task_output = any(
         isinstance(output, dict) and (output.get("search_completed") or "observations" in output)
@@ -531,14 +673,14 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
         or has_evidence_task_output
         or valid_persisted_count > 0
     )
-    if state.get("required_evidence_satisfied") is not None:
-        required_evidence_satisfied = bool(state["required_evidence_satisfied"])
-    else:
-        required_evidence_satisfied = validated_evidence_satisfied
+
+    # Current authoritative validation sets required_evidence_satisfied;
+    # a stale state flag must not override current authoritative validation.
+    required_evidence_satisfied = validated_evidence_satisfied
 
     remaining_search_budget = int(state.get("remaining_search_budget", 1 if not static_search_completed else 0))
 
-    # 3. Determine explicit workflow phase
+    # 4. Determine explicit workflow phase
     if not static_search_completed:
         phase = DecisionPhase.SEARCH_COMPLETION
     elif unhandled_browser_requests > 0 and remaining_browser_slots > 0:
@@ -652,11 +794,9 @@ async def route_evidence_decision_node(state: TripPlanningState) -> dict[str, An
                     reused = await repo.find_reusable_decision(decision_req, active_phase=phase)
                 except Exception as repo_exc:
                     logger.debug("Database reusable decision lookup missed: %s", repo_exc)
-            else:
+            elif not is_offline_fixture:
                 try:
-                    from config.db import get_session_factory
-
-                    factory = get_session_factory()
+                    factory = session_factory if session_factory is not None else get_session_factory()
                     async with factory() as session:
                         repo = LayaDecisionRepository(session=session)
                         reused = await repo.find_reusable_decision(decision_req, active_phase=phase)

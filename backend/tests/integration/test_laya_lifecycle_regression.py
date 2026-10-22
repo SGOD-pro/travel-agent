@@ -51,6 +51,7 @@ from functions.evidence_collector.fixtures import (
     FixtureSearchAdapter,
     FixtureWebExtractionAdapter,
     RawObservation,
+    compute_content_hash,
 )
 from functions.evidence_collector.models import SourceObservationModel
 from functions.orchestrator.decision.models import LayaDecisionModel
@@ -512,29 +513,31 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
             async def extract_page(
                 self, page_url: str, category: str = "general"
             ) -> tuple[list[RawObservation], list[dict[str, Any]]]:
-                obs = RawObservation.create(
+                placeholder_text = (
+                    f"[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED] Dynamic rendering required for {page_url} (DYNAMIC_JAVASCRIPT_REQUIRED)"
+                )
+                obs = RawObservation(
                     source_url=page_url,
+                    canonical_url=page_url,
                     publisher="HotelPortal",
-                    excerpt_text="Digha hotel listing requires dynamic browser rendering",
-                    excerpt_locator="p:1",
-                    extraction_method="SCRAPLING_HTTP",
+                    content_hash=compute_content_hash(placeholder_text),
+                    retrieved_at=datetime.now(UTC),
+                    excerpt_text=placeholder_text,
+                    excerpt_locator="html",
+                    extraction_method="NEEDS_BROWSER",
+                    artifact_ref={"browser_reason": "DYNAMIC_JAVASCRIPT_REQUIRED"},
                 )
                 b_reqs = [
                     {
-                        "url": "https://hotel.example.com/rates",
-                        "canonical_url": "https://hotel.example.com/rates",
+                        "url": page_url,
+                        "canonical_url": page_url,
                         "category": "lodging",
                         "reason": "DYNAMIC_JAVASCRIPT_REQUIRED",
                     }
                 ]
                 return [obs], b_reqs
 
-        digha_stub = RawObservation.create(
-            source_url="https://hotel.example.com",
-            publisher="HotelPortal",
-            excerpt_text="Digha hotel directory",
-        )
-        search_adapter = FixtureSearchAdapter(fixtures=[digha_stub])
+        search_adapter = FixtureSearchAdapter(fixtures=[])
         extraction_adapter = BrowserRequestExtractionAdapter()
 
         await evidence_process_record(
@@ -735,6 +738,20 @@ async def test_durable_decision_reuse_runtime_path(
             context_version=1,
             allowed_choices=eligible,
         )
+        valid_obs = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            source_url="https://example.com/digha-beach",
+            canonical_url="https://example.com/digha-beach",
+            publisher="TravelGuide",
+            content_hash=hashlib.sha256(b"digha beach hotels").hexdigest(),
+            retrieved_at=datetime.now(UTC),
+            excerpt_text="Digha sea beach hotels and resorts directory",
+            excerpt_locator="body",
+            extraction_method="SCRAPLING_HTTP",
+            artifact_ref={"gps": {"lat": 21.6266, "lng": 87.5074}},
+        )
+        session.add(valid_obs)
         await session.commit()
 
     # Create controllable adapter with call counter

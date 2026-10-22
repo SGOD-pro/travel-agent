@@ -732,8 +732,8 @@ The build plan follows the Tracer Bullet approach, standing up a thin vertical t
 ## Follow-up
 
 - [x] Measure live Cloudflare tunnel latency and Kaggle inference duration during initial connected testing to tune timeout thresholds (verified: ~568 ms latency).
-- [x] Execute the 25 scenario labeled routing quality benchmark against the connected endpoint to calibrate confidence thresholds before production rollout (verified: 100% precision on canonical scenarios).
+- [ ] Execute the 25 scenario labeled routing quality benchmark against the connected endpoint to calibrate confidence thresholds before production rollout (PENDING live connected endpoint evaluation; offline deterministic policy regression suite verified at 100% precision on canonical scenarios).
 
 ## Remaining Blockers
 
-None. All 5 slices and acceptance criteria AC-1 through AC-10 are implemented, verified live against the Cloudflare tunnel, and confirmed with 100% passing test coverage.
+None. All 5 slices and acceptance criteria AC-1 through AC-10 are implemented, verified live against PostgreSQL and offline suites, with live connected benchmark marked PENDING.

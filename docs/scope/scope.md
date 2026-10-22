@@ -122,6 +122,7 @@ Integrate the remote LAYA decision model hosted on Kaggle through a public Cloud
    - [x] Slice 4 canonical replay digest, migration, and persistence repository: [2026-10-18-laya-slice4.md](../reviews/2026-10-18-laya-slice4.md) (Approve)
    - [x] Slice 5 LangGraph node, connected acceptance, and benchmark suite: [2026-10-18-laya-slice5.md](../reviews/2026-10-18-laya-slice5.md) (Approve)
    - [x] Full integration and lifecycle repair review: [2026-10-18-main.md](../reviews/2026-10-18-main.md) (Approve)
+   - [x] 0004 closure findings review: [2026-10-22-main.md](../reviews/2026-10-22-main.md) (Approve)
 - [x] Test it: `/test 0004-remote-laya-decision-router` (100 unit tests, 4 connected lifecycle tests, 2 connected live endpoint tests passing)
 - [x] Document it: `/document 0004-remote-laya-decision-router` (8 capability entries in CHANGELOG.md)
 

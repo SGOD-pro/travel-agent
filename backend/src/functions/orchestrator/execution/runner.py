@@ -240,7 +240,12 @@ class GraphRunnerService:
                 )
 
         # Phase 2: Execute LangGraph start outside database transaction
-        config = {"configurable": {"thread_id": str(execution_id)}}
+        config = {
+            "configurable": {
+                "thread_id": str(execution_id),
+                "session_factory": self._session_factory,
+            }
+        }
         initial_state = {
             "status": "RUNNING",
             "current_step": "start",
@@ -404,7 +409,12 @@ class GraphRunnerService:
                 )
 
         # Phase 2: Execute LangGraph continuation outside database transaction
-        config = {"configurable": {"thread_id": str(execution_id)}}
+        config = {
+            "configurable": {
+                "thread_id": str(execution_id),
+                "session_factory": self._session_factory,
+            }
+        }
         checkpointer = getattr(active_graph, "checkpointer", None)
         if checkpointer and hasattr(checkpointer, "session_factory") and checkpointer.session_factory is None:
             checkpointer.session_factory = self._session_factory

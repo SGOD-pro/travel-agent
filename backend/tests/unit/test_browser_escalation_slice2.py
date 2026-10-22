@@ -401,6 +401,7 @@ async def test_trip_planning_workflow_e2e_with_escalation_node() -> None:
             "rooms": 1,
             "budget": {"amount": "25000.00", "currency": "INR"},
         },
+        "_offline_fixture_mode": True,
         "task_outputs": {
             "search-1": {
                 "observations": [
@@ -408,6 +409,8 @@ async def test_trip_planning_workflow_e2e_with_escalation_node() -> None:
                         "observation_id": str(uuid.uuid4()),
                         "canonical_url": "https://example.com/digha",
                         "content_hash": "hash123",
+                        "excerpt_text": "Digha beach resort hotel lodging and sightseeing travel guide",
+                        "extraction_method": "SCRAPLING_HTTP",
                     }
                 ],
                 "search_completed": True,

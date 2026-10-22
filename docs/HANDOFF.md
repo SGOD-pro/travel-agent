@@ -207,10 +207,20 @@ Following the agreed action, closure findings C1, C2, C3, and C5 were implemente
 * C4 (DISPROVED): Retained `CodeUri: ../../../build/browser` in `backend/src/functions/browser/template.yaml`, confirming path arithmetic resolves correctly to `backend/build/browser`.
 * C5 (RESOLVED): Enforced post wait snapshot capture in `PlaywrightBrowserAdapter._render_with_browser` strictly after `wait_for_selector()`. Derived substantive excerpt text, SHA256 content hash, and Scrapling entity parsing atomically from identical post wait DOM snapshot.
 
+### 0004 closure reconciliation (2026-10-22)
+
+Inspected repository HEAD commit `5d43dc911370edc2ea1e43b5cc8ef78453a7f5f9` (and prior reviewed commit `71161b28be605ed74762443573aeafe2fbacf037`). Bounded corrections completed and verified across all four closure areas:
+
+* C1 (RESOLVED): Fail closed evidence validation. Removed automatic production fallback from failed database lookups to unpersisted task output observations. In production, database query failure immediately halts with runtime error rather than falling back to in memory tasks. A stale required_evidence_satisfied state flag is overridden by current authoritative database validation. Offline fixtures are explicitly isolated via `_offline_fixture_mode` and fixture adapters. Unavailable persistence uses existing execution failure and retry semantics without prematurely scheduling.
+* C2 (RESOLVED): Required evidence sufficiency. Destination name substring matching alone does not establish required evidence. Applied canonical requirements for destination identity, coordinates, and source support with haversine distance verification (<100 km) using ItineraryScheduler. Explicitly rejected NEEDS_BROWSER placeholders, irrelevant observations, and unpersisted references. Corrected the browser lifecycle fixture to use the actual scraper NEEDS_BROWSER contract instead of labeling placeholder text SCRAPLING_HTTP. Demonstrated that browser completion permits evaluation only when required evidence is actually satisfied.
+* C3 (RESOLVED): Focused regression coverage. Added four unit regressions at the owning boundary in `tests/unit/test_laya_graph_node.py` covering database lookup failure fail closed, stale flag override, destination name only text or URLs and placeholder rejection, and valid persisted evidence acceptance. Preserved all four consumer executed PostgreSQL lifecycle and runtime reuse tests in `tests/integration/test_laya_lifecycle_regression.py`. Full unit suite verified at 431 passed, 1 skipped in 42.89s.
+* C4 (RESOLVED): Reconcile closure records. Removed unsupported claims of 100% precision on a connected 25 scenario model benchmark. Kept offline policy regression separate from live model quality. Marked connected labeled model evaluation PENDING. Updated next action and ordering below.
+
 ### Next action and ordering
 
-Closure findings C1, C2, C3, and C5 are resolved and verified within existing 0003, with SAM template and driver bootstrap aligned to the Sparticuz layer layout. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
+Closure findings C1, C2, C3, and C4 are resolved and verified within existing 0004. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
 
-Next planned capability: architect remote LAYA served from Kaggle through Cloudflare: configurable endpoint/auth, typed request/decision contracts, bounded timeouts/retries, deterministic policy validation and fallback. Local ONNX packaging is not the target.
+Next planned capability: route optimizer architecture after 0004 closure.
 
-Agreed order: remote LAYA → route optimizer → route API/map E2E → hosted LLM/trip planner E2E → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone for these fixes and no AWS deployment now.
+Agreed order: remote LAYA (done) → route optimizer → route API/map E2E → hosted LLM/trip planner E2E → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone for these fixes and no AWS deployment now.
+
