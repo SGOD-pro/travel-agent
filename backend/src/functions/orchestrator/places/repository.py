@@ -93,6 +93,56 @@ class CanonicalPlacesRepository:
         result = await self._session.execute(stmt)
         return [(row[0], float(row[1])) for row in result.all()]
 
+    async def find_verified_parking_near(
+        self,
+        point: CoordinatePoint,
+        max_distance_meters: float = 1000.0,
+        *,
+        limit: int = 10,
+    ) -> list[tuple[CanonicalPlaceModel, float]]:
+        """Queries verified public parking places within max_distance_meters using PostGIS geography."""
+        if max_distance_meters < 0:
+            raise ValueError("max_distance_meters cannot be negative")
+
+        target_pt = func.ST_SetSRID(func.ST_MakePoint(point.lng, point.lat), 4326)
+        geog_col = sa.cast(CanonicalPlaceModel.point, Geography)
+        target_geog = sa.cast(target_pt, Geography)
+        dist_expr = func.ST_Distance(geog_col, target_geog).label("distance_meters")
+
+        amenity_val = CanonicalPlaceModel.provider_ids.op("->>")("amenity")
+        category_val = CanonicalPlaceModel.provider_ids.op("->>")("category")
+        type_val = CanonicalPlaceModel.provider_ids.op("->>")("type")
+
+        is_parking_match = (
+            (category_val == "parking")
+            | (amenity_val == "parking")
+            | (type_val == "parking")
+            | (CanonicalPlaceModel.primary_name.ilike("%parking%"))
+        )
+
+        not_bicycle = sa.and_(
+            sa.not_(func.coalesce(amenity_val, "").ilike("%bicycle%")),
+            sa.not_(func.coalesce(category_val, "").ilike("%bicycle%")),
+            sa.not_(CanonicalPlaceModel.primary_name.ilike("%bicycle%")),
+            sa.not_(CanonicalPlaceModel.primary_name.ilike("%cycle%")),
+        )
+
+        parking_filter = sa.and_(is_parking_match, not_bicycle)
+
+        stmt = (
+            select(CanonicalPlaceModel, dist_expr)
+            .where(
+                func.ST_DWithin(geog_col, target_geog, max_distance_meters),
+                CanonicalPlaceModel.is_candidate.is_(False),
+                CanonicalPlaceModel.access_status != "RESTRICTED",
+                parking_filter,
+            )
+            .order_by(dist_expr.asc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [(row[0], float(row[1])) for row in result.all()]
+
     async def find_in_annular_band(
         self,
         point: CoordinatePoint,

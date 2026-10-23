@@ -10,7 +10,11 @@ Conforms strictly to docs/TRD.md:
 
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import ROUND_HALF_UP, Decimal
+from enum import StrEnum
+from typing import Any
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -138,3 +142,231 @@ class RoadBudgetCalculator:
             )
 
         return lines
+
+
+class Point(BaseModel):
+    """Geographic coordinate point in WGS84."""
+
+    model_config = ConfigDict(frozen=True)
+
+    latitude: float = Field(..., ge=-90.0, le=90.0)
+    longitude: float = Field(..., ge=-180.0, le=180.0)
+
+
+class RouteObjective(StrEnum):
+    FASTEST = "FASTEST"
+    SHORTEST = "SHORTEST"
+    BALANCED = "BALANCED"
+
+
+class RouteStatus(StrEnum):
+    FEASIBLE = "FEASIBLE"
+    PARTIAL = "PARTIAL"
+    INFEASIBLE = "INFEASIBLE"
+    UNAVAILABLE = "UNAVAILABLE"
+
+
+class SolverStatus(StrEnum):
+    OPTIMAL = "OPTIMAL"
+    FEASIBLE = "FEASIBLE"
+    TIME_LIMIT = "TIME_LIMIT"
+    INFEASIBLE = "INFEASIBLE"
+    ERROR = "ERROR"
+
+
+class StopType(StrEnum):
+    ORIGIN = "ORIGIN"
+    DESTINATION = "DESTINATION"
+    WAYPOINT = "WAYPOINT"
+    PARKING_HUB = "PARKING_HUB"
+
+
+class TrafficBasis(StrEnum):
+    LIVE = "LIVE"
+    MODELED = "MODELED"
+    UNKNOWN = "UNKNOWN"
+
+
+class RestrictionType(StrEnum):
+    ROAD_CLOSURE = "ROAD_CLOSURE"
+    VEHICLE_ZONE = "VEHICLE_ZONE"
+    TIME_WINDOW = "TIME_WINDOW"
+    DELAY = "DELAY"
+
+
+class RouteStopInput(BaseModel):
+    """Input stop representation for route optimization."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    place_id: UUID | None = None
+    name: str
+    location: Point
+    stop_type: StopType = StopType.DESTINATION
+    is_must_visit: bool = True
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    dwell_seconds: int = Field(default=0, ge=0)
+    is_completed: bool = False
+    is_pedestrian_only: bool = False
+    vehicle_restricted: bool = False
+    parking_hub_id: UUID | None = None
+
+
+class RouteRequest(BaseModel):
+    """Route optimization request payload."""
+
+    model_config = ConfigDict(frozen=True)
+
+    owner_id: UUID | None = None
+    trip_id: UUID | None = None
+    execution_id: UUID | None = None
+    departure_at: datetime
+    return_deadline: datetime | None = None
+    stops: list[RouteStopInput]
+    objective: RouteObjective = RouteObjective.FASTEST
+    is_round_trip: bool = False
+    start_stop_id: UUID | None = None
+    end_stop_id: UUID | None = None
+    time_limit_seconds: int = Field(default=10, ge=1)
+    transport_mode: TransportMode = TransportMode.CAR_PETROL
+    fuel_profile: VehicleFuelProfile | None = None
+
+
+class MatrixElement(BaseModel):
+    """Individual cell in a distance/duration matrix."""
+
+    model_config = ConfigDict(frozen=True)
+
+    distance_m: int | None = Field(default=None, ge=0)
+    duration_s: int | None = Field(default=None, ge=0)
+    reachable: bool = True
+
+
+class MatrixRequest(BaseModel):
+    """Matrix calculation request."""
+
+    model_config = ConfigDict(frozen=True)
+
+    origins: list[Point]
+    destinations: list[Point]
+    mode: TransportMode = TransportMode.CAR_PETROL
+
+
+class MatrixResponse(BaseModel):
+    """Distance and duration matrix response."""
+
+    model_config = ConfigDict(frozen=True)
+
+    durations_s: list[list[int | None]]
+    distances_m: list[list[int | None]]
+
+
+class ScheduledStopOutput(BaseModel):
+    """Scheduled stop output from optimization."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    stop_id: UUID | None = None
+    place_id: UUID | None = None
+    stop_order: int
+    name: str
+    location: Point
+    stop_type: StopType
+    is_must_visit: bool = True
+    is_completed: bool = False
+    is_skipped: bool = False
+    skip_reason: str | None = None
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    dwell_seconds: int = 0
+    planned_arrival_at: datetime | None = None
+    planned_departure_at: datetime | None = None
+    wait_seconds: int = 0
+
+
+class RouteLegOutput(BaseModel):
+    """Scheduled transit leg connecting two stops."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    leg_order: int
+    from_stop_id: UUID
+    to_stop_id: UUID
+    from_stop_name: str
+    to_stop_name: str
+    transport_mode: TransportMode = TransportMode.CAR_PETROL
+    departure_at: datetime
+    arrival_at: datetime
+    distance_m: int
+    travel_seconds: int
+    geometry: dict[str, Any] = Field(
+        default_factory=lambda: {"type": "LineString", "coordinates": []}
+    )
+    traffic_basis: TrafficBasis = TrafficBasis.MODELED
+    parking_hub_id: UUID | None = None
+    turn_instructions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class RouteRestrictionOutput(BaseModel):
+    """Spatial route restriction applied or evaluated during routing."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    route_id: UUID | None = None
+    restriction_type: RestrictionType
+    geometry: dict[str, Any]
+    allowed_modes: list[str] = Field(default_factory=list)
+    effective_start: datetime | None = None
+    effective_end: datetime | None = None
+    claim_id: UUID | None = None
+    was_applied: bool = False
+    unresolved_reason: str | None = None
+    created_at: datetime | None = None
+
+
+class OptimizedRoute(BaseModel):
+    """Complete optimized itinerary route output."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: UUID = Field(default_factory=uuid4)
+    owner_id: UUID | None = None
+    execution_id: UUID | None = None
+    trip_id: UUID | None = None
+    route_version: int = 1
+    status: RouteStatus
+    solver_status: SolverStatus
+    objective: RouteObjective = RouteObjective.FASTEST
+    departure_at: datetime
+    return_deadline: datetime | None = None
+    actual_return_at: datetime | None = None
+    total_distance_m: int = 0
+    total_travel_seconds: int = 0
+    total_dwell_seconds: int = 0
+    total_wait_seconds: int = 0
+    total_elapsed_seconds: int = 0
+    driving_distance_m: int = 0
+    walking_distance_m: int = 0
+    fuel_amount: Decimal | None = None
+    fuel_currency: Currency = Currency.INR
+    fuel_basis: str | None = None
+    stops: list[ScheduledStopOutput] = Field(default_factory=list)
+    legs: list[RouteLegOutput] = Field(default_factory=list)
+    restrictions: list[RouteRestrictionOutput] = Field(default_factory=list)
+    dropped_stops: list[ScheduledStopOutput] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    diagnostics: list[str] = Field(default_factory=list)
+    previous_route_version: int | None = None
+
+
+# Backward compatibility aliases
+RoutePoint = Point
+RouteLeg = RouteLegOutput
+RouteResponse = OptimizedRoute
+RouteAlternative = OptimizedRoute

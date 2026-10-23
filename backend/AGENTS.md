@@ -25,6 +25,9 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/contracts/decision.py` | Internal decision domain models, action enums, envelope payloads, and port interfaces |
 | `src/functions/decision_router/` | Remote LAYA decision router client adapter, TypeSafe Jev wire schemas, sanitization, and offline fixtures |
 | `src/functions/orchestrator/decision/` | Decision policy validator, database models, canonical replay digests, and idempotent repository |
+| `src/contracts/routing.py` | Domain routing contracts, stop inputs, leg outputs, and fuel profiles |
+| `src/functions/route_optimizer/` | OR Tools VRPTW routing solver, vehicle continuity tracker, and multimodal parking hub service |
+| `src/functions/orchestrator/routing/` | Route persistence repository and PostGIS spatial models |
 
 ## Commands
 
@@ -78,6 +81,9 @@ uv run alembic upgrade head
 - LangGraph evidence routing node records chronological decision envelopes in laya_decisions table and executes between candidate discovery and dynamic evidence escalation.
 - Trip planner workflow compiles with an interrupt before await_evidence_results, resuming back to route_evidence_decision once completed task results or persisted source observations arrive.
 - Route optimizer and trip planner end to end workflows precede media location development.
+- Route optimizer enforces forbidden unreachable transitions via arc removal, dwell completion before venue closing, and honest solver statuses (OPTIMAL requires proof, timeout returns TIME_LIMIT).
+- Multimodal routes for private vehicles automatically discover verified public parking hubs within DEFAULT_PARKING_SEARCH_RADIUS_METERS, failing closed with INFEASIBLE and NO_VERIFIED_PARKING_HUB when missing.
+- Vehicle continuity tracker guarantees driving legs depart only from the stop where the vehicle is currently parked, preventing teleportation, and fuel calculations strictly isolate driving distance from walking.
 
 ## Gotchas
 

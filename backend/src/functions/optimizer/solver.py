@@ -8,10 +8,9 @@ Optimizes multi-stop travel sequences and daily time schedules:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, TypedDict
 
-from ortools.constraint_solver import pywrapcp, routing_enums_pb2
 from pydantic import BaseModel, ConfigDict
 
 
@@ -59,7 +58,10 @@ class OptimizedSchedule(BaseModel):
 
 
 class ItineraryScheduler:
-    """Solves multi-stop routing and sequencing constraints."""
+    """Solves multi-stop routing and sequencing constraints.
+
+    Serves as a backward-compatible facade delegating internally to OrToolsRoutingSolver.
+    """
 
     @staticmethod
     def _haversine_distance_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -86,20 +88,39 @@ class ItineraryScheduler:
         average_speed_kmh: float = 50.0,
     ) -> OptimizedSchedule:
         """Optimizes stop order and builds scheduled legs and arrival/departure timestamps."""
-        all_locations: list[_LocationNode] = [
-            {"name": origin_name, "lat": origin_lat, "lng": origin_lng, "stay_minutes": 0}
+        from contracts.routing import (
+            Point,
+            RouteObjective,
+            RouteRequest,
+            RouteStopInput,
+            SolverStatus,
+            StopType,
+        )
+        from functions.route_optimizer.solver import OrToolsRoutingSolver
+
+        # 1. Build stop inputs
+        route_stops: list[RouteStopInput] = [
+            RouteStopInput(
+                name=origin_name,
+                location=Point(latitude=float(origin_lat), longitude=float(origin_lng)),
+                stop_type=StopType.ORIGIN,
+                is_must_visit=True,
+                dwell_seconds=0,
+            )
         ]
         for s in stops:
-            all_locations.append(
-                {
-                    "name": str(s["name"]),
-                    "lat": float(s["lat"]),
-                    "lng": float(s["lng"]),
-                    "stay_minutes": int(s.get("stay_minutes", 120)),
-                }
+            stay_mins = int(s.get("stay_minutes", 120))
+            route_stops.append(
+                RouteStopInput(
+                    name=str(s["name"]),
+                    location=Point(latitude=float(s["lat"]), longitude=float(s["lng"])),
+                    stop_type=StopType.DESTINATION,
+                    is_must_visit=True,
+                    dwell_seconds=stay_mins * 60,
+                )
             )
 
-        n = len(all_locations)
+        n = len(route_stops)
         if n == 1:
             return OptimizedSchedule(
                 stops=[
@@ -118,109 +139,80 @@ class ItineraryScheduler:
                 is_optimal=True,
             )
 
-        # Build distance & duration matrix (in integer minutes for OR-Tools)
-        time_matrix: list[list[int]] = []
-        dist_matrix: list[list[float]] = []
+        # 2. Build local distance & duration matrices using haversine calculation
+        durations_s: list[list[int | None]] = []
+        distances_m: list[list[int | None]] = []
 
         for i in range(n):
-            time_row: list[int] = []
-            dist_row: list[float] = []
+            dur_row: list[int | None] = []
+            dist_row: list[int | None] = []
             for j in range(n):
                 if i == j:
-                    time_row.append(0)
-                    dist_row.append(0.0)
+                    dur_row.append(0)
+                    dist_row.append(0)
                 else:
-                    dist = cls._haversine_distance_km(
-                        all_locations[i]["lat"],
-                        all_locations[i]["lng"],
-                        all_locations[j]["lat"],
-                        all_locations[j]["lng"],
+                    dist_km = cls._haversine_distance_km(
+                        route_stops[i].location.latitude,
+                        route_stops[i].location.longitude,
+                        route_stops[j].location.latitude,
+                        route_stops[j].location.longitude,
                     )
-                    # Convert distance to transit duration in minutes
-                    dur_minutes = max(1, int((dist / average_speed_kmh) * 60))
-                    time_row.append(dur_minutes)
-                    dist_row.append(dist)
-            time_matrix.append(time_row)
-            dist_matrix.append(dist_row)
+                    dur_sec = max(60, int((dist_km / average_speed_kmh) * 3600))
+                    dist_m = max(1, int(dist_km * 1000))
+                    dur_row.append(dur_sec)
+                    dist_row.append(dist_m)
+            durations_s.append(dur_row)
+            distances_m.append(dist_row)
 
-        # Formulate OR-Tools Routing Model
-        manager = pywrapcp.RoutingIndexManager(n, 1, 0)
-        routing = pywrapcp.RoutingModel(manager)
-
-        def transit_callback(from_index: int, to_index: int) -> int:
-            from_node = manager.IndexToNode(from_index)
-            to_node = manager.IndexToNode(to_index)
-            return int(time_matrix[from_node][to_node])
-
-        transit_callback_index = routing.RegisterTransitCallback(transit_callback)
-        routing.SetArcCostEvaluatorOfAllVehicles(transit_callback_index)
-
-        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
-        search_parameters.first_solution_strategy = (
-            routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+        # 3. Formulate RouteRequest and solve via OrToolsRoutingSolver
+        request = RouteRequest(
+            departure_at=start_datetime,
+            stops=route_stops,
+            objective=RouteObjective.FASTEST,
+            is_round_trip=False,
+            time_limit_seconds=5,
         )
-        search_parameters.time_limit.seconds = 2
 
-        solution = routing.SolveWithParameters(search_parameters)
+        solver = OrToolsRoutingSolver()
+        optimized = solver.solve(request, durations_s, distances_m)
 
-        route_nodes: list[int] = []
-        is_optimal = solution is not None
-
-        if solution:
-            index = routing.Start(0)
-            while not routing.IsEnd(index):
-                route_nodes.append(manager.IndexToNode(index))
-                index = solution.Value(routing.NextVar(index))
-        else:
-            # Fallback: sequential order
-            route_nodes = list(range(n))
-
-        # Build scheduled stops & legs
-        scheduled_stops: list[ScheduledStop] = []
-        scheduled_legs: list[ScheduledLeg] = []
-        current_time = start_datetime
-        total_travel_minutes = 0
-
-        for pos, node_idx in enumerate(route_nodes):
-            loc = all_locations[node_idx]
-            stay = loc["stay_minutes"]
-
-            # If moving from prior stop, add travel time
-            if pos > 0:
-                prior_idx = route_nodes[pos - 1]
-                travel_mins = time_matrix[prior_idx][node_idx]
-                leg_dist = dist_matrix[prior_idx][node_idx]
-                total_travel_minutes += travel_mins
-
-                scheduled_legs.append(
-                    ScheduledLeg(
-                        from_stop=all_locations[prior_idx]["name"],
-                        to_stop=loc["name"],
-                        duration_minutes=travel_mins,
-                        distance_km=round(leg_dist, 2),
-                    )
-                )
-                current_time = current_time + timedelta(minutes=travel_mins)
-
-            arr_time = current_time
-            dep_time = current_time + timedelta(minutes=stay)
-            current_time = dep_time
-
-            scheduled_stops.append(
+        # 4. Map back to OptimizedSchedule
+        sched_stops: list[ScheduledStop] = []
+        for stop_out in optimized.stops:
+            sched_stops.append(
                 ScheduledStop(
-                    position=pos,
-                    name=loc["name"],
-                    latitude=loc["lat"],
-                    longitude=loc["lng"],
-                    arrival_time=arr_time,
-                    departure_time=dep_time,
-                    stay_duration_minutes=stay,
+                    position=stop_out.stop_order,
+                    name=stop_out.name,
+                    latitude=stop_out.location.latitude,
+                    longitude=stop_out.location.longitude,
+                    arrival_time=stop_out.planned_arrival_at or start_datetime,
+                    departure_time=stop_out.planned_departure_at or start_datetime,
+                    stay_duration_minutes=stop_out.dwell_seconds // 60,
+                )
+            )
+
+        sched_legs: list[ScheduledLeg] = []
+        for leg in optimized.legs:
+            sched_legs.append(
+                ScheduledLeg(
+                    from_stop=leg.from_stop_name,
+                    to_stop=leg.to_stop_name,
+                    duration_minutes=leg.travel_seconds // 60,
+                    distance_km=round(leg.distance_m / 1000.0, 2),
                 )
             )
 
         return OptimizedSchedule(
-            stops=scheduled_stops,
-            legs=scheduled_legs,
-            total_travel_minutes=total_travel_minutes,
-            is_optimal=is_optimal,
+            stops=sched_stops,
+            legs=sched_legs,
+            total_travel_minutes=optimized.total_travel_seconds // 60,
+            is_optimal=(optimized.solver_status == SolverStatus.OPTIMAL),
         )
+
+
+__all__ = [
+    "ItineraryScheduler",
+    "OptimizedSchedule",
+    "ScheduledLeg",
+    "ScheduledStop",
+]

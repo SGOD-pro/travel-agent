@@ -14,6 +14,7 @@ import functions.evidence_collector.models  # noqa: F401
 import functions.orchestrator.evidence.models  # noqa: F401
 import functions.orchestrator.execution.models  # noqa: F401
 import functions.orchestrator.places.models  # noqa: F401
+import functions.orchestrator.routing.models  # noqa: F401
 from config.base_model import Base
 from config.config import settings
 

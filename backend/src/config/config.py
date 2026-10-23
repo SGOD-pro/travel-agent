@@ -148,6 +148,14 @@ class Settings(BaseSettings):
         description="Target checkpoint name or empty to auto route",
     )
 
+    # Route Optimization and Multimodal Routing
+    DEFAULT_PARKING_SEARCH_RADIUS_METERS: int = Field(
+        default=1000,
+        ge=100,
+        le=50000,
+        description="Search radius in meters for locating candidate parking hubs around pedestrian destinations",
+    )
+
     @model_validator(mode="after")
     def validate_laya_deadlines(self) -> Settings:
         if self.LAYA_TOTAL_DEADLINE_SECONDS < self.LAYA_REQUEST_TIMEOUT_SECONDS:

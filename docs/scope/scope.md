@@ -136,15 +136,21 @@ Optimize multi stop itineraries across opening hours, dwell times, and transit m
 **Done when:** domain contracts and PostGIS tables persist routes and legs, OR Tools solver enforces time windows and stop priorities with drop penalties for optional stops, Valhalla adapter calculates road and pedestrian matrices with circuit breaking, parking hubs are injected for pedestrian restricted venues, mid trip replanning freezes completed stops from live GPS coordinates, and async worker executes under PostgreSQL lease fencing.
 - [x] Design it (spec): [0005](../specs/0005-route-optimizer.md)
 - [ ] Build it: `/develop route optimizer and multimodal itinerary planning`
-   - [ ] Offline core solver vertical slice, routing contracts, and scheduler facade (AC-1, AC-2, AC-5)
-   - [ ] Database migration and PostGIS repository with UUID foreign keys (AC-6)
-   - [ ] Multimodal vehicle continuity and canonical parking hub service (AC-4)
+   - [x] Offline core solver vertical slice, routing contracts, and scheduler facade (AC-1, AC-2, AC-5)
+   - [x] Database migration and PostGIS repository with UUID foreign keys (AC-6)
+   - [x] Multimodal vehicle continuity and canonical parking hub service (AC-4)
    - [ ] External Valhalla HTTP client, hard closure avoidance, and connected gate (AC-3, AC-7)
    - [ ] Mid trip dynamic replanning engine and optimistic concurrency (AC-8)
    - [ ] Fenced SQS worker service, job API polling, and standalone Lambda packaging (AC-7, AC-9)
 - [ ] Verify it: `/check verify 0005-route-optimizer`
+   - [x] Slice 1 offline core solver and routing contracts: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 15 behaviors)
+   - [x] Slice 2 database migration and PostGIS repository: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 4 live database behaviors)
+   - [x] Slice 3 multimodal vehicle continuity and parking hub service: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 12 behaviors)
 - [ ] Review it (fresh model): `/check review 0005-route-optimizer`
+   - [x] Slice 1 offline core solver and routing contracts: [2026-10-23-route-optimizer-slice1.md](../reviews/2026-10-23-route-optimizer-slice1.md) (Approve)
+   - [x] Slice 2 database migration and PostGIS repository: [2026-10-23-route-optimizer-slice2.md](../reviews/2026-10-23-route-optimizer-slice2.md) (Approve)
+   - [x] Slice 3 multimodal vehicle continuity and parking hub service: [2026-10-23-route-optimizer-slice3.md](../reviews/2026-10-23-route-optimizer-slice3.md) (Approve with nits)
 - [ ] Test it: `/test 0005-route-optimizer`
 - [ ] Document it: `/document 0005-route-optimizer`
 
-Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: Proposed) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`
+Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: In Progress) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`
