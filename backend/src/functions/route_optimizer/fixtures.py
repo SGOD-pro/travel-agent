@@ -232,15 +232,48 @@ class MockValhallaClient:
             p2 = locations[i + 1]
             dist = haversine_distance_m(p1, p2)
             dur = max(1, int(round(dist / speed_mps))) if dist > 0 else 0
-            total_dist += dist
-            total_time += dur
+            from shapely.geometry import LineString, Polygon
 
-            # Synthetic LineString
+            mid_lon = (p1.longitude + p2.longitude) / 2.0
+            mid_lat = (p1.latitude + p2.latitude) / 2.0
             coords = [
                 [p1.longitude, p1.latitude],
-                [(p1.longitude + p2.longitude) / 2.0, (p1.latitude + p2.latitude) / 2.0],
+                [mid_lon, mid_lat],
                 [p2.longitude, p2.latitude],
             ]
+
+            detour_occurred = False
+            for poly_coords in (exclude_polygons or []):
+                if len(poly_coords) >= 3:
+                    try:
+                        poly = Polygon(poly_coords)
+                        if LineString(coords).intersects(poly):
+                            detour_occurred = True
+                            minx, miny, maxx, maxy = poly.bounds
+                            candidates = [
+                                [minx - 0.005, maxy + 0.005],
+                                [maxx + 0.005, miny - 0.005],
+                                [minx - 0.01, miny - 0.01],
+                                [maxx + 0.01, maxy + 0.01],
+                            ]
+                            for cand_lon, cand_lat in candidates:
+                                test_coords = [
+                                    [p1.longitude, p1.latitude],
+                                    [cand_lon, cand_lat],
+                                    [p2.longitude, p2.latitude],
+                                ]
+                                if not LineString(test_coords).intersects(poly):
+                                    coords = test_coords
+                                    break
+                    except Exception:
+                        pass
+
+            if detour_occurred:
+                dist = int(round(dist * 1.25))
+                dur = int(round(dur * 1.25))
+
+            total_dist += dist
+            total_time += dur
             all_coords.extend(coords)
 
             legs.append(

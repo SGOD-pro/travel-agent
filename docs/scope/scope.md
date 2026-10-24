@@ -13,7 +13,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 | 2 | Evidence collection with provenance and canonical place/claim verification | Phase 4: Evidence & Verification | done |
 | 3 | Browser escalation worker service and orchestrator dispatch | Phase 5: Browser Escalation | done |
 | 4 | Remote LAYA decision router integration | Phase 6: Decision Routing | done |
-| 5 | Route optimizer and multimodal itinerary planning | Phase 7: Route Optimization | in-progress |
+| 5 | Route optimizer and multimodal itinerary planning | Phase 7: Route Optimization | done |
 
 ## Foundations
 

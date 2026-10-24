@@ -264,7 +264,7 @@ class CompletionReconciliationService:
                     )
 
                 # Deadline Barrier
-                if execution.deadline_at <= now:
+                if execution.deadline_at and execution.deadline_at <= now:
                     if active_graph is not None and hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
                         active_graph.checkpointer.discard(str(execution_id))
                     if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"):
@@ -505,46 +505,13 @@ class CompletionReconciliationService:
                                     "reason": "tasks_failed_or_cancelled",
                                 },
                             )
-                    elif execution.status == "WAITING_TASKS":
-                        # All tasks completed successfully: persist durable graph-resume action
-                        execution.status = "RUNNING"
-                        execution.updated_at = now
-                        resume_event_id = uuid.uuid4()
-                        session.add(
-                            OutboxEventModel(
-                                id=resume_event_id,
-                                execution_id=execution_id,
-                                aggregate_id=execution_id,
-                                task_id=task_id,
-                                kind="EXECUTION_RESUME",
-                                event_type="EXECUTION_RESUME",
-                                payload_ref={
-                                    "execution_id": str(execution_id),
-                                    "action": "resume_graph",
-                                    "triggered_by_task_id": str(task_id),
-                                },
-                                payload={
-                                    "execution_id": str(execution_id),
-                                    "action": "resume_graph",
-                                    "triggered_by_task_id": str(task_id),
-                                },
-                                due_at=now,
-                                attempts=0,
-                                created_at=now,
-                            )
-                        )
-                        await record_job_event(
-                            session,
-                            execution_id=execution_id,
-                            event_type="GRAPH_RESUMED",
-                            safe_payload={
-                                "status": "RUNNING",
-                                "action": "resume_graph",
-                            },
-                        )
-                        graph_resumed = True
-                    elif execution.status in ("CREATED", "RUNNING") or execution.workflow == "ROUTE_OPTIMIZATION":
-                        # All tasks completed successfully for API-created or standalone execution:
+                    elif execution.workflow in (
+                        "ROUTE_OPTIMIZATION",
+                        "ROUTE_REPLAN",
+                        "OPTIMIZER",
+                        "ROUTE_OPTIMIZER",
+                    ):
+                        # All tasks completed successfully for standalone optimizer workflow:
                         # Reconcile directly to terminal SUCCEEDED status
                         execution.status = "SUCCEEDED"
                         execution.lease_token = None
@@ -583,6 +550,44 @@ class CompletionReconciliationService:
                                 "workflow": execution.workflow,
                             },
                         )
+                    elif execution.status == "WAITING_TASKS":
+                        # Non-optimizer graph workflow: persist durable graph-resume action and transition to RUNNING state
+                        execution.status = "RUNNING"
+                        execution.updated_at = now
+                        resume_event_id = uuid.uuid4()
+                        session.add(
+                            OutboxEventModel(
+                                id=resume_event_id,
+                                execution_id=execution_id,
+                                aggregate_id=execution_id,
+                                task_id=task_id,
+                                kind="EXECUTION_RESUME",
+                                event_type="EXECUTION_RESUME",
+                                payload_ref={
+                                    "execution_id": str(execution_id),
+                                    "action": "resume_graph",
+                                    "triggered_by_task_id": str(task_id),
+                                },
+                                payload={
+                                    "execution_id": str(execution_id),
+                                    "action": "resume_graph",
+                                    "triggered_by_task_id": str(task_id),
+                                },
+                                due_at=now,
+                                attempts=0,
+                                created_at=now,
+                            )
+                        )
+                        await record_job_event(
+                            session,
+                            execution_id=execution_id,
+                            event_type="GRAPH_RESUMED",
+                            safe_payload={
+                                "status": "RUNNING",
+                                "action": "resume_graph",
+                            },
+                        )
+                        graph_resumed = True
 
                 result_status = (
                     "APPLIED"

@@ -156,7 +156,7 @@ class ValhallaClient:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.settings = settings or get_settings()
-        raw_url = base_url or self.settings.VALHALLA_ENDPOINT_URL
+        raw_url = base_url if base_url is not None else self.settings.VALHALLA_ENDPOINT_URL
         self.base_url: str | None
         if raw_url:
             clean_url = raw_url.strip().rstrip("/")

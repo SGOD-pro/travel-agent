@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -37,7 +37,11 @@ from functions.orchestrator.routing.repository import (
     RouteRepository,
     RouteVersionConflictError,
 )
-from functions.route_optimizer.closures import ClosureAvoidanceService, RestrictionClaim
+from functions.route_optimizer.closures import (
+    ClosureAvoidanceService,
+    RestrictionClaim,
+    UnsupportedRestrictionError,
+)
 from functions.route_optimizer.multimodal import MultimodalTransitionService
 from functions.route_optimizer.solver import OrToolsRoutingSolver
 from functions.route_optimizer.valhalla import (
@@ -76,9 +80,12 @@ class RouteReplanService:
         solver: OrToolsRoutingSolver | None = None,
         route_repo: RouteRepository | None = None,
     ) -> None:
-        self._multimodal_service = multimodal_service
-        self._valhalla_client = valhalla_client
-        self._closure_service = closure_service
+        self._valhalla_client = valhalla_client or ValhallaClient()
+        self._closure_service = closure_service or ClosureAvoidanceService()
+        self._multimodal_service = multimodal_service or MultimodalTransitionService(
+            valhalla_client=self._valhalla_client,
+            closure_service=self._closure_service,
+        )
         self._solver = solver or OrToolsRoutingSolver()
         self._route_repo = route_repo
 
@@ -214,15 +221,19 @@ class RouteReplanService:
 
         # 7. Solve the remaining route
         new_route_solution: OptimizedRoute
+        solved_with_multimodal = False
         if durations_s is not None and distances_m is not None:
             new_route_solution = self._solver.solve(sub_request, durations_s, distances_m)
         elif self._multimodal_service is not None and any(
             s.is_pedestrian_only or s.vehicle_restricted for s in sub_request_stops
         ):
-            new_route_solution = await self._multimodal_service.plan_multimodal_route(sub_request)
+            new_route_solution = await self._multimodal_service.plan_multimodal_route(
+                sub_request, restrictions=restrictions
+            )
+            solved_with_multimodal = True
         elif self._valhalla_client is not None or (hasattr(settings, "VALHALLA_ENDPOINT_URL") and settings.VALHALLA_ENDPOINT_URL):
             client = self._valhalla_client or ValhallaClient()
-            if hasattr(client, "base_url") and not client.base_url and not hasattr(client, "sources_to_targets"):
+            if hasattr(client, "base_url") and not client.base_url and not hasattr(client, "canned_matrix"):
                 raise ValhallaConnectionError(
                     "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
                 )
@@ -230,11 +241,24 @@ class RouteReplanService:
             matrix = await client.sources_to_targets(locs, locs, mode=eff_transport_mode)
             new_route_solution = self._solver.solve(sub_request, matrix.durations_s, matrix.distances_m)
         elif self._multimodal_service is not None:
-            new_route_solution = await self._multimodal_service.plan_multimodal_route(sub_request)
+            new_route_solution = await self._multimodal_service.plan_multimodal_route(
+                sub_request, restrictions=restrictions
+            )
+            solved_with_multimodal = True
         else:
             raise ValhallaConnectionError(
                 "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
             )
+
+        if not solved_with_multimodal and new_route_solution.status == RouteStatus.FEASIBLE and new_route_solution.legs:
+            client = self._valhalla_client
+            if client is not None and hasattr(client, "route") and (durations_s is None or restrictions):
+                new_route_solution = await self._hydrate_new_legs(
+                    new_route_solution=new_route_solution,
+                    sub_request=sub_request,
+                    client=client,
+                    restrictions=restrictions,
+                )
 
         # 8. Reconstruct and stitch full route: frozen completed stops + current location origin + newly scheduled stops
         all_stops: list[ScheduledStopOutput] = []
@@ -394,6 +418,123 @@ class RouteReplanService:
             )
 
         return reconstructed_route
+
+    async def _hydrate_new_legs(
+        self,
+        *,
+        new_route_solution: OptimizedRoute,
+        sub_request: RouteRequest,
+        client: Any,
+        restrictions: list[RestrictionClaim] | None = None,
+    ) -> OptimizedRoute:
+        """Hydrates real provider road/walking geometries for newly scheduled legs with closure exclusions."""
+        leg_polys: list[list[list[float]]] = []
+        if restrictions and self._closure_service is not None:
+            active_restrs = [r for r in restrictions if r.is_active and r.is_verified]
+            leg_polys, _, diags = self._closure_service.extract_valhalla_exclude_polygons(active_restrs)
+            if diags:
+                raise UnsupportedRestrictionError(diags[0])
+
+        stops_by_id = {s.id: s for s in new_route_solution.stops}
+        stops_by_stop_id = {s.stop_id: s for s in new_route_solution.stops if s.stop_id is not None}
+        input_stops_by_id = {s.id: s for s in sub_request.stops}
+
+        current_time = sub_request.departure_at
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=UTC)
+
+        hydrated_legs: list[RouteLegOutput] = []
+        updated_stops: list[ScheduledStopOutput] = []
+
+        total_distance_m: int = 0
+        total_travel_s: int = 0
+        total_dwell_s: int = 0
+        total_wait_s: int = 0
+
+        # Departure from new origin (current location)
+        origin_stop = new_route_solution.stops[0]
+        dep_time = current_time + timedelta(seconds=origin_stop.dwell_seconds)
+        updated_stops.append(
+            origin_stop.model_copy(
+                update={
+                    "planned_arrival_at": current_time,
+                    "planned_departure_at": dep_time,
+                    "wait_seconds": 0,
+                }
+            )
+        )
+        current_time = dep_time
+        total_dwell_s += origin_stop.dwell_seconds
+
+        for leg in new_route_solution.legs:
+            from_stop = stops_by_id.get(leg.from_stop_id) or stops_by_stop_id.get(leg.from_stop_id)
+            to_stop = stops_by_id.get(leg.to_stop_id) or stops_by_stop_id.get(leg.to_stop_id)
+            if from_stop is None or to_stop is None:
+                continue
+
+            route_res = await client.route(
+                locations=[from_stop.location, to_stop.location],
+                mode=leg.transport_mode,
+                exclude_polygons=leg_polys or None,
+            )
+            leg_dist = route_res.total_distance_m
+            leg_dur = route_res.total_travel_seconds
+            leg_geom = route_res.legs[0].geometry if route_res.legs else route_res.geometry
+
+            leg_dep = current_time
+            arr_time = leg_dep + timedelta(seconds=leg_dur)
+
+            target_input = input_stops_by_id.get(to_stop.id) or (
+                input_stops_by_id.get(to_stop.stop_id) if to_stop.stop_id is not None else None
+            )
+            dwell = target_input.dwell_seconds if target_input else to_stop.dwell_seconds
+            wait_s = 0
+            if target_input and target_input.window_start:
+                w_start = _ensure_utc(target_input.window_start)
+                if arr_time < w_start:
+                    wait_s = int((w_start - arr_time).total_seconds())
+
+            service_start = arr_time + timedelta(seconds=wait_s)
+            target_dep = service_start + timedelta(seconds=dwell)
+
+            updated_stops.append(
+                to_stop.model_copy(
+                    update={
+                        "planned_arrival_at": arr_time,
+                        "planned_departure_at": target_dep,
+                        "wait_seconds": wait_s,
+                        "dwell_seconds": dwell,
+                    }
+                )
+            )
+            total_dwell_s += dwell
+            total_wait_s += wait_s
+            current_time = target_dep
+
+            hydrated_legs.append(
+                leg.model_copy(
+                    update={
+                        "departure_at": leg_dep,
+                        "arrival_at": arr_time,
+                        "distance_m": leg_dist,
+                        "travel_seconds": leg_dur,
+                        "geometry": leg_geom,
+                    }
+                )
+            )
+            total_distance_m += leg_dist
+            total_travel_s += leg_dur
+
+        return new_route_solution.model_copy(
+            update={
+                "stops": updated_stops,
+                "legs": hydrated_legs,
+                "total_distance_m": total_distance_m,
+                "total_travel_seconds": total_travel_s,
+                "total_dwell_seconds": total_dwell_s,
+                "total_wait_seconds": total_wait_s,
+            }
+        )
 
     async def replan_and_persist(
         self,

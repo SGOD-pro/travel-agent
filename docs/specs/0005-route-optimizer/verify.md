@@ -172,6 +172,24 @@ _Steps derived from spec 0005 acceptance criteria. /check verify runs these; /te
   - 6 integration tests verifying connected gate skip logic in offline mode, actionable diagnostics on health probe failure when enabled, live asymmetric matrix `/sources_to_targets`, turn-by-turn maneuvers and geometries `/route`, multimodal network costing segregation (driving vs walking), hard road closure avoidance via `exclude_polygons`, and end-to-end multi-stop itinerary optimization connecting live Valhalla matrices with `OrToolsRoutingSolver`.
   - Connected Valhalla provider acceptance executed and verified against live service (https://valhalla1.openstreetmap.de) with all 6 tests passing.
 
+## Specced surfaces (Production Integration Repair)
+
+- [x] Shared provider across solve, multimodal, and replan:
+  - `RouteOptimizerWorkerService`, `MultimodalTransitionService`, and `RouteReplanService` share a single configured `ValhallaClient` instance.
+  - Implicit haversine and speed fallbacks removed from production code paths.
+  - Explicit `ValhallaConnectionError` raised whenever the routing client is unconfigured or unavailable.
+  - Authoritative restriction loading in `_load_active_restrictions` fails explicitly on repository failure rather than catching and defaulting to empty.
+- [x] Full leg geometry hydration and closure detour revalidation:
+  - Selected road and walking legs hydrated with turn by turn geometries via `ValhallaClient.route`.
+  - Closure polygon exclusions applied to provider leg routing requests via `exclude_polygons`.
+  - Geometries and arrival, wait, dwell, and departure schedules revalidated after routing to ensure schedule consistency and deadline compliance.
+- [x] Scoped standalone workflow reconciliation:
+  - `CompletionReconciliationService` scopes terminal completion to `SUCCEEDED` status strictly to optimizer solve and replan workflows (`ROUTE_OPTIMIZATION`, `ROUTE_REPLAN`, `OPTIMIZER`, `ROUTE_OPTIMIZER`).
+  - Unrelated graph workflows in `WAITING_TASKS` emit single `EXECUTION_RESUME` events without terminalizing or corrupting graph state.
+  - Prevents `NoneType` comparison errors on `deadline_at`.
+- [x] Production regression test suite in `backend/tests/unit/test_route_optimizer_production_regressions.py`:
+  - 7 focused unit tests verifying provider failure, unconfigured client rejection, authoritative restriction failure propagation, closure detour geometry and schedule consistency, and unrelated workflow reconciliation isolation.
+
 ## Commands
 
 - [x] `uv run pytest tests/unit/test_route_optimizer_slice1.py -v`: 15 passed in ~11s: AC-1, AC-2, AC-5
@@ -186,6 +204,8 @@ _Steps derived from spec 0005 acceptance criteria. /check verify runs these; /te
 - [x] `uv run pytest tests/integration/test_route_optimizer_worker_slice6.py -v`: 2 passed in ~58s: AC-9
 - [x] `uv run pytest tests/unit/test_route_optimizer_slice7.py -v`: 7 passed in ~35s: AC-7, AC-9
 - [x] `RUN_CONNECTED_VALHALLA_TESTS=1 uv run pytest tests/integration/test_valhalla_connected_acceptance_slice7.py -v`: 6 passed against live Valhalla service in ~16.2s: AC-3, AC-7, AC-9
+- [x] `uv run pytest tests/unit/test_route_optimizer_production_regressions.py -v`: 7 passed in ~1.4s: Production integration defect repairs
 - [x] `uv run ruff check src/ tests/`: All checks passed
-- [x] `uv run mypy src/functions/route_optimizer/`: Success, zero issues found in route optimizer source files
+- [x] `uv run mypy src/functions/route_optimizer/ src/functions/orchestrator/execution/reconciliation.py`: Success, zero issues found in 12 source files
+
 

@@ -12,7 +12,8 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from sqlalchemy import select, text
@@ -21,9 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from contracts.routing import (
     OptimizedRoute,
     RestrictionType,
+    RouteLegOutput,
     RouteOptimizerWorkerOutput,
     RouteReplanRequest,
     RouteRequest,
+    RouteStatus,
+    ScheduledStopOutput,
+    SolverStatus,
+    VehicleFuelProfile,
 )
 from contracts.trips import TransportMode
 from functions.orchestrator.execution.fencing import (
@@ -37,7 +43,11 @@ from functions.orchestrator.execution.models import ExecutionModel
 from functions.orchestrator.places.repository import CanonicalPlacesRepository
 from functions.orchestrator.routing.models import RouteModel
 from functions.orchestrator.routing.repository import RouteRepository
-from functions.route_optimizer.closures import ClosureAvoidanceService, RestrictionClaim
+from functions.route_optimizer.closures import (
+    ClosureAvoidanceService,
+    RestrictionClaim,
+    UnsupportedRestrictionError,
+)
 from functions.route_optimizer.multimodal import MultimodalTransitionService
 from functions.route_optimizer.replan import RouteReplanService
 from functions.route_optimizer.solver import OrToolsRoutingSolver
@@ -45,6 +55,13 @@ from functions.route_optimizer.valhalla import (
     ValhallaClient,
     ValhallaConnectionError,
 )
+
+
+def _ensure_utc(dt: datetime) -> datetime:
+    """Ensures a datetime is timezone-aware in UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
 
 logger = logging.getLogger(__name__)
 
@@ -130,12 +147,13 @@ class RouteOptimizerWorkerService:
     ) -> None:
         self._session = session
         self._solver = solver or OrToolsRoutingSolver()
-        self._valhalla_client = valhalla_client
+        self._valhalla_client = valhalla_client or ValhallaClient()
         self._closure_service = closure_service or ClosureAvoidanceService()
         self._places_repo = CanonicalPlacesRepository(session)
         self._multimodal_service = multimodal_service or MultimodalTransitionService(
             places_repo=self._places_repo,
             valhalla_client=self._valhalla_client,
+            closure_service=self._closure_service,
         )
         self._route_repo = route_repo or RouteRepository(session)
         self._replan_service = replan_service or RouteReplanService(
@@ -263,9 +281,13 @@ class RouteOptimizerWorkerService:
             )
 
             if is_driving and has_pedestrian_stops:
-                solved_route = await self._multimodal_service.plan_multimodal_route(route_req)
+                solved_route = await self._multimodal_service.plan_multimodal_route(
+                    route_req, restrictions=restrictions
+                )
             else:
-                solved_route = await self._solve_route_with_provider(route_req)
+                solved_route = await self._solve_route_with_provider(
+                    route_req, restrictions=restrictions
+                )
 
             # Apply closure avoidance and spatial revalidation
             if restrictions:
@@ -326,13 +348,22 @@ class RouteOptimizerWorkerService:
 
         return persisted_route_model.id, worker_output
 
-    async def _solve_route_with_provider(self, request: RouteRequest) -> OptimizedRoute:
-        """Solves a route request querying ValhallaClient (or injected fixture) for matrices."""
+    async def _solve_route_with_provider(
+        self,
+        request: RouteRequest,
+        restrictions: list[RestrictionClaim] | None = None,
+    ) -> OptimizedRoute:
+        """Solves a route request querying ValhallaClient (or injected fixture) for matrices,
+        then hydrates actual selected-leg road/walking geometries with closure exclusions."""
         client = self._valhalla_client
         if client is None:
             client = ValhallaClient()
 
-        if hasattr(client, "base_url") and not client.base_url and not hasattr(client, "canned_matrix"):
+        if (
+            hasattr(client, "base_url")
+            and not client.base_url
+            and not hasattr(client, "canned_matrix")
+        ):
             raise ValhallaConnectionError(
                 "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
             )
@@ -343,7 +374,190 @@ class RouteOptimizerWorkerService:
             destinations=locs,
             mode=request.transport_mode,
         )
-        return self._solver.solve(request, matrix.durations_s, matrix.distances_m)
+        initial_route = self._solver.solve(request, matrix.durations_s, matrix.distances_m)
+        if initial_route.status != RouteStatus.FEASIBLE or not initial_route.legs:
+            return initial_route
+
+        if hasattr(client, "route"):
+            return await self._hydrate_leg_geometries_and_revalidate_schedule(
+                initial_route=initial_route,
+                request=request,
+                client=client,
+                restrictions=restrictions,
+            )
+        return initial_route
+
+    async def _hydrate_leg_geometries_and_revalidate_schedule(
+        self,
+        *,
+        initial_route: OptimizedRoute,
+        request: RouteRequest,
+        client: Any,
+        restrictions: list[RestrictionClaim] | None = None,
+    ) -> OptimizedRoute:
+        """Hydrates real provider road/walking geometries for selected legs, applies
+        supported closure exclusions, and revalidates schedule consistency.
+        """
+        leg_polys: list[list[list[float]]] = []
+        if restrictions:
+            active_restrs = [r for r in restrictions if r.is_active and r.is_verified]
+            leg_polys, _, diags = self._closure_service.extract_valhalla_exclude_polygons(active_restrs)
+            if diags:
+                raise UnsupportedRestrictionError(diags[0])
+
+        stops_by_id = {s.id: s for s in initial_route.stops}
+        stops_by_stop_id = {s.stop_id: s for s in initial_route.stops if s.stop_id is not None}
+        input_stops_by_id = {s.id: s for s in request.stops}
+
+        current_time = request.departure_at
+        if current_time.tzinfo is None:
+            current_time = current_time.replace(tzinfo=UTC)
+
+        hydrated_legs: list[RouteLegOutput] = []
+        updated_stops: list[ScheduledStopOutput] = []
+
+        total_distance_m: int = 0
+        total_travel_s: int = 0
+        total_dwell_s: int = 0
+        total_wait_s: int = 0
+
+        origin_stop = initial_route.stops[0]
+        origin_dep = current_time + timedelta(seconds=origin_stop.dwell_seconds)
+        updated_stops.append(
+            origin_stop.model_copy(
+                update={
+                    "planned_arrival_at": current_time,
+                    "planned_departure_at": origin_dep,
+                    "wait_seconds": 0,
+                }
+            )
+        )
+        current_time = origin_dep
+        total_dwell_s += origin_stop.dwell_seconds
+
+        for leg in initial_route.legs:
+            from_stop = stops_by_id.get(leg.from_stop_id) or stops_by_stop_id.get(leg.from_stop_id)
+            to_stop = stops_by_id.get(leg.to_stop_id) or stops_by_stop_id.get(leg.to_stop_id)
+            if from_stop is None or to_stop is None:
+                continue
+
+            route_res = await client.route(
+                locations=[from_stop.location, to_stop.location],
+                mode=leg.transport_mode,
+                exclude_polygons=leg_polys or None,
+            )
+            leg_dist = route_res.total_distance_m
+            leg_dur = route_res.total_travel_seconds
+            leg_geom = route_res.legs[0].geometry if route_res.legs else route_res.geometry
+
+            leg_dep = current_time
+            arr_time = leg_dep + timedelta(seconds=leg_dur)
+
+            is_return_to_origin = (
+                request.is_round_trip
+                and to_stop.id == origin_stop.id
+                and leg.leg_order == len(initial_route.legs) - 1
+            )
+
+            wait_s = 0
+            if not is_return_to_origin:
+                target_input = input_stops_by_id.get(to_stop.id) or (
+                    input_stops_by_id.get(to_stop.stop_id) if to_stop.stop_id is not None else None
+                )
+                dwell = target_input.dwell_seconds if target_input else to_stop.dwell_seconds
+                if target_input and target_input.window_start:
+                    w_start = _ensure_utc(target_input.window_start)
+                    if arr_time < w_start:
+                        wait_s = int((w_start - arr_time).total_seconds())
+
+                service_start = arr_time + timedelta(seconds=wait_s)
+                target_dep = service_start + timedelta(seconds=dwell)
+
+                updated_stops.append(
+                    to_stop.model_copy(
+                        update={
+                            "planned_arrival_at": arr_time,
+                            "planned_departure_at": target_dep,
+                            "wait_seconds": wait_s,
+                            "dwell_seconds": dwell,
+                        }
+                    )
+                )
+                total_dwell_s += dwell
+                total_wait_s += wait_s
+                current_time = target_dep
+            else:
+                current_time = arr_time
+
+            hydrated_legs.append(
+                leg.model_copy(
+                    update={
+                        "departure_at": leg_dep,
+                        "arrival_at": arr_time,
+                        "distance_m": leg_dist,
+                        "travel_seconds": leg_dur,
+                        "geometry": leg_geom,
+                    }
+                )
+            )
+            total_distance_m += leg_dist
+            total_travel_s += leg_dur
+
+        actual_return_at: datetime | None = current_time if request.is_round_trip else None
+
+        if request.return_deadline is not None and actual_return_at is not None:
+            ret_dl = _ensure_utc(request.return_deadline)
+            if actual_return_at > ret_dl:
+                return initial_route.model_copy(
+                    update={
+                        "status": RouteStatus.INFEASIBLE,
+                        "solver_status": SolverStatus.INFEASIBLE,
+                        "actual_return_at": actual_return_at,
+                        "stops": updated_stops,
+                        "legs": hydrated_legs,
+                        "diagnostics": initial_route.diagnostics + [
+                            f"SCHEDULE_INFEASIBLE: Route completes at {actual_return_at.isoformat()}, exceeding return deadline {ret_dl.isoformat()}"
+                        ],
+                        "warnings": initial_route.warnings + ["Return deadline breached"],
+                    }
+                )
+
+        fuel_profile = request.fuel_profile or VehicleFuelProfile.default_for_mode(request.transport_mode)
+        driving_dist_m = total_distance_m if request.transport_mode != TransportMode.WALKING else 0
+        walking_dist_m = total_distance_m if request.transport_mode == TransportMode.WALKING else 0
+
+        driving_dist_km = (Decimal(str(driving_dist_m)) / Decimal("1000")).quantize(
+            Decimal("0.001"), rounding=ROUND_HALF_UP
+        )
+        fuel_liters = (driving_dist_km / fuel_profile.mileage_km_per_liter).quantize(
+            Decimal("0.000001"), rounding=ROUND_HALF_UP
+        )
+        fuel_cost = (fuel_liters * fuel_profile.fuel_price_per_liter).quantize(
+            Decimal("0.000001"), rounding=ROUND_HALF_UP
+        )
+        fuel_basis = (
+            f"fuel_{fuel_profile.mode.value} "
+            f"({driving_dist_km}km @ {fuel_profile.mileage_km_per_liter}km/l)"
+        )
+        total_elapsed_s = total_travel_s + total_dwell_s + total_wait_s
+
+        return initial_route.model_copy(
+            update={
+                "stops": updated_stops,
+                "legs": hydrated_legs,
+                "total_distance_m": total_distance_m,
+                "total_travel_seconds": total_travel_s,
+                "total_dwell_seconds": total_dwell_s,
+                "total_wait_seconds": total_wait_s,
+                "total_elapsed_seconds": total_elapsed_s,
+                "driving_distance_m": driving_dist_m,
+                "walking_distance_m": walking_dist_m,
+                "fuel_amount": fuel_cost,
+                "fuel_currency": fuel_profile.currency,
+                "fuel_basis": fuel_basis,
+                "actual_return_at": actual_return_at,
+            }
+        )
 
     async def _load_active_restrictions(self) -> list[RestrictionClaim]:
         """Loads active verified road closure claims from PostgreSQL."""
@@ -374,5 +588,7 @@ class RouteOptimizerWorkerService:
                     )
             return restrictions
         except Exception as exc:
-            logger.warning("Could not query road closure claims: %s", exc)
-            return []
+            logger.error("Authoritative road closure restriction lookup failed: %s", exc)
+            raise RuntimeError(
+                f"Authoritative restriction lookup failed: {exc}"
+            ) from exc

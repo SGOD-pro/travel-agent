@@ -36,17 +36,22 @@ from contracts.trips import TransportMode
 from functions.orchestrator.places.models import CanonicalPlaceModel
 from functions.orchestrator.places.repository import CanonicalPlacesRepository
 from functions.orchestrator.places.schemas import CoordinatePoint
+from functions.route_optimizer.closures import (
+    ClosureAvoidanceService,
+    RestrictionClaim,
+    UnsupportedRestrictionError,
+    _ensure_utc,
+)
 from functions.route_optimizer.continuity import (
     VehicleContinuityTracker,
     haversine_distance_m,
 )
+from functions.route_optimizer.valhalla import (
+    ValhallaClient,
+    ValhallaConnectionError,
+)
 
 logger = logging.getLogger(__name__)
-
-# Typical walking speed: 5.0 km/h = ~1.389 m/s
-DEFAULT_WALK_SPEED_MPS: float = 1.38889
-# Default driving speed for offline fallback: 45.0 km/h = 12.5 m/s
-DEFAULT_DRIVE_SPEED_MPS: float = 12.5
 
 
 class MultimodalTransitionService:
@@ -60,15 +65,57 @@ class MultimodalTransitionService:
         search_parking_fn: (
             Callable[[Point, float], Awaitable[list[tuple[CanonicalPlaceModel, float]]]] | None
         ) = None,
+        closure_service: ClosureAvoidanceService | None = None,
     ) -> None:
         self._places_repo = places_repo
-        self._valhalla_client = valhalla_client
+        self._valhalla_client = valhalla_client or ValhallaClient()
+        self._closure_service = closure_service or ClosureAvoidanceService()
         self._search_radius_meters = (
             search_radius_meters
             if search_radius_meters is not None
             else float(settings.DEFAULT_PARKING_SEARCH_RADIUS_METERS)
         )
         self._search_parking_fn = search_parking_fn
+
+    def _ensure_provider(self) -> Any:
+        client = self._valhalla_client
+        if client is None:
+            raise ValhallaConnectionError(
+                "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
+            )
+        if hasattr(client, "base_url") and not client.base_url and not hasattr(client, "canned_matrix"):
+            raise ValhallaConnectionError(
+                "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
+            )
+        return client
+
+    async def _route_leg(
+        self,
+        from_loc: Point,
+        to_loc: Point,
+        mode: TransportMode,
+        restrictions: list[RestrictionClaim] | None = None,
+    ) -> tuple[int, int, dict[str, Any]]:
+        client = self._ensure_provider()
+
+        leg_polys: list[list[list[float]]] = []
+        if restrictions:
+            active_restrs = [r for r in restrictions if r.is_active and r.is_verified]
+            leg_polys, _, diags = self._closure_service.extract_valhalla_exclude_polygons(active_restrs)
+            if diags:
+                raise UnsupportedRestrictionError(diags[0])
+
+        route_res = await client.route(
+            locations=[from_loc, to_loc],
+            mode=mode,
+            exclude_polygons=leg_polys or None,
+        )
+        dist_m = route_res.total_distance_m
+        if dist_m == 0 and (from_loc.latitude != to_loc.latitude or from_loc.longitude != to_loc.longitude):
+            dist_m = max(1, haversine_distance_m(from_loc, to_loc))
+        dur_s = max(1, route_res.total_travel_seconds)
+        geom = route_res.legs[0].geometry if route_res.legs else route_res.geometry
+        return dist_m, dur_s, geom
 
     async def find_verified_parking_hub(
         self,
@@ -98,6 +145,7 @@ class MultimodalTransitionService:
     async def plan_multimodal_route(
         self,
         request: RouteRequest,
+        restrictions: list[RestrictionClaim] | None = None,
     ) -> OptimizedRoute:
         """Plans a multimodal itinerary enforcing vehicle continuity and parking hub injection."""
         stops = request.stops
@@ -197,12 +245,12 @@ class MultimodalTransitionService:
                 # Standard driving destination
                 # If traveler is currently on foot away from their car, they must return to the hub first
                 if active_parking_hub is not None:
-                    # Walk back to parking hub
-                    walk_back_dist = haversine_distance_m(
-                        current_traveler_stop.location, active_parking_hub.location
+                    walk_back_dist, walk_back_dur, walk_back_geom = await self._route_leg(
+                        from_loc=current_traveler_stop.location,
+                        to_loc=active_parking_hub.location,
+                        mode=TransportMode.WALKING,
+                        restrictions=restrictions,
                     )
-                    walk_back_dur = max(1, int(round(walk_back_dist / DEFAULT_WALK_SPEED_MPS)))
-
                     walk_back_arr = current_time + timedelta(seconds=walk_back_dur)
                     scheduled_legs.append(
                         RouteLegOutput(
@@ -216,19 +264,7 @@ class MultimodalTransitionService:
                             arrival_at=walk_back_arr,
                             distance_m=walk_back_dist,
                             travel_seconds=walk_back_dur,
-                            geometry={
-                                "type": "LineString",
-                                "coordinates": [
-                                    [
-                                        current_traveler_stop.location.longitude,
-                                        current_traveler_stop.location.latitude,
-                                    ],
-                                    [
-                                        active_parking_hub.location.longitude,
-                                        active_parking_hub.location.latitude,
-                                    ],
-                                ],
-                            },
+                            geometry=walk_back_geom,
                             traffic_basis=TrafficBasis.MODELED,
                             parking_hub_id=active_parking_hub.id,
                         )
@@ -240,38 +276,19 @@ class MultimodalTransitionService:
                     active_parking_hub = None  # Reunited with vehicle, ready to drive
 
                 # Transit to target
-                if self._valhalla_client is not None and is_driving_trip:
-                    try:
-                        matrix = await self._valhalla_client.sources_to_targets(
-                            origins=[current_traveler_stop.location],
-                            destinations=[target.location],
-                            mode=request.transport_mode,
-                        )
-                        dur = matrix.durations_s[0][0]
-                        dist = matrix.distances_m[0][0]
-                        transit_dist = dist if dist is not None else haversine_distance_m(current_traveler_stop.location, target.location)
-                        transit_dur = dur if dur is not None else max(1, int(round(transit_dist / DEFAULT_DRIVE_SPEED_MPS)))
-                    except Exception as exc:
-                        logger.warning("Valhalla transit lookup failed (%s); using modeled speed", exc)
-                        transit_dist = haversine_distance_m(current_traveler_stop.location, target.location)
-                        transit_dur = max(1, int(round(transit_dist / DEFAULT_DRIVE_SPEED_MPS)))
-                else:
-                    transit_dist = haversine_distance_m(current_traveler_stop.location, target.location)
-                    transit_speed = (
-                        DEFAULT_DRIVE_SPEED_MPS if is_driving_trip else DEFAULT_WALK_SPEED_MPS
-                    )
-                    transit_dur = max(1, int(round(transit_dist / transit_speed)))
+                transit_dist, transit_dur, transit_geom = await self._route_leg(
+                    from_loc=current_traveler_stop.location,
+                    to_loc=target.location,
+                    mode=request.transport_mode,
+                    restrictions=restrictions,
+                )
                 arr_time = current_time + timedelta(seconds=transit_dur)
 
                 # Dwell & window accounting
                 wait_s = 0
-                if target.window_start and arr_time < target.window_start:
-                    w_start = (
-                        target.window_start
-                        if target.window_start.tzinfo
-                        else target.window_start.replace(tzinfo=UTC)
-                    )
-                    if arr_time < w_start:
+                if target.window_start:
+                    w_start = _ensure_utc(target.window_start)
+                    if w_start and arr_time < w_start:
                         wait_s = int((w_start - arr_time).total_seconds())
 
                 service_start = arr_time + timedelta(seconds=wait_s)
@@ -307,16 +324,7 @@ class MultimodalTransitionService:
                         arrival_at=arr_time,
                         distance_m=transit_dist,
                         travel_seconds=transit_dur,
-                        geometry={
-                            "type": "LineString",
-                            "coordinates": [
-                                [
-                                    current_traveler_stop.location.longitude,
-                                    current_traveler_stop.location.latitude,
-                                ],
-                                [target.location.longitude, target.location.latitude],
-                            ],
-                        },
+                        geometry=transit_geom,
                         traffic_basis=TrafficBasis.MODELED,
                     )
                 )
@@ -354,10 +362,12 @@ class MultimodalTransitionService:
                 if need_new_hub:
                     if active_parking_hub is not None:
                         # Return to old parking hub before driving to new one
-                        walk_back_dist = haversine_distance_m(
-                            current_traveler_stop.location, active_parking_hub.location
+                        walk_back_dist, walk_back_dur, walk_back_geom = await self._route_leg(
+                            from_loc=current_traveler_stop.location,
+                            to_loc=active_parking_hub.location,
+                            mode=TransportMode.WALKING,
+                            restrictions=restrictions,
                         )
-                        walk_back_dur = max(1, int(round(walk_back_dist / DEFAULT_WALK_SPEED_MPS)))
                         walk_back_arr = current_time + timedelta(seconds=walk_back_dur)
 
                         scheduled_legs.append(
@@ -372,19 +382,7 @@ class MultimodalTransitionService:
                                 arrival_at=walk_back_arr,
                                 distance_m=walk_back_dist,
                                 travel_seconds=walk_back_dur,
-                                geometry={
-                                    "type": "LineString",
-                                    "coordinates": [
-                                        [
-                                            current_traveler_stop.location.longitude,
-                                            current_traveler_stop.location.latitude,
-                                        ],
-                                        [
-                                            active_parking_hub.location.longitude,
-                                            active_parking_hub.location.latitude,
-                                        ],
-                                    ],
-                                },
+                                geometry=walk_back_geom,
                                 traffic_basis=TrafficBasis.MODELED,
                                 parking_hub_id=active_parking_hub.id,
                             )
@@ -396,10 +394,12 @@ class MultimodalTransitionService:
 
                     # Drive to new parking hub
                     hub_stop_id = uuid.uuid4()
-                    drive_to_hub_dist = haversine_distance_m(
-                        current_traveler_stop.location, parking_loc
+                    drive_to_hub_dist, drive_to_hub_dur, drive_to_hub_geom = await self._route_leg(
+                        from_loc=current_traveler_stop.location,
+                        to_loc=parking_loc,
+                        mode=request.transport_mode,
+                        restrictions=restrictions,
                     )
-                    drive_to_hub_dur = max(1, int(round(drive_to_hub_dist / DEFAULT_DRIVE_SPEED_MPS)))
                     hub_arr_time = current_time + timedelta(seconds=drive_to_hub_dur)
                     hub_dwell_s = 180  # 3 minutes parking dwell
 
@@ -431,16 +431,7 @@ class MultimodalTransitionService:
                             arrival_at=hub_arr_time,
                             distance_m=drive_to_hub_dist,
                             travel_seconds=drive_to_hub_dur,
-                            geometry={
-                                "type": "LineString",
-                                "coordinates": [
-                                    [
-                                        current_traveler_stop.location.longitude,
-                                        current_traveler_stop.location.latitude,
-                                    ],
-                                    [parking_loc.longitude, parking_loc.latitude],
-                                ],
-                            },
+                            geometry=drive_to_hub_geom,
                             traffic_basis=TrafficBasis.MODELED,
                         )
                     )
@@ -452,19 +443,19 @@ class MultimodalTransitionService:
                     active_parking_hub = hub_scheduled
 
                 # Walk from current position (hub or previous chained pedestrian stop) to target
-                walk_dist = haversine_distance_m(current_traveler_stop.location, target.location)
-                walk_dur = max(1, int(round(walk_dist / DEFAULT_WALK_SPEED_MPS)))
+                walk_dist, walk_dur, walk_geom = await self._route_leg(
+                    from_loc=current_traveler_stop.location,
+                    to_loc=target.location,
+                    mode=TransportMode.WALKING,
+                    restrictions=restrictions,
+                )
                 arr_time = current_time + timedelta(seconds=walk_dur)
 
                 # Window check
                 wait_s = 0
                 if target.window_start:
-                    w_start = (
-                        target.window_start
-                        if target.window_start.tzinfo
-                        else target.window_start.replace(tzinfo=UTC)
-                    )
-                    if arr_time < w_start:
+                    w_start = _ensure_utc(target.window_start)
+                    if w_start and arr_time < w_start:
                         wait_s = int((w_start - arr_time).total_seconds())
 
                 service_start = arr_time + timedelta(seconds=wait_s)
@@ -500,16 +491,7 @@ class MultimodalTransitionService:
                         arrival_at=arr_time,
                         distance_m=walk_dist,
                         travel_seconds=walk_dur,
-                        geometry={
-                            "type": "LineString",
-                            "coordinates": [
-                                [
-                                    current_traveler_stop.location.longitude,
-                                    current_traveler_stop.location.latitude,
-                                ],
-                                [target.location.longitude, target.location.latitude],
-                            ],
-                        },
+                        geometry=walk_geom,
                         traffic_basis=TrafficBasis.MODELED,
                         parking_hub_id=active_parking_hub.id if active_parking_hub is not None else None,
                     )
@@ -526,10 +508,12 @@ class MultimodalTransitionService:
         # 3. Handle return to parking hub and/or return to origin for round trips
         if active_parking_hub is not None:
             # Walk back to parking hub to retrieve vehicle
-            walk_back_dist = haversine_distance_m(
-                current_traveler_stop.location, active_parking_hub.location
+            walk_back_dist, walk_back_dur, walk_back_geom = await self._route_leg(
+                from_loc=current_traveler_stop.location,
+                to_loc=active_parking_hub.location,
+                mode=TransportMode.WALKING,
+                restrictions=restrictions,
             )
-            walk_back_dur = max(1, int(round(walk_back_dist / DEFAULT_WALK_SPEED_MPS)))
             walk_back_arr = current_time + timedelta(seconds=walk_back_dur)
 
             scheduled_legs.append(
@@ -544,19 +528,7 @@ class MultimodalTransitionService:
                     arrival_at=walk_back_arr,
                     distance_m=walk_back_dist,
                     travel_seconds=walk_back_dur,
-                    geometry={
-                        "type": "LineString",
-                        "coordinates": [
-                            [
-                                current_traveler_stop.location.longitude,
-                                current_traveler_stop.location.latitude,
-                            ],
-                            [
-                                active_parking_hub.location.longitude,
-                                active_parking_hub.location.latitude,
-                            ],
-                        ],
-                    },
+                    geometry=walk_back_geom,
                     traffic_basis=TrafficBasis.MODELED,
                     parking_hub_id=active_parking_hub.id,
                 )
@@ -569,13 +541,12 @@ class MultimodalTransitionService:
 
         actual_return_at = current_time
         if request.is_round_trip and len(scheduled_stops) > 1:
-            return_dist = haversine_distance_m(current_traveler_stop.location, origin_scheduled.location)
-            return_speed = (
-                DEFAULT_WALK_SPEED_MPS
-                if request.transport_mode == TransportMode.WALKING
-                else DEFAULT_DRIVE_SPEED_MPS
+            return_dist, return_dur, return_geom = await self._route_leg(
+                from_loc=current_traveler_stop.location,
+                to_loc=origin_scheduled.location,
+                mode=request.transport_mode,
+                restrictions=restrictions,
             )
-            return_dur = max(1, int(round(return_dist / return_speed)))
             return_arr = current_time + timedelta(seconds=return_dur)
 
             scheduled_legs.append(
@@ -590,19 +561,7 @@ class MultimodalTransitionService:
                     arrival_at=return_arr,
                     distance_m=return_dist,
                     travel_seconds=return_dur,
-                    geometry={
-                        "type": "LineString",
-                        "coordinates": [
-                            [
-                                current_traveler_stop.location.longitude,
-                                current_traveler_stop.location.latitude,
-                            ],
-                            [
-                                origin_scheduled.location.longitude,
-                                origin_scheduled.location.latitude,
-                            ],
-                        ],
-                    },
+                    geometry=return_geom,
                     traffic_basis=TrafficBasis.MODELED,
                 )
             )
@@ -612,6 +571,27 @@ class MultimodalTransitionService:
                 total_driving_m += return_dist
             total_travel_s += return_dur
             actual_return_at = return_arr
+
+        # Schedule consistency check against return_deadline
+        if request.return_deadline is not None and actual_return_at is not None:
+            ret_dl = _ensure_utc(request.return_deadline)
+            if ret_dl and actual_return_at > ret_dl:
+                return OptimizedRoute(
+                    owner_id=request.owner_id,
+                    trip_id=request.trip_id,
+                    execution_id=request.execution_id,
+                    route_version=1,
+                    status=RouteStatus.INFEASIBLE,
+                    solver_status=SolverStatus.INFEASIBLE,
+                    objective=request.objective,
+                    departure_at=request.departure_at,
+                    return_deadline=request.return_deadline,
+                    actual_return_at=actual_return_at,
+                    diagnostics=[
+                        f"SCHEDULE_INFEASIBLE: Route completes at {actual_return_at.isoformat()}, exceeding return deadline {ret_dl.isoformat()}"
+                    ],
+                    warnings=["Return deadline breached"],
+                )
 
         total_distance_m = total_driving_m + total_walking_m
         total_elapsed_s = total_travel_s + total_dwell_s + total_wait_s
@@ -682,4 +662,11 @@ class MultimodalTransitionService:
                 warnings=["Itinerary violated vehicle continuity constraints"],
             )
 
+        # 6. Apply closure avoidance and spatial revalidation
+        if restrictions:
+            optimized_route = self._closure_service.apply_and_revalidate(
+                optimized_route, restrictions
+            )
+
         return optimized_route
+
