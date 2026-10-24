@@ -15,15 +15,17 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from contracts.routing import (
     OptimizedRoute,
+    RestrictionType,
     RouteOptimizerWorkerOutput,
     RouteReplanRequest,
     RouteRequest,
 )
+from contracts.trips import TransportMode
 from functions.orchestrator.execution.fencing import (
     ParentCancelledError,
     TaskClaimResult,
@@ -32,11 +34,17 @@ from functions.orchestrator.execution.fencing import (
 )
 from functions.orchestrator.execution.job_events import record_job_event
 from functions.orchestrator.execution.models import ExecutionModel
+from functions.orchestrator.places.repository import CanonicalPlacesRepository
 from functions.orchestrator.routing.models import RouteModel
 from functions.orchestrator.routing.repository import RouteRepository
+from functions.route_optimizer.closures import ClosureAvoidanceService, RestrictionClaim
 from functions.route_optimizer.multimodal import MultimodalTransitionService
 from functions.route_optimizer.replan import RouteReplanService
 from functions.route_optimizer.solver import OrToolsRoutingSolver
+from functions.route_optimizer.valhalla import (
+    ValhallaClient,
+    ValhallaConnectionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +121,8 @@ class RouteOptimizerWorkerService:
         session: AsyncSession,
         *,
         solver: OrToolsRoutingSolver | None = None,
+        valhalla_client: Any | None = None,
+        closure_service: ClosureAvoidanceService | None = None,
         multimodal_service: MultimodalTransitionService | None = None,
         replan_service: RouteReplanService | None = None,
         route_repo: RouteRepository | None = None,
@@ -120,12 +130,21 @@ class RouteOptimizerWorkerService:
     ) -> None:
         self._session = session
         self._solver = solver or OrToolsRoutingSolver()
-        self._multimodal_service = multimodal_service
-        self._replan_service = replan_service or RouteReplanService(
-            solver=self._solver,
-            multimodal_service=self._multimodal_service,
+        self._valhalla_client = valhalla_client
+        self._closure_service = closure_service or ClosureAvoidanceService()
+        self._places_repo = CanonicalPlacesRepository(session)
+        self._multimodal_service = multimodal_service or MultimodalTransitionService(
+            places_repo=self._places_repo,
+            valhalla_client=self._valhalla_client,
         )
         self._route_repo = route_repo or RouteRepository(session)
+        self._replan_service = replan_service or RouteReplanService(
+            solver=self._solver,
+            valhalla_client=self._valhalla_client,
+            multimodal_service=self._multimodal_service,
+            closure_service=self._closure_service,
+            route_repo=self._route_repo,
+        )
         self._fencing_service = fencing_service or WorkerFencingService(session)
 
     async def execute_task(
@@ -196,6 +215,8 @@ class RouteOptimizerWorkerService:
         solved_route: OptimizedRoute
         persisted_route_model: RouteModel
 
+        restrictions = await self._load_active_restrictions()
+
         if envelope.action == "replan":
             route_id_raw = (
                 payload_data.get("route_id")
@@ -213,6 +234,7 @@ class RouteOptimizerWorkerService:
                 owner_id=owner_id or uuid.uuid4(),
                 request=replan_req,
                 route_repo=self._route_repo,
+                restrictions=restrictions,
             )
             solved_route = persisted_route_model.to_optimized_route()
         else:
@@ -232,11 +254,24 @@ class RouteOptimizerWorkerService:
                     }
                 )
 
-            if self._multimodal_service is not None:
+            is_driving = route_req.transport_mode in (
+                TransportMode.CAR_PETROL,
+                TransportMode.MOTORCYCLE_PETROL,
+            )
+            has_pedestrian_stops = any(
+                s.is_pedestrian_only or s.vehicle_restricted for s in route_req.stops
+            )
+
+            if is_driving and has_pedestrian_stops:
                 solved_route = await self._multimodal_service.plan_multimodal_route(route_req)
             else:
-                # Fallback to solver solve with haversine or mock matrix
-                solved_route = await self._solve_route_request(route_req)
+                solved_route = await self._solve_route_with_provider(route_req)
+
+            # Apply closure avoidance and spatial revalidation
+            if restrictions:
+                solved_route = self._closure_service.apply_and_revalidate(
+                    solved_route, restrictions
+                )
 
             if solved_route.owner_id is None or solved_route.owner_id != effective_owner_id:
                 solved_route = solved_route.model_copy(update={"owner_id": effective_owner_id})
@@ -291,25 +326,53 @@ class RouteOptimizerWorkerService:
 
         return persisted_route_model.id, worker_output
 
-    async def _solve_route_request(self, request: RouteRequest) -> OptimizedRoute:
-        """Solves a route request using OrToolsRoutingSolver with haversine matrix fallback."""
-        from contracts.trips import TransportMode
-        from functions.route_optimizer.continuity import haversine_distance_m
+    async def _solve_route_with_provider(self, request: RouteRequest) -> OptimizedRoute:
+        """Solves a route request querying ValhallaClient (or injected fixture) for matrices."""
+        client = self._valhalla_client
+        if client is None:
+            client = ValhallaClient()
 
-        speed_mps = 1.38889 if request.transport_mode == TransportMode.WALKING else 12.5
+        if hasattr(client, "base_url") and not client.base_url and not hasattr(client, "canned_matrix"):
+            raise ValhallaConnectionError(
+                "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
+            )
+
         locs = [s.location for s in request.stops]
-        durs: list[list[int | None]] = []
-        dists: list[list[int | None]] = []
+        matrix = await client.sources_to_targets(
+            origins=locs,
+            destinations=locs,
+            mode=request.transport_mode,
+        )
+        return self._solver.solve(request, matrix.durations_s, matrix.distances_m)
 
-        for o in locs:
-            dur_row: list[int | None] = []
-            dist_row: list[int | None] = []
-            for d in locs:
-                dist = haversine_distance_m(o, d)
-                dur = max(1, int(round(dist / speed_mps))) if dist > 0 else 0
-                dist_row.append(dist)
-                dur_row.append(dur)
-            durs.append(dur_row)
-            dists.append(dist_row)
-
-        return self._solver.solve(request, durs, dists)
+    async def _load_active_restrictions(self) -> list[RestrictionClaim]:
+        """Loads active verified road closure claims from PostgreSQL."""
+        try:
+            sql = text("""
+                SELECT id, geographic_scope, typed_value, valid_from, valid_until, availability
+                FROM claims
+                WHERE category = 'ROAD_CLOSURE' AND verification = 'VERIFIED'
+            """)
+            res = await self._session.execute(sql)
+            rows = res.mappings().all()
+            restrictions: list[RestrictionClaim] = []
+            for r in rows:
+                typed_val = r["typed_value"] if isinstance(r["typed_value"], dict) else {}
+                geom = r["geographic_scope"] or typed_val.get("geometry") or {}
+                if geom:
+                    restrictions.append(
+                        RestrictionClaim(
+                            id=r["id"],
+                            claim_id=r["id"],
+                            restriction_type=RestrictionType.ROAD_CLOSURE,
+                            geometry=geom,
+                            effective_start=r["valid_from"],
+                            effective_end=r["valid_until"],
+                            is_active=(r["availability"] in ("ACTIVE", "UNKNOWN")),
+                            is_verified=True,
+                        )
+                    )
+            return restrictions
+        except Exception as exc:
+            logger.warning("Could not query road closure claims: %s", exc)
+            return []

@@ -15,7 +15,9 @@ import logging
 import uuid
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
+from config.config import settings
 from contracts.money import Currency
 from contracts.routing import (
     OptimizedRoute,
@@ -35,10 +37,14 @@ from functions.orchestrator.routing.repository import (
     RouteRepository,
     RouteVersionConflictError,
 )
-from functions.route_optimizer.continuity import haversine_distance_m
+from functions.route_optimizer.closures import ClosureAvoidanceService, RestrictionClaim
 from functions.route_optimizer.multimodal import MultimodalTransitionService
 from functions.route_optimizer.solver import OrToolsRoutingSolver
-from functions.route_optimizer.valhalla import validate_coordinates
+from functions.route_optimizer.valhalla import (
+    ValhallaClient,
+    ValhallaConnectionError,
+    validate_coordinates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +71,14 @@ class RouteReplanService:
         self,
         *,
         multimodal_service: MultimodalTransitionService | None = None,
+        valhalla_client: Any | None = None,
+        closure_service: ClosureAvoidanceService | None = None,
         solver: OrToolsRoutingSolver | None = None,
         route_repo: RouteRepository | None = None,
     ) -> None:
         self._multimodal_service = multimodal_service
+        self._valhalla_client = valhalla_client
+        self._closure_service = closure_service
         self._solver = solver or OrToolsRoutingSolver()
         self._route_repo = route_repo
 
@@ -79,6 +89,7 @@ class RouteReplanService:
         *,
         durations_s: list[list[int | None]] | None = None,
         distances_m: list[list[int | None]] | None = None,
+        restrictions: list[RestrictionClaim] | None = None,
     ) -> OptimizedRoute:
         """Calculates a replanned route from current traveler coordinates, freezing completed stops."""
         # 1. Geographic boundary validation
@@ -205,26 +216,25 @@ class RouteReplanService:
         new_route_solution: OptimizedRoute
         if durations_s is not None and distances_m is not None:
             new_route_solution = self._solver.solve(sub_request, durations_s, distances_m)
+        elif self._multimodal_service is not None and any(
+            s.is_pedestrian_only or s.vehicle_restricted for s in sub_request_stops
+        ):
+            new_route_solution = await self._multimodal_service.plan_multimodal_route(sub_request)
+        elif self._valhalla_client is not None or (hasattr(settings, "VALHALLA_ENDPOINT_URL") and settings.VALHALLA_ENDPOINT_URL):
+            client = self._valhalla_client or ValhallaClient()
+            if hasattr(client, "base_url") and not client.base_url and not hasattr(client, "sources_to_targets"):
+                raise ValhallaConnectionError(
+                    "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
+                )
+            locs = [s.location for s in sub_request_stops]
+            matrix = await client.sources_to_targets(locs, locs, mode=eff_transport_mode)
+            new_route_solution = self._solver.solve(sub_request, matrix.durations_s, matrix.distances_m)
         elif self._multimodal_service is not None:
             new_route_solution = await self._multimodal_service.plan_multimodal_route(sub_request)
         else:
-            # Fallback to haversine matrix with OrToolsRoutingSolver
-            speed_mps = 1.38889 if eff_transport_mode == TransportMode.WALKING else 12.5
-            locs = [s.location for s in sub_request_stops]
-            durs: list[list[int | None]] = []
-            dists: list[list[int | None]] = []
-            for o in locs:
-                dur_row: list[int | None] = []
-                dist_row: list[int | None] = []
-                for d in locs:
-                    dist = haversine_distance_m(o, d)
-                    dur = max(1, int(round(dist / speed_mps))) if dist > 0 else 0
-                    dist_row.append(dist)
-                    dur_row.append(dur)
-                durs.append(dur_row)
-                dists.append(dist_row)
-
-            new_route_solution = self._solver.solve(sub_request, durs, dists)
+            raise ValhallaConnectionError(
+                "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
+            )
 
         # 8. Reconstruct and stitch full route: frozen completed stops + current location origin + newly scheduled stops
         all_stops: list[ScheduledStopOutput] = []
@@ -346,7 +356,7 @@ class RouteReplanService:
                 )
                 seen_dropped_ids.add(p_id)
 
-        return OptimizedRoute(
+        reconstructed_route = OptimizedRoute(
             id=uuid.uuid4(),
             owner_id=previous_route.owner_id,
             trip_id=previous_route.trip_id,
@@ -378,6 +388,13 @@ class RouteReplanService:
             diagnostics=combined_diagnostics,
         )
 
+        if self._closure_service is not None and restrictions:
+            reconstructed_route = self._closure_service.apply_and_revalidate(
+                reconstructed_route, restrictions
+            )
+
+        return reconstructed_route
+
     async def replan_and_persist(
         self,
         *,
@@ -387,6 +404,7 @@ class RouteReplanService:
         route_repo: RouteRepository,
         durations_s: list[list[int | None]] | None = None,
         distances_m: list[list[int | None]] | None = None,
+        restrictions: list[RestrictionClaim] | None = None,
     ) -> RouteModel:
         """Loads previous route, verifies tenant ownership, performs replan, and persists new route version atomically."""
         # 1. Tenant-isolated lookup
@@ -404,6 +422,7 @@ class RouteReplanService:
             request,
             durations_s=durations_s,
             distances_m=distances_m,
+            restrictions=restrictions,
         )
 
         # 3. Persist new route version under optimistic concurrency controls

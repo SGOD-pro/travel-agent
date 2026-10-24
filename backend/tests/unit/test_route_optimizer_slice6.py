@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -271,12 +272,11 @@ async def test_consumer_process_batch_partial_failures_on_deadline() -> None:
 
 
 # 4. Standalone Packaging Unit Test
-def test_route_optimizer_packaging_within_limits(tmp_path) -> None:
+def test_route_optimizer_packaging_within_limits(tmp_path: Path) -> None:
     """Verifies that route optimizer worker packages standalone under 250 MB limit."""
     dist_dir = tmp_path / "build" / "route_optimizer"
 
     # Run packaging directly on actual backend
-    from pathlib import Path
     actual_backend = Path(__file__).resolve().parent.parent.parent
 
     metrics = build_route_optimizer_artifact(dist_dir, actual_backend, install_dependencies=False)
@@ -362,3 +362,90 @@ async def test_api_get_route_tenant_isolation_forbidden() -> None:
                 assert "belongs to another tenant" in resp.json()["detail"]
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_sqs_transport_routes_optimizer_worker_to_dedicated_queue_via_worker_queues() -> None:
+    """Verifies that SqsTransportAdapter routes worker='OPTIMIZER' to dedicated queue URL."""
+    from functions.orchestrator.execution.transport import OutboxMessage, SqsTransportAdapter
+
+    mock_sqs = MagicMock()
+    mock_sqs.send_message = MagicMock(return_value={"MessageId": "sqs-msg-123"})
+
+    dedicated_queue = "https://sqs.ap-south-1.amazonaws.com/123456789012/route-optimizer-task-dispatch-staging"
+    generic_queue = "https://sqs.ap-south-1.amazonaws.com/123456789012/generic-outbox-queue"
+
+    transport = SqsTransportAdapter(
+        queue_url=generic_queue,
+        sqs_client=mock_sqs,
+        worker_queues={"OPTIMIZER": dedicated_queue},
+    )
+
+    msg = OutboxMessage(
+        event_id=uuid.uuid4(),
+        execution_id=uuid.uuid4(),
+        task_id=uuid.uuid4(),
+        kind="TASK_DISPATCH",
+        payload={"worker": "OPTIMIZER", "action": "solve"},
+        attempts=0,
+        created_at=datetime.now(UTC),
+    )
+
+    await transport.publish(msg)
+    mock_sqs.send_message.assert_called_once()
+    call_kwargs = mock_sqs.send_message.call_args[1]
+    assert call_kwargs["QueueUrl"] == dedicated_queue
+
+
+@pytest.mark.asyncio
+async def test_sqs_transport_routes_optimizer_worker_fallback_to_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verifies that SqsTransportAdapter falls back to ROUTE_OPTIMIZER_QUEUE_URL in os.environ."""
+    from functions.orchestrator.execution.transport import OutboxMessage, SqsTransportAdapter
+
+    env_queue = "https://sqs.ap-south-1.amazonaws.com/123456789012/route-optimizer-env-queue"
+    monkeypatch.setenv("ROUTE_OPTIMIZER_QUEUE_URL", env_queue)
+
+    mock_sqs = MagicMock()
+    mock_sqs.send_message = MagicMock(return_value={"MessageId": "sqs-msg-456"})
+
+    transport = SqsTransportAdapter(
+        queue_url="https://sqs.ap-south-1.amazonaws.com/123456789012/default-queue",
+        sqs_client=mock_sqs,
+    )
+
+    msg = OutboxMessage(
+        event_id=uuid.uuid4(),
+        execution_id=uuid.uuid4(),
+        task_id=uuid.uuid4(),
+        kind="TASK_DISPATCH",
+        payload={"worker": "OPTIMIZER", "action": "solve"},
+        attempts=0,
+        created_at=datetime.now(UTC),
+    )
+
+    await transport.publish(msg)
+    mock_sqs.send_message.assert_called_once()
+    call_kwargs = mock_sqs.send_message.call_args[1]
+    assert call_kwargs["QueueUrl"] == env_queue
+
+
+def test_build_sqs_transport_populates_optimizer_queue_from_env() -> None:
+    """Verifies build_sqs_transport populates OPTIMIZER and ROUTE_OPTIMIZER in worker_queues."""
+    from functions.orchestrator.execution.transport import SqsTransportAdapter, build_sqs_transport
+
+    env_queue = "https://sqs.ap-south-1.amazonaws.com/123456789012/route-optimizer-dispatch"
+    mock_boto = MagicMock()
+    mock_boto.client.return_value = MagicMock()
+
+    env_vars = {
+        "OUTBOX_QUEUE_URL": "https://sqs.ap-south-1.amazonaws.com/123456789012/outbox-queue",
+        "ROUTE_OPTIMIZER_QUEUE_URL": env_queue,
+    }
+
+    with patch.dict("os.environ", env_vars), patch.dict("sys.modules", {"boto3": mock_boto}):
+        transport = build_sqs_transport()
+        assert isinstance(transport, SqsTransportAdapter)
+        assert transport.worker_queues.get("OPTIMIZER") == env_queue
+        assert transport.worker_queues.get("ROUTE_OPTIMIZER") == env_queue
+
+

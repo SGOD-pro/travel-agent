@@ -135,6 +135,14 @@ class SqsTransportAdapter(TransportAdapter):
                 evidence_env = os.environ.get("EVIDENCE_COLLECTOR_QUEUE_URL")
                 if evidence_env:
                     target_queue_url = evidence_env
+            elif worker in ("OPTIMIZER", "ROUTE_OPTIMIZER"):
+                optimizer_env = (
+                    os.environ.get("ROUTE_OPTIMIZER_QUEUE_URL")
+                    or os.environ.get("OPTIMIZER_WORKER_QUEUE_URL")
+                    or os.environ.get("OPTIMIZER_QUEUE_URL")
+                )
+                if optimizer_env:
+                    target_queue_url = optimizer_env
 
         params: dict[str, Any] = {
             "QueueUrl": target_queue_url,
@@ -191,6 +199,15 @@ def build_sqs_transport() -> TransportAdapter:
     browser_queue = os.environ.get("BROWSER_WORKER_QUEUE_URL")
     if browser_queue:
         worker_queues["BROWSER"] = browser_queue
+
+    optimizer_queue = (
+        os.environ.get("ROUTE_OPTIMIZER_QUEUE_URL")
+        or os.environ.get("OPTIMIZER_WORKER_QUEUE_URL")
+        or os.environ.get("OPTIMIZER_QUEUE_URL")
+    )
+    if optimizer_queue:
+        worker_queues["OPTIMIZER"] = optimizer_queue
+        worker_queues["ROUTE_OPTIMIZER"] = optimizer_queue
 
     try:
         import boto3

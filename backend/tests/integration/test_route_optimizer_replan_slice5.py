@@ -41,6 +41,7 @@ from functions.orchestrator.routing.repository import (
     RouteNotFoundError,
     RouteRepository,
 )
+from functions.route_optimizer.fixtures import MockValhallaClient
 from functions.route_optimizer.replan import RouteReplanService
 
 _orig_getaddrinfo = socket.getaddrinfo
@@ -242,7 +243,7 @@ class TestRouteReplanIntegration:
             expected_previous_version=1,
         )
 
-        replan_service = RouteReplanService()
+        replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
         async with session_factory() as session:
             async with session.begin():
                 repo = RouteRepository(session)
@@ -333,7 +334,7 @@ class TestRouteReplanIntegration:
             replan_at=base_time + timedelta(hours=1),
         )
 
-        replan_service = RouteReplanService()
+        replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
         async with session_factory() as session:
             repo = RouteRepository(session)
             # User B attempts to replan User A's route

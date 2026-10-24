@@ -22,6 +22,7 @@ import re
 import socket
 import time
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -35,14 +36,20 @@ from config.config import settings
 from config.db import get_session
 from functions.api.app import app
 from functions.api.models import TripModel
-from functions.orchestrator.execution.models import (
+from functions.orchestrator.execution import (
+    CompletionReconciliationService,
     ExecutionModel,
     OutboxEventModel,
+    TaskCompletionEvent,
     TaskModel,
     WorkerResultModel,
 )
+from functions.orchestrator.execution.transport import OutboxMessage, SqsTransportAdapter
 from functions.orchestrator.routing.repository import RouteRepository
+from functions.route_optimizer.closures import ClosureAvoidanceService
 from functions.route_optimizer.consumer import process_record
+from functions.route_optimizer.fixtures import MockValhallaClient
+from functions.route_optimizer.valhalla import ValhallaConnectionError
 from middleware.auth import AuthenticatedUser, get_current_user
 
 # Resilient DNS caching for PostgreSQL connectivity
@@ -93,10 +100,10 @@ socket.getaddrinfo = _resilient_getaddrinfo
 
 
 @pytest.fixture
-async def session_factory():
+async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     """Initializes live PostgreSQL connection pool."""
     url = settings.DATABASE_URL
-    connect_args = {
+    connect_args: dict[str, Any] = {
         "command_timeout": 60,
         "timeout": 30,
     }
@@ -123,7 +130,9 @@ async def session_factory():
 
 
 @pytest.mark.asyncio
-async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
+async def test_route_optimization_worker_e2e_lifecycle(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
     """End-to-end integration test: API submission -> SQS consumption -> worker solve -> polling -> fetch."""
     owner_id = uuid.uuid4()
     trip_id = uuid.uuid4()
@@ -142,13 +151,13 @@ async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
         session.add(trip)
         await session.commit()
 
-    async def override_get_session():
+    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
         async with session_factory() as session:
             yield session
 
     current_user = AuthenticatedUser(id=owner_id, email="owner@test.internal")
 
-    async def override_get_current_user():
+    async def override_get_current_user() -> AuthenticatedUser:
         return current_user
 
     app.dependency_overrides[get_session] = override_get_session
@@ -221,10 +230,43 @@ async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
                 assert outbox_event.kind == "TASK_DISPATCH"
                 dispatch_record = outbox_event.payload_ref
 
-            # 4. Simulate SQS worker consumption: process_record executes under lease fencing
-            await process_record(dispatch_record, session_factory)
+            # 4. Outbox routing: verify dedicated SQS routing to optimizer queue
+            published_queues: list[str] = []
 
-            # 5. Verify task completed in database
+            class MockSqsClient:
+                def send_message(self, QueueUrl: str, MessageBody: str, **kwargs: Any) -> dict[str, str]:
+                    published_queues.append(QueueUrl)
+                    return {"MessageId": f"mock-msg-{uuid.uuid4()}"}
+
+            optimizer_queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/route-optimizer-queue"
+            transport_adapter = SqsTransportAdapter(
+                queue_url="https://sqs.us-east-1.amazonaws.com/123456789012/default-queue",
+                sqs_client=MockSqsClient(),
+                worker_queues={"OPTIMIZER": optimizer_queue_url},
+            )
+            outbox_msg = OutboxMessage(
+                event_id=outbox_event.id,
+                execution_id=outbox_event.execution_id,
+                task_id=outbox_event.task_id,
+                kind=outbox_event.kind,
+                payload=outbox_event.payload or outbox_event.payload_ref,
+                attempts=outbox_event.attempts,
+                created_at=outbox_event.created_at,
+            )
+            await transport_adapter.publish(outbox_msg)
+            assert optimizer_queue_url in published_queues
+
+            # 5. Real consumer execution under lease fencing with injected provider
+            injected_provider = MockValhallaClient()
+            injected_closures = ClosureAvoidanceService()
+            await process_record(
+                dispatch_record,
+                session_factory,
+                valhalla_client=injected_provider,
+                closure_service=injected_closures,
+            )
+
+            # 6. Verify task completed in database and extract result
             async with session_factory() as session:
                 task_completed = (await session.execute(task_stmt)).scalar_one()
                 assert task_completed.status == "COMPLETED"
@@ -244,13 +286,34 @@ async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
                 assert len(route_model.stops) == 3
                 assert len(route_model.legs) == 2
 
-            # 6. Poll GET /api/v1/jobs/{job_id}
+            # 7. Completion reconciliation: reconcile task completion into execution terminal SUCCEEDED state
+            reconciliation_service = CompletionReconciliationService(session_factory)
+            completion_event = TaskCompletionEvent(
+                event_id=uuid.uuid4(),
+                task_id=task.id,
+                execution_id=job_id,
+                attempt=task_completed.attempt,
+                event_type="TASK_COMPLETED",
+                result_id=worker_result.id,
+            )
+            reconcile_result = await reconciliation_service.reconcile_task_event(event=completion_event)
+            assert reconcile_result.status == "APPLIED"
+
+            async with session_factory() as session:
+                reconciled_exec = (await session.execute(exec_stmt)).scalar_one()
+                assert reconciled_exec.status == "SUCCEEDED"
+
+            # 8. Terminal job polling: GET /api/v1/jobs/{job_id} confirms SUCCEEDED and result_available
             job_resp = await client.get(f"/api/v1/jobs/{job_id}")
             assert job_resp.status_code == 200
             job_data = job_resp.json()
             assert job_data["job_id"] == job_id_str
+            assert job_data["status"] == "SUCCEEDED"
+            assert job_data["result_available"] is True
+            assert job_data["retry_after_seconds"] == 0
+            assert any(e["event_type"] == "EXECUTION_SUCCEEDED" for e in job_data["timeline"])
 
-            # 7. Fetch route via GET /api/v1/optimization/routes/{route_id}
+            # 9. Owner-isolated route retrieval via GET /api/v1/optimization/routes/{route_id}
             route_resp = await client.get(f"/api/v1/optimization/routes/{route_id}")
             assert route_resp.status_code == 200
             route_data = route_resp.json()
@@ -259,7 +322,7 @@ async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
             assert len(route_data["stops"]) == 3
             assert len(route_data["legs"]) == 2
 
-            # 8. Test tenant isolation: User B receives 403 Forbidden
+            # 10. Tenant isolation: unauthorized user receives 403 Forbidden
             other_user = AuthenticatedUser(id=uuid.uuid4(), email="attacker@test.internal")
             app.dependency_overrides[get_current_user] = lambda: other_user
 
@@ -267,7 +330,7 @@ async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
             assert forbidden_resp.status_code == 403
             assert "belongs to another tenant" in forbidden_resp.json()["detail"]
 
-            # 9. Test replan submission by owner -> 202 Accepted
+            # 11. Mid-trip replan submission by owner -> 202 Accepted
             app.dependency_overrides[get_current_user] = lambda: current_user
             replan_body = {
                 "current_location": {"latitude": 22.5450, "longitude": 88.3430},
@@ -284,7 +347,7 @@ async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
             replan_data = replan_resp.json()
             replan_job_id = uuid.UUID(replan_data["job_id"])
 
-            # 10. Process replan task in worker
+            # 12. Outbox routing for replan task
             async with session_factory() as session:
                 replan_outbox_stmt = select(OutboxEventModel).where(
                     OutboxEventModel.execution_id == replan_job_id
@@ -292,9 +355,28 @@ async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
                 replan_outbox = (await session.execute(replan_outbox_stmt)).scalar_one()
                 replan_dispatch_record = replan_outbox.payload_ref
 
-            await process_record(replan_dispatch_record, session_factory)
+            published_queues.clear()
+            replan_msg = OutboxMessage(
+                event_id=replan_outbox.id,
+                execution_id=replan_outbox.execution_id,
+                task_id=replan_outbox.task_id,
+                kind=replan_outbox.kind,
+                payload=replan_outbox.payload or replan_outbox.payload_ref,
+                attempts=replan_outbox.attempts,
+                created_at=replan_outbox.created_at,
+            )
+            await transport_adapter.publish(replan_msg)
+            assert optimizer_queue_url in published_queues
 
-            # 11. Verify replanned route version 2 created
+            # 13. Process replan task in worker with injected provider
+            await process_record(
+                replan_dispatch_record,
+                session_factory,
+                valhalla_client=injected_provider,
+                closure_service=injected_closures,
+            )
+
+            # 14. Verify replanned route version 2 created and reconcile completion
             async with session_factory() as session:
                 replan_task_stmt = select(TaskModel).where(
                     TaskModel.execution_id == replan_job_id
@@ -309,11 +391,109 @@ async def test_route_optimization_worker_e2e_lifecycle(session_factory) -> None:
                 v2_route_id_str = replan_worker_result.output_ref["route_id"]
                 assert replan_worker_result.output_ref["route_version"] == 2
 
-            # 12. Fetch version 2 route
+            replan_reconcile_event = TaskCompletionEvent(
+                event_id=uuid.uuid4(),
+                task_id=replan_task_completed.id,
+                execution_id=replan_job_id,
+                attempt=replan_task_completed.attempt,
+                event_type="TASK_COMPLETED",
+                result_id=replan_worker_result.id,
+            )
+            replan_reconcile_result = await reconciliation_service.reconcile_task_event(
+                event=replan_reconcile_event
+            )
+            assert replan_reconcile_result.status == "APPLIED"
+
+            # 15. Polling replan job -> SUCCEEDED
+            replan_job_resp = await client.get(f"/api/v1/jobs/{replan_job_id}")
+            assert replan_job_resp.status_code == 200
+            assert replan_job_resp.json()["status"] == "SUCCEEDED"
+            assert replan_job_resp.json()["result_available"] is True
+
+            # 16. Fetch version 2 route
             v2_resp = await client.get(f"/api/v1/optimization/routes/{v2_route_id_str}")
             assert v2_resp.status_code == 200
             v2_data = v2_resp.json()
             assert v2_data["route_version"] == 2
             assert v2_data["previous_route_version"] == 1
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_route_optimization_worker_fails_explicitly_without_provider(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies that the worker fails explicitly with ValhallaConnectionError when provider is unavailable."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        trip = TripModel(
+            id=trip_id,
+            owner_id=owner_id,
+            current_version=1,
+            state="draft",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(trip)
+        await session.commit()
+
+    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
+        async with session_factory() as session:
+            yield session
+
+    current_user = AuthenticatedUser(id=owner_id, email="owner@test.internal")
+
+    async def override_get_current_user() -> AuthenticatedUser:
+        return current_user
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            dep_at = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
+            req_payload = {
+                "trip_id": str(trip_id),
+                "departure_at": dep_at.isoformat(),
+                "objective": "FASTEST",
+                "is_round_trip": False,
+                "stops": [
+                    {
+                        "name": "Start",
+                        "location": {"latitude": 22.5726, "longitude": 88.3639},
+                        "stop_type": "ORIGIN",
+                        "dwell_seconds": 0,
+                    },
+                    {
+                        "name": "End",
+                        "location": {"latitude": 22.5448, "longitude": 88.3426},
+                        "stop_type": "DESTINATION",
+                        "dwell_seconds": 0,
+                    },
+                ],
+            }
+            resp = await client.post(
+                "/api/v1/optimization/routes",
+                headers={"Idempotency-Key": f"opt-{uuid.uuid4()}"},
+                json=req_payload,
+            )
+            assert resp.status_code == 202
+            job_id = uuid.UUID(resp.json()["job_id"])
+
+            async with session_factory() as session:
+                outbox_stmt = select(OutboxEventModel).where(OutboxEventModel.execution_id == job_id)
+                outbox_event = (await session.execute(outbox_stmt)).scalar_one()
+                dispatch_record = outbox_event.payload_ref
+
+            # Calling process_record with no injected provider and no VALHALLA_ENDPOINT_URL must fail explicitly
+            monkeypatch.setattr(settings, "VALHALLA_ENDPOINT_URL", None)
+            with pytest.raises(ValhallaConnectionError, match="VALHALLA_ENDPOINT_URL is not configured"):
+                await process_record(dispatch_record, session_factory)
     finally:
         app.dependency_overrides.clear()

@@ -244,3 +244,28 @@ def test_packaging_cli_entrypoint(tmp_path: Path) -> None:
         ]
     )
     assert verify_exit_code == 0
+
+
+def test_dependency_inclusive_python312_linux_artifact(tmp_path: Path) -> None:
+    """Builds the dependency-inclusive Python 3.12 Linux artifact, measures it, and verifies imports + solve in clean runtime."""
+    output_dir = tmp_path / "dep_inclusive_artifact"
+    metrics = build_route_optimizer_artifact(
+        output_dir=output_dir,
+        backend_root=BACKEND_DIR,
+        install_dependencies=True,
+    )
+
+    # 1. Size measurements: uncompressed must be <= 250 MB
+    assert metrics["is_uncompressed_within_limit"] is True
+    assert metrics["uncompressed_bytes"] <= MAX_UNCOMPRESSED_BYTES
+    assert metrics["uncompressed_mb"] <= 250.0
+
+    # 2. Package compliance and audit
+    audit = metrics["audit"]
+    assert audit["is_compliant"] is True
+    assert audit["valhalla_detected"] is False
+    assert len(audit["forbidden_detected"]) == 0
+
+    # 3. Import verification and small solve in clean isolated runtime without repository files or dev site packages
+    assert verify_isolated_environment_imports(output_dir, verify_solve=True) is True
+

@@ -246,7 +246,7 @@ class CompletionReconciliationService:
                 # Phase 3: Barrier Checks
                 # Cancellation Barrier: do not resume or update graph for cancelled execution
                 if execution.status == "CANCELLED" or execution.cancelled_at is not None:
-                    if hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
+                    if active_graph is not None and hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
                         active_graph.checkpointer.discard(str(execution_id))
                     await session.execute(
                         text(
@@ -265,7 +265,7 @@ class CompletionReconciliationService:
 
                 # Deadline Barrier
                 if execution.deadline_at <= now:
-                    if hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
+                    if active_graph is not None and hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
                         active_graph.checkpointer.discard(str(execution_id))
                     if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"):
                         execution.status = "FAILED"
@@ -543,6 +543,46 @@ class CompletionReconciliationService:
                             },
                         )
                         graph_resumed = True
+                    elif execution.status in ("CREATED", "RUNNING") or execution.workflow == "ROUTE_OPTIMIZATION":
+                        # All tasks completed successfully for API-created or standalone execution:
+                        # Reconcile directly to terminal SUCCEEDED status
+                        execution.status = "SUCCEEDED"
+                        execution.lease_token = None
+                        execution.lease_expiry = None
+                        execution.updated_at = now
+                        success_event_id = uuid.uuid4()
+                        session.add(
+                            OutboxEventModel(
+                                id=success_event_id,
+                                execution_id=execution_id,
+                                aggregate_id=execution_id,
+                                task_id=task_id,
+                                kind="EXECUTION_SUCCEEDED",
+                                event_type="EXECUTION_SUCCEEDED",
+                                payload_ref={
+                                    "execution_id": str(execution_id),
+                                    "status": "SUCCEEDED",
+                                    "workflow": execution.workflow,
+                                },
+                                payload={
+                                    "execution_id": str(execution_id),
+                                    "status": "SUCCEEDED",
+                                    "workflow": execution.workflow,
+                                },
+                                due_at=now,
+                                attempts=0,
+                                created_at=now,
+                            )
+                        )
+                        await record_job_event(
+                            session,
+                            execution_id=execution_id,
+                            event_type="EXECUTION_SUCCEEDED",
+                            safe_payload={
+                                "status": "SUCCEEDED",
+                                "workflow": execution.workflow,
+                            },
+                        )
 
                 result_status = (
                     "APPLIED"

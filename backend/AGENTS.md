@@ -28,7 +28,7 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/contracts/routing.py` | Domain routing contracts, stop inputs, leg outputs, and fuel profiles |
 | `src/functions/route_optimizer/` | OR Tools VRPTW routing solver, vehicle continuity tracker, multimodal parking hubs, Valhalla client, closure avoidance, mid trip replanning, and fenced worker service |
 | `src/functions/route_optimizer/consumer.py` | Dedicated SQS consumer Lambda handler with partial batch failure reporting and deadline guards |
-| `src/functions/route_optimizer/packaging.py` | Standalone Lambda packaging under 250 MB unpacked (0.27 MB), asset auditing, and clean environment verification |
+| `src/functions/route_optimizer/packaging.py` | Standalone Lambda packaging under 250 MB unpacked (0.28 MB lightweight, ~211 MB dependency inclusive), asset auditing, and clean isolated runtime verification |
 | `src/functions/api/routes/optimization.py` | Asynchronous route optimization, route retrieval, and mid trip replanning endpoints with tenant isolation |
 | `src/functions/orchestrator/routing/` | Route persistence repository and PostGIS spatial models |
 

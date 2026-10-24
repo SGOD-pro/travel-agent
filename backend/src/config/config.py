@@ -149,6 +149,15 @@ class Settings(BaseSettings):
     )
 
     # Route Optimization and Multimodal Routing
+    ROUTE_OPTIMIZER_QUEUE_URL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "ROUTE_OPTIMIZER_QUEUE_URL",
+            "OPTIMIZER_WORKER_QUEUE_URL",
+            "OPTIMIZER_QUEUE_URL",
+        ),
+        description="Amazon SQS queue URL for route optimizer worker task dispatch",
+    )
     DEFAULT_PARKING_SEARCH_RADIUS_METERS: int = Field(
         default=1000,
         ge=100,

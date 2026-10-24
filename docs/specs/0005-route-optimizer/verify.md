@@ -133,12 +133,20 @@ _Steps derived from spec 0005 acceptance criteria. /check verify runs these; /te
   - `RouteOptimizerWorkerService` claiming tasks under `WorkerFencingService`.
   - Supports actions `solve` and `replan`.
   - Enforces parent execution cancellation check and deadline barriers.
+  - Wires real `ValhallaClient` provider, multimodal planning, and `ClosureAvoidanceService`, failing explicitly with `ValhallaConnectionError` when the required provider is unavailable without falling back to haversine.
   - Persists routes via `RouteRepository.save_route` and completes tasks atomically under lease fencing.
 - [x] Dedicated SQS Lambda consumer in `backend/src/functions/route_optimizer/consumer.py`:
   - `process_record` and `process_batch` with partial batch failure reporting (`batchItemFailures`).
   - Remaining Lambda execution time deadline guards (failing messages when remaining time drops under 5000ms for safe redrive).
+  - Wires provider and closure avoidance services with explicit dependency injection for testability.
+- [x] Production outbox transport routing in `backend/src/functions/orchestrator/execution/transport.py`:
+  - `SqsTransportAdapter.publish` dedicated queue routing for `OPTIMIZER` and `ROUTE_OPTIMIZER` worker tasks.
+  - Configured with `ROUTE_OPTIMIZER_QUEUE_URL` setting and environment variable fallback.
+- [x] Execution completion reconciliation in `backend/src/functions/orchestrator/execution/reconciliation.py`:
+  - `CompletionReconciliationService.reconcile_task_event` transitions API-created `CREATED` executions to terminal `SUCCEEDED` status upon task completion.
+  - Emits `EXECUTION_SUCCEEDED` outbox event and records `EXECUTION_SUCCEEDED` job timeline event.
 - [x] Standalone packaging and SAM infrastructure:
-  - `backend/src/functions/route_optimizer/packaging.py`: builds standalone zip artifact verified at 0.26 MB (under 250 MB ceiling).
+  - `backend/src/functions/route_optimizer/packaging.py`: builds standalone zip artifact verified at 0.28 MB lightweight, and dependency-inclusive Linux package under 250 MB ceiling.
   - `backend/src/functions/route_optimizer/template.yaml`: SAM template configuring `RouteOptimizerFunction`, SQS queue, and dead letter queue with redrive policy.
   - `backend/src/functions/route_optimizer/requirements.txt`: runtime dependencies without orchestrator or LangGraph bloat.
 - [x] Asynchronous REST API endpoints in `backend/src/functions/api/routes/optimization.py`:
@@ -147,21 +155,22 @@ _Steps derived from spec 0005 acceptance criteria. /check verify runs these; /te
   - `POST /api/v1/optimization/routes/{route_id}/replans`: validates replan body, enforces caller ownership, stages replan execution and task rows, and returns 202 Accepted.
   - Registered in `backend/src/functions/api/app.py` under router prefix `/api/v1`.
 - [x] Unit test suite in `backend/tests/unit/test_route_optimizer_slice6.py`:
-  - 12 unit tests verifying envelope parsing, worker and action validation, cooperative cancellation, deadline checks, SQS discard on fencing conflicts, partial batch failures, packaging limits, API validation, and tenant isolation 403 checks.
+  - 15 unit tests verifying envelope parsing, worker and action validation, cooperative cancellation, deadline checks, SQS discard on fencing conflicts, partial batch failures, packaging limits, API validation, tenant isolation 403 checks, and dedicated optimizer outbox queue routing.
 - [x] Integration test suite in `backend/tests/integration/test_route_optimizer_worker_slice6.py`:
-  - Live PostgreSQL and PostGIS test executing end to end flow: API submission, SQS consumption, worker solve under lease fencing, route persistence, job polling, route retrieval, tenant isolation checks, and version 2 mid trip replanning.
+  - 2 live PostgreSQL/PostGIS tests verifying the complete lifecycle: API acceptance -> outbox routing to dedicated queue -> real consumer with injected provider under lease fencing -> completion reconciliation -> terminal job polling confirming SUCCEEDED and result_available -> owner-isolated route retrieval with 403 enforcement, plus explicit provider unavailability failure when unconfigured.
 
 ## Specced surfaces (Slice 7)
 
 - [x] Packaging verification and package auditing in `backend/src/functions/route_optimizer/packaging.py`:
   - `audit_package_contents`: audits package contents preventing bundling of Valhalla C++ binaries or OSM graph tiles.
-  - Confirms uncompressed package size <= 250 MB (verified at 0.27 MB) and compressed size <= 50 MB (verified at 0.07 MB).
-  - Proves handler import in clean isolated environment without fallback to repo root.
+  - Confirms uncompressed package size <= 250 MB (verified at 0.28 MB lightweight, ~211 MB dependency-inclusive) and compressed size <= 50 MB for lightweight distribution.
+  - Proves handler import and small constraint solve in clean isolated Python 3.12 Linux runtime without access to repository files or development site packages.
   - CLI runner supporting `--output-dir`, `--backend-root`, `--install-dependencies`, and `--verify-only`.
 - [x] Unit test suite in `backend/tests/unit/test_route_optimizer_slice7.py`:
-  - 6 unit tests verifying SAM template alignment, requirements lean boundaries and exclusions, standalone packaging size limits, audit detection of forbidden assets/tiles, isolated import proof, and CLI entrypoint.
+  - 7 unit tests verifying SAM template alignment, requirements lean boundaries and exclusions, standalone packaging size limits, audit detection of forbidden assets/tiles, isolated import proof, CLI entrypoint, and dependency-inclusive Python 3.12 Linux packaging with clean runtime import and solve.
 - [x] Connected provider acceptance test suite in `backend/tests/integration/test_valhalla_connected_acceptance_slice7.py`:
   - 6 integration tests verifying connected gate skip logic in offline mode, actionable diagnostics on health probe failure when enabled, live asymmetric matrix `/sources_to_targets`, turn-by-turn maneuvers and geometries `/route`, multimodal network costing segregation (driving vs walking), hard road closure avoidance via `exclude_polygons`, and end-to-end multi-stop itinerary optimization connecting live Valhalla matrices with `OrToolsRoutingSolver`.
+  - Connected Valhalla provider acceptance executed and verified against live service (https://valhalla1.openstreetmap.de) with all 6 tests passing.
 
 ## Commands
 
@@ -170,13 +179,13 @@ _Steps derived from spec 0005 acceptance criteria. /check verify runs these; /te
 - [x] `uv run pytest tests/unit/test_route_optimizer_slice3.py -v`: 8 passed in ~2s: AC-4, AC-5
 - [x] `uv run pytest tests/integration/test_route_optimizer_multimodal_slice3.py -v`: 4 passed in ~12s: AC-4, AC-6
 - [x] `uv run pytest tests/unit/test_route_optimizer_slice4.py -v`: 20 passed in ~3s: AC-3, AC-7
-- [x] `uv run pytest tests/integration/test_valhalla_connected_slice4.py -v`: 1 skipped (offline gate) in ~0.05s: AC-7
+- [x] `uv run pytest tests/integration/test_valhalla_connected_slice4.py -v`: 1 passed against live Valhalla service in ~1.7s: AC-7
 - [x] `uv run pytest tests/unit/test_route_optimizer_slice5.py -v`: 9 passed in ~51s: AC-8
 - [x] `uv run pytest tests/integration/test_route_optimizer_replan_slice5.py -v`: 2 passed in ~21s: AC-8
-- [x] `uv run pytest tests/unit/test_route_optimizer_slice6.py -v`: 12 passed in ~2.3s: AC-9
-- [x] `uv run pytest tests/integration/test_route_optimizer_worker_slice6.py -v`: 1 passed in ~45s: AC-9
-- [x] `uv run pytest tests/unit/test_route_optimizer_slice7.py -v`: 6 passed in ~3.6s: AC-7, AC-9
-- [x] `uv run pytest tests/integration/test_valhalla_connected_acceptance_slice7.py -v`: 6 skipped (offline gate) in ~0.1s: AC-3, AC-7, AC-9
-- [x] `uv run ruff check src/functions/route_optimizer/packaging.py tests/unit/test_route_optimizer_slice7.py tests/integration/test_valhalla_connected_acceptance_slice7.py`: All checks passed
-- [x] `uv run mypy src/functions/route_optimizer/packaging.py tests/unit/test_route_optimizer_slice7.py tests/integration/test_valhalla_connected_acceptance_slice7.py`: Success, zero issues found in 3 source files
+- [x] `uv run pytest tests/unit/test_route_optimizer_slice6.py -v`: 15 passed in ~2.3s: AC-9
+- [x] `uv run pytest tests/integration/test_route_optimizer_worker_slice6.py -v`: 2 passed in ~58s: AC-9
+- [x] `uv run pytest tests/unit/test_route_optimizer_slice7.py -v`: 7 passed in ~35s: AC-7, AC-9
+- [x] `RUN_CONNECTED_VALHALLA_TESTS=1 uv run pytest tests/integration/test_valhalla_connected_acceptance_slice7.py -v`: 6 passed against live Valhalla service in ~16.2s: AC-3, AC-7, AC-9
+- [x] `uv run ruff check src/ tests/`: All checks passed
+- [x] `uv run mypy src/functions/route_optimizer/`: Success, zero issues found in route optimizer source files
 

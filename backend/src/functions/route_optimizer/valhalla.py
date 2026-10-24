@@ -157,7 +157,15 @@ class ValhallaClient:
     ) -> None:
         self.settings = settings or get_settings()
         raw_url = base_url or self.settings.VALHALLA_ENDPOINT_URL
-        self.base_url = raw_url.strip().rstrip("/") if raw_url else None
+        self.base_url: str | None
+        if raw_url:
+            clean_url = raw_url.strip().rstrip("/")
+            for suffix in ("/route", "/sources_to_targets", "/status"):
+                if clean_url.endswith(suffix):
+                    clean_url = clean_url[: -len(suffix)].rstrip("/")
+            self.base_url = clean_url
+        else:
+            self.base_url = None
         self._external_client = http_client
         self._owned_client: httpx.AsyncClient | None = None
         self.call_count: int = 0
@@ -328,6 +336,7 @@ class ValhallaClient:
             "sources": sources_payload,
             "targets": targets_payload,
             "costing": costing,
+            "units": "kilometers",
         }
         if costing_options:
             payload["costing_options"] = costing_options
@@ -385,6 +394,7 @@ class ValhallaClient:
         payload: dict[str, Any] = {
             "locations": locs_payload,
             "costing": costing,
+            "units": "kilometers",
         }
         if exclude_polygons:
             payload["exclude_polygons"] = exclude_polygons

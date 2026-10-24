@@ -19,6 +19,7 @@ from functions.orchestrator.execution.fencing import (
     TaskClaimConflictError,
     TaskLeaseActiveError,
 )
+from functions.route_optimizer.closures import ClosureAvoidanceService
 from functions.route_optimizer.multimodal import MultimodalTransitionService
 from functions.route_optimizer.service import (
     RouteOptimizerWorkerService,
@@ -35,6 +36,8 @@ async def process_record(
     *,
     solver: OrToolsRoutingSolver | None = None,
     multimodal_service: MultimodalTransitionService | None = None,
+    valhalla_client: Any | None = None,
+    closure_service: ClosureAvoidanceService | None = None,
 ) -> None:
     """Parses a TASK_DISPATCH message and executes route optimization under lease fencing."""
     envelope = parse_optimizer_dispatch_message(record)
@@ -55,6 +58,8 @@ async def process_record(
             session,
             solver=solver,
             multimodal_service=multimodal_service,
+            valhalla_client=valhalla_client,
+            closure_service=closure_service,
         )
         try:
             await service.execute_task(envelope)
@@ -83,6 +88,8 @@ async def process_batch(
     *,
     solver: OrToolsRoutingSolver | None = None,
     multimodal_service: MultimodalTransitionService | None = None,
+    valhalla_client: Any | None = None,
+    closure_service: ClosureAvoidanceService | None = None,
 ) -> list[dict[str, str]]:
     """Processes an SQS batch and returns failed item identifiers for partial batch responses."""
     if session_factory is None:
@@ -112,6 +119,8 @@ async def process_batch(
                 session_factory,
                 solver=solver,
                 multimodal_service=multimodal_service,
+                valhalla_client=valhalla_client,
+                closure_service=closure_service,
             )
         except Exception as exc:
             logger.error("Failed processing record %s: %s", message_id, exc, exc_info=True)

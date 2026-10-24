@@ -17,6 +17,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from typing import Any
 
 from config.config import settings
 from contracts.routing import (
@@ -54,12 +55,14 @@ class MultimodalTransitionService:
     def __init__(
         self,
         places_repo: CanonicalPlacesRepository | None = None,
+        valhalla_client: Any | None = None,
         search_radius_meters: float | None = None,
         search_parking_fn: (
             Callable[[Point, float], Awaitable[list[tuple[CanonicalPlaceModel, float]]]] | None
         ) = None,
     ) -> None:
         self._places_repo = places_repo
+        self._valhalla_client = valhalla_client
         self._search_radius_meters = (
             search_radius_meters
             if search_radius_meters is not None
@@ -237,11 +240,27 @@ class MultimodalTransitionService:
                     active_parking_hub = None  # Reunited with vehicle, ready to drive
 
                 # Transit to target
-                transit_dist = haversine_distance_m(current_traveler_stop.location, target.location)
-                transit_speed = (
-                    DEFAULT_DRIVE_SPEED_MPS if is_driving_trip else DEFAULT_WALK_SPEED_MPS
-                )
-                transit_dur = max(1, int(round(transit_dist / transit_speed)))
+                if self._valhalla_client is not None and is_driving_trip:
+                    try:
+                        matrix = await self._valhalla_client.sources_to_targets(
+                            origins=[current_traveler_stop.location],
+                            destinations=[target.location],
+                            mode=request.transport_mode,
+                        )
+                        dur = matrix.durations_s[0][0]
+                        dist = matrix.distances_m[0][0]
+                        transit_dist = dist if dist is not None else haversine_distance_m(current_traveler_stop.location, target.location)
+                        transit_dur = dur if dur is not None else max(1, int(round(transit_dist / DEFAULT_DRIVE_SPEED_MPS)))
+                    except Exception as exc:
+                        logger.warning("Valhalla transit lookup failed (%s); using modeled speed", exc)
+                        transit_dist = haversine_distance_m(current_traveler_stop.location, target.location)
+                        transit_dur = max(1, int(round(transit_dist / DEFAULT_DRIVE_SPEED_MPS)))
+                else:
+                    transit_dist = haversine_distance_m(current_traveler_stop.location, target.location)
+                    transit_speed = (
+                        DEFAULT_DRIVE_SPEED_MPS if is_driving_trip else DEFAULT_WALK_SPEED_MPS
+                    )
+                    transit_dur = max(1, int(round(transit_dist / transit_speed)))
                 arr_time = current_time + timedelta(seconds=transit_dur)
 
                 # Dwell & window accounting

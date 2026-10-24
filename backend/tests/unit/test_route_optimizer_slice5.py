@@ -32,7 +32,7 @@ from contracts.routing import (
 )
 from contracts.trips import TransportMode
 from functions.orchestrator.routing.repository import RouteVersionConflictError
-from functions.route_optimizer.fixtures import FIXED_STOP_IDS
+from functions.route_optimizer.fixtures import FIXED_STOP_IDS, MockValhallaClient
 from functions.route_optimizer.replan import RouteReplanService
 from functions.route_optimizer.valhalla import ValhallaSSRFError
 
@@ -162,7 +162,7 @@ def _build_sample_route_version_1() -> OptimizedRoute:
 async def test_replan_freezes_completed_stops_and_updates_version() -> None:
     """Verifies that completed stops retain historical arrival timestamps and version increments to 2."""
     route_v1 = _build_sample_route_version_1()
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
 
     # Traveler reports delay while at Victoria Memorial (Stop 1 completed)
     replan_time = datetime(2026, 10, 24, 11, 0, tzinfo=UTC)  # 30 min delay
@@ -225,7 +225,7 @@ async def test_replan_freezes_completed_stops_and_updates_version() -> None:
 async def test_replan_optimistic_concurrency_conflict() -> None:
     """Verifies that version mismatch raises RouteVersionConflictError."""
     route_v1 = _build_sample_route_version_1()
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
 
     request = RouteReplanRequest(
         current_location=Point(latitude=22.5450, longitude=88.3430),
@@ -242,7 +242,7 @@ async def test_replan_optimistic_concurrency_conflict() -> None:
 async def test_replan_coordinate_ssrf_validation() -> None:
     """Out-of-bounds current_location raises ValhallaSSRFError."""
     route_v1 = _build_sample_route_version_1()
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
 
     request = RouteReplanRequest.model_construct(
         current_location=Point.model_construct(latitude=95.0, longitude=88.0),  # Bypass Pydantic field constraint
@@ -258,7 +258,7 @@ async def test_replan_coordinate_ssrf_validation() -> None:
 async def test_replan_zero_completed_stops() -> None:
     """Replan before reaching any destination sets current location as sole initial origin."""
     route_v1 = _build_sample_route_version_1()
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
 
     # Traveler starts from a different location before reaching any destination
     new_start = Point(latitude=22.5600, longitude=88.3500)
@@ -282,7 +282,7 @@ async def test_replan_zero_completed_stops() -> None:
 async def test_replan_all_stops_completed() -> None:
     """Replan when all destination stops are marked completed returns feasible route cleanly."""
     route_v1 = _build_sample_route_version_1()
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
 
     request = RouteReplanRequest(
         current_location=Point(latitude=22.5850, longitude=88.3430),
@@ -376,7 +376,7 @@ async def test_replan_dropped_optional_stop_on_tight_deadline() -> None:
         completed_stop_ids=[FIXED_STOP_IDS[0], FIXED_STOP_IDS[1]],
     )
 
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
     route_v2 = await replan_service.replan_route(route_v1, request)
 
     assert route_v2.route_version == 2
@@ -398,7 +398,7 @@ async def test_replan_fuel_cost_calculation() -> None:
         currency=Currency.INR,
     )
 
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
     request = RouteReplanRequest(
         current_location=Point(latitude=22.5450, longitude=88.3430),
         replan_at=datetime(2026, 10, 24, 11, 0, tzinfo=UTC),
@@ -468,7 +468,7 @@ async def test_replan_infeasible_schedule_with_zero_completed_stops() -> None:
         completed_stop_ids=[],
     )
 
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
     route_v2 = await replan_service.replan_route(route_v1, request)
 
     assert route_v2.route_version == 2
@@ -501,7 +501,7 @@ async def test_replan_retains_previously_dropped_stops_in_audit_record() -> None
         update={"dropped_stops": [dropped_stop]}
     )
 
-    replan_service = RouteReplanService()
+    replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
     request = RouteReplanRequest(
         current_location=Point(latitude=22.5448, longitude=88.3426),
         replan_at=base_time + timedelta(hours=1),

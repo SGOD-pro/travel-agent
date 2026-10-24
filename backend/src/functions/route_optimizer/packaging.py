@@ -48,13 +48,31 @@ PERMITTED_CONTRACT_FILES: tuple[str, ...] = (
 
 
 def resolve_python_runtime_binary() -> str:
-    """Finds a compatible Python runtime binary for building and verifying the artifact."""
-    if sys.version_info[:2] in ((3, 12), (3, 13)):
-        return sys.executable
+    """Finds a compatible Python 3.12 runtime binary for building and verifying the artifact."""
+    # 1. Search uv toolchain for Python 3.12
+    uv_bin = shutil.which("uv")
+    if uv_bin:
+        try:
+            res = subprocess.run(
+                [uv_bin, "python", "find", "3.12"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            found_path = res.stdout.strip()
+            if found_path and os.access(found_path, os.X_OK):
+                return found_path
+        except Exception:
+            pass
 
-    which_py = shutil.which("python3.12") or shutil.which("python3")
-    if which_py and os.access(which_py, os.X_OK):
-        return which_py
+    # 2. Check PATH and standard locations for python3.12
+    for candidate in ("python3.12", "/usr/bin/python3.12", "/usr/local/bin/python3.12"):
+        which_py = shutil.which(candidate)
+        if which_py and os.access(which_py, os.X_OK):
+            return which_py
+
+    if sys.version_info[:2] == (3, 12):
+        return sys.executable
 
     return sys.executable
 
@@ -124,9 +142,23 @@ def build_route_optimizer_artifact(
     if install_dependencies:
         req_file = opt_dest / "requirements.txt"
         if req_file.exists():
-            subprocess.run(
-                [
-                    resolve_python_runtime_binary(),
+            py_bin = resolve_python_runtime_binary()
+            uv_bin = shutil.which("uv")
+            if uv_bin:
+                cmd = [
+                    uv_bin,
+                    "pip",
+                    "install",
+                    "--python",
+                    py_bin,
+                    "--target",
+                    str(output_dir),
+                    "-r",
+                    str(req_file),
+                ]
+            else:
+                cmd = [
+                    py_bin,
                     "-m",
                     "pip",
                     "install",
@@ -135,10 +167,17 @@ def build_route_optimizer_artifact(
                     "--target",
                     str(output_dir),
                     "--no-cache-dir",
-                ],
-                check=True,
-                capture_output=True,
-            )
+                ]
+            subprocess.run(cmd, check=True, capture_output=True)
+
+            # Strip unnecessary metadata, bytecode, and test directories to optimize Lambda package size
+            for dist_info in output_dir.glob("*.dist-info"):
+                shutil.rmtree(dist_info, ignore_errors=True)
+            for pycache in output_dir.rglob("__pycache__"):
+                shutil.rmtree(pycache, ignore_errors=True)
+            for tests_dir in list(output_dir.rglob("tests")) + list(output_dir.rglob("test")):
+                if tests_dir.is_dir() and "functions" not in str(tests_dir):
+                    shutil.rmtree(tests_dir, ignore_errors=True)
 
     # 8. Measure uncompressed size
     uncompressed_bytes = sum(
@@ -149,11 +188,11 @@ def build_route_optimizer_artifact(
     audit_res = audit_package_contents(output_dir)
 
     # 10. Build zip archive to measure compressed size
-    zip_path = output_dir.parent / "route_optimizer.zip"
+    zip_path = output_dir.with_suffix(".zip")
     if zip_path.exists():
         zip_path.unlink()
 
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for f in output_dir.rglob("*"):
             if f.is_file():
                 zf.write(f, f.relative_to(output_dir))
@@ -216,33 +255,103 @@ def audit_package_contents(artifact_dir: Path) -> dict[str, Any]:
     }
 
 
-def verify_isolated_environment_imports(artifact_dir: Path) -> bool:
-    """Verifies that the consumer handler can be imported cleanly from the artifact."""
+def verify_isolated_environment_imports(
+    artifact_dir: Path,
+    *,
+    verify_solve: bool = False,
+) -> bool:
+    """Verifies that the consumer handler can be imported cleanly from the artifact in an isolated runtime without repository files, and optionally runs a small solve."""
     consumer_file = artifact_dir / "functions" / "route_optimizer" / "consumer.py"
     if not consumer_file.exists():
         return False
 
     py_bin = resolve_python_runtime_binary()
-    cmd = [
-        py_bin,
-        "-c",
-        "from functions.route_optimizer.consumer import handler; print('IMPORT_OK')",
-    ]
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(artifact_dir)
+    has_installed_deps = (artifact_dir / "ortools").exists() or (artifact_dir / "pydantic").exists()
 
-    res = subprocess.run(
-        cmd,
-        env=env,
-        cwd=str(artifact_dir),
-        capture_output=True,
-        text=True,
-        check=False,
+    if has_installed_deps:
+        # Strict clean runtime: ONLY the artifact dir and standard library, zero dev repo, zero dev site-packages
+        code = """
+import sys
+from pathlib import Path
+
+art_dir = sys.argv[1]
+sys.path = [art_dir] + [p for p in sys.path if 'site-packages' not in p and 'travel-agent' not in p]
+
+from functions.route_optimizer.consumer import handler
+print('CLEAN_IMPORT_OK')
+
+if sys.argv[2] == 'solve':
+    import uuid
+    from datetime import UTC, datetime
+    from contracts.routing import Point, RouteRequest, RouteStopInput, StopType
+    from contracts.trips import TransportMode
+    from functions.route_optimizer.solver import OrToolsRoutingSolver
+
+    s0 = RouteStopInput(id=uuid.uuid4(), name='A', location=Point(latitude=22.5, longitude=88.3), stop_type=StopType.ORIGIN)
+    s1 = RouteStopInput(id=uuid.uuid4(), name='B', location=Point(latitude=22.6, longitude=88.4), stop_type=StopType.DESTINATION)
+    req = RouteRequest(
+        owner_id=uuid.uuid4(),
+        trip_id=uuid.uuid4(),
+        departure_at=datetime.now(UTC),
+        stops=[s0, s1],
+        transport_mode=TransportMode.CAR_PETROL,
     )
-    if res.returncode != 0 or "IMPORT_OK" not in res.stdout:
-        logger.error("Artifact isolation import check failed: %s\n%s", res.stdout, res.stderr)
-        return False
-    return True
+    solver = OrToolsRoutingSolver()
+    res = solver.solve(req, [[0, 600], [600, 0]], [[0, 5000], [5000, 0]])
+    assert res.status.value in ('FEASIBLE', 'OPTIMAL')
+    print('CLEAN_SOLVE_OK')
+"""
+        cmd = [
+            py_bin,
+            "-I",
+            "-c",
+            code,
+            str(artifact_dir.resolve()),
+            "solve" if verify_solve else "nosolve",
+        ]
+        res = subprocess.run(
+            cmd,
+            cwd=str(artifact_dir),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0 or "CLEAN_IMPORT_OK" not in res.stdout:
+            logger.error("Clean runtime import check failed: %s\n%s", res.stdout, res.stderr)
+            return False
+        if verify_solve and "CLEAN_SOLVE_OK" not in res.stdout:
+            logger.error("Clean runtime solve check failed: %s\n%s", res.stdout, res.stderr)
+            return False
+        return True
+    else:
+        # Lightweight mode: verify that artifact code layout imports cleanly without repo files on sys.path
+        code = """
+import sys
+
+art_dir = sys.argv[1]
+# Ensure repo src directory is NOT in sys.path, only artifact_dir and existing site-packages
+sys.path = [art_dir] + [p for p in sys.path if not p.endswith('/src') and not p.endswith('/backend')]
+
+from functions.route_optimizer.consumer import handler
+print('IMPORT_OK')
+"""
+        cmd = [
+            sys.executable,
+            "-c",
+            code,
+            str(artifact_dir.resolve()),
+        ]
+        res = subprocess.run(
+            cmd,
+            cwd=str(artifact_dir),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode != 0 or "IMPORT_OK" not in res.stdout:
+            logger.error("Artifact isolation import check failed: %s\n%s", res.stdout, res.stderr)
+            return False
+        return True
 
 
 def main(args: list[str] | None = None) -> int:
