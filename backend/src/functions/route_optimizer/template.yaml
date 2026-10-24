@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Route Optimizer Function SAM Template with SQS Partial Batch Responses and DLQ Redrive Policies
+
+Parameters:
+  Environment:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - local
+      - staging
+      - production
+    Description: Deployment target environment matching application Settings
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: PostgreSQL connection string with asyncpg dialect
+  OutboxQueueUrl:
+    Type: String
+    Default: 'https://sqs.ap-south-1.amazonaws.com/123456789012/swena-outbox-events'
+    Description: Amazon SQS queue URL for outbox relay events (defaults to local mock queue URL)
+  ValhallaEndpointUrl:
+    Type: String
+    Default: 'http://localhost:8002'
+    Description: External Valhalla HTTP routing endpoint URL
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 120
+    MemorySize: 1024
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        DATABASE_URL: !Ref DatabaseUrl
+        OUTBOX_QUEUE_URL: !Ref OutboxQueueUrl
+        SQS_QUEUE_URL: !Ref OutboxQueueUrl
+        VALHALLA_ENDPOINT_URL: !Ref ValhallaEndpointUrl
+        ORTOOLS_SOLVER_TIME_LIMIT_SECONDS: '10'
+        DEFAULT_PARKING_SEARCH_RADIUS_METERS: '1000'
+
+Resources:
+  # Dead Letter Queue for failed task attempts
+  RouteOptimizerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'route-optimizer-task-dlq-${Environment}'
+      MessageRetentionPeriod: 1209600 # 14 days
+
+  # Work Queue with Redrive Policy
+  RouteOptimizerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub 'route-optimizer-task-dispatch-${Environment}'
+      VisibilityTimeout: 240
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt RouteOptimizerDLQ.Arn
+        maxReceiveCount: 5
+
+  # Dedicated Route Optimizer SQS Consumer Function
+  RouteOptimizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub 'route-optimizer-${Environment}'
+      Handler: functions.route_optimizer.consumer.handler
+      CodeUri: ../../../build/route_optimizer
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      Timeout: 120
+      MemorySize: 1024
+      Description: SQS consumer for route optimizer TASK_DISPATCH messages
+      Events:
+        TaskDispatchBatch:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt RouteOptimizerQueue.Arn
+            BatchSize: 5
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+Outputs:
+  RouteOptimizerQueueUrl:
+    Description: URL of SQS Route Optimizer Task Dispatch Queue
+    Value: !Ref RouteOptimizerQueue
+  RouteOptimizerQueueArn:
+    Description: ARN of SQS Route Optimizer Task Dispatch Queue
+    Value: !GetAtt RouteOptimizerQueue.Arn
+  RouteOptimizerDLQUrl:
+    Description: URL of SQS Route Optimizer DLQ
+    Value: !Ref RouteOptimizerDLQ
+  RouteOptimizerDLQArn:
+    Description: ARN of SQS Route Optimizer DLQ
+    Value: !GetAtt RouteOptimizerDLQ.Arn
+  RouteOptimizerFunctionArn:
+    Description: ARN of Route Optimizer Lambda Function
+    Value: !GetAtt RouteOptimizerFunction.Arn

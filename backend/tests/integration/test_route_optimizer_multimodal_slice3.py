@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 from geoalchemy2.elements import WKTElement
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import functions.api.models  # noqa: F401 - register TripModel in metadata
@@ -92,14 +93,24 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
         session_factory: async_sessionmaker[AsyncSession],
     ) -> None:
         """Verifies PostGIS spatial query finds verified public parking within threshold."""
-        target_lat = 22.5726
-        target_lng = 88.3639
+        rand_offset = float(uuid.uuid4().int % 500) * 0.001 + 0.1
+        target_lat = 22.5726 + rand_offset
+        target_lng = 88.3639 + rand_offset
         target_pt = CoordinatePoint(lng=target_lng, lat=target_lat)
 
         verified_parking_id = uuid.uuid4()
         candidate_parking_id = uuid.uuid4()
         restricted_parking_id = uuid.uuid4()
         distant_parking_id = uuid.uuid4()
+        bicycle_parking_id = uuid.uuid4()
+
+        inserted_ids = [
+            verified_parking_id,
+            candidate_parking_id,
+            restricted_parking_id,
+            distant_parking_id,
+            bicycle_parking_id,
+        ]
 
         async with session_factory() as session:
             async with session.begin():
@@ -152,7 +163,6 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
                 session.add(p4)
 
                 # 5. Nearby bicycle parking stand at ~250m (should be excluded by bicycle filter)
-                bicycle_parking_id = uuid.uuid4()
                 p5 = CanonicalPlaceModel(
                     id=bicycle_parking_id,
                     primary_name="Metro Station Bicycle Stand Parking",
@@ -164,22 +174,32 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
                 )
                 session.add(p5)
 
-        # Query using CanonicalPlacesRepository
-        async with session_factory() as session:
-            repo = CanonicalPlacesRepository(session)
-            results = await repo.find_verified_parking_near(target_pt, max_distance_meters=1000.0)
+        try:
+            # Query using CanonicalPlacesRepository
+            async with session_factory() as session:
+                repo = CanonicalPlacesRepository(session)
+                results = await repo.find_verified_parking_near(target_pt, max_distance_meters=1000.0)
 
-            result_ids = [place.id for place, _ in results]
-            assert verified_parking_id in result_ids
-            assert candidate_parking_id not in result_ids
-            assert restricted_parking_id not in result_ids
-            assert distant_parking_id not in result_ids
-            assert bicycle_parking_id not in result_ids
+                result_ids = [place.id for place, _ in results]
+                assert verified_parking_id in result_ids
+                assert candidate_parking_id not in result_ids
+                assert restricted_parking_id not in result_ids
+                assert distant_parking_id not in result_ids
+                assert bicycle_parking_id not in result_ids
 
-            # Verify distance is accurate and under 1000m
-            for place, distance_m in results:
-                if place.id == verified_parking_id:
-                    assert 100.0 <= distance_m <= 600.0
+                # Verify distance is accurate and under 1000m
+                for place, distance_m in results:
+                    if place.id == verified_parking_id:
+                        assert 100.0 <= distance_m <= 600.0
+        finally:
+            # Teardown: delete inserted test rows to prevent database residue
+            async with session_factory() as session:
+                async with session.begin():
+                    await session.execute(
+                        delete(CanonicalPlaceModel).where(
+                            CanonicalPlaceModel.id.in_(inserted_ids)
+                        )
+                    )
 
     async def test_multimodal_transition_service_with_real_database(
         self,

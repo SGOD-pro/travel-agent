@@ -10,9 +10,14 @@ Conforms to specification 0005:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from contracts.routing import Point, RouteRequest, RouteStopInput, StopType
+from contracts.routing import MatrixResponse, Point, RouteRequest, RouteStopInput, StopType
+from contracts.trips import TransportMode
+
+if TYPE_CHECKING:
+    from functions.route_optimizer.valhalla import ValhallaRouteResult
 
 FIXED_STOP_IDS: list[UUID] = [
     UUID("00000000-0000-0000-0000-000000000001"),
@@ -132,3 +137,133 @@ def create_fixed_5x5_request(
         is_round_trip=is_round_trip,
         time_limit_seconds=time_limit_seconds,
     )
+
+
+class MockValhallaClient:
+    """Offline mock client simulating external Valhalla routing service."""
+
+    def __init__(
+        self,
+        base_url: str = "http://mock-valhalla:8002",
+        *,
+        is_healthy: bool = True,
+    ) -> None:
+        self.base_url = base_url
+        self.is_healthy = is_healthy
+        self.call_count: int = 0
+        self.retry_count: int = 0
+        self.exclude_polygons_received: list[list[list[float]]] = []
+        self.simulated_error: Exception | None = None
+        self.canned_matrix: MatrixResponse | None = None
+
+    async def aclose(self) -> None:
+        pass
+
+    async def __aenter__(self) -> MockValhallaClient:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        pass
+
+    async def check_health(self) -> bool:
+        return self.is_healthy
+
+    async def sources_to_targets(
+        self,
+        origins: list[Point],
+        destinations: list[Point],
+        mode: TransportMode = TransportMode.CAR_PETROL,
+        costing_options: dict[str, object] | None = None,
+    ) -> MatrixResponse:
+        self.call_count += 1
+        if self.simulated_error is not None:
+            raise self.simulated_error
+
+        if self.canned_matrix is not None:
+            return self.canned_matrix
+
+        # Generate realistic offline haversine matrix
+        speed_mps = 1.38889 if mode == TransportMode.WALKING else 12.5
+        durations_s: list[list[int | None]] = []
+        distances_m: list[list[int | None]] = []
+
+        # Inlined import to avoid circular dependencies between fixtures and continuity
+        from functions.route_optimizer.continuity import haversine_distance_m
+
+        for orig in origins:
+            dur_row: list[int | None] = []
+            dist_row: list[int | None] = []
+            for dest in destinations:
+                dist = haversine_distance_m(orig, dest)
+                dur = max(1, int(round(dist / speed_mps))) if dist > 0 else 0
+                dist_row.append(dist)
+                dur_row.append(dur)
+            durations_s.append(dur_row)
+            distances_m.append(dist_row)
+
+        return MatrixResponse(durations_s=durations_s, distances_m=distances_m)
+
+    async def route(
+        self,
+        locations: list[Point],
+        mode: TransportMode = TransportMode.CAR_PETROL,
+        exclude_polygons: list[list[list[float]]] | None = None,
+        costing_options: dict[str, object] | None = None,
+    ) -> ValhallaRouteResult:
+        self.call_count += 1
+        if self.simulated_error is not None:
+            raise self.simulated_error
+
+        if exclude_polygons:
+            self.exclude_polygons_received.extend(exclude_polygons)
+
+        # Inlined imports to avoid circular dependencies between fixtures, continuity, and valhalla
+        from functions.route_optimizer.continuity import haversine_distance_m
+        from functions.route_optimizer.valhalla import ValhallaLegResult, ValhallaRouteResult
+
+        speed_mps = 1.38889 if mode == TransportMode.WALKING else 12.5
+        legs: list[ValhallaLegResult] = []
+        total_dist = 0
+        total_time = 0
+        all_coords: list[list[float]] = []
+
+        for i in range(len(locations) - 1):
+            p1 = locations[i]
+            p2 = locations[i + 1]
+            dist = haversine_distance_m(p1, p2)
+            dur = max(1, int(round(dist / speed_mps))) if dist > 0 else 0
+            total_dist += dist
+            total_time += dur
+
+            # Synthetic LineString
+            coords = [
+                [p1.longitude, p1.latitude],
+                [(p1.longitude + p2.longitude) / 2.0, (p1.latitude + p2.latitude) / 2.0],
+                [p2.longitude, p2.latitude],
+            ]
+            all_coords.extend(coords)
+
+            legs.append(
+                ValhallaLegResult(
+                    distance_m=dist,
+                    travel_seconds=dur,
+                    geometry={"type": "LineString", "coordinates": coords},
+                    turn_instructions=[
+                        {
+                            "instruction": f"Head toward stop {i + 1}",
+                            "type": 1,
+                            "street_names": ["Main Road"],
+                            "time_seconds": dur,
+                            "distance_meters": dist,
+                        }
+                    ],
+                )
+            )
+
+        return ValhallaRouteResult(
+            total_distance_m=total_dist,
+            total_travel_seconds=total_time,
+            legs=legs,
+            geometry={"type": "LineString", "coordinates": all_coords},
+        )
+

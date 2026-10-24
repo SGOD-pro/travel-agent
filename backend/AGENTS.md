@@ -26,7 +26,10 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/decision_router/` | Remote LAYA decision router client adapter, TypeSafe Jev wire schemas, sanitization, and offline fixtures |
 | `src/functions/orchestrator/decision/` | Decision policy validator, database models, canonical replay digests, and idempotent repository |
 | `src/contracts/routing.py` | Domain routing contracts, stop inputs, leg outputs, and fuel profiles |
-| `src/functions/route_optimizer/` | OR Tools VRPTW routing solver, vehicle continuity tracker, and multimodal parking hub service |
+| `src/functions/route_optimizer/` | OR Tools VRPTW routing solver, vehicle continuity tracker, multimodal parking hubs, Valhalla client, closure avoidance, mid trip replanning, and fenced worker service |
+| `src/functions/route_optimizer/consumer.py` | Dedicated SQS consumer Lambda handler with partial batch failure reporting and deadline guards |
+| `src/functions/route_optimizer/packaging.py` | Standalone Lambda packaging under 250 MB unpacked (0.27 MB), asset auditing, and clean environment verification |
+| `src/functions/api/routes/optimization.py` | Asynchronous route optimization, route retrieval, and mid trip replanning endpoints with tenant isolation |
 | `src/functions/orchestrator/routing/` | Route persistence repository and PostGIS spatial models |
 
 ## Commands
@@ -49,6 +52,9 @@ uv run python -m functions.evidence_collector.packaging
 
 # Package isolated browser worker Lambda
 uv run python -m functions.browser.packaging
+
+# Package isolated route optimizer Lambda
+uv run python -m functions.route_optimizer.packaging
 
 # Run database migrations
 uv run alembic upgrade head
@@ -84,6 +90,13 @@ uv run alembic upgrade head
 - Route optimizer enforces forbidden unreachable transitions via arc removal, dwell completion before venue closing, and honest solver statuses (OPTIMAL requires proof, timeout returns TIME_LIMIT).
 - Multimodal routes for private vehicles automatically discover verified public parking hubs within DEFAULT_PARKING_SEARCH_RADIUS_METERS, failing closed with INFEASIBLE and NO_VERIFIED_PARKING_HUB when missing.
 - Vehicle continuity tracker guarantees driving legs depart only from the stop where the vehicle is currently parked, preventing teleportation, and fuel calculations strictly isolate driving distance from walking.
+- Valhalla HTTP client provides matrices and turn-by-turn routes with polyline6 decoding, bounded retry backoff, and coordinate boundary safety.
+- Closure avoidance service transforms verified road restrictions into Valhalla exclude polygons and enforces post-routing spatial revalidation with strict fail-closed semantics.
+- Mid trip replanning freezes completed stops with historical timestamps, injects traveler GPS coordinates as departure origin, re-optimizes remaining stops, and enforces two tier optimistic concurrency checks on immutable route versions.
+- Route optimizer worker service executes under WorkerFencingService with parent first locking order, cooperative cancellation checks, and atomic completion.
+- Route optimizer consumer reports SQS partial batch failures via batchItemFailures and uses remaining execution time guards (< 5000ms) for safe redrive.
+- Route optimizer packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed (0.26 MB measured), excluding LangGraph, Playwright, and FastAPI dependencies.
+- Optimization endpoints enforce caller tenant ownership with explicit 403 Forbidden responses on tenant mismatch.
 
 ## Gotchas
 

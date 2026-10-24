@@ -155,6 +155,35 @@ class Settings(BaseSettings):
         le=50000,
         description="Search radius in meters for locating candidate parking hubs around pedestrian destinations",
     )
+    VALHALLA_ENDPOINT_URL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("VALHALLA_ENDPOINT_URL", "ROUTING_BASE_URL"),
+        description="HTTP URL for the external Valhalla routing service instance",
+    )
+    ORTOOLS_SOLVER_TIME_LIMIT_SECONDS: int = Field(
+        default=10,
+        ge=1,
+        le=120,
+        description="Maximum calculation budget allocated to OR Tools before yielding best feasible result",
+    )
+    VALHALLA_CONNECT_TIMEOUT_SECONDS: float = Field(
+        default=2.0,
+        ge=0.1,
+        le=30.0,
+        description="Connection timeout for Valhalla HTTP requests",
+    )
+    VALHALLA_READ_TIMEOUT_SECONDS: float = Field(
+        default=5.0,
+        ge=0.5,
+        le=60.0,
+        description="Read timeout for Valhalla matrix and route requests",
+    )
+    VALHALLA_MAX_RETRIES: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="Maximum retry attempts for transient network or 5xx errors on Valhalla requests",
+    )
 
     @model_validator(mode="after")
     def validate_laya_deadlines(self) -> Settings:

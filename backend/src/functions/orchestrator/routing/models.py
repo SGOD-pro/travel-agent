@@ -281,6 +281,7 @@ class RouteStopModel(Base):
     def to_scheduled_stop_output(self) -> ScheduledStopOutput:
         """Converts persistent stop model to domain ScheduledStopOutput."""
         return ScheduledStopOutput(
+            id=self.id,
             stop_id=self.id,
             place_id=self.place_id,
             stop_order=self.stop_order,

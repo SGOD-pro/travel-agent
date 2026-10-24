@@ -131,26 +131,35 @@ Spec 0004 (`docs/specs/0004-remote-laya-decision-router.md`, Status: Accepted) �
 
 ## Phase 7: Route Optimization
 
-### 5. Route optimizer and multimodal itinerary planning · in-progress
+### 5. Route optimizer and multimodal itinerary planning · done
 Optimize multi stop itineraries across opening hours, dwell times, and transit modes using Google OR Tools constraint solving and Valhalla road matrices, with automated parking hub injection for pedestrian destinations, dynamic road closure avoidance, and mid trip replanning. Strictly excludes payments, booking checkout, client user interfaces, and live AWS deployment.
 **Done when:** domain contracts and PostGIS tables persist routes and legs, OR Tools solver enforces time windows and stop priorities with drop penalties for optional stops, Valhalla adapter calculates road and pedestrian matrices with circuit breaking, parking hubs are injected for pedestrian restricted venues, mid trip replanning freezes completed stops from live GPS coordinates, and async worker executes under PostgreSQL lease fencing.
 - [x] Design it (spec): [0005](../specs/0005-route-optimizer.md)
-- [ ] Build it: `/develop route optimizer and multimodal itinerary planning`
+- [x] Build it: `/develop route optimizer and multimodal itinerary planning`
    - [x] Offline core solver vertical slice, routing contracts, and scheduler facade (AC-1, AC-2, AC-5)
    - [x] Database migration and PostGIS repository with UUID foreign keys (AC-6)
    - [x] Multimodal vehicle continuity and canonical parking hub service (AC-4)
-   - [ ] External Valhalla HTTP client, hard closure avoidance, and connected gate (AC-3, AC-7)
-   - [ ] Mid trip dynamic replanning engine and optimistic concurrency (AC-8)
-   - [ ] Fenced SQS worker service, job API polling, and standalone Lambda packaging (AC-7, AC-9)
-- [ ] Verify it: `/check verify 0005-route-optimizer`
+   - [x] External Valhalla HTTP client, hard closure avoidance, and connected gate (AC-3, AC-7)
+   - [x] Mid trip dynamic replanning engine and optimistic concurrency (AC-8)
+   - [x] Fenced SQS worker service, job API polling, and standalone Lambda packaging (AC-7, AC-9)
+   - [x] Standalone Lambda ZIP packaging and connected provider acceptance (AC-7, AC-9)
+- [x] Verify it: `/check verify 0005-route-optimizer`
    - [x] Slice 1 offline core solver and routing contracts: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 15 behaviors)
    - [x] Slice 2 database migration and PostGIS repository: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 4 live database behaviors)
    - [x] Slice 3 multimodal vehicle continuity and parking hub service: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 12 behaviors)
-- [ ] Review it (fresh model): `/check review 0005-route-optimizer`
+   - [x] Slice 4 external Valhalla HTTP client and hard closure avoidance: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 19 unit and integration behaviors)
+   - [x] Slice 5 mid trip dynamic replanning engine and optimistic concurrency: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 11 behaviors)
+   - [x] Slice 6 fenced SQS worker service, REST API, and standalone packaging: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 13 behaviors)
+   - [x] Slice 7 standalone Lambda ZIP packaging and connected provider acceptance: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 12 unit and integration behaviors)
+- [x] Review it (fresh model): `/check review 0005-route-optimizer`
    - [x] Slice 1 offline core solver and routing contracts: [2026-10-23-route-optimizer-slice1.md](../reviews/2026-10-23-route-optimizer-slice1.md) (Approve)
    - [x] Slice 2 database migration and PostGIS repository: [2026-10-23-route-optimizer-slice2.md](../reviews/2026-10-23-route-optimizer-slice2.md) (Approve)
    - [x] Slice 3 multimodal vehicle continuity and parking hub service: [2026-10-23-route-optimizer-slice3.md](../reviews/2026-10-23-route-optimizer-slice3.md) (Approve with nits)
-- [ ] Test it: `/test 0005-route-optimizer`
+   - [x] Slice 4 external Valhalla HTTP client and hard closure avoidance: [2026-10-24-route-optimizer-slice4.md](../reviews/2026-10-24-route-optimizer-slice4.md) (Approve)
+   - [x] Slice 5 mid trip dynamic replanning engine and optimistic concurrency: [2026-10-24-route-optimizer-slice5.md](../reviews/2026-10-24-route-optimizer-slice5.md) (Approve)
+   - [x] Slice 6 fenced SQS worker service, REST API, and standalone packaging: [2026-10-24-route-optimizer-slice6.md](../reviews/2026-10-24-route-optimizer-slice6.md) (Approve with nits)
+   - [x] Slice 7 standalone Lambda ZIP packaging and connected provider acceptance: [2026-10-24-route-optimizer-slice7.md](../reviews/2026-10-24-route-optimizer-slice7.md) (Approve with nits)
+- [x] Test it: `/test 0005-route-optimizer` (81 tests passing across unit and live database integration suites, 7 connected tests cleanly gated)
 - [ ] Document it: `/document 0005-route-optimizer`
 
-Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: In Progress) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`
+Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: Accepted) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`

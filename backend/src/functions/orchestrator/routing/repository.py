@@ -135,9 +135,11 @@ class RouteRepository:
         stop_models: list[RouteStopModel] = []
 
         for s in all_stops:
-            s_id = s.stop_id or uuid.uuid4()
+            s_id = uuid.uuid4()
             if s.stop_id is not None:
                 stop_id_map[s.stop_id] = s_id
+            if s.id is not None:
+                stop_id_map[s.id] = s_id
 
             pt = shapely.geometry.Point(s.location.longitude, s.location.latitude)
             loc_geom = from_shape(pt, srid=4326)

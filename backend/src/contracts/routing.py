@@ -234,6 +234,22 @@ class RouteRequest(BaseModel):
     fuel_profile: VehicleFuelProfile | None = None
 
 
+class RouteReplanRequest(BaseModel):
+    """Payload for mid-trip dynamic replanning from traveler live location."""
+
+    model_config = ConfigDict(frozen=True)
+
+    current_location: Point
+    replan_at: datetime
+    completed_stop_ids: list[UUID] = Field(default_factory=list)
+    expected_previous_version: int | None = None
+    objective: RouteObjective | None = None
+    return_deadline: datetime | None = None
+    transport_mode: TransportMode | None = None
+    fuel_profile: VehicleFuelProfile | None = None
+    time_limit_seconds: int = Field(default=10, ge=1)
+
+
 class MatrixElement(BaseModel):
     """Individual cell in a distance/duration matrix."""
 
@@ -363,6 +379,34 @@ class OptimizedRoute(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     diagnostics: list[str] = Field(default_factory=list)
     previous_route_version: int | None = None
+
+
+class RouteOptimizerWorkerOutput(BaseModel):
+    """Output summary payload emitted by optimizer worker upon task completion."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: RouteStatus
+    route_id: UUID
+    route_version: int
+    trip_id: UUID | None = None
+    execution_id: UUID | None = None
+    total_distance_m: int
+    total_travel_seconds: int
+    stops_count: int
+    legs_count: int
+    fuel_amount: Decimal | None = None
+    fuel_currency: Currency = Currency.INR
+    warnings: list[str] = Field(default_factory=list)
+    diagnostics: list[str] = Field(default_factory=list)
+
+
+class AcceptedRouteResponse(BaseModel):
+    """Asynchronous route submission response conforming to 0005 AC-9."""
+
+    job_id: UUID
+    status: str = "QUEUED"
+    status_url: str
 
 
 # Backward compatibility aliases
