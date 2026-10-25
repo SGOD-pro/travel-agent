@@ -1,8 +1,8 @@
-# Context Handoff: SWENA Travel Intelligence (Specs 0001, 0002, 0003, and 0004)
+# Context Handoff: SWENA Travel Intelligence (Specs 0001, 0002, 0003, 0004, and 0005)
 
-Date: 2026-10-18
+Date: 2026-10-25
 
-Status: Specs 0001, 0002, 0003, and 0004 complete. Spec 0004 Remote LAYA decision router is Accepted across all 5 slices, with bounded corrections completed for evidence sufficiency validation, real consumer executed lifecycle tests, original decision audit preservation, and documentation reconciliation. Scope Feature 4 is done. AWS deployment verification remains deferred across all features until cloud deployment.
+Status: Specs 0001, 0002, 0003, 0004, and 0005 complete. Spec 0005 Route Optimizer is Accepted across all 7 slices, with production integration repairs completed at commit `80c03ceecde68955a4c3ab1f587e33b1a1d75bed`. Scope Feature 5 is done. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is `/architect route API/map E2E`.
 
 
 ## 1. Project Purpose and Agreed Stack
@@ -18,22 +18,25 @@ Build the SWENA Travel Intelligence platform, an asynchronous travel intelligenc
 * Persistence: Aiven PostgreSQL 16 with PostGIS extensions (local container for development), asyncpg driver, SQLAlchemy 2.0 async, Alembic migrations.
 * Workflow Orchestration: LangGraph for stateful workflow graphs, backed by a custom TransactionBoundCheckpointer.
 * Remote Model Serving: Remote LAYA model is served from Kaggle through a Cloudflare tunnel.
+* Routing Provider: External Valhalla HTTP service for road and pedestrian distance and duration matrices and turn by turn path geometry generation with polyline6 decoding.
+* Constraint Optimization: Google OR Tools constraint solver for asymmetric Vehicle Routing Problem with Time Windows (VRPTW), wait time accounting, dwell durations, and priority partitioning with drop penalties.
 * Workflow Execution Sequence: Route optimizer and trip planner end to end workflows precede media location development.
 * Browser Milestone Boundary: Browser escalation milestone strictly covers dynamic web page rendering and evidence extraction only; booking, reservation execution, payment, checkout, and transaction automation remain deferred.
 * Messaging and Outbox: Transactional outbox table (`outbox_events`) claimed with `FOR UPDATE SKIP LOCKED`, AWS SQS for message delivery with partial batch failure reporting (`ReportBatchItemFailures`), and Dead Letter Queues (DLQ) with redrive policies.
-* Worker Routing: Dedicated SQS queue transport routing worker `EVIDENCE` and `BROWSER` dispatches to dedicated queues with zero reverse imports into orchestrator modules.
+* Worker Routing: Dedicated SQS queue transport routing worker `EVIDENCE`, `BROWSER`, and `OPTIMIZER` dispatches to dedicated queues with zero reverse imports into orchestrator modules.
 * Evidence Collection: Scrapling CSS extraction adapter, SerpAPI search provider adapter, immutable content addressed observations in PostgreSQL.
 * Verification Engine: PostGIS spatial annular band filtering and candidate matching, deterministic ClaimVerificationPolicy with domain authority rules, side by side conflict preservation, and categorical freshness expiration.
 * Supervision and Scheduling: Continuous BackgroundDaemon supervision for local processes, AWS EventBridge schedules for periodic relay, lease recovery, and stale sweeps.
-* Infrastructure: AWS SAM templates ([orchestrator template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/template.yaml), [evidence collector template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/evidence_collector/template.yaml), and [browser template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/template.yaml)).
+* Infrastructure: AWS SAM templates ([orchestrator template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/template.yaml), [evidence collector template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/evidence_collector/template.yaml), [browser template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/browser/template.yaml), and [route optimizer template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/template.yaml)).
 * Frontend: Next.js (TypeScript, React) in `frontend/`.
 
 ## 2. Git State
 
+* Commit: `80c03ceecde68955a4c3ab1f587e33b1a1d75bed`
 * Branch: `main`
-* Working Tree: Clean application code, verified tests, up to date changelog, and reconciled scope.
+* Working Tree: Clean application code, verified test suites, up to date review records, and reconciled scope.
 
-## 3. What 0001, 0002, and 0003 Implement
+## 3. What 0001, 0002, 0003, 0004, and 0005 Implement
 
 ### Slice 0001: Orchestrator Execution Engine
 Conforms to [0001-orchestrator-execution-engine.md](file:///home/swyra/projects/travel-agent/docs/specs/0001-orchestrator-execution-engine.md):
@@ -104,12 +107,46 @@ Conforms to [0004-remote-laya-decision-router.md](file:///home/swyra/projects/tr
   * Connected smoke acceptance test in [backend/tests/integration/test_laya_connected_acceptance.py](file:///home/swyra/projects/travel-agent/backend/tests/integration/test_laya_connected_acceptance.py) verifying live Cloudflare tunnel communication, GET /health probe, and POST /v1/systemone inference round trip with latency measurement.
   * 25 scenario labeled routing quality evaluation benchmark in [backend/tests/unit/test_laya_evaluation_benchmark.py](file:///home/swyra/projects/travel-agent/backend/tests/unit/test_laya_evaluation_benchmark.py), serving as an offline deterministic policy validator regression benchmark that exercises policy gating, confidence thresholding, and deterministic fallbacks; live model inference accuracy on those scenarios remains pending connected live evaluation (3 benchmark tests).
 
+### Spec 0005: Route Optimizer and Multimodal Itinerary Planning (Slices 1 to 7 Complete)
+Conforms to [0005-route-optimizer.md](file:///home/swyra/projects/travel-agent/docs/specs/0005-route-optimizer.md):
+* Slice 1 (Domain Contracts, Priority Partitioning, and Offline Solver):
+  * Internal typed domain contracts `RouteRequest`, `RouteStopInput`, `OptimizedRoute`, `ScheduledStopOutput`, `RouteLegOutput`, `MatrixRequest`, `MatrixResponse`, `RouteObjective`, `RouteStatus`, `SolverStatus`, `StopType`, and `TrafficBasis` defined in [backend/src/contracts/routing.py](file:///home/swyra/projects/travel-agent/backend/src/contracts/routing.py).
+  * Offline constraint solver `OrToolsRoutingSolver` in [backend/src/functions/route_optimizer/solver.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/solver.py) solving asymmetric Vehicle Routing Problems with Time Windows (VRPTW), wait time accounting, dwell completion before venue closing, drop penalties (10,000,000) for optional stops, multi criteria integer objectives (`FASTEST`, `SHORTEST`, `BALANCED`), and honest status mapping (`OPTIMAL` strictly requiring mathematical proof, solution found yielding `FEASIBLE`, timeout yielding `TIME_LIMIT` with `UNAVAILABLE`, and impossible mandatory constraints returning `INFEASIBLE`) (15 unit tests).
+* Slice 2 (Database Migration, Models, and PostGIS Repository):
+  * Alembic migration `0012_add_route_optimization.py` creating tables `routes`, `route_stops`, `route_legs`, and `route_restrictions` with GiST spatial indexes, `Numeric(20, 6)` fuel cost precision, and UUID foreign keys.
+  * SQLAlchemy models in [backend/src/functions/orchestrator/routing/models.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/routing/models.py) and repository `RouteRepository` in [backend/src/functions/orchestrator/routing/repository.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/routing/repository.py) providing atomic route saving, tenant isolation enforcement, and optimistic version conflict prevention rejecting duplicate trip versions (4 live PostgreSQL tests).
+* Slice 3 (Multimodal Vehicle Continuity and Canonical Parking Hub Service):
+  * Spatial continuity validator `VehicleContinuityTracker` in [backend/src/functions/route_optimizer/continuity.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/continuity.py) enforcing that driving legs only depart from where the vehicle is parked, detecting vehicle abandonment or teleportation.
+  * Spatial parking discovery query `find_verified_parking_near` in [backend/src/functions/orchestrator/places/repository.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/places/repository.py) using PostGIS `ST_DWithin` on geography with bicycle parking exclusion.
+  * Coordinator `MultimodalTransitionService` in [backend/src/functions/route_optimizer/multimodal.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/multimodal.py) injecting `PARKING_HUB` stops, splitting driving and walking legs, supporting walk chaining, and isolating fuel costs strictly to driving distance (8 unit tests, 4 live database tests).
+* Slice 4 (Valhalla HTTP Client and Hard Closure Avoidance):
+  * Client `ValhallaClient` in [backend/src/functions/route_optimizer/valhalla.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/valhalla.py) with connection pooling, polyline6 decoding, bounded retries, and explicit failure on unconfigured or unreachable hosts.
+  * Service `ClosureAvoidanceService` in [backend/src/functions/route_optimizer/closures.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/closures.py) transforming active verified restriction claims into `exclude_polygons` with post routing Shapely intersection revalidation (20 unit tests, 1 live Valhalla integration test).
+* Slice 5 (Mid Trip Dynamic Replanning):
+  * Service `RouteReplanService` in [backend/src/functions/route_optimizer/replan.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/replan.py) accepting current traveler coordinates, freezing completed stops with historical arrival timestamps, treating live position as the new origin, optimizing remaining stops, retaining historical dropped stops audit records, and writing an immutable incremented `route_version` under optimistic concurrency controls (9 unit tests, 2 live database tests).
+* Slice 6 (Fenced Asynchronous Worker Service, Consumer, and REST API):
+  * Worker service `RouteOptimizerWorkerService` in [backend/src/functions/route_optimizer/service.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/service.py) claimed under `WorkerFencingService` on SQS.
+  * SQS consumer handler `process_batch` in [backend/src/functions/route_optimizer/consumer.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/consumer.py) supporting partial batch item failure reporting and deadline guards.
+  * Dedicated SQS transport routing for worker `OPTIMIZER` tasks via `ROUTE_OPTIMIZER_QUEUE_URL` in [backend/src/functions/orchestrator/execution/transport.py](file:///home/swyra/projects/travel-agent/backend/src/functions/orchestrator/execution/transport.py).
+  * Serverless SAM template in [backend/src/functions/route_optimizer/template.yaml](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/template.yaml) with dedicated dispatch queue, DLQ redrive, and 60s timeout.
+  * REST endpoints in [backend/src/functions/api/routes/optimization.py](file:///home/swyra/projects/travel-agent/backend/src/functions/api/routes/optimization.py) providing asynchronous route submission (`POST /api/v1/routes/optimize`), owner isolated route retrieval (`GET /api/v1/routes/{route_id}`), and mid trip replan submission (`POST /api/v1/routes/{route_id}/replan`) (15 unit tests, 2 live PostgreSQL tests).
+* Slice 7 (Standalone Lambda ZIP Packaging and Connected Acceptance):
+  * Standalone packaging utility in [backend/src/functions/route_optimizer/packaging.py](file:///home/swyra/projects/travel-agent/backend/src/functions/route_optimizer/packaging.py), confirming lightweight function artifact (0.28 MB) and measuring dependency inclusive Linux distribution artifact (~211 MB unpacked, ~64.5 MB compressed) well within the AWS Lambda 250 MB uncompressed limit (38.8 MB headroom), with verified clean isolated import and solve execution under Python 3.12 `-S -P`.
+  * Connected provider acceptance suite in [backend/tests/integration/test_valhalla_connected_acceptance_slice7.py](file:///home/swyra/projects/travel-agent/backend/tests/integration/test_valhalla_connected_acceptance_slice7.py) verifying live Valhalla matrix calculation, turn by turn geometry decoding, and closure detour routing (7 unit tests, 6 connected live tests).
+* Production Integration Repairs (Commits `c6ba6e8` and `80c03ce`):
+  * Shared configured `ValhallaClient` provider across solve, multimodal, and replan workflows without implicit production haversine or hardcoded speed fallbacks, failing explicitly with `ValhallaConnectionError` when unconfigured or unreachable.
+  * Selected road and walking legs query `ValhallaClient.route` with `exclude_polygons` derived from active restrictions, persisting detoured provider geometries and consistent arrival, dwell, wait, and departure timing.
+  * Revalidated hard service windows after provider hydration: dwell completion checked before closing (`target_dep <= window_end`). Mandatory stop violations transition status to `RouteStatus.INFEASIBLE` and never retain a feasible status. Optional stop violations drop the stop, re solve remaining stops, and return `RouteStatus.PARTIAL`.
+  * Provider hydration and validation applied to both `RouteStatus.FEASIBLE` and `RouteStatus.PARTIAL` routes across solve, multimodal, and replan workflows.
+  * Identity preservation (`id=s.id`) in `ScheduledStopOutput` for both scheduled and dropped stops, ensuring exact ID mapping in itinerary and audit records.
+  * Standalone terminal completion reconciliation scoped strictly to optimizer workflows (`ROUTE_OPTIMIZATION`, `ROUTE_REPLAN`, `OPTIMIZER`, `ROUTE_OPTIMIZER`), preventing unintended terminalization of graph workflows in `WAITING_TASKS` (13 unit regression tests).
+
 ## 4. Verification Commands and Latest Confirmed Results
 
 All verification commands execute locally against live PostgreSQL and headless Chromium:
 
 1. Full Backend Test Suite (`cd backend && uv run pytest tests/unit/ -v`):
-   * Result: 327 passed in 39.46s with zero regressions across all unit suites.
+   * Result: 444 passed, 1 skipped in ~43s with zero regressions across all unit suites.
 
 2. Full Browser Test Suite (`cd backend && uv run pytest tests/unit/test_browser* -v`):
    * Result: 178 passed in 29.59s across all 7 browser test suites.
@@ -141,6 +178,29 @@ All verification commands execute locally against live PostgreSQL and headless C
    * Result: 4 passed in 4.41s on live PostgreSQL.
    * Confirms collector task dispatch and no premature scheduling, task completion execution through the real evidence collector consumer (`functions.evidence_collector.consumer.process_record`) and reconciliation to direct resolution resume, dynamic browser escalation dispatch with task execution through the real browser consumer (`functions.browser.consumer.process_record`) and reconciliation to schedule proposal, and durable decision reuse through the runtime graph node path without invoking remote inference.
 
+10. Route Optimizer Unit Test Suite (`cd backend && uv run pytest tests/unit/test_route_optimizer*.py -v`):
+    * Result: 85 passed in ~2m across all 7 slices.
+    * Verifies OR Tools VRPTW constraint solving, multimodal transitions, parking hub injection, vehicle continuity, Valhalla matrix and route integration, closure avoidance, mid trip replanning, fenced SQS worker service, REST API, and standalone packaging.
+
+11. Route Optimizer Production Regressions (`cd backend && uv run pytest tests/unit/test_route_optimizer_production_regressions.py -v`):
+    * Result: 13 passed in ~42s.
+    * Verifies provider failure fast fail, restriction lookup failure propagation, closure detour geometry hydration, schedule consistency, hard service window closing revalidation, optional stop dropped yielding PARTIAL with provider geometries in solve and replan paths, and unrelated workflow reconciliation isolation.
+
+12. Route Optimizer Live PostgreSQL Integration Suite:
+    * Result: 13 passed across live database and worker suites (`test_route_optimizer_slice2.py`: 4 passed; `test_route_optimizer_multimodal_slice3.py`: 4 passed; `test_route_optimizer_replan_slice5.py`: 2 passed; `test_route_optimizer_worker_slice6.py`: 2 passed; `test_valhalla_connected_slice4.py`: 1 passed).
+    * Verifies PostGIS tables, spatial queries, optimistic version conflict detection, and worker lifecycle on live PostgreSQL.
+
+13. Live Connected Valhalla Acceptance Suite (`cd backend && RUN_CONNECTED_VALHALLA_TESTS=1 uv run pytest tests/integration/test_valhalla_connected_acceptance_slice7.py -v`):
+    * Result: 6 passed in ~16s against live Valhalla service.
+    * Verifies live matrix calculation, turn by turn geometry decoding, and closure detour routing. Offline execution cleanly skips when live provider is unconfigured.
+
+14. Route Optimizer Static Analysis and Type Checking:
+    * `cd backend && uv run ruff check src/functions/route_optimizer/ tests/unit/test_route_optimizer*`: PASS (0 warnings).
+    * `cd backend && uv run mypy src/functions/route_optimizer/ tests/unit/test_route_optimizer_production_regressions.py`: PASS (0 type errors).
+
+15. Route Optimizer Standalone Packaging:
+    * Confirms lightweight function artifact (0.28 MB) and dependency inclusive Linux distribution artifact (~211 MB unpacked, ~64.5 MB compressed) well within the AWS Lambda 250 MB uncompressed limit (38.8 MB headroom), with clean isolated import and solve verification under Python 3.12 `-S -P`.
+
 ## 5. Review Reports
 
 * Spec 0003 Slice 2 Review: [2026-10-15-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-15-main.md) (Verdict: Approve).
@@ -154,30 +214,39 @@ All verification commands execute locally against live PostgreSQL and headless C
 * Spec 0004 Slice 4 Review: [2026-10-18-laya-slice4.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-18-laya-slice4.md) (Verdict: Approve).
 * Spec 0004 Slice 5 Review: [2026-10-18-laya-slice5.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-18-laya-slice5.md) (Verdict: Approve).
 * Spec 0004 Full Integration and Lifecycle Repair Review: [2026-10-18-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-18-main.md) (Verdict: Approve, 0 blockers, 0 majors, 0 unaddressed nits).
+* Spec 0005 Slice 1 Review: [2026-10-23-route-optimizer-slice1.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-23-route-optimizer-slice1.md) (Verdict: Approve).
+* Spec 0005 Slice 2 Review: [2026-10-23-route-optimizer-slice2.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-23-route-optimizer-slice2.md) (Verdict: Approve).
+* Spec 0005 Slice 3 Review: [2026-10-23-route-optimizer-slice3.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-23-route-optimizer-slice3.md) (Verdict: Approve with nits).
+* Spec 0005 Slice 4 Review: [2026-10-24-route-optimizer-slice4.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-24-route-optimizer-slice4.md) (Verdict: Approve).
+* Spec 0005 Slice 5 Review: [2026-10-24-route-optimizer-slice5.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-24-route-optimizer-slice5.md) (Verdict: Approve).
+* Spec 0005 Slice 6 Review: [2026-10-24-route-optimizer-slice6.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-24-route-optimizer-slice6.md) (Verdict: Approve with nits).
+* Spec 0005 Slice 7 Review: [2026-10-24-route-optimizer-slice7.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-24-route-optimizer-slice7.md) (Verdict: Approve with nits).
+* Spec 0005 Production Integration Repair Review: [2026-10-25-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-25-main.md) (Verdict: Approve, 0 blockers, 0 majors, 0 unaddressed nits).
 
 ## 6. Development Acceptance versus Deferred AWS Verification
 
 ### Development Acceptance
 * Slices 1 through 5 of Spec 0003 are complete, verified, reviewed, and tested (Status: Accepted, Feature 3 marked done).
 * Spec 0004 Remote LAYA decision router is complete across all 5 slices, with bounded corrections completed for evidence sufficiency validation, real consumer executed lifecycle tests, original decision audit preservation, and documentation reconciliation (Status: Accepted, Feature 4 marked done).
+* Slices 1 through 7 of Spec 0005 Route Optimizer are complete, verified, reviewed, and tested with production integration repairs (Status: Accepted, Feature 5 marked done).
 
 ### Deployed AWS Verification (Deferred)
 No live AWS deployment has been executed. The following checks remain deferred until full cloud deployment:
-* SAM deployment of `template.yaml` to live AWS CloudFormation.
+* SAM deployment of `template.yaml` to live AWS CloudFormation across all workers (orchestrator, evidence collector, browser worker, and route optimizer).
 * Real SQS task dispatch queue message delivery, visibility timeouts, and DLQ redrive policies in AWS.
 * Live Aiven PostgreSQL and PostGIS connectivity from AWS Lambda VPC runtime.
 * CloudWatch memory utilization, cold start duration, and timeout telemetry in production.
 
 ## 7. Status of Workflow Gates
 
-* Scope (`/scope`): Features 1, 2, 3, and 4 marked done in [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md).
-* Architect (`/architect`): [0004-remote-laya-decision-router.md](file:///home/swyra/projects/travel-agent/docs/specs/0004-remote-laya-decision-router.md) status is `Accepted`.
-* Develop (`/develop`): Complete across all 5 slices with bounded 0004 corrections.
-* Verify (`/check verify`): Passed all 10 acceptance criteria and specced surfaces on live PostgreSQL.
-* Review (`/check review`): Approved across all slices and full lifecycle repair in [2026-10-18-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-18-main.md).
-* Test (`/test`): Complete. 102 LAYA tests (100 unit tests, 2 connected live endpoint tests) and 4 live PostgreSQL lifecycle tests passing.
-* Document (`/document`): Complete. 8 capability entries recorded in [CHANGELOG.md](file:///home/swyra/projects/travel-agent/CHANGELOG.md).
-* Sync (`/sync`): Complete. Scope and spec statuses synchronized.
+* Scope (`/scope`): Features 1, 2, 3, 4, and 5 marked done in [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md).
+* Architect (`/architect`): [0005-route-optimizer.md](file:///home/swyra/projects/travel-agent/docs/specs/0005-route-optimizer.md) status is `Accepted`.
+* Develop (`/develop`): Complete across all 7 slices with production integration repairs.
+* Verify (`/check verify`): Passed all 9 acceptance criteria and specced surfaces with 13 regression behaviors on live PostgreSQL.
+* Review (`/check review`): Approved across all slices and production integration repairs in [2026-10-25-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-25-main.md).
+* Test (`/test`): Complete. 111 tests passing across unit and live database integration suites, 7 connected acceptance tests cleanly gated.
+* Document (`/document`): Complete for 0001, 0002, 0003, and 0004; pending for 0005.
+* Sync (`/sync`): Complete. Checkpoint reconciled at commit `80c03ceecde68955a4c3ab1f587e33b1a1d75bed`.
 
 ## 0003 closure reconciliation (2026-10-16)
 
@@ -216,11 +285,21 @@ Inspected repository HEAD commit `5d43dc911370edc2ea1e43b5cc8ef78453a7f5f9` (and
 * C3 (RESOLVED): Focused regression coverage. Added four unit regressions at the owning boundary in `tests/unit/test_laya_graph_node.py` covering database lookup failure fail closed, stale flag override, destination name only text or URLs and placeholder rejection, and valid persisted evidence acceptance. Preserved all four consumer executed PostgreSQL lifecycle and runtime reuse tests in `tests/integration/test_laya_lifecycle_regression.py`. Full unit suite verified at 431 passed, 1 skipped in 42.89s.
 * C4 (RESOLVED): Reconcile closure records. Removed unsupported claims of 100% precision on a connected 25 scenario model benchmark. Kept offline policy regression separate from live model quality. Marked connected labeled model evaluation PENDING. Updated next action and ordering below.
 
+### 0005 closure reconciliation (2026-10-25)
+
+Inspected repository HEAD commit `80c03ceecde68955a4c3ab1f587e33b1a1d75bed` (and prior integration repair commit `c6ba6e81c437961b6acaca776977e2dce4358089`). Bounded corrections completed and verified across all routing integration areas:
+
+* C1 (RESOLVED): Hard service window closing revalidation. Post hydration arrival, wait, and dwell times are revalidated against `window_end` (`target_dep <= window_end`). Mandatory stop window violations transition status to `RouteStatus.INFEASIBLE` and never retain a feasible status. Optional stop violations drop the stop, re solve remaining stops with provider routing, and return `RouteStatus.PARTIAL`.
+* C2 (RESOLVED): Provider geometry hydration for both FEASIBLE and PARTIAL routes. Hydration check in solve and replan was expanded from `status == RouteStatus.FEASIBLE` to `(RouteStatus.FEASIBLE, RouteStatus.PARTIAL)`, ensuring all returned scheduled legs carry turn by turn provider geometries and consistent timing.
+* C3 (RESOLVED): Input stop ID preservation. `ScheduledStopOutput` receives `id=s.id` for both scheduled and dropped stops, preserving input stop identity across itinerary schedules and audit records.
+* C4 (RESOLVED): Focused regression coverage. Added 6 unit regressions (13 total) in `tests/unit/test_route_optimizer_production_regressions.py` covering matrix fits with detour closing breaches, optional stop dropped yielding `PARTIAL` with provider geometries, and equivalent replan behaviors.
+* C5 (RESOLVED): Evidence boundaries. Preserved reported versus independently executed evidence: connected Valhalla tests require external network and are cleanly gated via `RUN_CONNECTED_VALHALLA_TESTS=1`; offline suites (111 tests) execute with zero cloud or network dependencies. Measured dependency inclusive packaging confirmed at ~211 MB uncompressed and ~64.5 MB compressed (< 250 MB ceiling) with clean isolated import and solve verification under Python 3.12 `-S -P`. Pending LAYA quality evaluation: offline policy benchmark passes, but live connected model inference accuracy on the 25 scenarios remains pending live evaluation. AWS deployment deferrals: SAM deployment to live AWS CloudFormation, real SQS queues and DLQ redrive in AWS, and VPC Lambda database connectivity remain explicitly deferred.
+
 ### Next action and ordering
 
-Closure findings C1, C2, C3, and C4 are resolved and verified within existing 0004. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
+Closure findings C1, C2, C3, C4, and C5 are resolved and verified within existing 0005. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
 
-Next planned capability: route optimizer architecture after 0004 closure.
+Next planned action: `/architect route API/map E2E`.
 
-Agreed order: remote LAYA (done) → route optimizer → route API/map E2E → hosted LLM/trip planner E2E → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone for these fixes and no AWS deployment now.
+Agreed order: remote LAYA (done) → route optimizer (done) → route API/map E2E → hosted LLM/trip planner E2E → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone and no AWS deployment now.
 

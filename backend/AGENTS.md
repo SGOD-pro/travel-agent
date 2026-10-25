@@ -90,12 +90,17 @@ uv run alembic upgrade head
 - Route optimizer enforces forbidden unreachable transitions via arc removal, dwell completion before venue closing, and honest solver statuses (OPTIMAL requires proof, timeout returns TIME_LIMIT).
 - Multimodal routes for private vehicles automatically discover verified public parking hubs within DEFAULT_PARKING_SEARCH_RADIUS_METERS, failing closed with INFEASIBLE and NO_VERIFIED_PARKING_HUB when missing.
 - Vehicle continuity tracker guarantees driving legs depart only from the stop where the vehicle is currently parked, preventing teleportation, and fuel calculations strictly isolate driving distance from walking.
-- Valhalla HTTP client provides matrices and turn-by-turn routes with polyline6 decoding, bounded retry backoff, and coordinate boundary safety.
-- Closure avoidance service transforms verified road restrictions into Valhalla exclude polygons and enforces post-routing spatial revalidation with strict fail-closed semantics.
-- Mid trip replanning freezes completed stops with historical timestamps, injects traveler GPS coordinates as departure origin, re-optimizes remaining stops, and enforces two tier optimistic concurrency checks on immutable route versions.
+- Valhalla HTTP client provides matrices and turn by turn routes with polyline6 decoding, bounded retry backoff, and coordinate boundary safety.
+- Closure avoidance service transforms verified road restrictions into Valhalla exclude polygons and enforces post routing spatial revalidation with strict fail closed semantics.
+- Shared configured Valhalla client provider instance is used across solve, multimodal, and replan workflows without implicit production haversine or hardcoded speed fallbacks.
+- Post hydration arrival, wait, and dwell times are revalidated against window end; mandatory breaches transition to INFEASIBLE, while optional breaches drop the stop, re solve remaining stops, and return PARTIAL.
+- Provider hydration and schedule revalidation apply to both FEASIBLE and PARTIAL routes in solve and replan paths, ensuring all scheduled legs carry provider geometries.
+- ScheduledStopOutput preserves input stop identifier for both scheduled and dropped stops.
+- Mid trip replanning freezes completed stops with historical timestamps, injects traveler GPS coordinates as departure origin, re optimizes remaining stops, and enforces two tier optimistic concurrency checks on immutable route versions.
 - Route optimizer worker service executes under WorkerFencingService with parent first locking order, cooperative cancellation checks, and atomic completion.
 - Route optimizer consumer reports SQS partial batch failures via batchItemFailures and uses remaining execution time guards (< 5000ms) for safe redrive.
-- Route optimizer packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed (0.26 MB measured), excluding LangGraph, Playwright, and FastAPI dependencies.
+- Standalone completion reconciliation scopes strictly to optimizer workflows, leaving orchestrator graph workflows in waiting states untouched.
+- Route optimizer packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed (0.28 MB lightweight, ~211 MB dependency inclusive), excluding LangGraph, Playwright, and FastAPI dependencies.
 - Optimization endpoints enforce caller tenant ownership with explicit 403 Forbidden responses on tenant mismatch.
 
 ## Gotchas
