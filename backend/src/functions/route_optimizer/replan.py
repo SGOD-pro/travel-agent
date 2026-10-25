@@ -250,9 +250,9 @@ class RouteReplanService:
                 "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
             )
 
-        if not solved_with_multimodal and new_route_solution.status == RouteStatus.FEASIBLE and new_route_solution.legs:
+        if not solved_with_multimodal and new_route_solution.status in (RouteStatus.FEASIBLE, RouteStatus.PARTIAL) and new_route_solution.legs:
             client = self._valhalla_client
-            if client is not None and hasattr(client, "route") and (durations_s is None or restrictions):
+            if client is not None and hasattr(client, "route"):
                 new_route_solution = await self._hydrate_new_legs(
                     new_route_solution=new_route_solution,
                     sub_request=sub_request,
@@ -280,19 +280,20 @@ class RouteReplanService:
             stop_index += 1
 
         # B. New origin and newly scheduled remaining stops
-        for s in new_route_solution.stops:
-            eff_id = s.stop_id or s.id
-            all_stops.append(
-                s.model_copy(
-                    update={
-                        "id": eff_id,
-                        "stop_id": eff_id,
-                        "stop_order": stop_index,
-                        "is_completed": True if eff_id == replan_origin_id else False,
-                    }
+        if new_route_solution.status not in (RouteStatus.INFEASIBLE, RouteStatus.UNAVAILABLE) or frozen_completed_stops:
+            for s in new_route_solution.stops:
+                eff_id = s.stop_id or s.id
+                all_stops.append(
+                    s.model_copy(
+                        update={
+                            "id": eff_id,
+                            "stop_id": eff_id,
+                            "stop_order": stop_index,
+                            "is_completed": True if eff_id == replan_origin_id else False,
+                        }
+                    )
                 )
-            )
-            stop_index += 1
+                stop_index += 1
 
         # 9. Stitch legs: historical completed legs + new remaining legs
         all_legs: list[RouteLegOutput] = []
@@ -302,9 +303,10 @@ class RouteReplanService:
             all_legs.append(leg_item.model_copy(update={"leg_order": leg_index}))
             leg_index += 1
 
-        for leg_item in new_route_solution.legs:
-            all_legs.append(leg_item.model_copy(update={"leg_order": leg_index}))
-            leg_index += 1
+        if new_route_solution.status not in (RouteStatus.INFEASIBLE, RouteStatus.UNAVAILABLE) or frozen_completed_stops:
+            for leg_item in new_route_solution.legs:
+                all_legs.append(leg_item.model_copy(update={"leg_order": leg_index}))
+                leg_index += 1
 
         # 10. Recompute aggregate metrics across full itinerary
         total_dist_m = sum(leg_item.distance_m for leg_item in all_legs)
@@ -497,6 +499,85 @@ class RouteReplanService:
             service_start = arr_time + timedelta(seconds=wait_s)
             target_dep = service_start + timedelta(seconds=dwell)
 
+            # Hard service window revalidation: dwell completion before closing
+            if target_input and target_input.window_end:
+                w_end = _ensure_utc(target_input.window_end)
+                if w_end and target_dep > w_end:
+                    if target_input.is_must_visit:
+                        return new_route_solution.model_copy(
+                            update={
+                                "status": RouteStatus.INFEASIBLE,
+                                "solver_status": SolverStatus.INFEASIBLE,
+                                "actual_return_at": target_dep,
+                                "stops": updated_stops,
+                                "legs": hydrated_legs,
+                                "diagnostics": new_route_solution.diagnostics + [
+                                    f"SCHEDULE_INFEASIBLE: Service at mandatory stop '{to_stop.name}' finishes at {target_dep.isoformat()}, exceeding closing time {w_end.isoformat()}"
+                                ],
+                                "warnings": new_route_solution.warnings + [f"Service window breached at mandatory stop '{to_stop.name}'"],
+                            }
+                        )
+                    else:
+                        # Optional stop breached closing time: drop and re-solve with remaining stops
+                        reduced_stops = [s for s in sub_request.stops if s.id != target_input.id]
+                        reduced_sub_request = sub_request.model_copy(update={"stops": reduced_stops})
+                        reduced_locs = [s.location for s in reduced_stops]
+                        reduced_matrix = await client.sources_to_targets(
+                            reduced_locs, reduced_locs, mode=sub_request.transport_mode
+                        )
+                        reduced_solution = self._solver.solve(
+                            reduced_sub_request,
+                            reduced_matrix.durations_s,
+                            reduced_matrix.distances_m,
+                        )
+                        if hasattr(client, "route") and reduced_solution.status in (
+                            RouteStatus.FEASIBLE,
+                            RouteStatus.PARTIAL,
+                        ):
+                            reduced_solution = await self._hydrate_new_legs(
+                                new_route_solution=reduced_solution,
+                                sub_request=reduced_sub_request,
+                                client=client,
+                                restrictions=restrictions,
+                            )
+                        dropped_stop = ScheduledStopOutput(
+                            id=target_input.id,
+                            stop_id=target_input.id,
+                            place_id=target_input.place_id,
+                            stop_order=len(reduced_solution.stops),
+                            name=target_input.name,
+                            location=target_input.location,
+                            stop_type=target_input.stop_type,
+                            is_must_visit=False,
+                            is_skipped=True,
+                            skip_reason="TIME_WINDOW_OR_DROP_PENALTY",
+                            window_start=target_input.window_start,
+                            window_end=target_input.window_end,
+                            dwell_seconds=target_input.dwell_seconds,
+                        )
+                        final_status = (
+                            RouteStatus.PARTIAL
+                            if reduced_solution.status == RouteStatus.FEASIBLE
+                            else reduced_solution.status
+                        )
+                        final_solver_status = (
+                            SolverStatus.FEASIBLE
+                            if reduced_solution.status == RouteStatus.FEASIBLE
+                            else reduced_solution.solver_status
+                        )
+                        return reduced_solution.model_copy(
+                            update={
+                                "status": final_status,
+                                "solver_status": final_solver_status,
+                                "stops": reduced_solution.stops + [dropped_stop],
+                                "dropped_stops": reduced_solution.dropped_stops + [dropped_stop],
+                                "diagnostics": reduced_solution.diagnostics + [
+                                    f"Optional stop '{to_stop.name}' dropped after detour exceeded closing time {w_end.isoformat()}"
+                                ],
+                                "warnings": reduced_solution.warnings + [f"Optional stop '{to_stop.name}' dropped due to closure detour"],
+                            }
+                        )
+
             updated_stops.append(
                 to_stop.model_copy(
                     update={
@@ -524,6 +605,28 @@ class RouteReplanService:
             )
             total_distance_m += leg_dist
             total_travel_s += leg_dur
+
+        # Preserve dropped stops in updated_stops
+        for s in new_route_solution.stops:
+            if getattr(s, "is_skipped", False) and s.id not in {us.id for us in updated_stops}:
+                updated_stops.append(s)
+
+        if sub_request.return_deadline is not None:
+            ret_dl = _ensure_utc(sub_request.return_deadline)
+            if ret_dl and current_time > ret_dl:
+                return new_route_solution.model_copy(
+                    update={
+                        "status": RouteStatus.INFEASIBLE,
+                        "solver_status": SolverStatus.INFEASIBLE,
+                        "actual_return_at": current_time,
+                        "stops": updated_stops,
+                        "legs": hydrated_legs,
+                        "diagnostics": new_route_solution.diagnostics + [
+                            f"SCHEDULE_INFEASIBLE: Replan route completes at {current_time.isoformat()}, exceeding return deadline {ret_dl.isoformat()}"
+                        ],
+                        "warnings": new_route_solution.warnings + ["Return deadline breached"],
+                    }
+                )
 
         return new_route_solution.model_copy(
             update={

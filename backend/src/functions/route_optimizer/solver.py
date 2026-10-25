@@ -102,6 +102,7 @@ class OrToolsRoutingSolver:
         if n == 1:
             only_stop = stops[0]
             scheduled = ScheduledStopOutput(
+                id=only_stop.id,
                 stop_id=only_stop.id,
                 place_id=only_stop.place_id,
                 stop_order=0,
@@ -409,6 +410,7 @@ class OrToolsRoutingSolver:
 
                 dropped_stops.append(
                     ScheduledStopOutput(
+                        id=s.id,
                         stop_id=s.id,
                         place_id=s.place_id,
                         stop_order=-1,
@@ -492,6 +494,7 @@ class OrToolsRoutingSolver:
 
             scheduled_stops.append(
                 ScheduledStopOutput(
+                    id=s.id,
                     stop_id=s.id,
                     place_id=s.place_id,
                     stop_order=order,

@@ -147,9 +147,13 @@ class MockValhallaClient:
         base_url: str = "http://mock-valhalla:8002",
         *,
         is_healthy: bool = True,
+        detour_factor: float = 1.25,
+        detour_extra_seconds: int = 0,
     ) -> None:
         self.base_url = base_url
         self.is_healthy = is_healthy
+        self.detour_factor = detour_factor
+        self.detour_extra_seconds = detour_extra_seconds
         self.call_count: int = 0
         self.retry_count: int = 0
         self.exclude_polygons_received: list[list[list[float]]] = []
@@ -269,8 +273,8 @@ class MockValhallaClient:
                         pass
 
             if detour_occurred:
-                dist = int(round(dist * 1.25))
-                dur = int(round(dur * 1.25))
+                dist = int(round(dist * self.detour_factor))
+                dur = int(round(dur * self.detour_factor)) + self.detour_extra_seconds
 
             total_dist += dist
             total_time += dur

@@ -160,7 +160,7 @@ Optimize multi stop itineraries across opening hours, dwell times, and transit m
    - [x] Slice 6 fenced SQS worker service, REST API, and standalone packaging: [2026-10-24-route-optimizer-slice6.md](../reviews/2026-10-24-route-optimizer-slice6.md) (Approve with nits)
    - [x] Slice 7 standalone Lambda ZIP packaging and connected provider acceptance: [2026-10-24-route-optimizer-slice7.md](../reviews/2026-10-24-route-optimizer-slice7.md) (Approve with nits)
    - [x] Production integration repair: [2026-10-25-main.md](../reviews/2026-10-25-main.md) (Approve)
-- [x] Test it: `/test 0005-route-optimizer` (87 tests passing across unit and live database integration suites, 7 connected tests cleanly gated)
+- [x] Test it: `/test 0005-route-optimizer` (111 tests passing across unit and live database integration suites including 13 production regressions, 7 connected tests cleanly gated)
 - [ ] Document it: `/document 0005-route-optimizer`
 
 Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: Accepted) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`

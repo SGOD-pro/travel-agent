@@ -375,7 +375,7 @@ class RouteOptimizerWorkerService:
             mode=request.transport_mode,
         )
         initial_route = self._solver.solve(request, matrix.durations_s, matrix.distances_m)
-        if initial_route.status != RouteStatus.FEASIBLE or not initial_route.legs:
+        if initial_route.status not in (RouteStatus.FEASIBLE, RouteStatus.PARTIAL) or not initial_route.legs:
             return initial_route
 
         if hasattr(client, "route"):
@@ -467,11 +467,74 @@ class RouteOptimizerWorkerService:
                 dwell = target_input.dwell_seconds if target_input else to_stop.dwell_seconds
                 if target_input and target_input.window_start:
                     w_start = _ensure_utc(target_input.window_start)
-                    if arr_time < w_start:
+                    if w_start and arr_time < w_start:
                         wait_s = int((w_start - arr_time).total_seconds())
 
                 service_start = arr_time + timedelta(seconds=wait_s)
                 target_dep = service_start + timedelta(seconds=dwell)
+
+                # Hard service window revalidation: dwell completion before closing
+                if target_input and target_input.window_end:
+                    w_end = _ensure_utc(target_input.window_end)
+                    if w_end and target_dep > w_end:
+                        if target_input.is_must_visit:
+                            return initial_route.model_copy(
+                                update={
+                                    "status": RouteStatus.INFEASIBLE,
+                                    "solver_status": SolverStatus.INFEASIBLE,
+                                    "actual_return_at": target_dep,
+                                    "stops": updated_stops,
+                                    "legs": hydrated_legs,
+                                    "diagnostics": initial_route.diagnostics + [
+                                        f"SCHEDULE_INFEASIBLE: Service at mandatory stop '{to_stop.name}' finishes at {target_dep.isoformat()}, exceeding closing time {w_end.isoformat()}"
+                                    ],
+                                    "warnings": initial_route.warnings + [f"Service window breached at mandatory stop '{to_stop.name}'"],
+                                }
+                            )
+                        else:
+                            # Optional stop breached closing time: drop and re-solve with remaining stops
+                            reduced_stops = [s for s in request.stops if s.id != target_input.id]
+                            reduced_request = request.model_copy(update={"stops": reduced_stops})
+                            reduced_route = await self._solve_route_with_provider(
+                                reduced_request, restrictions=restrictions
+                            )
+                            dropped_stop = ScheduledStopOutput(
+                                id=target_input.id,
+                                stop_id=target_input.id,
+                                place_id=target_input.place_id,
+                                stop_order=len(reduced_route.stops),
+                                name=target_input.name,
+                                location=target_input.location,
+                                stop_type=target_input.stop_type,
+                                is_must_visit=False,
+                                is_skipped=True,
+                                skip_reason="TIME_WINDOW_OR_DROP_PENALTY",
+                                window_start=target_input.window_start,
+                                window_end=target_input.window_end,
+                                dwell_seconds=target_input.dwell_seconds,
+                            )
+                            final_status = (
+                                RouteStatus.PARTIAL
+                                if reduced_route.status == RouteStatus.FEASIBLE
+                                else reduced_route.status
+                            )
+                            final_solver_status = (
+                                SolverStatus.FEASIBLE
+                                if reduced_route.status == RouteStatus.FEASIBLE
+                                else reduced_route.solver_status
+                            )
+                            return reduced_route.model_copy(
+                                update={
+                                    "status": final_status,
+                                    "solver_status": final_solver_status,
+                                    "stops": reduced_route.stops + [dropped_stop],
+                                    "dropped_stops": reduced_route.dropped_stops + [dropped_stop],
+                                    "diagnostics": reduced_route.diagnostics + [
+                                        f"Optional stop '{to_stop.name}' dropped after detour exceeded closing time {w_end.isoformat()}"
+                                    ],
+                                    "warnings": reduced_route.warnings + [f"Optional stop '{to_stop.name}' dropped due to closure detour"],
+                                }
+                            )
 
                 updated_stops.append(
                     to_stop.model_copy(
@@ -503,20 +566,26 @@ class RouteOptimizerWorkerService:
             total_distance_m += leg_dist
             total_travel_s += leg_dur
 
-        actual_return_at: datetime | None = current_time if request.is_round_trip else None
+        # Preserve dropped stops in updated_stops
+        for s in initial_route.stops:
+            if getattr(s, "is_skipped", False) and s.id not in {us.id for us in updated_stops}:
+                updated_stops.append(s)
 
-        if request.return_deadline is not None and actual_return_at is not None:
+        actual_return_at: datetime | None = current_time if request.is_round_trip else None
+        check_deadline_at = actual_return_at if request.is_round_trip else current_time
+
+        if request.return_deadline is not None and check_deadline_at is not None:
             ret_dl = _ensure_utc(request.return_deadline)
-            if actual_return_at > ret_dl:
+            if ret_dl and check_deadline_at > ret_dl:
                 return initial_route.model_copy(
                     update={
                         "status": RouteStatus.INFEASIBLE,
                         "solver_status": SolverStatus.INFEASIBLE,
-                        "actual_return_at": actual_return_at,
+                        "actual_return_at": check_deadline_at,
                         "stops": updated_stops,
                         "legs": hydrated_legs,
                         "diagnostics": initial_route.diagnostics + [
-                            f"SCHEDULE_INFEASIBLE: Route completes at {actual_return_at.isoformat()}, exceeding return deadline {ret_dl.isoformat()}"
+                            f"SCHEDULE_INFEASIBLE: Route completes at {check_deadline_at.isoformat()}, exceeding return deadline {ret_dl.isoformat()}"
                         ],
                         "warnings": initial_route.warnings + ["Return deadline breached"],
                     }

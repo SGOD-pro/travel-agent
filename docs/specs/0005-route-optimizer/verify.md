@@ -183,12 +183,14 @@ _Steps derived from spec 0005 acceptance criteria. /check verify runs these; /te
   - Selected road and walking legs hydrated with turn by turn geometries via `ValhallaClient.route`.
   - Closure polygon exclusions applied to provider leg routing requests via `exclude_polygons`.
   - Geometries and arrival, wait, dwell, and departure schedules revalidated after routing to ensure schedule consistency and deadline compliance.
+  - Revalidation of hard service windows after provider geometry and duration hydration: dwell completion checked before closing (`target_dep <= window_end`). Must visit stop violations transition status to `INFEASIBLE`, never retaining `FEASIBLE`. Optional stop violations drop the stop, re-solve remaining stops, and yield `PARTIAL`.
+  - Leg hydration and validation applied to both `FEASIBLE` and `PARTIAL` routes across solve, multimodal, and replan workflows, ensuring every scheduled leg carries provider geometry and consistent timing.
 - [x] Scoped standalone workflow reconciliation:
   - `CompletionReconciliationService` scopes terminal completion to `SUCCEEDED` status strictly to optimizer solve and replan workflows (`ROUTE_OPTIMIZATION`, `ROUTE_REPLAN`, `OPTIMIZER`, `ROUTE_OPTIMIZER`).
   - Unrelated graph workflows in `WAITING_TASKS` emit single `EXECUTION_RESUME` events without terminalizing or corrupting graph state.
   - Prevents `NoneType` comparison errors on `deadline_at`.
 - [x] Production regression test suite in `backend/tests/unit/test_route_optimizer_production_regressions.py`:
-  - 7 focused unit tests verifying provider failure, unconfigured client rejection, authoritative restriction failure propagation, closure detour geometry and schedule consistency, and unrelated workflow reconciliation isolation.
+  - 13 focused unit tests verifying provider failure, unconfigured client rejection, authoritative restriction failure propagation, closure detour geometry and schedule consistency, hard service window revalidation, optional stop dropped yielding PARTIAL with provider geometries in solve and replan paths, and unrelated workflow reconciliation isolation.
 
 ## Commands
 
@@ -204,8 +206,9 @@ _Steps derived from spec 0005 acceptance criteria. /check verify runs these; /te
 - [x] `uv run pytest tests/integration/test_route_optimizer_worker_slice6.py -v`: 2 passed in ~58s: AC-9
 - [x] `uv run pytest tests/unit/test_route_optimizer_slice7.py -v`: 7 passed in ~35s: AC-7, AC-9
 - [x] `RUN_CONNECTED_VALHALLA_TESTS=1 uv run pytest tests/integration/test_valhalla_connected_acceptance_slice7.py -v`: 6 passed against live Valhalla service in ~16.2s: AC-3, AC-7, AC-9
-- [x] `uv run pytest tests/unit/test_route_optimizer_production_regressions.py -v`: 7 passed in ~1.4s: Production integration defect repairs
-- [x] `uv run ruff check src/ tests/`: All checks passed
-- [x] `uv run mypy src/functions/route_optimizer/ src/functions/orchestrator/execution/reconciliation.py`: Success, zero issues found in 12 source files
+- [x] `uv run pytest tests/unit/test_route_optimizer_production_regressions.py -v`: 13 passed in ~41s: Production integration defect repairs and detour constraint revalidations
+- [x] `uv run ruff check src/functions/route_optimizer/ tests/unit/test_route_optimizer*`: All checks passed
+- [x] `uv run mypy src/functions/route_optimizer/ tests/unit/test_route_optimizer_production_regressions.py`: Success, zero issues found in 12 source files
+
 
 

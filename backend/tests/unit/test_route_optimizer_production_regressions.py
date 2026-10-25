@@ -28,9 +28,11 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from contracts.routing import (
+    OptimizedRoute,
     Point,
     RestrictionType,
     RouteLegOutput,
+    RouteObjective,
     RouteReplanRequest,
     RouteRequest,
     RouteStatus,
@@ -314,7 +316,7 @@ async def test_reconciliation_preserves_running_for_unrelated_workflow() -> None
     )
 
     # Mock queries: 1. Execution, 2. Task, 3. Receipt insert, 4. Remaining tasks count (0), 5. Failed tasks count (0)
-    def mock_execute(stmt, *args, **kwargs):
+    def mock_execute(stmt: object, *args: object, **kwargs: object) -> MagicMock:
         res = MagicMock()
         if "FROM executions" in str(stmt):
             res.scalar_one_or_none.return_value = execution
@@ -375,7 +377,7 @@ async def test_reconciliation_preserves_running_for_unrelated_workflow() -> None
         output={"places": []},
     )
 
-    def mock_execute_2(stmt, *args, **kwargs):
+    def mock_execute_2(stmt: object, *args: object, **kwargs: object) -> MagicMock:
         res = MagicMock()
         if "FROM executions" in str(stmt):
             res.scalar_one_or_none.return_value = execution
@@ -431,7 +433,7 @@ async def test_reconciliation_terminalizes_optimizer_workflow_to_succeeded() -> 
         context_version=1,
     )
 
-    def mock_execute(stmt, *args, **kwargs):
+    def mock_execute(stmt: object, *args: object, **kwargs: object) -> MagicMock:
         res = MagicMock()
         if "FROM executions" in str(stmt):
             res.scalar_one_or_none.return_value = execution
@@ -505,7 +507,7 @@ async def test_reconciliation_terminal_state_idempotency() -> None:
         context_version=1,
     )
 
-    def mock_execute(stmt, *args, **kwargs):
+    def mock_execute(stmt: object, *args: object, **kwargs: object) -> MagicMock:
         res = MagicMock()
         if "FROM executions" in str(stmt):
             res.scalar_one_or_none.return_value = execution
@@ -532,3 +534,525 @@ async def test_reconciliation_terminal_state_idempotency() -> None:
     assert result.status == "PARENT_TERMINAL"
     assert result.checkpoint_updated is False
     assert result.graph_resumed is False
+
+
+@pytest.mark.asyncio
+async def test_solve_provider_detour_finishes_after_closing_returns_infeasible() -> None:
+    """Verifies that when matrix durations allow a mandatory stop to fit before closing,
+    but provider detour pushes dwell completion past closing, the solver returns INFEASIBLE.
+    """
+    t0 = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
+    stop1_id = uuid.uuid4()
+    stop2_id = uuid.uuid4()
+
+    request = RouteRequest(
+        departure_at=t0,
+        stops=[
+            RouteStopInput(
+                id=stop1_id,
+                name="Origin",
+                location=Point(latitude=23.6168, longitude=87.1305),
+                stop_type=StopType.ORIGIN,
+                dwell_seconds=0,
+            ),
+            RouteStopInput(
+                id=stop2_id,
+                name="Morning Museum",
+                location=Point(latitude=23.6200, longitude=87.1350),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=True,
+                window_start=t0,
+                window_end=t0 + timedelta(minutes=30),  # 09:30
+                dwell_seconds=900,  # 15 minutes
+            ),
+        ],
+        is_round_trip=False,
+    )
+
+    closure_poly = [
+        [87.1320, 23.6180],
+        [87.1330, 23.6180],
+        [87.1330, 23.6190],
+        [87.1320, 23.6190],
+        [87.1320, 23.6180],
+    ]
+    restr = RestrictionClaim(
+        id=uuid.uuid4(),
+        claim_id=uuid.uuid4(),
+        restriction_type=RestrictionType.ROAD_CLOSURE,
+        geometry={"type": "Polygon", "coordinates": [closure_poly]},
+        effective_start=t0 - timedelta(hours=1),
+        effective_end=t0 + timedelta(hours=24),
+        is_active=True,
+        is_verified=True,
+    )
+
+    mock_valhalla = MockValhallaClient(detour_extra_seconds=2000)
+    session_mock = AsyncMock(spec=AsyncSession)
+    worker_service = RouteOptimizerWorkerService(
+        session=session_mock,
+        valhalla_client=mock_valhalla,
+        route_repo=MagicMock(),
+    )
+
+    solved_route = await worker_service._solve_route_with_provider(
+        request, restrictions=[restr]
+    )
+
+    assert solved_route.status == RouteStatus.INFEASIBLE
+    assert solved_route.solver_status == SolverStatus.INFEASIBLE
+    assert any("SCHEDULE_INFEASIBLE" in d for d in solved_route.diagnostics)
+
+
+@pytest.mark.asyncio
+async def test_solve_optional_stop_dropped_yields_partial_with_provider_geometries() -> None:
+    """Verifies that when an optional stop is dropped by the solver, the resulting route
+    status is PARTIAL and all visited legs are hydrated with actual provider geometries.
+    """
+    t0 = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
+    origin_id = uuid.uuid4()
+    mandatory_id = uuid.uuid4()
+    optional_id = uuid.uuid4()
+
+    request = RouteRequest(
+        departure_at=t0,
+        return_deadline=t0 + timedelta(hours=1),
+        stops=[
+            RouteStopInput(
+                id=origin_id,
+                name="Origin",
+                location=Point(latitude=23.6168, longitude=87.1305),
+                stop_type=StopType.ORIGIN,
+                dwell_seconds=0,
+            ),
+            RouteStopInput(
+                id=mandatory_id,
+                name="Mandatory Temple",
+                location=Point(latitude=23.6200, longitude=87.1350),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=True,
+                window_start=t0,
+                window_end=t0 + timedelta(hours=1),
+                dwell_seconds=600,
+            ),
+            RouteStopInput(
+                id=optional_id,
+                name="Optional Distant Fort",
+                location=Point(latitude=24.5000, longitude=88.0000),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=False,
+                window_start=t0,
+                window_end=t0 + timedelta(minutes=10),
+                dwell_seconds=1800,
+            ),
+        ],
+        is_round_trip=False,
+    )
+
+    mock_valhalla = MockValhallaClient()
+    session_mock = AsyncMock(spec=AsyncSession)
+    worker_service = RouteOptimizerWorkerService(
+        session=session_mock,
+        valhalla_client=mock_valhalla,
+        route_repo=MagicMock(),
+    )
+
+    solved_route = await worker_service._solve_route_with_provider(request)
+
+    assert solved_route.status == RouteStatus.PARTIAL
+    assert solved_route.solver_status in (SolverStatus.FEASIBLE, SolverStatus.OPTIMAL)
+    assert len(solved_route.legs) == 1
+    leg = solved_route.legs[0]
+    assert leg.from_stop_id == origin_id
+    assert leg.to_stop_id == mandatory_id
+    assert len(leg.geometry["coordinates"]) >= 3
+    assert leg.departure_at == t0
+    assert any(s.id == optional_id and s.is_skipped for s in solved_route.dropped_stops)
+    assert not any(s.id == optional_id for s in solved_route.stops)
+
+
+@pytest.mark.asyncio
+async def test_replan_provider_detour_finishes_after_closing_returns_infeasible() -> None:
+    """Verifies that when a mid-trip replan has a mandatory remaining stop where matrix fits
+    but provider detour finishes after venue closing, the replan returns INFEASIBLE.
+    """
+    t0 = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
+    origin_id = uuid.uuid4()
+    completed_stop_id = uuid.uuid4()
+    remaining_stop_id = uuid.uuid4()
+
+    previous_route = OptimizedRoute(
+        id=uuid.uuid4(),
+        owner_id=uuid.uuid4(),
+        trip_id=uuid.uuid4(),
+        route_version=1,
+        status=RouteStatus.FEASIBLE,
+        solver_status=SolverStatus.OPTIMAL,
+        objective=RouteObjective.FASTEST,
+        departure_at=t0,
+        stops=[
+            ScheduledStopOutput(
+                id=origin_id,
+                stop_order=0,
+                name="Start",
+                location=Point(latitude=23.6168, longitude=87.1305),
+                stop_type=StopType.ORIGIN,
+                planned_arrival_at=t0,
+                planned_departure_at=t0,
+                dwell_seconds=0,
+                is_completed=True,
+            ),
+            ScheduledStopOutput(
+                id=completed_stop_id,
+                stop_order=1,
+                name="First Stop",
+                location=Point(latitude=23.6180, longitude=87.1320),
+                stop_type=StopType.DESTINATION,
+                planned_arrival_at=t0 + timedelta(minutes=10),
+                planned_departure_at=t0 + timedelta(minutes=30),
+                dwell_seconds=1200,
+                is_completed=True,
+            ),
+            ScheduledStopOutput(
+                id=remaining_stop_id,
+                stop_order=2,
+                name="Remaining Heritage Site",
+                location=Point(latitude=23.6220, longitude=87.1370),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=True,
+                window_start=t0,
+                window_end=t0 + timedelta(minutes=50),
+                dwell_seconds=900,
+                planned_arrival_at=t0 + timedelta(minutes=35),
+                planned_departure_at=t0 + timedelta(minutes=50),
+                is_completed=False,
+            ),
+        ],
+        legs=[],
+    )
+
+    replan_req = RouteReplanRequest(
+        current_location=Point(latitude=23.6180, longitude=87.1320),
+        replan_at=t0 + timedelta(minutes=30),
+        completed_stop_ids=[completed_stop_id],
+    )
+
+    closure_poly = [
+        [87.1330, 23.6190],
+        [87.1350, 23.6190],
+        [87.1350, 23.6210],
+        [87.1330, 23.6210],
+        [87.1330, 23.6190],
+    ]
+    restr = RestrictionClaim(
+        id=uuid.uuid4(),
+        claim_id=uuid.uuid4(),
+        restriction_type=RestrictionType.ROAD_CLOSURE,
+        geometry={"type": "Polygon", "coordinates": [closure_poly]},
+        effective_start=t0 - timedelta(hours=1),
+        effective_end=t0 + timedelta(hours=24),
+        is_active=True,
+        is_verified=True,
+    )
+
+    mock_valhalla = MockValhallaClient(detour_extra_seconds=1800)
+    replan_service = RouteReplanService(valhalla_client=mock_valhalla)
+
+    route_v2 = await replan_service.replan_route(
+        previous_route, replan_req, restrictions=[restr]
+    )
+
+    assert route_v2.status == RouteStatus.INFEASIBLE
+    assert route_v2.solver_status == SolverStatus.INFEASIBLE
+    assert any("SCHEDULE_INFEASIBLE" in d for d in route_v2.diagnostics)
+
+
+@pytest.mark.asyncio
+async def test_replan_optional_stop_dropped_yields_partial_with_provider_geometries() -> None:
+    """Verifies that during mid-trip replanning, when an optional stop is dropped,
+    the replanned route returns PARTIAL with actual provider geometries for all newly scheduled legs.
+    """
+    t0 = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
+    origin_id = uuid.uuid4()
+    completed_stop_id = uuid.uuid4()
+    mandatory_stop_id = uuid.uuid4()
+    optional_stop_id = uuid.uuid4()
+
+    previous_route = OptimizedRoute(
+        id=uuid.uuid4(),
+        owner_id=uuid.uuid4(),
+        trip_id=uuid.uuid4(),
+        route_version=1,
+        status=RouteStatus.FEASIBLE,
+        solver_status=SolverStatus.OPTIMAL,
+        objective=RouteObjective.FASTEST,
+        departure_at=t0,
+        stops=[
+            ScheduledStopOutput(
+                id=origin_id,
+                stop_order=0,
+                name="Start",
+                location=Point(latitude=23.6168, longitude=87.1305),
+                stop_type=StopType.ORIGIN,
+                planned_arrival_at=t0,
+                planned_departure_at=t0,
+                dwell_seconds=0,
+                is_completed=True,
+            ),
+            ScheduledStopOutput(
+                id=completed_stop_id,
+                stop_order=1,
+                name="Completed Stop",
+                location=Point(latitude=23.6180, longitude=87.1320),
+                stop_type=StopType.DESTINATION,
+                planned_arrival_at=t0 + timedelta(minutes=10),
+                planned_departure_at=t0 + timedelta(minutes=30),
+                dwell_seconds=1200,
+                is_completed=True,
+            ),
+            ScheduledStopOutput(
+                id=mandatory_stop_id,
+                stop_order=2,
+                name="Mandatory Stop",
+                location=Point(latitude=23.6200, longitude=87.1350),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=True,
+                window_start=t0,
+                window_end=t0 + timedelta(hours=3),
+                dwell_seconds=600,
+                is_completed=False,
+            ),
+            ScheduledStopOutput(
+                id=optional_stop_id,
+                stop_order=3,
+                name="Optional Distant Venue",
+                location=Point(latitude=24.5000, longitude=88.0000),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=False,
+                window_start=t0,
+                window_end=t0 + timedelta(minutes=40),
+                dwell_seconds=1800,
+                is_completed=False,
+            ),
+        ],
+        legs=[],
+    )
+
+    replan_req = RouteReplanRequest(
+        current_location=Point(latitude=23.6180, longitude=87.1320),
+        replan_at=t0 + timedelta(minutes=30),
+        completed_stop_ids=[completed_stop_id],
+        return_deadline=t0 + timedelta(hours=2),
+    )
+
+    mock_valhalla = MockValhallaClient()
+    replan_service = RouteReplanService(valhalla_client=mock_valhalla)
+
+    route_v2 = await replan_service.replan_route(previous_route, replan_req)
+
+    assert route_v2.status == RouteStatus.PARTIAL
+    assert route_v2.solver_status in (SolverStatus.FEASIBLE, SolverStatus.OPTIMAL)
+    assert len(route_v2.legs) >= 1
+    new_leg = route_v2.legs[-1]
+    assert new_leg.to_stop_id == mandatory_stop_id
+    assert len(new_leg.geometry["coordinates"]) >= 3
+    assert any(s.id == optional_stop_id and s.is_skipped for s in route_v2.dropped_stops)
+    assert not any(s.id == optional_stop_id for s in route_v2.stops)
+
+
+@pytest.mark.asyncio
+async def test_solve_optional_stop_detour_exceeds_closing_drops_stop_yields_partial() -> None:
+    """Verifies that when a matrix schedule fits an optional stop before closing,
+    but provider detour finishes service after venue closing, the optional stop is dropped,
+    yielding PARTIAL with provider geometries on remaining scheduled legs.
+    """
+    t0 = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
+    origin_id = uuid.uuid4()
+    optional_id = uuid.uuid4()
+    mandatory_id = uuid.uuid4()
+
+    request = RouteRequest(
+        departure_at=t0,
+        stops=[
+            RouteStopInput(
+                id=origin_id,
+                name="Origin",
+                location=Point(latitude=23.6168, longitude=87.1305),
+                stop_type=StopType.ORIGIN,
+                dwell_seconds=0,
+            ),
+            RouteStopInput(
+                id=optional_id,
+                name="Optional Historic Pavilion",
+                location=Point(latitude=23.6200, longitude=87.1350),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=False,
+                window_start=t0,
+                window_end=t0 + timedelta(minutes=30),
+                dwell_seconds=900,
+            ),
+            RouteStopInput(
+                id=mandatory_id,
+                name="Mandatory Grand Temple",
+                location=Point(latitude=23.6250, longitude=87.1400),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=True,
+                window_start=t0,
+                window_end=t0 + timedelta(hours=3),
+                dwell_seconds=600,
+            ),
+        ],
+        is_round_trip=False,
+    )
+
+    closure_poly = [
+        [87.1320, 23.6180],
+        [87.1330, 23.6180],
+        [87.1330, 23.6190],
+        [87.1320, 23.6190],
+        [87.1320, 23.6180],
+    ]
+    restr = RestrictionClaim(
+        id=uuid.uuid4(),
+        claim_id=uuid.uuid4(),
+        restriction_type=RestrictionType.ROAD_CLOSURE,
+        geometry={"type": "Polygon", "coordinates": [closure_poly]},
+        effective_start=t0 - timedelta(hours=1),
+        effective_end=t0 + timedelta(hours=24),
+        is_active=True,
+        is_verified=True,
+    )
+
+    mock_valhalla = MockValhallaClient(detour_extra_seconds=2000)
+    session_mock = AsyncMock(spec=AsyncSession)
+    worker_service = RouteOptimizerWorkerService(
+        session=session_mock,
+        valhalla_client=mock_valhalla,
+        route_repo=MagicMock(),
+    )
+
+    solved_route = await worker_service._solve_route_with_provider(
+        request, restrictions=[restr]
+    )
+
+    assert solved_route.status == RouteStatus.PARTIAL
+    assert solved_route.solver_status in (SolverStatus.FEASIBLE, SolverStatus.OPTIMAL)
+    assert len(solved_route.legs) == 1
+    leg = solved_route.legs[0]
+    assert leg.from_stop_id == origin_id
+    assert leg.to_stop_id == mandatory_id
+    assert len(leg.geometry["coordinates"]) >= 3
+    assert any(s.id == optional_id and s.is_skipped for s in solved_route.dropped_stops)
+
+
+@pytest.mark.asyncio
+async def test_replan_optional_stop_detour_exceeds_closing_drops_stop_yields_partial() -> None:
+    """Verifies that during mid-trip replanning, when provider detour forces dwell completion
+    past an optional venue's closing time, the optional stop is dropped and returns PARTIAL.
+    """
+    t0 = datetime(2026, 10, 24, 9, 0, tzinfo=UTC)
+    origin_id = uuid.uuid4()
+    completed_stop_id = uuid.uuid4()
+    optional_stop_id = uuid.uuid4()
+    mandatory_stop_id = uuid.uuid4()
+
+    previous_route = OptimizedRoute(
+        id=uuid.uuid4(),
+        owner_id=uuid.uuid4(),
+        trip_id=uuid.uuid4(),
+        route_version=1,
+        status=RouteStatus.FEASIBLE,
+        solver_status=SolverStatus.OPTIMAL,
+        objective=RouteObjective.FASTEST,
+        departure_at=t0,
+        stops=[
+            ScheduledStopOutput(
+                id=origin_id,
+                stop_order=0,
+                name="Start",
+                location=Point(latitude=23.6168, longitude=87.1305),
+                stop_type=StopType.ORIGIN,
+                planned_arrival_at=t0,
+                planned_departure_at=t0,
+                dwell_seconds=0,
+                is_completed=True,
+            ),
+            ScheduledStopOutput(
+                id=completed_stop_id,
+                stop_order=1,
+                name="Completed Venue",
+                location=Point(latitude=23.6180, longitude=87.1320),
+                stop_type=StopType.DESTINATION,
+                planned_arrival_at=t0 + timedelta(minutes=10),
+                planned_departure_at=t0 + timedelta(minutes=30),
+                dwell_seconds=1200,
+                is_completed=True,
+            ),
+            ScheduledStopOutput(
+                id=optional_stop_id,
+                stop_order=2,
+                name="Optional Museum",
+                location=Point(latitude=23.6200, longitude=87.1350),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=False,
+                window_start=t0,
+                window_end=t0 + timedelta(minutes=55),
+                dwell_seconds=900,
+                is_completed=False,
+            ),
+            ScheduledStopOutput(
+                id=mandatory_stop_id,
+                stop_order=3,
+                name="Mandatory Shrine",
+                location=Point(latitude=23.6250, longitude=87.1400),
+                stop_type=StopType.DESTINATION,
+                is_must_visit=True,
+                window_start=t0,
+                window_end=t0 + timedelta(hours=3),
+                dwell_seconds=600,
+                is_completed=False,
+            ),
+        ],
+        legs=[],
+    )
+
+    replan_req = RouteReplanRequest(
+        current_location=Point(latitude=23.6180, longitude=87.1320),
+        replan_at=t0 + timedelta(minutes=30),
+        completed_stop_ids=[completed_stop_id],
+    )
+
+    closure_poly = [
+        [87.1330, 23.6190],
+        [87.1350, 23.6190],
+        [87.1350, 23.6210],
+        [87.1330, 23.6210],
+        [87.1330, 23.6190],
+    ]
+    restr = RestrictionClaim(
+        id=uuid.uuid4(),
+        claim_id=uuid.uuid4(),
+        restriction_type=RestrictionType.ROAD_CLOSURE,
+        geometry={"type": "Polygon", "coordinates": [closure_poly]},
+        effective_start=t0 - timedelta(hours=1),
+        effective_end=t0 + timedelta(hours=24),
+        is_active=True,
+        is_verified=True,
+    )
+
+    mock_valhalla = MockValhallaClient(detour_extra_seconds=2000)
+    replan_service = RouteReplanService(valhalla_client=mock_valhalla)
+
+    route_v2 = await replan_service.replan_route(
+        previous_route, replan_req, restrictions=[restr]
+    )
+
+    assert route_v2.status == RouteStatus.PARTIAL
+    assert route_v2.solver_status in (SolverStatus.FEASIBLE, SolverStatus.OPTIMAL)
+    assert len(route_v2.legs) >= 1
+    new_leg = route_v2.legs[-1]
+    assert new_leg.to_stop_id == mandatory_stop_id
+    assert len(new_leg.geometry["coordinates"]) >= 3
+    assert any(s.id == optional_stop_id and s.is_skipped for s in route_v2.dropped_stops)
+
+

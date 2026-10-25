@@ -294,6 +294,45 @@ class MultimodalTransitionService:
                 service_start = arr_time + timedelta(seconds=wait_s)
                 dep_time = service_start + timedelta(seconds=target.dwell_seconds)
 
+                if target.window_end:
+                    w_end = _ensure_utc(target.window_end)
+                    if w_end and dep_time > w_end:
+                        if target.is_must_visit:
+                            return OptimizedRoute(
+                                owner_id=request.owner_id,
+                                trip_id=request.trip_id,
+                                execution_id=request.execution_id,
+                                route_version=1,
+                                status=RouteStatus.INFEASIBLE,
+                                solver_status=SolverStatus.INFEASIBLE,
+                                objective=request.objective,
+                                departure_at=request.departure_at,
+                                return_deadline=request.return_deadline,
+                                actual_return_at=dep_time,
+                                diagnostics=[
+                                    f"SCHEDULE_INFEASIBLE: Service at mandatory stop '{target.name}' finishes at {dep_time.isoformat()}, exceeding closing time {w_end.isoformat()}"
+                                ],
+                                warnings=[f"Hard service window breached at mandatory stop '{target.name}'"],
+                            )
+                        else:
+                            skipped_stop = ScheduledStopOutput(
+                                id=target.id,
+                                stop_id=target.id,
+                                place_id=target.place_id,
+                                stop_order=len(scheduled_stops),
+                                name=target.name,
+                                location=target.location,
+                                stop_type=target.stop_type,
+                                is_must_visit=False,
+                                is_skipped=True,
+                                skip_reason="TIME_WINDOW_OR_DROP_PENALTY",
+                                window_start=target.window_start,
+                                window_end=target.window_end,
+                                dwell_seconds=target.dwell_seconds,
+                            )
+                            scheduled_stops.append(skipped_stop)
+                            continue
+
                 target_scheduled = ScheduledStopOutput(
                     id=target.id,
                     stop_id=target.id,
@@ -461,6 +500,45 @@ class MultimodalTransitionService:
                 service_start = arr_time + timedelta(seconds=wait_s)
                 dep_time = service_start + timedelta(seconds=target.dwell_seconds)
 
+                if target.window_end:
+                    w_end = _ensure_utc(target.window_end)
+                    if w_end and dep_time > w_end:
+                        if target.is_must_visit:
+                            return OptimizedRoute(
+                                owner_id=request.owner_id,
+                                trip_id=request.trip_id,
+                                execution_id=request.execution_id,
+                                route_version=1,
+                                status=RouteStatus.INFEASIBLE,
+                                solver_status=SolverStatus.INFEASIBLE,
+                                objective=request.objective,
+                                departure_at=request.departure_at,
+                                return_deadline=request.return_deadline,
+                                actual_return_at=dep_time,
+                                diagnostics=[
+                                    f"SCHEDULE_INFEASIBLE: Service at mandatory stop '{target.name}' finishes at {dep_time.isoformat()}, exceeding closing time {w_end.isoformat()}"
+                                ],
+                                warnings=[f"Hard service window breached at mandatory stop '{target.name}'"],
+                            )
+                        else:
+                            skipped_stop = ScheduledStopOutput(
+                                id=target.id,
+                                stop_id=target.id,
+                                place_id=target.place_id,
+                                stop_order=len(scheduled_stops),
+                                name=target.name,
+                                location=target.location,
+                                stop_type=target.stop_type,
+                                is_must_visit=False,
+                                is_skipped=True,
+                                skip_reason="TIME_WINDOW_OR_DROP_PENALTY",
+                                window_start=target.window_start,
+                                window_end=target.window_end,
+                                dwell_seconds=target.dwell_seconds,
+                            )
+                            scheduled_stops.append(skipped_stop)
+                            continue
+
                 target_scheduled = ScheduledStopOutput(
                     id=target.id,
                     stop_id=target.id,
@@ -611,12 +689,13 @@ class MultimodalTransitionService:
             f"({driving_dist_km}km @ {fuel_profile.mileage_km_per_liter}km/l; walking excluded)"
         )
 
+        has_skipped = any(s.is_skipped for s in scheduled_stops)
         optimized_route = OptimizedRoute(
             owner_id=request.owner_id,
             trip_id=request.trip_id,
             execution_id=request.execution_id,
             route_version=1,
-            status=RouteStatus.FEASIBLE,
+            status=RouteStatus.PARTIAL if has_skipped else RouteStatus.FEASIBLE,
             solver_status=SolverStatus.FEASIBLE,
             objective=request.objective,
             departure_at=request.departure_at,
@@ -634,7 +713,7 @@ class MultimodalTransitionService:
             fuel_basis=fuel_basis,
             stops=scheduled_stops,
             legs=scheduled_legs,
-            dropped_stops=[],
+            dropped_stops=[s for s in scheduled_stops if s.is_skipped],
             warnings=[],
             assumptions=[
                 "Multimodal itinerary with verified parking hub injection",
