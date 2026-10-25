@@ -14,6 +14,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 | 3 | Browser escalation worker service and orchestrator dispatch | Phase 5: Browser Escalation | done |
 | 4 | Remote LAYA decision router integration | Phase 6: Decision Routing | done |
 | 5 | Route optimizer and multimodal itinerary planning | Phase 7: Route Optimization | done |
+| 6 | Route graph, map GeoJSON, and end to end vertical slice | Phase 8: Route Graph & Map | in-progress |
 
 ## Foundations
 
@@ -164,3 +165,23 @@ Optimize multi stop itineraries across opening hours, dwell times, and transit m
 - [ ] Document it: `/document 0005-route-optimizer`
 
 Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: Accepted) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`
+ 
+## Phase 8: Route Graph & Map
+
+### 6. Route graph, map GeoJSON, and end to end vertical slice · in-progress
+Orchestrate route solving and dynamic mid trip replanning inside a dedicated LangGraph state machine, compile PostGIS route geometries into standards compliant GeoJSON FeatureCollections, and extend frontend Leaflet CorridorMap for interactive multi color route inspection. Strictly excludes payments, booking checkout, client user interfaces, and live AWS deployment.
+**Done when:** RouteOptimizerGraph executes under transactional checkpointing, GET /api/v1/optimization/routes/{route_id}/map returns valid styled GeoJSON FeatureCollections, replanning records parent_route_id lineage and version comparison deltas, Leaflet CorridorMap renders driving, walking, detour, and parking legs, and automated integration trace passes on live PostgreSQL.
+- [x] Design it (spec): [0006](../specs/0006-route-graph-and-map-e2e.md)
+- [ ] Build it: `/develop route graph, map GeoJSON, and end to end vertical slice`
+   - [ ] Database migration for parent_route_id lineage and index (AC-4, AC-5)
+   - [ ] GeoJSON assembler service and domain response contracts (AC-3, AC-7)
+   - [ ] RouteOptimizerGraph state machine with transactional checkpointing (AC-1, AC-2)
+   - [ ] API routes for map, versions lineage, and replan graph trigger (AC-2, AC-3, AC-4, AC-5, AC-6, AC-7)
+   - [ ] Frontend CorridorMap GeoJSON layer rendering and interactive popups (AC-8)
+   - [ ] End to end vertical slice trace test on live database (AC-9)
+- [ ] Verify it: `/check verify 0006-route-graph-and-map-e2e`
+- [ ] Review it (fresh model): `/check review 0006-route-graph-and-map-e2e`
+- [ ] Test it: `/test 0006-route-graph-and-map-e2e`
+- [ ] Document it: `/document 0006-route-graph-and-map-e2e`
+
+Spec 0006 (`docs/specs/0006-route-graph-and-map-e2e.md`, Status: Proposed) · code in `backend/src/functions/orchestrator/graphs/route_optimizer/`, `backend/src/functions/api/routes/optimization.py`, and `frontend/src/components/map/`
