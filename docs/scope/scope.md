@@ -173,12 +173,11 @@ Orchestrate route solving and dynamic mid trip replanning inside a dedicated Lan
 **Done when:** RouteOptimizerGraph executes under transactional checkpointing, GET /api/v1/optimization/routes/{route_id}/map returns valid styled GeoJSON FeatureCollections, replanning records parent_route_id lineage and version comparison deltas, Leaflet CorridorMap renders driving, walking, detour, and parking legs, and automated integration trace passes on live PostgreSQL.
 - [x] Design it (spec): [0006](../specs/0006-route-graph-and-map-e2e.md)
 - [ ] Build it: `/develop route graph, map GeoJSON, and end to end vertical slice`
-   - [ ] Database migration for parent_route_id lineage and index (AC-4, AC-5)
-   - [ ] GeoJSON assembler service and domain response contracts (AC-3, AC-7)
-   - [ ] RouteOptimizerGraph state machine with transactional checkpointing (AC-1, AC-2)
-   - [ ] API routes for map, versions lineage, and replan graph trigger (AC-2, AC-3, AC-4, AC-5, AC-6, AC-7)
-   - [ ] Frontend CorridorMap GeoJSON layer rendering and interactive popups (AC-8)
-   - [ ] End to end vertical slice trace test on live database (AC-9)
+   - [ ] Core submit, graph dispatch, worker resume, job discovery, and map vertical slice (AC-1, AC-2, AC-3, AC-4, AC-5, AC-9)
+   - [ ] Mid trip replanning engine, parent lineage tracking, and versions history (AC-6, AC-7)
+   - [ ] Infeasible and partial route handling, diagnostic preservation, and failure separation (AC-8)
+   - [ ] Frontend CorridorMap GeoJSON layer integration, safe popups, and attribution (AC-10)
+   - [ ] Browser end to end test suite and connected Valhalla verification gate (AC-11)
 - [ ] Verify it: `/check verify 0006-route-graph-and-map-e2e`
 - [ ] Review it (fresh model): `/check review 0006-route-graph-and-map-e2e`
 - [ ] Test it: `/test 0006-route-graph-and-map-e2e`
