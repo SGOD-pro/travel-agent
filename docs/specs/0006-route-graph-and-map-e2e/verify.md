@@ -65,6 +65,10 @@ _Steps derived from spec 0006 acceptance criteria. /check verify runs these; /te
   - `RouteVersionHistoryResponse` model exposing `root_route_id`, `current_route_id`, and `versions` list.
 - [x] Persistence repository in `backend/src/functions/orchestrator/routing/repository.py`:
   - `get_route_lineage(route_id, *, owner_id)` resolves version lineage for trip scoped and standalone routes by climbing upwards to root and descending to all child replans using a recursive PostgreSQL CTE.
+  - Enforces single child replan policy: checks existing children and catches PostgreSQL unique constraint violations to raise `RouteVersionConflictError`.
+- [x] Database migration `0014_enforce_single_child_replan.py` in `backend/infrastructure/migrations/versions/`:
+  - Adds partial unique index `uq_routes_parent_route_id` on `routes(parent_route_id) WHERE parent_route_id IS NOT NULL`.
+  - Applied and verified against live PostgreSQL schema.
 - [x] Replan service in `backend/src/functions/route_optimizer/replan.py`:
   - Sets `parent_route_id = previous_route.id` on `OptimizedRoute`.
   - Accepts `execution_id` parameter and stores both `execution_id` and `parent_route_id` during persistence.
@@ -73,8 +77,10 @@ _Steps derived from spec 0006 acceptance criteria. /check verify runs these; /te
 - [x] LangGraph RouteOptimizerGraph in `backend/src/functions/orchestrator/graphs/route_optimizer/graph.py`:
   - `initialize_route_node` recognizes replan actions and payload structures, validates `RouteReplanRequest`, and emits tasks with `action="replan"`.
 - [x] API endpoints in `backend/src/functions/api/routes/optimization.py`:
-  - `POST /api/v1/optimization/routes/{route_id}/replans`: validates tenant ownership, checks optimistic concurrency returning HTTP 409 Conflict on mismatch, reserves idempotency, creates `ROUTE_OPTIMIZER_GRAPH` execution, and stages `EXECUTION_START`.
+  - `POST /api/v1/optimization/routes/{route_id}/replans`: validates tenant ownership, locks parent route row via `with_for_update()`, checks for existing children, checks optimistic concurrency returning HTTP 409 Conflict on mismatch, reserves idempotency key atomically, creates `ROUTE_OPTIMIZER_GRAPH` execution, and stages `EXECUTION_START`.
   - `GET /api/v1/optimization/routes/{route_id}/versions`: verifies tenant ownership, retrieves complete lineage tree, computes distance and duration deltas against immediate parents, identifies dropped stops, and returns `RouteVersionHistoryResponse`.
+- [x] Replan concurrency regression suite in `backend/tests/integration/test_route_replan_concurrency_slice2.py`:
+  - Verified on live PostgreSQL testing atomic acceptance rejection of concurrent replans (202 for winner, 409 for loser), stale replan rejection (409), and database constraint enforcement (`RouteVersionConflictError`).
 - [x] End to end integration test suite in `backend/tests/integration/test_route_replan_lineage_slice2.py`:
   - Verified on live PostgreSQL covering initial route creation, graph execution, worker solve, replan submission, optimistic concurrency conflict rejection, replan graph execution, worker replan solve, reconciliation resume, job discovery, versions lineage retrieval, and cross tenant 403 isolation.
 
@@ -126,9 +132,14 @@ _Steps derived from spec 0006 acceptance criteria. /check verify runs these; /te
   - Version selector dropdown for switching between root and detoured routes.
   - Breadcrumb navigation linked from `frontend/src/app/trips/[id]/page.tsx`.
 
-## Specced surfaces (Slice 5)
+## Specced surfaces (Slice 5 & Testing Distinction)
 
-- [x] Automated browser end to end suite in `frontend/e2e/route-optimization-e2e.spec.ts`:
+The route optimization test suite is explicitly divided into three distinct operational levels:
+
+### Level 1: Mocked UI Regression Suite
+- Location: `frontend/e2e/route-optimization-e2e.spec.ts`
+- Purpose: Fast user interface rendering and interaction regression checking. Intercepts backend routes using Playwright route mocking.
+- Scenarios tested:
   - Scenario 1: Base layout, breadcrumbs, metrics, and replan form layout.
   - Scenario 2: Polling progress banner and status transitions during solver execution.
   - Scenario 3: GeoJSON FeatureCollection rendering with multi color paths, numbered pins, parking icons, metrics, and OpenStreetMap and CARTO tile attribution.
@@ -137,48 +148,81 @@ _Steps derived from spec 0006 acceptance criteria. /check verify runs these; /te
   - Scenario 6: Version lineage selector switching between root and detoured routes.
   - Scenario 7: Infeasible route failure pins with red styling, skip reasons, and diagnostic banner.
   - Scenario 8: Clean browser console execution without errors or exceptions.
-- [x] Connected Valhalla verification gate in `backend/tests/integration/test_route_graph_valhalla_connected_slice5.py`:
-  - Gated by `RUN_CONNECTED_VALHALLA_TESTS=1` and `VALHALLA_ENDPOINT_URL`.
-  - Skips cleanly when disabled or unconfigured in 0.13s.
-  - When enabled, runs live end to end pipeline: trip seeding, route submission, LangGraph start execution, worker solve with real live Valhalla client, task completion reconciliation, graph resumption, and verifies RFC 7946 GeoJSON FeatureCollection with decoded turn by turn LineString coordinates (> 50 points) and metropolitan corridor distance.
+
+### Level 2: Full Stack Browser Acceptance Suite
+- Location: `frontend/e2e/route-optimization-acceptance.spec.ts`
+- Purpose: Real local end to end browser acceptance proving user flows across live components.
+- Stack under test: Real Next.js frontend on port 3000, real FastAPI backend on port 8000, live PostgreSQL database, real LangGraph execution runner (`GraphRunnerService`), worker consumer (`process_record`), and completion reconciliation (`CompletionReconciliationService`).
+- Provider injection: Injects only the routing provider (`MockValhallaClient`). Does not intercept application APIs via `page.route()`.
+- Controlled test principals: Dev default principal (`USER_A_ID: 00000000-0000-0000-0000-000000000001`) and unauthorized tenant (`USER_B_ID: 99999999-9999-9999-9999-999999999999`), preserving the development auth decision.
+- Scenarios demonstrated:
+  - Scenario 1: Live Submission, Real Polling, and Map Retrieval.
+  - Scenario 2: Refresh Recovery restoring active route from URL query and session storage.
+  - Scenario 3: Mid Trip Changed Road Replan and Version Switching Lineage.
+  - Scenario 4: Multimodal Route Execution (Parking Hub, Walking Leg, Vehicle Return, Drive Home).
+  - Scenario 5: PARTIAL Outcome (Dropped Optional Stop and Advisory Diagnostics).
+  - Scenario 6: INFEASIBLE Outcome (No Verified Parking Hub in Pedestrian Precinct).
+  - Scenario 7: Controlled Test Principals & Owner Isolation (HTTP 403 Forbidden checks).
+
+### Level 3: Connected Valhalla Verification Gate
+- Location: `backend/tests/integration/test_route_graph_valhalla_connected_slice5.py`
+- Purpose: Integration verification with a live external Valhalla routing provider instance.
+- Gating: Gated by `RUN_CONNECTED_VALHALLA_TESTS=1` and `VALHALLA_ENDPOINT_URL`. Skips cleanly in 0.13s when disabled or unconfigured.
+- Behavior when enabled: Runs full pipeline with trip seeding, route submission, LangGraph execution, worker solving with real Valhalla client, reconciliation, and verifies RFC 7946 GeoJSON FeatureCollection with decoded turn by turn LineString coordinates (> 50 points).
 
 ## Verified commands and evidence
 
-```bash
-# 1. Database schema verification
-SELECT column_name, data_type, is_nullable FROM information_schema.columns WHERE table_name = 'routes' AND column_name = 'parent_route_id';
-# Output: ('parent_route_id', 'uuid', 'YES')
+Tested commit: `fa6f170752703ec561324678271c10b7defeecee`
 
-# 2. Slice 1 end to end integration test execution
-cd backend && uv run pytest tests/integration/test_route_graph_map_slice1.py -v
+```bash
+# 1. Database schema migration verification (single child replan constraint)
+cd backend && .venv/bin/alembic upgrade head
+# Applied: 0014_enforce_single_child_replan (uq_routes_parent_route_id partial unique index)
+
+# 2. Replan concurrency regression execution (PostgreSQL concurrent requests)
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_replan_concurrency_slice2.py -v
+# Output: 1 passed in 9.62s on live PostgreSQL
+
+# 3. Slice 1 end to end integration test execution
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_map_slice1.py -v
 # Output: 1 passed in 51.67s on live PostgreSQL
 
-# 3. Slice 2 end to end integration test execution
-cd backend && uv run pytest tests/integration/test_route_replan_lineage_slice2.py -v
-# Output: 1 passed in 92.53s on live PostgreSQL (all 18 lifecycle assertions passed)
+# 4. Slice 2 end to end integration test execution
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_replan_lineage_slice2.py -v
+# Output: 1 passed in 122.11s on live PostgreSQL (all 18 lifecycle assertions passed)
 
-# 4. Slice 3 end to end integration test execution
-cd backend && uv run pytest tests/integration/test_route_infeasible_partial_slice3.py -v
+# 5. Slice 3 end to end integration test execution
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_infeasible_partial_slice3.py -v
 # Output: 3 passed in 89.62s on live PostgreSQL
 
-# 5. Unit test regression execution
-cd backend && uv run pytest tests/unit/test_route_optimizer_slice6.py tests/unit/test_route_optimizer_slice5.py tests/unit/test_route_map_geojson_slice3.py -v
+# 6. Unit test regression execution
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/unit/test_route_optimizer_slice6.py tests/unit/test_route_optimizer_slice5.py tests/unit/test_route_map_geojson_slice3.py -v
 # Output: 26 passed in 52.29s
 
-# 6. Frontend TypeScript verification and production build
+# 7. Frontend TypeScript verification and production build
 cd frontend && npx tsc --noEmit && npm run build
 # Output: Compiled /trips/[id]/route successfully with 0 errors
 
-# 7. Playwright browser end to end test suite (AC-11)
-cd frontend && npx playwright test
-# Output: 8 passed (7.5s)
+# 8. Level 1: Mocked Playwright UI regression suite
+cd frontend && npx playwright test e2e/route-optimization-e2e.spec.ts
+# Output: 8 passed (22.8s)
 
-# 8. Connected Valhalla verification gate (clean skip when disabled)
-cd backend && uv run pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v
+# 9. Level 2: Full stack browser acceptance suite (AC-11)
+cd frontend && npx playwright test e2e/route-optimization-acceptance.spec.ts
+# Output: 7 passed (2.6m) on real local frontend, backend, PostgreSQL, runner, and worker
+
+# 10. Level 3: Connected Valhalla verification gate (clean skip when unconfigured)
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v
 # Output: 1 skipped in 0.13s
 
-# 9. Connected Valhalla verification gate (live provider execution when enabled)
-cd backend && RUN_CONNECTED_VALHALLA_TESTS=1 uv run pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v
+# 11. Level 3: Connected Valhalla verification gate (live provider execution when enabled)
+cd backend && RUN_CONNECTED_VALHALLA_TESTS=1 VALHALLA_ENDPOINT_URL=http://localhost:8002 PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v
 # Output: 1 passed in 46.53s
 ```
+
+## Known limitations
+
+1. Browser acceptance tests run against local Next.js and FastAPI instances connected to live cloud PostgreSQL. Because each LangGraph execution stages outbox events and cycles through graph runner and worker reconciliation over the network, full graph solving runs take approximately 50 to 60 seconds per execution cycle.
+2. Connected Valhalla live tests require an active external Valhalla instance with geographic OSM tiles loaded. They are safely skipped in environments where Valhalla is not deployed.
+3. The development authentication mode uses encoded bearer tokens with subject principals; production deployment requires standard asymmetric JWT verification through the identity provider.
 

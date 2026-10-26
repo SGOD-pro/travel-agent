@@ -113,7 +113,7 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
     await submitRouteOptimization({
       owner_id: "00000000-0000-0000-0000-000000000001",
       trip_id: tripId,
-      transport_mode: "CAR_PETROL",
+      transport_mode: "car_petrol",
       departure_at: new Date().toISOString(),
       stops: [
         {
@@ -302,6 +302,8 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
                 <span>Trip Execution Metrics</span>
                 {routeStatus && (
                   <span
+                    id="route-status-badge"
+                    data-testid="route-status-badge"
                     className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${
                       routeStatus === "FEASIBLE" || routeStatus === "OPTIMAL"
                         ? "bg-emerald-950 text-emerald-300 border-emerald-700"

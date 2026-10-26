@@ -31,7 +31,8 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/route_optimizer/packaging.py` | Standalone Lambda packaging under 250 MB unpacked (0.28 MB lightweight, ~211 MB dependency inclusive), asset auditing, and clean isolated runtime verification |
 | `src/functions/api/routes/optimization.py` | Asynchronous route optimization, job discovery by-job, map GeoJSON, route retrieval, and replanning endpoints |
 | `src/functions/orchestrator/graphs/route_optimizer/` | RouteOptimizerGraph LangGraph state machine, solver task emission, and route finalization |
-| `src/functions/orchestrator/routing/` | Route persistence repository, PostGIS spatial models, and RFC 7946 GeoJSON map assembler |
+| `src/functions/orchestrator/routing/` | Route persistence repository, single child replan constraint, PostGIS spatial models, and RFC 7946 GeoJSON map assembler |
+| `src/acceptance_server.py` | Local acceptance server and worker orchestration with injected MockValhallaClient for browser testing |
 
 ## Commands
 

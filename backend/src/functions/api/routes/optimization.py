@@ -397,8 +397,8 @@ async def submit_route_replan(
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> AcceptedRouteResponse:
     """Submits an asynchronous mid-trip replanning job for an existing route (AC-8, AC-9)."""
-    # 1. Tenant ownership validation
-    stmt = select(RouteModel).where(RouteModel.id == route_id)
+    # 1. Tenant ownership validation and atomic row lock
+    stmt = select(RouteModel).where(RouteModel.id == route_id).with_for_update()
     res = await session.execute(stmt)
     existing_route = res.scalar_one_or_none()
 
@@ -414,7 +414,20 @@ async def submit_route_replan(
             detail=f"Access forbidden: route {route_id} belongs to another tenant",
         )
 
-    # 2. Optimistic concurrency check (AC-6)
+    # 2. Stale parent route check (AC-6 single-child replan policy)
+    child_stmt = (
+        select(RouteModel.id)
+        .where(RouteModel.parent_route_id == route_id)
+        .limit(1)
+    )
+    existing_child = (await session.execute(child_stmt)).scalar_one_or_none()
+    if existing_child is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Route {route_id} is a stale version and has already been replanned into child route {existing_child}",
+        )
+
+    # 3. Optimistic concurrency check against expected_previous_version (AC-6)
     if (
         request.expected_previous_version is not None
         and request.expected_previous_version != existing_route.route_version
@@ -437,8 +450,15 @@ async def submit_route_replan(
     }
     req_hash = compute_request_hash(req_dict)
 
-    # 3. Idempotency reservation
-    insert_sql = text(
+    execution_id = uuid.uuid4()
+    resp_data = {
+        "job_id": str(execution_id),
+        "status": "QUEUED",
+        "status_url": f"/api/v1/jobs/{execution_id}",
+    }
+
+    # 4. Atomic replan reservation on route_id to enforce single active replan
+    replan_lock_sql = text(
         """
         INSERT INTO api_idempotency (
             owner_id, operation, key, request_hash, response_json, status_code, expires_at
@@ -449,29 +469,22 @@ async def submit_route_replan(
         RETURNING owner_id;
         """
     )
-    execution_id = uuid.uuid4()
-    resp_data = {
-        "job_id": str(execution_id),
-        "status": "QUEUED",
-        "status_url": f"/api/v1/jobs/{execution_id}",
-    }
-
-    res_idemp = await session.execute(
-        insert_sql,
+    res_lock = await session.execute(
+        replan_lock_sql,
         {
             "owner_id": current_user.id,
-            "operation": f"route_optimization:replan:{route_id}",
-            "key": idemp_key,
+            "operation": "route_optimization:replan_reservation",
+            "key": str(route_id),
             "request_hash": req_hash,
             "response_json": json.dumps(resp_data),
             "status_code": 202,
             "expires_at": now + timedelta(days=1),
         },
     )
-    inserted = res_idemp.scalar_one_or_none()
+    lock_inserted = res_lock.scalar_one_or_none()
 
-    if inserted is None:
-        select_sql = text(
+    if lock_inserted is None:
+        check_lock_sql = text(
             """
             SELECT request_hash, response_json, status_code
             FROM api_idempotency
@@ -479,11 +492,11 @@ async def submit_route_replan(
             """
         )
         existing_res = await session.execute(
-            select_sql,
+            check_lock_sql,
             {
                 "owner_id": current_user.id,
-                "operation": f"route_optimization:replan:{route_id}",
-                "key": idemp_key,
+                "operation": "route_optimization:replan_reservation",
+                "key": str(route_id),
             },
         )
         existing_row = existing_res.first()
@@ -500,7 +513,7 @@ async def submit_route_replan(
             )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Idempotency conflict for key '{idemp_key}' with differing payload",
+            detail=f"A competing replan operation is already active or in flight for route {route_id}",
         )
 
     # 4. Create execution record under ROUTE_OPTIMIZER_GRAPH

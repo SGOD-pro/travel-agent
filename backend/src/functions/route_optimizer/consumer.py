@@ -14,6 +14,7 @@ from config.db import get_session_factory
 from functions.orchestrator.execution.fencing import (
     ExecutionEngineError,
     ParentCancelledError,
+    ParentTerminalError,
     StaleQueueMessageError,
     TaskAlreadyTerminalError,
     TaskClaimConflictError,
@@ -69,6 +70,7 @@ async def process_record(
             TaskAlreadyTerminalError,
             StaleQueueMessageError,
             ParentCancelledError,
+            ParentTerminalError,
         ) as exc:
             logger.info("Safely discarding task dispatch for %s: %s", envelope.task_id, exc)
             return

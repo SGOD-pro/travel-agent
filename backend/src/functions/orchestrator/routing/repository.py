@@ -14,6 +14,7 @@ import uuid
 import shapely.geometry
 from geoalchemy2.shape import from_shape
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -100,6 +101,17 @@ class RouteRepository:
             if conflict_res.scalar_one_or_none() is not None:
                 raise RouteVersionConflictError(
                     f"Route version {eff_version} already exists for trip {eff_trip_id}"
+                )
+
+        # Check for child replan conflict if parent_route_id is present (single-child replan policy)
+        if eff_parent_route_id is not None:
+            parent_conflict_stmt = select(RouteModel.id).where(
+                RouteModel.parent_route_id == eff_parent_route_id
+            )
+            parent_conflict_res = await self._session.execute(parent_conflict_stmt)
+            if parent_conflict_res.scalar_one_or_none() is not None:
+                raise RouteVersionConflictError(
+                    f"Route {eff_parent_route_id} has already been replanned into a child route"
                 )
 
         # 3. Create RouteModel
@@ -226,7 +238,19 @@ class RouteRepository:
 
         # 7. Atomic session add and flush
         self._session.add(route_model)
-        await self._session.flush()
+        try:
+            await self._session.flush()
+        except IntegrityError as exc:
+            err_msg = str(exc).lower()
+            if "uq_routes_parent_route_id" in err_msg or "parent_route_id" in err_msg:
+                raise RouteVersionConflictError(
+                    f"Route {eff_parent_route_id} has already been replanned into a child route"
+                ) from exc
+            if "uq_routes_trip_version" in err_msg:
+                raise RouteVersionConflictError(
+                    f"Route version {eff_version} already exists for trip {eff_trip_id}"
+                ) from exc
+            raise
 
         return route_model
 

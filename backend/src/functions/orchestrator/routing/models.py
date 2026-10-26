@@ -175,6 +175,12 @@ class RouteModel(Base):
             unique=True,
             postgresql_where=sa.text("trip_id IS NOT NULL"),
         ),
+        Index(
+            "uq_routes_parent_route_id",
+            "parent_route_id",
+            unique=True,
+            postgresql_where=sa.text("parent_route_id IS NOT NULL"),
+        ),
     )
 
     def to_optimized_route(self) -> OptimizedRoute:
@@ -389,19 +395,43 @@ class RouteLegModel(Base):
 
     def to_route_leg_output(self) -> RouteLegOutput:
         """Converts persistent leg model to domain RouteLegOutput."""
+        raw_mode = str(self.transport_mode or "car_petrol")
+        raw_upper = raw_mode.upper()
+        if raw_upper in ("DRIVE", "CAR", "CAR_PETROL"):
+            mode = TransportMode.CAR_PETROL
+        elif raw_upper in ("WALK", "WALKING"):
+            mode = TransportMode.WALKING
+        elif raw_upper in ("BICYCLE", "BIKE"):
+            mode = TransportMode.BICYCLE
+        elif raw_upper in ("BUS", "TRANSIT"):
+            mode = TransportMode.BUS
+        elif raw_upper == "TRAIN":
+            mode = TransportMode.TRAIN
+        elif raw_upper == "FLIGHT":
+            mode = TransportMode.FLIGHT
+        else:
+            try:
+                mode = TransportMode(raw_mode.lower())
+            except ValueError:
+                mode = TransportMode(raw_mode)
+
         return RouteLegOutput(
             leg_order=self.leg_order,
             from_stop_id=self.from_stop_id,
             to_stop_id=self.to_stop_id,
             from_stop_name=self.from_stop.name if self.from_stop else "",
             to_stop_name=self.to_stop.name if self.to_stop else "",
-            transport_mode=TransportMode(self.transport_mode),
+            transport_mode=mode,
             departure_at=self.departure_at,
             arrival_at=self.arrival_at,
             distance_m=self.distance_m,
             travel_seconds=self.travel_seconds,
             geometry=self.geometry,
-            traffic_basis=TrafficBasis(self.traffic_basis),
+            traffic_basis=(
+                TrafficBasis(self.traffic_basis)
+                if self.traffic_basis in TrafficBasis.__members__.values()
+                else TrafficBasis.MODELED
+            ),
             parking_hub_id=self.parking_hub_id,
             turn_instructions=list(self.turn_instructions or []),
         )

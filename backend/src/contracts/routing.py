@@ -179,11 +179,14 @@ class StopType(StrEnum):
     DESTINATION = "DESTINATION"
     WAYPOINT = "WAYPOINT"
     PARKING_HUB = "PARKING_HUB"
+    RETURN_ORIGIN = "RETURN_ORIGIN"
 
 
 class TrafficBasis(StrEnum):
     LIVE = "LIVE"
     MODELED = "MODELED"
+    HISTORICAL_SPEEDS = "HISTORICAL_SPEEDS"
+    PEDESTRIAN_NETWORK = "PEDESTRIAN_NETWORK"
     UNKNOWN = "UNKNOWN"
 
 
@@ -233,6 +236,16 @@ class RouteRequest(BaseModel):
     transport_mode: TransportMode = TransportMode.CAR_PETROL
     fuel_profile: VehicleFuelProfile | None = None
 
+    @field_validator("transport_mode", mode="before")
+    @classmethod
+    def _normalize_transport_mode(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v_lower = v.lower()
+            for m in TransportMode:
+                if v_lower in (m.value, m.name.lower()):
+                    return m
+        return v
+
 
 class RouteReplanRequest(BaseModel):
     """Payload for mid-trip dynamic replanning from traveler live location."""
@@ -248,6 +261,18 @@ class RouteReplanRequest(BaseModel):
     transport_mode: TransportMode | None = None
     fuel_profile: VehicleFuelProfile | None = None
     time_limit_seconds: int = Field(default=10, ge=1)
+
+    @field_validator("transport_mode", mode="before")
+    @classmethod
+    def _normalize_transport_mode(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str):
+            v_lower = v.lower()
+            for m in TransportMode:
+                if v_lower in (m.value, m.name.lower()):
+                    return m
+        return v
 
 
 class MatrixElement(BaseModel):
@@ -325,6 +350,29 @@ class RouteLegOutput(BaseModel):
     traffic_basis: TrafficBasis = TrafficBasis.MODELED
     parking_hub_id: UUID | None = None
     turn_instructions: list[dict[str, Any]] = Field(default_factory=list)
+
+    @field_validator("transport_mode", mode="before")
+    @classmethod
+    def _normalize_transport_mode(cls, v: Any) -> Any:
+        if v is None:
+            return TransportMode.CAR_PETROL
+        if isinstance(v, str):
+            val = v.lower().strip()
+            if val in ("drive", "car", "car_petrol", "driving"):
+                return TransportMode.CAR_PETROL
+            if val in ("walk", "walking", "pedestrian"):
+                return TransportMode.WALKING
+            if val in ("motorcycle", "motorcycle_petrol", "bike"):
+                return TransportMode.MOTORCYCLE_PETROL
+            if val in ("bicycle", "cycling"):
+                return TransportMode.BICYCLE
+            if val in ("flight", "plane"):
+                return TransportMode.FLIGHT
+            if val in ("train", "rail"):
+                return TransportMode.TRAIN
+            if val in ("bus", "transit"):
+                return TransportMode.BUS
+        return v
 
 
 class RouteRestrictionOutput(BaseModel):

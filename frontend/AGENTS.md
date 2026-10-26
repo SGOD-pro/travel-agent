@@ -22,7 +22,8 @@ Next.js 16 App Router frontend for SWENA. Provides interactive multi stop itiner
 | `src/lib/useRouteOptimization.ts` | Route optimization polling hook with exponential backoff, URL query parameter sync, and session recovery |
 | `src/app/trips/[id]/route/page.tsx` | Interactive route optimizer page with live map, mid trip replanning form, completed stops checklist, and version lineage selector |
 | `src/types/routing.ts` | GeoJSON and route version history domain TypeScript contracts |
-| `e2e/route-optimization-e2e.spec.ts` | Playwright browser end to end test suite |
+| `e2e/route-optimization-e2e.spec.ts` | Playwright mocked UI regression test suite |
+| `e2e/route-optimization-acceptance.spec.ts` | Playwright full stack browser acceptance test suite against real services |
 
 ## Commands
 

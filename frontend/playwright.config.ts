@@ -20,10 +20,18 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
   ],
-  webServer: {
-    command: "npm run start",
-    url: "http://localhost:3000",
-    reuseExistingServer: true,
-    timeout: 120 * 1000,
-  },
+  webServer: [
+    {
+      command: "npm run start",
+      url: "http://localhost:3000",
+      reuseExistingServer: true,
+      timeout: 120 * 1000,
+    },
+    {
+      command: "cd ../backend && PYTHONPATH=src .venv/bin/python src/acceptance_server.py",
+      url: "http://127.0.0.1:8000/health",
+      reuseExistingServer: true,
+      timeout: 120 * 1000,
+    },
+  ],
 });
