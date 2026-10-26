@@ -13,7 +13,7 @@ import uuid
 
 import shapely.geometry
 from geoalchemy2.shape import from_shape
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -53,6 +53,7 @@ class RouteRepository:
         execution_id: uuid.UUID | None = None,
         route_version: int | None = None,
         previous_route_version: int | None = None,
+        parent_route_id: uuid.UUID | None = None,
     ) -> RouteModel:
         """Persists optimized route, stops, legs, and restrictions atomically in one transaction.
 
@@ -67,6 +68,7 @@ class RouteRepository:
 
         eff_trip_id = trip_id or route.trip_id
         eff_exec_id = execution_id or route.execution_id
+        eff_parent_route_id = parent_route_id or route.parent_route_id
         eff_prev_version = (
             previous_route_version
             if previous_route_version is not None
@@ -107,6 +109,7 @@ class RouteRepository:
             owner_id=owner_id,
             execution_id=eff_exec_id,
             trip_id=eff_trip_id,
+            parent_route_id=eff_parent_route_id,
             route_version=eff_version,
             status=route.status.value,
             solver_status=route.solver_status.value,
@@ -125,7 +128,7 @@ class RouteRepository:
             fuel_currency=route.fuel_currency.value,
             fuel_basis=route.fuel_basis,
             warnings=list(route.warnings),
-            assumptions=list(route.assumptions),
+            assumptions=list(dict.fromkeys(list(route.assumptions or []) + list(route.diagnostics or []))),
             previous_route_version=eff_prev_version,
         )
 
@@ -155,7 +158,7 @@ class RouteRepository:
                 is_must_visit=s.is_must_visit,
                 is_completed=s.is_completed,
                 is_skipped=s.is_skipped,
-                skip_reason=s.skip_reason,
+                skip_reason=s.skip_reason[:64] if s.skip_reason else None,
                 window_start=s.window_start,
                 window_end=s.window_end,
                 dwell_seconds=s.dwell_seconds,
@@ -246,6 +249,27 @@ class RouteRepository:
         result = await self._session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_latest_route_by_execution_id(
+        self,
+        execution_id: uuid.UUID,
+        *,
+        owner_id: uuid.UUID,
+    ) -> RouteModel | None:
+        """Retrieves the latest route version for an execution with strict tenant isolation."""
+        stmt = (
+            select(RouteModel)
+            .where(RouteModel.execution_id == execution_id, RouteModel.owner_id == owner_id)
+            .order_by(RouteModel.route_version.desc())
+            .options(
+                selectinload(RouteModel.stops),
+                selectinload(RouteModel.legs),
+                selectinload(RouteModel.restrictions),
+            )
+            .limit(1)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_latest_route_by_trip(
         self,
         trip_id: uuid.UUID,
@@ -313,6 +337,85 @@ class RouteRepository:
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_route_lineage(
+        self,
+        route_id: uuid.UUID,
+        *,
+        owner_id: uuid.UUID,
+    ) -> list[RouteModel]:
+        """Retrieves chronological route version history (root to latest) for a route."""
+        target = await self.get_route_by_id(route_id, owner_id=owner_id)
+        if target is None:
+            return []
+
+        # If trip_id is present, all versions for that trip belong to the lineage
+        if target.trip_id is not None:
+            stmt = (
+                select(RouteModel)
+                .where(
+                    RouteModel.trip_id == target.trip_id,
+                    RouteModel.owner_id == owner_id,
+                )
+                .order_by(RouteModel.route_version.asc(), RouteModel.created_at.asc())
+                .options(
+                    selectinload(RouteModel.stops),
+                    selectinload(RouteModel.legs),
+                    selectinload(RouteModel.restrictions),
+                )
+            )
+            res = await self._session.execute(stmt)
+            return list(res.scalars().all())
+
+        # Standalone route (trip_id is None): trace backwards to root via parent_route_id
+        current: RouteModel | None = target
+        ancestor_visited = {target.id}
+        root = target
+        while current and current.parent_route_id:
+            parent = await self.get_route_by_id(current.parent_route_id, owner_id=owner_id)
+            if not parent or parent.id in ancestor_visited:
+                break
+            ancestor_visited.add(parent.id)
+            root = parent
+            current = parent
+
+        # Trace descendants from root via recursive CTE in a single round trip
+        cte_query = text(
+            """
+            WITH RECURSIVE descendants AS (
+                SELECT id, parent_route_id, 1 AS depth
+                FROM routes
+                WHERE id = :root_id AND owner_id = :owner_id
+                UNION ALL
+                SELECT r.id, r.parent_route_id, d.depth + 1
+                FROM routes r
+                JOIN descendants d ON r.parent_route_id = d.id
+                WHERE r.owner_id = :owner_id AND d.depth < 100
+            )
+            SELECT id FROM descendants;
+            """
+        )
+        cte_res = await self._session.execute(cte_query, {"root_id": root.id, "owner_id": owner_id})
+        descendant_ids = [row[0] for row in cte_res.fetchall()]
+
+        if not descendant_ids:
+            return [root]
+
+        stmt = (
+            select(RouteModel)
+            .where(
+                RouteModel.id.in_(descendant_ids),
+                RouteModel.owner_id == owner_id,
+            )
+            .order_by(RouteModel.route_version.asc(), RouteModel.created_at.asc())
+            .options(
+                selectinload(RouteModel.stops),
+                selectinload(RouteModel.legs),
+                selectinload(RouteModel.restrictions),
+            )
+        )
+        res = await self._session.execute(stmt)
+        return list(res.scalars().all())
 
 
 __all__ = [

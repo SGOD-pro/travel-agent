@@ -39,6 +39,9 @@ from functions.api.models import TripModel
 from functions.orchestrator.execution import (
     CompletionReconciliationService,
     ExecutionModel,
+    ExecutionResumeEvent,
+    ExecutionStartEvent,
+    GraphRunnerService,
     OutboxEventModel,
     TaskCompletionEvent,
     TaskModel,
@@ -209,12 +212,32 @@ async def test_route_optimization_worker_e2e_lifecycle(
             assert resp_data["status"] == "QUEUED"
             assert resp_data["status_url"] == f"/api/v1/jobs/{job_id}"
 
-            # 3. Verify database state: execution, task, and outbox event
+            # 3. Process EXECUTION_START via GraphRunnerService to dispatch optimizer task
+            async with session_factory() as session:
+                start_stmt = select(OutboxEventModel).where(
+                    OutboxEventModel.execution_id == job_id,
+                    OutboxEventModel.kind == "EXECUTION_START",
+                )
+                start_outbox = (await session.execute(start_stmt)).scalar_one()
+                start_payload = start_outbox.payload_ref or start_outbox.payload
+
+            runner = GraphRunnerService(session_factory)
+            await runner.handle_execution_start(
+                event=ExecutionStartEvent(
+                    execution_id=job_id,
+                    event_id=start_outbox.id,
+                    workflow="ROUTE_OPTIMIZER_GRAPH",
+                    context_version=1,
+                    payload=start_payload,
+                )
+            )
+
+            # Verify database state: execution, task, and outbox event
             async with session_factory() as session:
                 exec_stmt = select(ExecutionModel).where(ExecutionModel.id == job_id)
                 execution = (await session.execute(exec_stmt)).scalar_one_or_none()
                 assert execution is not None
-                assert execution.status == "CREATED"
+                assert execution.status == "WAITING_TASKS"
                 assert execution.owner_id == owner_id
 
                 task_stmt = select(TaskModel).where(TaskModel.execution_id == job_id)
@@ -224,7 +247,10 @@ async def test_route_optimization_worker_e2e_lifecycle(
                 assert task.action == "solve"
                 assert task.status == "PENDING"
 
-                outbox_stmt = select(OutboxEventModel).where(OutboxEventModel.execution_id == job_id)
+                outbox_stmt = select(OutboxEventModel).where(
+                    OutboxEventModel.execution_id == job_id,
+                    OutboxEventModel.kind == "TASK_DISPATCH",
+                )
                 outbox_event = (await session.execute(outbox_stmt)).scalar_one_or_none()
                 assert outbox_event is not None
                 assert outbox_event.kind == "TASK_DISPATCH"
@@ -286,7 +312,7 @@ async def test_route_optimization_worker_e2e_lifecycle(
                 assert len(route_model.stops) == 3
                 assert len(route_model.legs) == 2
 
-            # 7. Completion reconciliation: reconcile task completion into execution terminal SUCCEEDED state
+            # 7. Completion reconciliation: reconcile task completion into execution
             reconciliation_service = CompletionReconciliationService(session_factory)
             completion_event = TaskCompletionEvent(
                 event_id=uuid.uuid4(),
@@ -298,6 +324,14 @@ async def test_route_optimization_worker_e2e_lifecycle(
             )
             reconcile_result = await reconciliation_service.reconcile_task_event(event=completion_event)
             assert reconcile_result.status == "APPLIED"
+
+            # Resume execution to terminal SUCCEEDED via graph runner
+            resume_event = ExecutionResumeEvent(
+                execution_id=job_id,
+                triggered_by_task_id=task.id,
+                context_version=1,
+            )
+            await runner.handle_execution_resume(event=resume_event)
 
             async with session_factory() as session:
                 reconciled_exec = (await session.execute(exec_stmt)).scalar_one()
@@ -487,7 +521,29 @@ async def test_route_optimization_worker_fails_explicitly_without_provider(
             job_id = uuid.UUID(resp.json()["job_id"])
 
             async with session_factory() as session:
-                outbox_stmt = select(OutboxEventModel).where(OutboxEventModel.execution_id == job_id)
+                start_stmt = select(OutboxEventModel).where(
+                    OutboxEventModel.execution_id == job_id,
+                    OutboxEventModel.kind == "EXECUTION_START",
+                )
+                start_outbox = (await session.execute(start_stmt)).scalar_one()
+                start_payload = start_outbox.payload_ref or start_outbox.payload
+
+            runner = GraphRunnerService(session_factory)
+            await runner.handle_execution_start(
+                event=ExecutionStartEvent(
+                    execution_id=job_id,
+                    event_id=start_outbox.id,
+                    workflow="ROUTE_OPTIMIZER_GRAPH",
+                    context_version=1,
+                    payload=start_payload,
+                )
+            )
+
+            async with session_factory() as session:
+                outbox_stmt = select(OutboxEventModel).where(
+                    OutboxEventModel.execution_id == job_id,
+                    OutboxEventModel.kind == "TASK_DISPATCH",
+                )
                 outbox_event = (await session.execute(outbox_stmt)).scalar_one()
                 dispatch_record = outbox_event.payload_ref
 

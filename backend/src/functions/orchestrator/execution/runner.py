@@ -114,19 +114,40 @@ class GraphRunnerService:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         default_graph: Any | None = None,
+        workflow_graphs: dict[str, Any] | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         max_runtime_seconds: float = DEFAULT_RUNNER_LEASE_SECONDS,
     ) -> None:
         self._session_factory = session_factory
         self._default_graph = default_graph
-        if (
-            default_graph is not None
-            and hasattr(default_graph, "checkpointer")
-            and getattr(default_graph.checkpointer, "session_factory", None) is None
-        ):
-            default_graph.checkpointer.session_factory = session_factory
+        self._workflow_graphs = dict(workflow_graphs or {})
+        for g in [default_graph, *self._workflow_graphs.values()]:
+            if (
+                g is not None
+                and hasattr(g, "checkpointer")
+                and getattr(g.checkpointer, "session_factory", None) is None
+            ):
+                g.checkpointer.session_factory = session_factory
         self._max_steps = max_steps
         self._max_runtime_seconds = max_runtime_seconds
+
+    def _resolve_graph(self, workflow: str | None, explicit_graph: Any | None = None) -> Any:
+        """Resolves the appropriate LangGraph state machine based on execution workflow."""
+        if explicit_graph is not None:
+            return explicit_graph
+        if workflow and workflow in self._workflow_graphs:
+            return self._workflow_graphs[workflow]
+        if workflow in ("ROUTE_OPTIMIZER_GRAPH", "ROUTE_OPTIMIZER", "ROUTE_OPTIMIZATION"):
+            from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
+            from functions.orchestrator.graphs.route_optimizer import (
+                compile_route_optimizer_workflow,
+            )
+
+            checkpointer = TransactionBoundCheckpointer(session_factory=self._session_factory)
+            g = compile_route_optimizer_workflow(checkpointer=checkpointer)
+            self._workflow_graphs[workflow] = g
+            return g
+        return self._default_graph
 
     async def handle_execution_start(
         self,
@@ -150,13 +171,10 @@ class GraphRunnerService:
         else:
             event_obj = event
 
-        active_graph = graph or self._default_graph
-        if active_graph is None:
-            raise GraphRunnerError("No graph provided and no default graph configured")
-
         execution_id = event_obj.execution_id
         now = datetime.now(UTC)
         runner_lease = uuid.uuid4()
+        workflow_name = event_obj.workflow
 
         # Phase 1: Lock execution and evaluate barriers
         async with self._session_factory() as session:
@@ -227,6 +245,7 @@ class GraphRunnerService:
                         graph_advanced=False,
                     )
 
+                workflow_name = execution.workflow or workflow_name
                 # Acquire lease and mark RUNNING
                 execution.status = "RUNNING"
                 execution.lease_token = runner_lease
@@ -238,6 +257,10 @@ class GraphRunnerService:
                     event_type="EXECUTION_STARTED",
                     safe_payload={"status": "RUNNING"},
                 )
+
+        active_graph = self._resolve_graph(workflow_name, explicit_graph=graph)
+        if active_graph is None:
+            raise GraphRunnerError(f"No graph configured for workflow '{workflow_name}' and no default graph configured")
 
         # Phase 2: Execute LangGraph start outside database transaction
         config = {
@@ -312,13 +335,10 @@ class GraphRunnerService:
         else:
             event_obj = event
 
-        active_graph = graph or self._default_graph
-        if active_graph is None:
-            raise GraphRunnerError("No graph provided and no default graph configured")
-
         execution_id = event_obj.execution_id
         now = datetime.now(UTC)
         runner_lease = uuid.uuid4()
+        workflow_name: str | None = None
 
         # Phase 1: Lock execution and evaluate barriers
         async with self._session_factory() as session:
@@ -396,6 +416,7 @@ class GraphRunnerService:
                         graph_advanced=False,
                     )
 
+                workflow_name = execution.workflow
                 # Acquire lease and set RUNNING
                 execution.status = "RUNNING"
                 execution.lease_token = runner_lease
@@ -407,6 +428,10 @@ class GraphRunnerService:
                     event_type="EXECUTION_RESUMING",
                     safe_payload={"status": "RUNNING", "action": "resume_graph"},
                 )
+
+        active_graph = self._resolve_graph(workflow_name, explicit_graph=graph)
+        if active_graph is None:
+            raise GraphRunnerError(f"No graph configured for workflow '{workflow_name}' and no default graph configured")
 
         # Phase 2: Execute LangGraph continuation outside database transaction
         config = {

@@ -14,6 +14,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from geoalchemy2.shape import to_shape
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,16 +22,20 @@ from config.db import get_session
 from contracts.routing import (
     AcceptedRouteResponse,
     OptimizedRoute,
+    Point,
+    RouteMapGeoJsonResponse,
     RouteReplanRequest,
     RouteRequest,
+    RouteVersionHistoryResponse,
+    RouteVersionItem,
 )
 from functions.api.idempotency import compute_request_hash
 from functions.orchestrator.execution.job_events import record_job_event
 from functions.orchestrator.execution.models import (
     ExecutionModel,
     OutboxEventModel,
-    TaskModel,
 )
+from functions.orchestrator.routing.geojson import assemble_route_map_geojson
 from functions.orchestrator.routing.models import RouteModel
 from functions.orchestrator.routing.repository import RouteRepository
 from middleware.auth import AuthenticatedUser, get_current_user
@@ -55,7 +60,11 @@ async def submit_route_optimization(
     and returns 202 Accepted with job status URL.
     """
     now = datetime.now(UTC)
-    idemp_key = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else f"route-opt-{uuid.uuid4()}"
+    idemp_key = (
+        idempotency_key.strip()
+        if idempotency_key and idempotency_key.strip()
+        else f"route-opt-{uuid.uuid4()}"
+    )
     req_dict = request.model_dump(mode="json")
     req_hash = compute_request_hash(req_dict)
 
@@ -111,7 +120,11 @@ async def submit_route_optimization(
         )
         existing_row = existing_res.first()
         if existing_row and existing_row.request_hash == req_hash:
-            cached_json = json.loads(existing_row.response_json)
+            cached_json = (
+                json.loads(existing_row.response_json)
+                if isinstance(existing_row.response_json, str)
+                else existing_row.response_json
+            )
             return AcceptedRouteResponse(
                 job_id=uuid.UUID(cached_json["job_id"]),
                 status=cached_json.get("status", "QUEUED"),
@@ -128,7 +141,7 @@ async def submit_route_optimization(
         id=execution_id,
         owner_id=current_user.id,
         trip_id=request.trip_id,
-        workflow="ROUTE_OPTIMIZATION",
+        workflow="ROUTE_OPTIMIZER_GRAPH",
         status="CREATED",
         context_version=1,
         deadline_at=deadline,
@@ -138,44 +151,23 @@ async def submit_route_optimization(
     session.add(execution)
     await session.flush()
 
-    # 3. Create task record
-    task_id = uuid.uuid4()
-    task = TaskModel(
-        id=task_id,
-        execution_id=execution_id,
-        worker="OPTIMIZER",
-        action="solve",
-        status="PENDING",
-        attempt=0,
-        payload_ref=req_dict,
-        input_hash=req_hash,
-        idempotency_key=f"task-{task_id}",
-        deadline_at=deadline,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(task)
-    await session.flush()
-
-    # 4. Stage TASK_DISPATCH outbox event
-    dispatch_payload = {
-        "task_id": str(task_id),
+    # 3. Stage EXECUTION_START outbox event (GraphRunnerService owns task/outbox creation)
+    start_payload = {
         "execution_id": str(execution_id),
-        "worker": "OPTIMIZER",
-        "action": "solve",
-        "attempt": 0,
-        "context_version": 1,
-        "payload": req_dict,
+        "workflow": "ROUTE_OPTIMIZER_GRAPH",
+        "request": req_dict,
+        "owner_id": str(current_user.id),
+        "trip_id": str(request.trip_id) if request.trip_id else None,
     }
     outbox_event = OutboxEventModel(
         id=uuid.uuid4(),
         execution_id=execution_id,
         aggregate_id=execution_id,
-        task_id=task_id,
-        kind="TASK_DISPATCH",
-        event_type="TASK_DISPATCH",
-        payload_ref=dispatch_payload,
-        payload=dispatch_payload,
+        task_id=None,
+        kind="EXECUTION_START",
+        event_type="EXECUTION_START",
+        payload_ref=start_payload,
+        payload=start_payload,
         due_at=now,
         attempts=0,
         created_at=now,
@@ -183,14 +175,14 @@ async def submit_route_optimization(
     session.add(outbox_event)
     await session.flush()
 
-    # 5. Record job timeline event
+    # 4. Record job timeline event
     await record_job_event(
         session,
         execution_id=execution_id,
         event_type="JOB_ACCEPTED",
         safe_payload={
             "status": "CREATED",
-            "workflow": "ROUTE_OPTIMIZATION",
+            "workflow": "ROUTE_OPTIMIZER_GRAPH",
             "trip_id": str(request.trip_id) if request.trip_id else None,
             "stops_count": len(request.stops),
         },
@@ -202,6 +194,162 @@ async def submit_route_optimization(
         job_id=execution_id,
         status="QUEUED",
         status_url=f"/api/v1/jobs/{execution_id}",
+    )
+
+
+@router.get(
+    "/by-job/{job_id}",
+    response_model=OptimizedRoute,
+    status_code=status.HTTP_200_OK,
+)
+async def get_route_by_job(
+    job_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> OptimizedRoute:
+    """Retrieves an optimized route by execution/job ID with tenant fencing."""
+    route_repo = RouteRepository(session)
+    route_model = await route_repo.get_latest_route_by_execution_id(
+        job_id, owner_id=current_user.id
+    )
+
+    if route_model is None:
+        stmt = select(RouteModel.owner_id).where(RouteModel.execution_id == job_id)
+        existing_owner = (await session.execute(stmt)).scalars().first()
+        if existing_owner is not None and existing_owner != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access forbidden: job {job_id} belongs to another tenant",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No route found for job {job_id}",
+        )
+
+    return route_model.to_optimized_route()
+
+
+@router.get(
+    "/{route_id}/map",
+    response_model=RouteMapGeoJsonResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_route_map(
+    route_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> RouteMapGeoJsonResponse:
+    """Retrieves RFC 7946 GeoJSON Map for an optimized route with tenant fencing."""
+    route_repo = RouteRepository(session)
+    route_model = await route_repo.get_route_by_id(route_id, owner_id=current_user.id)
+
+    if route_model is None:
+        stmt = select(RouteModel.owner_id).where(RouteModel.id == route_id)
+        existing_owner = (await session.execute(stmt)).scalar_one_or_none()
+        if existing_owner is not None and existing_owner != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access forbidden: route {route_id} belongs to another tenant",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Route {route_id} not found",
+        )
+
+    return assemble_route_map_geojson(route_model)
+
+
+@router.get(
+    "/{route_id}/versions",
+    response_model=RouteVersionHistoryResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def get_route_versions(
+    route_id: uuid.UUID,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> RouteVersionHistoryResponse:
+    """Returns chronological route version lineage and deltas conforming to AC-7, AC-9."""
+    repo = RouteRepository(session)
+    existing_route = await repo.get_route_by_id(route_id, owner_id=current_user.id)
+
+    if existing_route is None:
+        stmt = select(RouteModel.owner_id).where(RouteModel.id == route_id)
+        existing_owner = (await session.execute(stmt)).scalar_one_or_none()
+        if existing_owner is not None and existing_owner != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access forbidden: route {route_id} belongs to another tenant",
+            )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Route {route_id} not found",
+        )
+
+    lineage = await repo.get_route_lineage(route_id, owner_id=current_user.id)
+    if not lineage:
+        lineage = [existing_route]
+
+    versions_by_id = {v.id: v for v in lineage}
+    version_items: list[RouteVersionItem] = []
+
+    for idx, v in enumerate(lineage):
+        parent_v = (
+            versions_by_id.get(v.parent_route_id)
+            if v.parent_route_id
+            else (lineage[idx - 1] if idx > 0 else None)
+        )
+
+        dist_delta = (v.total_distance_m - parent_v.total_distance_m) if parent_v else None
+        dur_delta = (v.total_travel_seconds - parent_v.total_travel_seconds) if parent_v else None
+
+        # Calculate dropped stop IDs
+        dropped_ids: list[uuid.UUID] = []
+        if parent_v:
+            parent_active = {s.name: s.id for s in (parent_v.stops or []) if not s.is_skipped}
+            current_active_names = {s.name for s in (v.stops or []) if not s.is_skipped}
+            dropped_names = set(parent_active.keys()) - current_active_names
+
+            v_skipped_ids = [s.id for s in (v.stops or []) if s.is_skipped]
+            omitted_parent_ids = [
+                parent_active[name]
+                for name in dropped_names
+                if not any(s.name == name for s in (v.stops or []))
+            ]
+            dropped_ids = v_skipped_ids + omitted_parent_ids
+        else:
+            dropped_ids = [s.id for s in (v.stops or []) if s.is_skipped]
+
+        # Detect replan origin
+        replan_origin = None
+        replan_stop = next((s for s in (v.stops or []) if s.name == "Current Location"), None)
+        if replan_stop and replan_stop.location:
+            try:
+                pt = to_shape(replan_stop.location)
+                replan_origin = Point(latitude=pt.y, longitude=pt.x)
+            except Exception:
+                replan_origin = None
+
+        version_items.append(
+            RouteVersionItem(
+                route_id=v.id,
+                route_version=v.route_version or 1,
+                parent_route_id=v.parent_route_id,
+                created_at=v.created_at,
+                status=v.status,
+                total_distance_m=v.total_distance_m,
+                total_travel_seconds=v.total_travel_seconds,
+                distance_delta_m=dist_delta,
+                duration_delta_seconds=dur_delta,
+                dropped_stop_ids=dropped_ids,
+                replan_origin=replan_origin,
+            )
+        )
+
+    return RouteVersionHistoryResponse(
+        root_route_id=lineage[0].id,
+        current_route_id=route_id,
+        versions=version_items,
     )
 
 
@@ -266,15 +414,30 @@ async def submit_route_replan(
             detail=f"Access forbidden: route {route_id} belongs to another tenant",
         )
 
+    # 2. Optimistic concurrency check (AC-6)
+    if (
+        request.expected_previous_version is not None
+        and request.expected_previous_version != existing_route.route_version
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Route version mismatch: expected version {request.expected_previous_version}, current route version is {existing_route.route_version}",
+        )
+
     now = datetime.now(UTC)
-    idemp_key = idempotency_key.strip() if idempotency_key and idempotency_key.strip() else f"route-replan-{uuid.uuid4()}"
+    idemp_key = (
+        idempotency_key.strip()
+        if idempotency_key and idempotency_key.strip()
+        else f"route-replan-{uuid.uuid4()}"
+    )
     req_dict = {
         "route_id": str(route_id),
+        "action": "replan",
         **request.model_dump(mode="json"),
     }
     req_hash = compute_request_hash(req_dict)
 
-    # 2. Idempotency reservation
+    # 3. Idempotency reservation
     insert_sql = text(
         """
         INSERT INTO api_idempotency (
@@ -325,7 +488,11 @@ async def submit_route_replan(
         )
         existing_row = existing_res.first()
         if existing_row and existing_row.request_hash == req_hash:
-            cached_json = json.loads(existing_row.response_json)
+            cached_json = (
+                json.loads(existing_row.response_json)
+                if isinstance(existing_row.response_json, str)
+                else existing_row.response_json
+            )
             return AcceptedRouteResponse(
                 job_id=uuid.UUID(cached_json["job_id"]),
                 status=cached_json.get("status", "QUEUED"),
@@ -336,13 +503,13 @@ async def submit_route_replan(
             detail=f"Idempotency conflict for key '{idemp_key}' with differing payload",
         )
 
-    # 3. Create execution record
+    # 4. Create execution record under ROUTE_OPTIMIZER_GRAPH
     deadline = now + timedelta(seconds=request.time_limit_seconds + 300)
     execution = ExecutionModel(
         id=execution_id,
         owner_id=current_user.id,
         trip_id=existing_route.trip_id,
-        workflow="ROUTE_REPLAN",
+        workflow="ROUTE_OPTIMIZER_GRAPH",
         status="CREATED",
         context_version=1,
         deadline_at=deadline,
@@ -352,44 +519,23 @@ async def submit_route_replan(
     session.add(execution)
     await session.flush()
 
-    # 4. Create task record
-    task_id = uuid.uuid4()
-    task = TaskModel(
-        id=task_id,
-        execution_id=execution_id,
-        worker="OPTIMIZER",
-        action="replan",
-        status="PENDING",
-        attempt=0,
-        payload_ref=req_dict,
-        input_hash=req_hash,
-        idempotency_key=f"task-{task_id}",
-        deadline_at=deadline,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(task)
-    await session.flush()
-
-    # 5. Stage TASK_DISPATCH outbox event
-    dispatch_payload = {
-        "task_id": str(task_id),
+    # 5. Stage EXECUTION_START outbox event (GraphRunnerService owns task dispatch and checkpoint commit)
+    start_payload = {
         "execution_id": str(execution_id),
-        "worker": "OPTIMIZER",
-        "action": "replan",
-        "attempt": 0,
-        "context_version": 1,
-        "payload": req_dict,
+        "workflow": "ROUTE_OPTIMIZER_GRAPH",
+        "request": req_dict,
+        "owner_id": str(current_user.id),
+        "trip_id": str(existing_route.trip_id) if existing_route.trip_id else None,
     }
     outbox_event = OutboxEventModel(
         id=uuid.uuid4(),
         execution_id=execution_id,
         aggregate_id=execution_id,
-        task_id=task_id,
-        kind="TASK_DISPATCH",
-        event_type="TASK_DISPATCH",
-        payload_ref=dispatch_payload,
-        payload=dispatch_payload,
+        task_id=None,
+        kind="EXECUTION_START",
+        event_type="EXECUTION_START",
+        payload_ref=start_payload,
+        payload=start_payload,
         due_at=now,
         attempts=0,
         created_at=now,
@@ -404,8 +550,11 @@ async def submit_route_replan(
         event_type="JOB_ACCEPTED",
         safe_payload={
             "status": "CREATED",
-            "workflow": "ROUTE_REPLAN",
-            "previous_route_id": str(route_id),
+            "workflow": "ROUTE_OPTIMIZER_GRAPH",
+            "action": "replan",
+            "parent_route_id": str(route_id),
+            "previous_version": existing_route.route_version,
+            "trip_id": str(existing_route.trip_id) if existing_route.trip_id else None,
             "completed_stops_count": len(request.completed_stop_ids),
         },
     )

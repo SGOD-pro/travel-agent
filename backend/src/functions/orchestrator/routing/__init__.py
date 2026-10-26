@@ -12,6 +12,7 @@ from functions.orchestrator.routing.repository import (
     RouteVersionConflictError,
     TenantMismatchError,
 )
+
 __all__ = [
     "RouteLegModel",
     "RouteModel",

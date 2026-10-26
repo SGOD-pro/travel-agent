@@ -123,6 +123,12 @@ class RouteModel(Base):
         server_default=sa.text("'[]'::jsonb"),
     )
     previous_route_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parent_route_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("routes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
@@ -138,6 +144,11 @@ class RouteModel(Base):
     )
 
     # Relationships
+    parent_route: Mapped[RouteModel | None] = relationship(
+        "RouteModel",
+        remote_side=[id],
+        foreign_keys=[parent_route_id],
+    )
     stops: Mapped[list[RouteStopModel]] = relationship(
         "RouteStopModel",
         back_populates="route",
@@ -201,8 +212,9 @@ class RouteModel(Base):
             dropped_stops=dropped_stops,
             warnings=list(self.warnings or []),
             assumptions=list(self.assumptions or []),
-            diagnostics=[],
+            diagnostics=list(self.assumptions or []),
             previous_route_version=self.previous_route_version,
+            parent_route_id=self.parent_route_id,
         )
 
 

@@ -229,9 +229,18 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
               <Compass className="w-4 h-4 text-[#B7C9AD]" />
               Interactive Corridor Map & Detour POIs
             </h2>
-            <span className="text-xs text-[#A9B8AD]">Dark Matter PostGIS Engine</span>
+            <div className="flex items-center gap-3">
+              <Link
+                href={`/trips/${tripId}/route`}
+                className="text-xs font-semibold text-[#B7C9AD] hover:text-[#F7F7F2] bg-[#102D25] border border-[#233E32] hover:border-[#B7C9AD] px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
+              >
+                <span>Interactive Route & Replan</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Link>
+              <span className="text-xs text-[#A9B8AD] hidden sm:inline">Dark Matter PostGIS Engine</span>
+            </div>
           </div>
-          <div className="h-[420px] w-full rounded-2xl overflow-hidden border border-[#233E32] shadow-2xl">
+          <div className="h-105 w-full rounded-2xl overflow-hidden border border-[#233E32] shadow-2xl">
             <CorridorMapWrapper stops={stops} places={places} />
           </div>
         </div>

@@ -379,6 +379,38 @@ class OptimizedRoute(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     diagnostics: list[str] = Field(default_factory=list)
     previous_route_version: int | None = None
+    parent_route_id: UUID | None = None
+
+
+class GeoJsonFeature(BaseModel):
+    """RFC 7946 GeoJSON Feature representation."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: str = "Feature"
+    geometry: dict[str, Any]
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class RouteMapGeoJsonResponse(BaseModel):
+    """RFC 7946 GeoJSON FeatureCollection response with simplestyle attributes (AC-5)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    type: str = "FeatureCollection"
+    bbox: list[float] | None = None
+    features: list[GeoJsonFeature]
+    properties: dict[str, Any] = Field(default_factory=dict)
+    route_id: UUID | None = None
+    route_version: int = 1
+    parent_route_id: UUID | None = None
+    status: RouteStatus = RouteStatus.FEASIBLE
+    solver_status: SolverStatus = SolverStatus.OPTIMAL
+    total_distance_m: int = 0
+    total_travel_seconds: int = 0
+    fuel_cost: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    diagnostics: list[str] = Field(default_factory=list)
 
 
 class RouteOptimizerWorkerOutput(BaseModel):
@@ -407,6 +439,34 @@ class AcceptedRouteResponse(BaseModel):
     job_id: UUID
     status: str = "QUEUED"
     status_url: str
+
+
+class RouteVersionItem(BaseModel):
+    """Individual version summary in a route's lineage."""
+
+    model_config = ConfigDict(frozen=True)
+
+    route_id: UUID
+    route_version: int
+    parent_route_id: UUID | None = None
+    created_at: datetime
+    status: str
+    total_distance_m: int
+    total_travel_seconds: int
+    distance_delta_m: int | None = None
+    duration_delta_seconds: int | None = None
+    dropped_stop_ids: list[UUID] = Field(default_factory=list)
+    replan_origin: Point | None = None
+
+
+class RouteVersionHistoryResponse(BaseModel):
+    """Chronological route version history response conforming to spec 0006 AC-7."""
+
+    model_config = ConfigDict(frozen=True)
+
+    root_route_id: UUID
+    current_route_id: UUID
+    versions: list[RouteVersionItem] = Field(default_factory=list)
 
 
 # Backward compatibility aliases

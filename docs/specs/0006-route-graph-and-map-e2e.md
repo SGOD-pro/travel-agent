@@ -1,7 +1,7 @@
 # 0006. Route Graph, Map GeoJSON, and End to End Vertical Slice
 
 **Date**: 2026-10-25
-**Status**: Proposed
+**Status**: Accepted
 
 ## Summary
 

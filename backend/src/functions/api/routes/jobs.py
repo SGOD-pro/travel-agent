@@ -42,6 +42,7 @@ class JobStatusResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     error: dict[str, Any] | None = None
     result_available: bool = False
+    result_ref: dict[str, Any] | None = None
     retry_after_seconds: int = 0
     timeline: list[JobEventDTO] = Field(default_factory=list)
     next_cursor: str | None = None
@@ -130,6 +131,25 @@ async def get_job_status(
             "message": "Workflow execution failed or deadline exceeded",
         }
 
+    result_ref = None
+    if execution.status == "SUCCEEDED":
+        from functions.orchestrator.routing.models import RouteModel
+
+        route_stmt = (
+            select(RouteModel.id)
+            .where(
+                RouteModel.execution_id == job_id,
+                RouteModel.owner_id == current_user.id,
+            )
+            .order_by(RouteModel.route_version.desc())
+        )
+        route_id = (await session.execute(route_stmt)).scalars().first()
+        if route_id is not None:
+            result_ref = {
+                "route_id": str(route_id),
+                "map_url": f"/api/v1/optimization/routes/{route_id}/map",
+            }
+
     return JobStatusResponse(
         job_id=execution.id,
         status=execution.status,
@@ -139,6 +159,7 @@ async def get_job_status(
         warnings=[],
         error=error_info,
         result_available=result_available,
+        result_ref=result_ref,
         retry_after_seconds=retry_after,
         timeline=event_dtos,
         next_cursor=str(next_seq) if next_seq is not None else None,

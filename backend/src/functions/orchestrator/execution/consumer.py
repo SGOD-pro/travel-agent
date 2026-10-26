@@ -78,8 +78,22 @@ async def process_batch(
     if runner is None:
         session_factory = get_session_factory()
         checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
-        graph = compile_trip_planning_workflow(checkpointer=checkpointer)
-        runner = GraphRunnerService(session_factory, default_graph=graph)
+        trip_graph = compile_trip_planning_workflow(checkpointer=checkpointer)
+        from functions.orchestrator.graphs.route_optimizer import (
+            compile_route_optimizer_workflow,
+        )
+
+        route_graph = compile_route_optimizer_workflow(checkpointer=checkpointer)
+        runner = GraphRunnerService(
+            session_factory,
+            default_graph=trip_graph,
+            workflow_graphs={
+                "ROUTE_OPTIMIZER_GRAPH": route_graph,
+                "ROUTE_OPTIMIZATION": route_graph,
+                "ROUTE_OPTIMIZER": route_graph,
+                "TRAVEL": trip_graph,
+            },
+        )
 
     records = event.get("Records", [])
     if not records:

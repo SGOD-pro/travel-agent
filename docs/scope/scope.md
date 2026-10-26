@@ -14,7 +14,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 | 3 | Browser escalation worker service and orchestrator dispatch | Phase 5: Browser Escalation | done |
 | 4 | Remote LAYA decision router integration | Phase 6: Decision Routing | done |
 | 5 | Route optimizer and multimodal itinerary planning | Phase 7: Route Optimization | done |
-| 6 | Route graph, map GeoJSON, and end to end vertical slice | Phase 8: Route Graph & Map | in-progress |
+| 6 | Route graph, map GeoJSON, and end to end vertical slice | Phase 8: Route Graph & Map | done |
 
 ## Foundations
 
@@ -168,19 +168,29 @@ Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: Accepted) · code in `b
  
 ## Phase 8: Route Graph & Map
 
-### 6. Route graph, map GeoJSON, and end to end vertical slice · in-progress
+### 6. Route graph, map GeoJSON, and end to end vertical slice · done
 Orchestrate route solving and dynamic mid trip replanning inside a dedicated LangGraph state machine, compile PostGIS route geometries into standards compliant GeoJSON FeatureCollections, and extend frontend Leaflet CorridorMap for interactive multi color route inspection. Strictly excludes payments, booking checkout, client user interfaces, and live AWS deployment.
 **Done when:** RouteOptimizerGraph executes under transactional checkpointing, GET /api/v1/optimization/routes/{route_id}/map returns valid styled GeoJSON FeatureCollections, replanning records parent_route_id lineage and version comparison deltas, Leaflet CorridorMap renders driving, walking, detour, and parking legs, and automated integration trace passes on live PostgreSQL.
 - [x] Design it (spec): [0006](../specs/0006-route-graph-and-map-e2e.md)
-- [ ] Build it: `/develop route graph, map GeoJSON, and end to end vertical slice`
-   - [ ] Core submit, graph dispatch, worker resume, job discovery, and map vertical slice (AC-1, AC-2, AC-3, AC-4, AC-5, AC-9)
-   - [ ] Mid trip replanning engine, parent lineage tracking, and versions history (AC-6, AC-7)
-   - [ ] Infeasible and partial route handling, diagnostic preservation, and failure separation (AC-8)
-   - [ ] Frontend CorridorMap GeoJSON layer integration, safe popups, and attribution (AC-10)
-   - [ ] Browser end to end test suite and connected Valhalla verification gate (AC-11)
-- [ ] Verify it: `/check verify 0006-route-graph-and-map-e2e`
-- [ ] Review it (fresh model): `/check review 0006-route-graph-and-map-e2e`
-- [ ] Test it: `/test 0006-route-graph-and-map-e2e`
-- [ ] Document it: `/document 0006-route-graph-and-map-e2e`
+- [x] Build it: `/develop route graph, map GeoJSON, and end to end vertical slice`
+   - [x] Core submit, graph dispatch, worker resume, job discovery, and map vertical slice (AC-1, AC-2, AC-3, AC-4, AC-5, AC-9)
+   - [x] Mid trip replanning engine, parent lineage tracking, and versions history (AC-6, AC-7)
+   - [x] Infeasible and partial route handling, diagnostic preservation, and failure separation (AC-8)
+   - [x] Frontend CorridorMap GeoJSON layer integration, safe popups, and attribution (AC-10)
+   - [x] Browser end to end test suite and connected Valhalla verification gate (AC-11)
+- [x] Verify it: `/check verify 0006-route-graph-and-map-e2e`
+   - [x] Slice 1 core submit, graph dispatch, worker resume, job discovery, and map: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed on live PostgreSQL)
+   - [x] Slice 2 mid trip replanning engine, parent lineage tracking, and versions history: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed on live PostgreSQL)
+   - [x] Slice 3 infeasible and partial route handling, diagnostic preservation, and failure separation: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed on live PostgreSQL)
+   - [x] Slice 4 frontend CorridorMap GeoJSON, safe popups, and live page verification: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed TypeScript, Next.js build, and live HTTP rendering)
+   - [x] Slice 5 browser end to end suite and connected Valhalla verification gate: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed Playwright suite, clean skip, and live Valhalla provider execution)
+- [x] Review it (fresh model): `/check review 0006-route-graph-and-map-e2e`
+   - [x] Slice 1 core submit, graph dispatch, worker resume, job discovery, and map: [2026-10-25-route-optimizer-graph-slice1.md](../reviews/2026-10-25-route-optimizer-graph-slice1.md) (Approve with nits)
+   - [x] Slice 2 mid trip replanning engine, parent lineage tracking, and versions history: [2026-10-26-route-optimizer-graph-slice2.md](../reviews/2026-10-26-route-optimizer-graph-slice2.md) (Approve with nits)
+   - [x] Slice 3 infeasible and partial route handling, diagnostic preservation, and failure separation: [2026-10-26-route-optimizer-graph-slice3.md](../reviews/2026-10-26-route-optimizer-graph-slice3.md) (Approve with nits)
+   - [x] Slice 4 frontend CorridorMap GeoJSON, safe popups, and polling hook: [2026-10-26-route-optimizer-graph-slice4.md](../reviews/2026-10-26-route-optimizer-graph-slice4.md) (Approve)
+   - [x] Slice 5 browser end to end suite and connected Valhalla verification gate: [2026-10-26-route-optimizer-graph-slice5.md](../reviews/2026-10-26-route-optimizer-graph-slice5.md) (Approve)
+- [x] Test it: `/test 0006-route-graph-and-map-e2e` (37 unit tests, 4 live database integration suites, 8 Playwright browser tests, and 1 connected provider gate passing)
+- [x] Document it: `/document 0006-route-graph-and-map-e2e` (10 capability entries in CHANGELOG.md)
 
-Spec 0006 (`docs/specs/0006-route-graph-and-map-e2e.md`, Status: Proposed) · code in `backend/src/functions/orchestrator/graphs/route_optimizer/`, `backend/src/functions/api/routes/optimization.py`, and `frontend/src/components/map/`
+Spec 0006 (`docs/specs/0006-route-graph-and-map-e2e.md`, Status: Accepted) · code in `backend/src/functions/orchestrator/graphs/route_optimizer/`, `backend/src/functions/api/routes/optimization.py`, and `frontend/src/components/map/`

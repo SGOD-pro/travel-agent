@@ -293,13 +293,23 @@ async def test_api_submit_route_optimization_validation_and_acceptance() -> None
     caller_id = uuid.uuid4()
     auth_user = AuthenticatedUser(id=caller_id, email="traveler@test.local")
 
-    app.dependency_overrides[get_current_user] = lambda: auth_user
+    async def _get_auth_user():
+        return auth_user
+
+    app.dependency_overrides[get_current_user] = _get_auth_user
 
     mock_session = AsyncMock()
-    mock_session.execute.return_value.scalar_one_or_none.return_value = caller_id
+    mock_session.add = MagicMock()
+    mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = caller_id
+    mock_res.scalar.return_value = 1
+    mock_session.execute.return_value = mock_res
+
+    async def _get_test_session():
+        yield mock_session
 
     from config.db import get_session
-    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[get_session] = _get_test_session
 
     try:
         transport = ASGITransport(app=app)
@@ -342,16 +352,22 @@ async def test_api_get_route_tenant_isolation_forbidden() -> None:
     route_id = uuid.uuid4()
 
     auth_user = AuthenticatedUser(id=caller_id, email="caller@test.local")
-    app.dependency_overrides[get_current_user] = lambda: auth_user
+    async def _get_auth_user():
+        return auth_user
+
+    app.dependency_overrides[get_current_user] = _get_auth_user
 
     mock_session = AsyncMock()
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = other_owner_id
     mock_session.execute.return_value = mock_result
 
+    async def _get_test_session():
+        yield mock_session
+
     from config.db import get_session
     from functions.orchestrator.routing.repository import RouteRepository
-    app.dependency_overrides[get_session] = lambda: mock_session
+    app.dependency_overrides[get_session] = _get_test_session
 
     try:
         with patch.object(RouteRepository, "get_route_by_id", new_callable=AsyncMock, return_value=None):

@@ -29,6 +29,7 @@ from contracts.routing import (
     RouteStatus,
     ScheduledStopOutput,
     SolverStatus,
+    StopType,
     VehicleFuelProfile,
 )
 from contracts.trips import TransportMode
@@ -62,6 +63,7 @@ def _ensure_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
+
 
 logger = logging.getLogger(__name__)
 
@@ -177,14 +179,10 @@ class RouteOptimizerWorkerService:
             envelope = parse_optimizer_dispatch_message(message)
 
         if envelope.worker.upper() not in ("OPTIMIZER", "ROUTE_OPTIMIZER"):
-            raise ValueError(
-                f"Unsupported worker: {envelope.worker}, expected OPTIMIZER"
-            )
+            raise ValueError(f"Unsupported worker: {envelope.worker}, expected OPTIMIZER")
 
         if envelope.action not in ("solve", "replan"):
-            raise ValueError(
-                f"Unsupported action: {envelope.action}, expected 'solve' or 'replan'"
-            )
+            raise ValueError(f"Unsupported action: {envelope.action}, expected 'solve' or 'replan'")
 
         task_msg = envelope.to_task_queue_message()
 
@@ -253,6 +251,7 @@ class RouteOptimizerWorkerService:
                 request=replan_req,
                 route_repo=self._route_repo,
                 restrictions=restrictions,
+                execution_id=envelope.execution_id,
             )
             solved_route = persisted_route_model.to_optimized_route()
         else:
@@ -297,6 +296,57 @@ class RouteOptimizerWorkerService:
 
             if solved_route.owner_id is None or solved_route.owner_id != effective_owner_id:
                 solved_route = solved_route.model_copy(update={"owner_id": effective_owner_id})
+
+            if solved_route.status == RouteStatus.INFEASIBLE:
+                infeasible_reason = (
+                    "MANDATORY_STOP_WINDOW_BREACH"
+                    if any(
+                        "cannot complete service" in d or "window" in d.lower()
+                        for d in solved_route.diagnostics
+                    )
+                    else (
+                        solved_route.diagnostics[0][:64]
+                        if solved_route.diagnostics
+                        else "MANDATORY_CONSTRAINT_INFEASIBLE"
+                    )
+                )
+                existing_stops_by_name = {
+                    s.name: s
+                    for s in (list(solved_route.stops) + list(solved_route.dropped_stops))
+                }
+                infeasible_stops = []
+                for idx, s in enumerate(route_req.stops):
+                    prev_s = existing_stops_by_name.get(s.name)
+                    s_id = (
+                        getattr(prev_s, "id", None)
+                        or getattr(s, "id", None)
+                        or uuid.uuid4()
+                    )
+                    infeasible_stops.append(
+                        ScheduledStopOutput(
+                            id=s_id,
+                            stop_id=getattr(s, "id", None) or s_id,
+                            place_id=getattr(s, "place_id", None),
+                            stop_order=idx + 1,
+                            name=s.name,
+                            location=s.location,
+                            stop_type=getattr(s, "stop_type", StopType.DESTINATION),
+                            is_must_visit=getattr(s, "is_must_visit", True),
+                            is_completed=False,
+                            is_skipped=True,
+                            skip_reason=getattr(prev_s, "skip_reason", None) or infeasible_reason,
+                            window_start=getattr(s, "window_start", None),
+                            window_end=getattr(s, "window_end", None),
+                            dwell_seconds=getattr(s, "dwell_seconds", 0),
+                        )
+                    )
+                solved_route = solved_route.model_copy(
+                    update={
+                        "stops": [],
+                        "dropped_stops": infeasible_stops,
+                        "legs": [],
+                    }
+                )
 
             # Persist solved route
             persisted_route_model = await self._route_repo.save_route(
@@ -375,7 +425,10 @@ class RouteOptimizerWorkerService:
             mode=request.transport_mode,
         )
         initial_route = self._solver.solve(request, matrix.durations_s, matrix.distances_m)
-        if initial_route.status not in (RouteStatus.FEASIBLE, RouteStatus.PARTIAL) or not initial_route.legs:
+        if (
+            initial_route.status not in (RouteStatus.FEASIBLE, RouteStatus.PARTIAL)
+            or not initial_route.legs
+        ):
             return initial_route
 
         if hasattr(client, "route"):
@@ -401,7 +454,9 @@ class RouteOptimizerWorkerService:
         leg_polys: list[list[list[float]]] = []
         if restrictions:
             active_restrs = [r for r in restrictions if r.is_active and r.is_verified]
-            leg_polys, _, diags = self._closure_service.extract_valhalla_exclude_polygons(active_restrs)
+            leg_polys, _, diags = self._closure_service.extract_valhalla_exclude_polygons(
+                active_restrs
+            )
             if diags:
                 raise UnsupportedRestrictionError(diags[0])
 
@@ -485,10 +540,14 @@ class RouteOptimizerWorkerService:
                                     "actual_return_at": target_dep,
                                     "stops": updated_stops,
                                     "legs": hydrated_legs,
-                                    "diagnostics": initial_route.diagnostics + [
+                                    "diagnostics": initial_route.diagnostics
+                                    + [
                                         f"SCHEDULE_INFEASIBLE: Service at mandatory stop '{to_stop.name}' finishes at {target_dep.isoformat()}, exceeding closing time {w_end.isoformat()}"
                                     ],
-                                    "warnings": initial_route.warnings + [f"Service window breached at mandatory stop '{to_stop.name}'"],
+                                    "warnings": initial_route.warnings
+                                    + [
+                                        f"Service window breached at mandatory stop '{to_stop.name}'"
+                                    ],
                                 }
                             )
                         else:
@@ -529,10 +588,14 @@ class RouteOptimizerWorkerService:
                                     "solver_status": final_solver_status,
                                     "stops": reduced_route.stops + [dropped_stop],
                                     "dropped_stops": reduced_route.dropped_stops + [dropped_stop],
-                                    "diagnostics": reduced_route.diagnostics + [
+                                    "diagnostics": reduced_route.diagnostics
+                                    + [
                                         f"Optional stop '{to_stop.name}' dropped after detour exceeded closing time {w_end.isoformat()}"
                                     ],
-                                    "warnings": reduced_route.warnings + [f"Optional stop '{to_stop.name}' dropped due to closure detour"],
+                                    "warnings": reduced_route.warnings
+                                    + [
+                                        f"Optional stop '{to_stop.name}' dropped due to closure detour"
+                                    ],
                                 }
                             )
 
@@ -584,14 +647,17 @@ class RouteOptimizerWorkerService:
                         "actual_return_at": check_deadline_at,
                         "stops": updated_stops,
                         "legs": hydrated_legs,
-                        "diagnostics": initial_route.diagnostics + [
+                        "diagnostics": initial_route.diagnostics
+                        + [
                             f"SCHEDULE_INFEASIBLE: Route completes at {check_deadline_at.isoformat()}, exceeding return deadline {ret_dl.isoformat()}"
                         ],
                         "warnings": initial_route.warnings + ["Return deadline breached"],
                     }
                 )
 
-        fuel_profile = request.fuel_profile or VehicleFuelProfile.default_for_mode(request.transport_mode)
+        fuel_profile = request.fuel_profile or VehicleFuelProfile.default_for_mode(
+            request.transport_mode
+        )
         driving_dist_m = total_distance_m if request.transport_mode != TransportMode.WALKING else 0
         walking_dist_m = total_distance_m if request.transport_mode == TransportMode.WALKING else 0
 
@@ -658,6 +724,4 @@ class RouteOptimizerWorkerService:
             return restrictions
         except Exception as exc:
             logger.error("Authoritative road closure restriction lookup failed: %s", exc)
-            raise RuntimeError(
-                f"Authoritative restriction lookup failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"Authoritative restriction lookup failed: {exc}") from exc

@@ -29,8 +29,9 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/route_optimizer/` | OR Tools VRPTW routing solver, vehicle continuity tracker, multimodal parking hubs, Valhalla client, closure avoidance, mid trip replanning, and fenced worker service |
 | `src/functions/route_optimizer/consumer.py` | Dedicated SQS consumer Lambda handler with partial batch failure reporting and deadline guards |
 | `src/functions/route_optimizer/packaging.py` | Standalone Lambda packaging under 250 MB unpacked (0.28 MB lightweight, ~211 MB dependency inclusive), asset auditing, and clean isolated runtime verification |
-| `src/functions/api/routes/optimization.py` | Asynchronous route optimization, route retrieval, and mid trip replanning endpoints with tenant isolation |
-| `src/functions/orchestrator/routing/` | Route persistence repository and PostGIS spatial models |
+| `src/functions/api/routes/optimization.py` | Asynchronous route optimization, job discovery by-job, map GeoJSON, route retrieval, and replanning endpoints |
+| `src/functions/orchestrator/graphs/route_optimizer/` | RouteOptimizerGraph LangGraph state machine, solver task emission, and route finalization |
+| `src/functions/orchestrator/routing/` | Route persistence repository, PostGIS spatial models, and RFC 7946 GeoJSON map assembler |
 
 ## Commands
 
@@ -102,6 +103,9 @@ uv run alembic upgrade head
 - Standalone completion reconciliation scopes strictly to optimizer workflows, leaving orchestrator graph workflows in waiting states untouched.
 - Route optimizer packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed (0.28 MB lightweight, ~211 MB dependency inclusive), excluding LangGraph, Playwright, and FastAPI dependencies.
 - Optimization endpoints enforce caller tenant ownership with explicit 403 Forbidden responses on tenant mismatch.
+- RouteOptimizerGraph compiles with interrupt_before=[RouteOptimizerNode.AWAIT_SOLVER_RESULT], clearing pending_tasks upon resumption to eliminate duplicate dispatch, and preserves INFEASIBLE route outcomes with status SUCCEEDED (see spec 0006).
+- GET /api/v1/optimization/routes/{route_id}/map returns RFC 7946 GeoJSON FeatureCollection with PostGIS stop coordinates, JSONB leg polylines, simplestyle presentation attributes, and 4 element bbox (see spec 0006).
+- GET /api/v1/optimization/routes/{route_id}/versions traces root to child replan lineage with recursive PostgreSQL CTE, computing distance deltas, duration deltas, and dropped stops (see spec 0006).
 
 ## Gotchas
 
