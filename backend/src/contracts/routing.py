@@ -1,4 +1,4 @@
-"""Domain model for Road Transit, Fuel Math, and Route Budgeting.
+"""Domain model for Road Transit, Fuel Math, Route Budgeting, and Routing Graphs.
 
 Conforms strictly to docs/TRD.md:
 - fuel_liters = route_distance_km / mileage_km_per_liter
@@ -11,12 +11,75 @@ Conforms strictly to docs/TRD.md:
 from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from contracts.money import BudgetCategory, BudgetLine, Currency
 from contracts.trips import TransportMode
 
+
+# ============================================================================
+# PART 1: ROUTING GRAPH MODELS (Required by functions/optimizer/routing.py)
+# ============================================================================
+
+class RoutePoint(BaseModel):
+    """A geographical coordinate point on a route."""
+    name: str
+    lat: float
+    lng: float
+    sequence_order: int = 0
+
+
+class RouteLeg(BaseModel):
+    """A single transit segment connecting two points."""
+    from_point: str
+    to_point: str
+    distance_km: float
+    duration_minutes: int
+    mode: str = "car"  # car, motorcycle, walk, transit
+
+
+class RouteAlternative(BaseModel):
+    """A viable route option (e.g. Scenic vs. Fastest)."""
+    name: str = "Default Route"
+    legs: List[RouteLeg] = Field(default_factory=list)
+    total_distance_km: float = 0.0
+    total_duration_minutes: int = 0
+    estimated_cost_inr: float = 0.0
+
+
+class RouteRequest(BaseModel):
+    """Input schema for requesting route alternatives."""
+    origin: RoutePoint
+    destinations: List[RoutePoint]
+    preferences: dict = Field(default_factory=dict)  # e.g. {"avoid_tolls": true, "scenic_only": true}
+
+
+class RouteResponse(BaseModel):
+    """Output schema containing ranked route alternatives."""
+    request_id: str
+    alternatives: List[RouteAlternative] = Field(default_factory=list)
+    best_alternative: Optional[RouteAlternative] = None
+
+
+class RouteMatrix(BaseModel):
+    """Matrix of distances and durations between multiple points."""
+    from_points: List[RoutePoint]
+    to_points: List[RoutePoint]
+    distance_matrix: List[List[float]]
+    duration_matrix: List[List[int]]
+
+
+class TimeWindow(BaseModel):
+    """Represents a time constraint window for a location (e.g. opening hours)."""
+    start_minute: int = Field(ge=0, le=1439, description="Start time in minutes from midnight")
+    end_minute: int = Field(ge=0, le=1439, description="End time in minutes from midnight")
+
+
+# ============================================================================
+# PART 2: ROAD BUDGET & FUEL MATH MODELS (Your existing domain models)
+# ============================================================================
 
 class VehicleFuelProfile(BaseModel):
     """Vehicle mileage benchmarks and fuel pricing configuration."""

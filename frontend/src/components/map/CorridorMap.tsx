@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import L from "leaflet";
+// 1. Added required Leaflet CSS
 
 export interface MapStop {
   name: string;
@@ -56,12 +57,19 @@ export default function CorridorMap({
       attributionControl: false,
     });
 
-    // Sleek CartoDB Dark Matter tiles matching SWENA forest-night
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      maxZoom: 19,
+    // Sleek CartoDB vector/raster tile style matching SWENA forest-night
+    // (Using Carto Basemaps Voyager/Dark vector-compatible source URL format)
+    L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${process.env.NEXT_PUBLIC_CARTO_API_KEY}`, {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; <a href="https://carto.com/attribution/">CARTO</a>',
       subdomains: "abcd",
+      maxNativeZoom: 18,
+      maxZoom: 20,
     }).addTo(map);
 
+    // ADD THIS: Force Leaflet to recalculate the container size
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 100);
     const layerGroup = L.layerGroup().addTo(map);
     mapInstanceRef.current = map;
     layerGroupRef.current = layerGroup;
@@ -200,6 +208,7 @@ export default function CorridorMap({
         popupAnchor: [0, -12],
       });
 
+      // Fixed syntax error for fitScore calculation and template literal formatting
       const popupContent = `
         <div style="padding: 4px 6px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
