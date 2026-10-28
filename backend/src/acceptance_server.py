@@ -68,8 +68,10 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
+import os
+
 def get_live_session_factory() -> async_sessionmaker[AsyncSession]:
-    url = settings.DATABASE_URL
+    url = settings.ACCEPTANCE_DATABASE_URL or settings.DATABASE_URL
     connect_args: dict[str, Any] = {
         "command_timeout": 60,
         "timeout": 30,
@@ -98,10 +100,15 @@ def get_live_session_factory() -> async_sessionmaker[AsyncSession]:
 @asynccontextmanager
 async def lifespan(app: Any):
     session_factory = get_live_session_factory()
-    try:
-        await seed_acceptance_fixtures(session_factory)
-    except Exception as e:
-        logger.warning("Acceptance fixture seeding warning: %s", e)
+    if getattr(settings, "ENVIRONMENT", "local") == "production":
+        logger.warning("Acceptance server running in production environment; startup seeding disabled.")
+    elif os.environ.get("SKIP_ACCEPTANCE_SEEDING", "").lower() in ("1", "true"):
+        logger.info("SKIP_ACCEPTANCE_SEEDING is set; skipping acceptance fixture seeding.")
+    else:
+        try:
+            await seed_acceptance_fixtures(session_factory)
+        except Exception as e:
+            logger.warning("Acceptance fixture seeding warning: %s", e)
     worker = LocalAcceptanceWorker(session_factory)
     worker_task = worker.start(poll_interval_s=0.2)
     logger.info("LocalAcceptanceWorker started for browser acceptance.")
@@ -144,7 +151,10 @@ async def reset_replan_fixtures():
 
     sf = get_live_session_factory()
     async with sf() as session:
-        stmt = select(RouteModel.id).where(RouteModel.parent_route_id.in_(CANONICAL_ROUTE_IDS))
+        stmt = select(RouteModel.id).where(
+            RouteModel.owner_id.in_(OWNED_USER_IDS),
+            RouteModel.parent_route_id.in_(CANONICAL_ROUTE_IDS),
+        )
         child_ids = list((await session.execute(stmt)).scalars().all())
         if child_ids:
             await session.execute(delete(RouteLegModel).where(RouteLegModel.route_id.in_(child_ids)))

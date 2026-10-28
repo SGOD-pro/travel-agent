@@ -541,3 +541,96 @@ async def test_mock_valhalla_client_offline() -> None:
     assert len(route_res.legs) == 1
     assert len(mock.exclude_polygons_received) == 1
     assert mock.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_changed_road_closure_full_intersection_and_route_change() -> None:
+    """Proves full line-polygon intersection and demonstrates that the road closure changes the route."""
+    from shapely.geometry import LineString, Point as ShapelyPoint, Polygon
+
+    # Point A (MG Road Depot) and Point B (Cubbon Park Parking Hub)
+    p1 = Point(latitude=12.9716, longitude=77.6101)
+    p2 = Point(latitude=12.9794, longitude=77.5855)
+
+    # Road closure polygon directly on the straight-line path between P1 and P2
+    # Longitude: 77.5950 to 77.6010, Latitude: 12.9740 to 12.9770
+    closure_coords = [
+        [77.5950, 12.9740],
+        [77.6010, 12.9740],
+        [77.6010, 12.9770],
+        [77.5950, 12.9770],
+        [77.5950, 12.9740],
+    ]
+    closure_poly = Polygon(closure_coords)
+
+    # Direct line between P1 and P2
+    direct_line = LineString([[p1.longitude, p1.latitude], [p2.longitude, p2.latitude]])
+
+    # 1. Assert endpoints P1 and P2 are outside the polygon, but the line crosses through (full line-polygon intersection)
+    assert not closure_poly.contains(ShapelyPoint(p1.longitude, p1.latitude))
+    assert not closure_poly.contains(ShapelyPoint(p2.longitude, p2.latitude))
+    assert direct_line.intersects(closure_poly), "Direct path must intersect closure polygon"
+
+    # 2. Test revalidation rejects the direct intersecting leg
+    intersecting_leg = RouteLegOutput(
+        leg_order=0,
+        from_stop_id=uuid.uuid4(),
+        to_stop_id=uuid.uuid4(),
+        from_stop_name="Depot",
+        to_stop_name="Parking Hub",
+        departure_at=datetime(2026, 11, 10, 10, 0, tzinfo=UTC),
+        arrival_at=datetime(2026, 11, 10, 10, 30, tzinfo=UTC),
+        distance_m=2800,
+        travel_seconds=300,
+        geometry={"type": "LineString", "coordinates": [[p1.longitude, p1.latitude], [p2.longitude, p2.latitude]]},
+    )
+    closure_claim = RestrictionClaim(
+        id=uuid.uuid4(),
+        restriction_type=RestrictionType.ROAD_CLOSURE,
+        geometry={"type": "Polygon", "coordinates": [closure_coords]},
+        effective_start=datetime(2026, 11, 10, 9, 0, tzinfo=UTC),
+        effective_end=datetime(2026, 11, 10, 12, 0, tzinfo=UTC),
+        is_active=True,
+        is_verified=True,
+    )
+    violations = ClosureAvoidanceService.revalidate_leg_geometries([intersecting_leg], [closure_claim])
+    assert len(violations) == 1
+    assert "ROAD_CLOSURE_INTERSECTION" in violations[0]
+
+    # 3. Solve route WITHOUT closure using MockValhallaClient
+    mock = MockValhallaClient()
+    unrestricted_route = await mock.route([p1, p2], mode=TransportMode.CAR_PETROL, exclude_polygons=[])
+    assert len(unrestricted_route.legs) == 1
+    unrestricted_coords = unrestricted_route.legs[0].geometry["coordinates"]
+    assert LineString(unrestricted_coords).intersects(closure_poly), "Unrestricted route must intersect the closure"
+
+    # 4. Solve route WITH closure using MockValhallaClient
+    detour_route = await mock.route([p1, p2], mode=TransportMode.CAR_PETROL, exclude_polygons=[closure_coords])
+    assert len(detour_route.legs) == 1
+    detour_coords = detour_route.legs[0].geometry["coordinates"]
+
+    # 5. Prove closure changes the route:
+    # - Route coordinates differ
+    assert detour_coords != unrestricted_coords, "Closure must alter route geometry"
+    # - Detour distance is strictly greater than unrestricted distance
+    assert detour_route.total_distance_m > unrestricted_route.total_distance_m, (
+        f"Detour distance ({detour_route.total_distance_m}m) must exceed unrestricted ({unrestricted_route.total_distance_m}m)"
+    )
+    # - Detoured route leg does NOT intersect the closure polygon (full line-polygon non-intersection)
+    assert not LineString(detour_coords).intersects(closure_poly), "Detour path must not intersect closure polygon"
+
+    # 6. Revalidation of detoured leg passes cleanly with zero violations
+    detour_leg = RouteLegOutput(
+        leg_order=0,
+        from_stop_id=uuid.uuid4(),
+        to_stop_id=uuid.uuid4(),
+        from_stop_name="Depot",
+        to_stop_name="Parking Hub",
+        departure_at=datetime(2026, 11, 10, 10, 0, tzinfo=UTC),
+        arrival_at=datetime(2026, 11, 10, 10, 35, tzinfo=UTC),
+        distance_m=detour_route.total_distance_m,
+        travel_seconds=detour_route.total_travel_seconds,
+        geometry={"type": "LineString", "coordinates": detour_coords},
+    )
+    assert len(ClosureAvoidanceService.revalidate_leg_geometries([detour_leg], [closure_claim])) == 0
+

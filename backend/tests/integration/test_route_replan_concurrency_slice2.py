@@ -591,3 +591,101 @@ async def test_replan_failed_job_retry_when_no_child_committed(
     finally:
         app.dependency_overrides.clear()
 
+
+@pytest.mark.asyncio
+async def test_concurrent_same_key_replan_returns_same_job(
+    session_factory: Any,
+) -> None:
+    """Verifies that simultaneous identical replan requests with the same Idempotency-Key return the same job."""
+    owner_id = uuid.uuid4()
+    route_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        stop1 = RouteStopModel(
+            id=uuid.uuid4(),
+            route_id=route_id,
+            stop_order=1,
+            name="Depot",
+            location=from_shape(shapely.geometry.Point(88.3639, 22.5726), srid=4326),
+            stop_type="ORIGIN",
+            is_must_visit=True,
+            is_completed=False,
+            is_skipped=False,
+            dwell_seconds=0,
+            wait_seconds=0,
+        )
+        route_v1 = RouteModel(
+            id=route_id,
+            owner_id=owner_id,
+            trip_id=None,
+            execution_id=None,
+            parent_route_id=None,
+            route_version=1,
+            status="FEASIBLE",
+            solver_status="OPTIMAL",
+            objective="FASTEST",
+            departure_at=now,
+            total_distance_m=5000,
+            total_travel_seconds=600,
+            total_dwell_seconds=0,
+            total_wait_seconds=0,
+            total_elapsed_seconds=600,
+            driving_distance_m=5000,
+            walking_distance_m=0,
+            fuel_amount=None,
+            fuel_currency="INR",
+            warnings=[],
+            assumptions=[],
+            stops=[stop1],
+            legs=[],
+            restrictions=[],
+        )
+        session.add(route_v1)
+        await session.commit()
+
+    async def override_get_session() -> Any:
+        async with session_factory() as session:
+            yield session
+
+    current_user = AuthenticatedUser(id=owner_id, email="concurrent-same-key@swena.internal")
+
+    async def override_get_current_user() -> AuthenticatedUser:
+        return current_user
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            same_key = f"same-key-{uuid.uuid4()}"
+            replan_payload = {
+                "current_location": {"latitude": 22.5800, "longitude": 88.3700},
+                "completed_stop_ids": [],
+                "expected_previous_version": 1,
+                "replan_at": now.isoformat(),
+            }
+
+            resp_a, resp_b = await asyncio.gather(
+                client.post(
+                    f"/api/v1/optimization/routes/{route_id}/replans",
+                    headers={"Idempotency-Key": same_key},
+                    json=replan_payload,
+                ),
+                client.post(
+                    f"/api/v1/optimization/routes/{route_id}/replans",
+                    headers={"Idempotency-Key": same_key},
+                    json=replan_payload,
+                ),
+            )
+
+            assert resp_a.status_code == 202, f"resp_a failed with {resp_a.status_code}: {resp_a.text}"
+            assert resp_b.status_code == 202, f"resp_b failed with {resp_b.status_code}: {resp_b.text}"
+            job_a = resp_a.json()["job_id"]
+            job_b = resp_b.json()["job_id"]
+            assert job_a == job_b, f"Expected identical job_id for concurrent same-key replay, got {job_a} vs {job_b}"
+    finally:
+        app.dependency_overrides.clear()
+
+

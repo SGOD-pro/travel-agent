@@ -16,6 +16,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from geoalchemy2.shape import to_shape
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.db import get_session
@@ -460,6 +461,25 @@ async def submit_route_replan(
             detail=f"Access forbidden: route {route_id} belongs to another tenant",
         )
 
+    # 2.5 Re-check idempotency under parent route row lock for concurrent same-key replays
+    existing_idemp = (await session.execute(check_idemp_stmt)).scalar_one_or_none()
+    if existing_idemp is not None:
+        if existing_idemp.request_hash == req_hash:
+            cached_json = (
+                json.loads(existing_idemp.response_json)
+                if isinstance(existing_idemp.response_json, str)
+                else existing_idemp.response_json
+            )
+            return AcceptedRouteResponse(
+                job_id=uuid.UUID(cached_json["job_id"]),
+                status=cached_json.get("status", "QUEUED"),
+                status_url=cached_json["status_url"],
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Idempotency conflict for key '{idemp_key}' with differing payload",
+        )
+
     # 3. Stale parent route check (AC-6 single-child replan policy)
     child_stmt = (
         select(RouteModel.id)
@@ -605,7 +625,25 @@ async def submit_route_replan(
         },
     )
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        err_msg = str(exc).lower()
+        if "api_idempotency" in err_msg or "uq_api_idempotency" in err_msg:
+            existing_idemp = (await session.execute(check_idemp_stmt)).scalar_one_or_none()
+            if existing_idemp is not None and existing_idemp.request_hash == req_hash:
+                cached_json = (
+                    json.loads(existing_idemp.response_json)
+                    if isinstance(existing_idemp.response_json, str)
+                    else existing_idemp.response_json
+                )
+                return AcceptedRouteResponse(
+                    job_id=uuid.UUID(cached_json["job_id"]),
+                    status=cached_json.get("status", "QUEUED"),
+                    status_url=cached_json["status_url"],
+                )
+        raise
 
     return AcceptedRouteResponse(
         job_id=execution_id,

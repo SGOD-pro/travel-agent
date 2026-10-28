@@ -118,15 +118,23 @@ OWNED_USER_IDS = [USER_A_ID, USER_B_ID]
 
 async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSession]) -> None:
     """Idempotently cleans owned test entities, seeds inputs, and generates routes through the pipeline."""
+    from config.config import settings
+
+    if getattr(settings, "ENVIRONMENT", "local") == "production":
+        raise RuntimeError("Acceptance fixture seeding is strictly forbidden in production")
+
     now = datetime.now(UTC)
 
     # 1. Surgical cleanup strictly restricted to owned test entities
     async with session_factory() as session:
         # Find all routes associated with owned trips, canonical IDs, or child replans
         r_stmt = select(RouteModel.id).where(
-            (RouteModel.trip_id.in_(OWNED_TRIP_IDS))
-            | (RouteModel.id.in_(CANONICAL_ROUTE_IDS))
-            | (RouteModel.parent_route_id.in_(CANONICAL_ROUTE_IDS))
+            RouteModel.owner_id.in_(OWNED_USER_IDS),
+            (
+                (RouteModel.trip_id.in_(OWNED_TRIP_IDS))
+                | (RouteModel.id.in_(CANONICAL_ROUTE_IDS))
+                | (RouteModel.parent_route_id.in_(CANONICAL_ROUTE_IDS))
+            ),
         )
         target_rids = list((await session.execute(r_stmt)).scalars().all())
 
@@ -140,8 +148,11 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
 
         # Find all executions associated with owned trips or users
         e_stmt = select(ExecutionModel.id).where(
-            (ExecutionModel.trip_id.in_(OWNED_TRIP_IDS))
-            | (ExecutionModel.owner_id.in_(OWNED_USER_IDS))
+            ExecutionModel.owner_id.in_(OWNED_USER_IDS),
+            (
+                (ExecutionModel.trip_id.in_(OWNED_TRIP_IDS))
+                | (ExecutionModel.trip_id.is_(None))
+            ),
         )
         target_eids = list((await session.execute(e_stmt)).scalars().all())
 
@@ -205,16 +216,16 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
         )
         session.add(parking_hub)
 
-        # 4. Seed Verified Road Closure Claim input
+        # 4. Seed Verified Road Closure Claim input (between Depot and Parking Hub)
         closure_polygon = {
             "type": "Polygon",
             "coordinates": [
                 [
-                    [77.0500, 12.6000],
-                    [77.1800, 12.6000],
-                    [77.1800, 12.6800],
-                    [77.0500, 12.6800],
-                    [77.0500, 12.6000],
+                    [77.5950, 12.9740],
+                    [77.6010, 12.9740],
+                    [77.6010, 12.9770],
+                    [77.5950, 12.9770],
+                    [77.5950, 12.9740],
                 ]
             ],
         }

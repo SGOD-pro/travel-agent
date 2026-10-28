@@ -27,6 +27,10 @@ class Settings(BaseSettings):
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/travel_planning",
         description="SQLAlchemy asyncpg PostgreSQL connection URL",
     )
+    ACCEPTANCE_DATABASE_URL: str | None = Field(
+        default=None,
+        description="Optional dedicated PostgreSQL URL for browser acceptance testing to protect shared dev databases",
+    )
     DB_SSL: bool = False
 
     @field_validator("DATABASE_URL", mode="before")

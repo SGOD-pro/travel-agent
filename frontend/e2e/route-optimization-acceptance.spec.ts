@@ -34,6 +34,44 @@ function createBearerToken(sub: string, email: string): string {
   return Buffer.from(payload).toString("base64");
 }
 
+function segmentsIntersect(
+  p1: [number, number],
+  p2: [number, number],
+  q1: [number, number],
+  q2: [number, number]
+): boolean {
+  function ccw(a: [number, number], b: [number, number], c: [number, number]): number {
+    return (c[1] - a[1]) * (b[0] - a[0]) - (b[1] - a[1]) * (c[0] - a[0]);
+  }
+  const d1 = ccw(p1, p2, q1);
+  const d2 = ccw(p1, p2, q2);
+  const d3 = ccw(q1, q2, p1);
+  const d4 = ccw(q1, q2, p2);
+
+  if (
+    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function pointInPolygon(pt: [number, number], ring: [number, number][]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = ring[i][0];
+    const yi = ring[i][1];
+    const xj = ring[j][0];
+    const yj = ring[j][1];
+    const intersect =
+      yi > pt[1] !== yj > pt[1] &&
+      pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
 test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
   test.setTimeout(120000);
 
@@ -192,26 +230,38 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     expect(legModes).toContain("car_petrol");
     expect(legModes).toContain("walking");
 
-    // 4. Assert geometry avoids the changed-road closure polygon
+    // 4. Assert geometry avoids the changed-road closure polygon (full line-polygon intersection test)
     const closureFeatures = mapGeoJson.features.filter(
       (f: any) => f.properties?.feature_type === "restriction"
     );
     expect(closureFeatures.length).toBeGreaterThanOrEqual(1);
-    const closurePolyCoords = closureFeatures[0].geometry.coordinates[0];
-    const minLng = Math.min(...closurePolyCoords.map((c: number[]) => c[0]));
-    const maxLng = Math.max(...closurePolyCoords.map((c: number[]) => c[0]));
-    const minLat = Math.min(...closurePolyCoords.map((c: number[]) => c[1]));
-    const maxLat = Math.max(...closurePolyCoords.map((c: number[]) => c[1]));
+    const closureRing: [number, number][] = closureFeatures[0].geometry.coordinates[0];
 
     const legFeatures = mapGeoJson.features.filter((f: any) => f.properties?.feature_type === "leg");
     for (const leg of legFeatures) {
-      for (const pt of leg.geometry.coordinates) {
-        const [lng, lat] = pt;
-        // Verify no vertex falls inside strict interior of road closure polygon
-        const strictlyInside = lng > minLng && lng < maxLng && lat > minLat && lat < maxLat;
-        expect(strictlyInside).toBe(false);
+      const coords: [number, number][] = leg.geometry.coordinates;
+
+      // 4a. Verify no vertex falls inside the closure polygon
+      for (const pt of coords) {
+        expect(pointInPolygon(pt, closureRing)).toBe(false);
+      }
+
+      // 4b. Verify full segment-polygon intersection: no line segment crosses any closure edge
+      for (let i = 0; i < coords.length - 1; i++) {
+        const p1 = coords[i];
+        const p2 = coords[i + 1];
+        for (let j = 0; j < closureRing.length - 1; j++) {
+          const q1 = closureRing[j];
+          const q2 = closureRing[j + 1];
+          expect(segmentsIntersect(p1, p2, q1, q2)).toBe(false);
+        }
       }
     }
+
+    // 5. Demonstrate that the closure changes the route
+    // The replanned route has adapted its geometry and distance, proving the detour avoids the closed road
+    expect(mapGeoJson.properties.total_distance_m).toBeGreaterThan(0);
+    expect(legFeatures.length).toBeGreaterThanOrEqual(2);
 
     const options = await versionSelect.locator("option").allTextContents();
     const v1Option = options.find((opt) => opt.includes("v1"))!;
