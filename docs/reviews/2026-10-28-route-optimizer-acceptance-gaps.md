@@ -1,29 +1,31 @@
 # Review, main, 2026-10-28
 
 **Reviewed by**: Senior Reviewer (inline evaluation, author confirmed Gemini 3.8 Flash)
-**Scope**: 16 files, commit d0e98b0 (reconciled 0006 acceptance and replan lifecycle gaps)
+**Scope**: 7 files, tested commit `f2b1a44` (focused 0006 fixes: database safety, concurrent same-key replay, and full line-polygon closure avoidance)
 **Verdict**: Approve
 
 ## Summary
 
-This change closes the remaining lifecycle and acceptance gaps in specification 0006. It restores standard owner, operation, and idempotency key replay semantics, allows new replan attempts after terminal failures when no child route exists, generates realistic multimodal, partial, and infeasible outcomes through the real execution pipeline, and isolates test data to owned fixtures. Both review nits (depot return name sanitization and production environment safety check on the reset endpoint) have been resolved. All regression suites pass on live PostgreSQL and local browser environments.
+This change closes all remaining lifecycle, concurrency, and acceptance gaps in specification 0006:
+1. **Acceptance database safety**: Added `ACCEPTANCE_DATABASE_URL` configuration to isolate test databases, guarded startup seeding to fail closed in production, and strictly restricted fixture cleanup to owned user identifiers (`OWNED_USER_IDS`), protecting shared development databases.
+2. **Concurrent same-key replay**: Re-checks idempotency under the parent route row lock and catches concurrent integrity collisions, guaranteeing that simultaneous identical replan requests return the exact same job.
+3. **Changed-road proof**: Implemented full line-polygon intersection assertions testing both vertices and line segments against the closure polygon exterior ring, and demonstrated that the closure changes route geometry and distance.
+4. **Verification records**: Identified the exact tested commit SHA (`f2b1a44`) and clean working tree state for every verification result.
 
-## Resolved Nits
-
-- ⚪ `backend/src/functions/route_optimizer/replan.py:238`: Cleaned home return stop naming so sequential replans strip any pre existing `Return to` prefix.
-- ⚪ `backend/src/acceptance_server.py:123`: Added an explicit production environment guard returning HTTP 403 Forbidden to guarantee the test helper route can never run against production configurations.
+All regression and acceptance suites pass on live PostgreSQL and local browser environments.
 
 ## Strengths
 
-- **Accurate idempotency replay and conflict detection**: The replan endpoint correctly inspects the combination of owner, operation, and idempotency key. Identical replays return the cached job response with HTTP 202 even after the child route has been committed, while conflicting payloads return HTTP 409 Conflict.
-- **Resilient failure retry**: Single child lineage protection remains intact, but travelers are no longer permanently locked out if a solver task fails terminally or gets cancelled before committing a child route.
-- **True pipeline generation in acceptance seeder**: Instead of inserting pre fabricated route records, the seeder now drives input places, verified parking hubs, and road closure claims through the actual API submission, state machine runner, worker solving, and completion reconciliation.
-- **Acceptance data isolation**: Outbox event polling in the local acceptance worker explicitly filters by allowed owner identifiers and the route optimizer workflow. Database wide updates and un scoped acknowledgements have been eliminated.
-- **Road closure avoidance with return preservation**: Browser acceptance scenario 3 and scenario 4 verify that replanned geometries route around the closure polygon, preserve completed stops, keep pedestrian walking legs to the sanctuary, and return safely to the parking hub and home depot.
+- **Acceptance database safety**: Startup seeding and reset endpoints fail closed in production, and all route/execution/idempotency cleanup queries filter strictly by `RouteModel.owner_id.in_(OWNED_USER_IDS)`, preventing accidental deletion of shared development data.
+- **Concurrent same-key replay**: Re-checking idempotency under the `RouteModel` row lock guarantees that racing identical requests resolve to the same execution record rather than returning 409 conflict or duplicate key errors.
+- **Full line-polygon spatial intersection verification**: Acceptance scenario 3 verifies that every line segment of every leg avoids intersecting the closure polygon exterior ring, with a companion unit test confirming that an intersecting direct route is rejected and detoured.
+- **True pipeline generation in acceptance seeder**: Driven via API → LangGraph state machine → OR-Tools worker → completion reconciliation on live PostgreSQL.
 
 ## Test coverage
 
-- `backend/tests/integration/test_route_replan_concurrency_slice2.py`: 3 passed in 24.65s on live PostgreSQL, verifying concurrent replan rejection (winner 202, loser 409), identical replay and changed payload conflict, and failed job retry when no child route exists.
-- `backend/tests/unit/test_route_graph_state_machine_unit.py`: 11 passed in 1.96s, verifying route graph state machine nodes, interrupts, transitions, and checkpointer behavior.
-- `frontend/e2e/route-optimization-e2e.spec.ts`: 8 passed in 8.0s, verifying mocked UI elements, progress banner, metrics, XSS popup escaping, and replan form interactions.
-- `frontend/e2e/route-optimization-acceptance.spec.ts`: 7 passed in 1.9m, exercising the real local stack across multimodal, partial, infeasible, and tenant isolation scenarios.
+- `backend/tests/integration/test_route_replan_concurrency_slice2.py`: 4 passed in 26.27s on live PostgreSQL, verifying concurrent replan rejection (winner 202, loser 409), identical replay and changed payload conflict, failed job retry when no child route exists, and simultaneous identical replan requests returning the same job.
+- `backend/tests/unit/test_route_optimizer_slice4.py`: 21 passed in 2.87s, verifying full line-polygon spatial intersection detection, direct route rejection, and closure route detour demonstration.
+- `backend/tests/unit/test_route_graph_state_machine_unit.py`: 11 passed in 1.19s, verifying route graph state machine nodes, interrupts, transitions, and checkpointer behavior.
+- `frontend/e2e/route-optimization-e2e.spec.ts`: 8 passed in 7.2s, verifying mocked UI elements, progress banner, metrics, XSS popup escaping, and replan form interactions.
+- `frontend/e2e/route-optimization-acceptance.spec.ts`: 7 passed in 1.9m, exercising the real local stack across multimodal, partial, infeasible, database safety, and full line-polygon closure avoidance scenarios.
+
