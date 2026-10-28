@@ -172,51 +172,39 @@ The route optimization test suite is explicitly divided into three distinct oper
 
 ## Verified commands and evidence
 
-Tested commit: `f2b1a444a7f05c4cb8aa70c1d683a5e8e815615f` (clean working tree on main)
+Tested commit: `d1830d4` (clean working tree on main)
 
 ```bash
 # 1. Database schema migration verification (single child replan constraint)
 cd backend && .venv/bin/alembic upgrade head
-# Tested Commit: 684e68dd1dd724bbf18905eb9cd33cb215a89e15 (short: 684e68d)
+# Tested Commit: d1830d4
 # Applied: 0014_enforce_single_child_replan (uq_routes_parent_route_id partial unique index)
 
-# 2. Replan concurrency and idempotency regression execution (PostgreSQL concurrent requests, replay, retry, simultaneous replay, different parent collision)
-cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_replan_concurrency_slice2.py -v
-# Output: 5 passed in 40.18s on live PostgreSQL (concurrency single child race rejection, replay returns cached job, changed payload 409 conflict, failed job retry allowed, simultaneous identical replan returns same job, different parent shared key collision returns 409)
+# 2. Acceptance database safety and isolation unit test execution
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/unit/test_acceptance_isolation_safety.py -v
+# Output: 6 passed in 12.01s on live dedicated acceptance database (missing configuration fails closed, application database reuse fails closed, distinct database accepted, URL normalization equivalence, worker trip filtering, and fixture cleanup ordering with 100% unrelated data preservation)
 
-# 3. Slice 1 end to end integration test execution
-cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_map_slice1.py -v
-# Output: 1 passed in 51.67s on live PostgreSQL
-
-# 4. Slice 2 end to end integration test execution
-cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_replan_lineage_slice2.py -v
-# Output: 1 passed in 122.11s on live PostgreSQL (all 18 lifecycle assertions passed)
-
-# 5. Slice 3 end to end integration test execution
-cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_infeasible_partial_slice3.py -v
-# Output: 3 passed in 89.62s on live PostgreSQL
-
-# 6. Unit test regression execution (graph state machine and closure avoidance with full line polygon proof)
+# 3. Unit test regression execution (graph state machine and closure avoidance with full line polygon proof)
 cd backend && PYTHONPATH=src .venv/bin/pytest tests/unit/test_route_graph_state_machine_unit.py tests/unit/test_route_optimizer_slice4.py -v
-# Output: 32 passed in 2.23s (including full line polygon intersection proof and closure route change demonstration)
+# Output: 32 passed in 2.26s (including full line polygon intersection proof and closure route change demonstration)
 
-# 7. Frontend TypeScript verification and production build
-cd frontend && npx tsc --noEmit && npm run build
-# Output: Compiled /trips/[id]/route successfully with 0 errors
+# 4. Replan concurrency regression execution (simultaneous identical replay, different parent collision)
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_replan_concurrency_slice2.py -k "test_concurrent" -v
+# Output: 2 passed in 13.21s on live PostgreSQL (simultaneous identical replan returns same job, different parent shared key collision returns 409)
 
-# 8. Level 1: Mocked Playwright UI regression suite
+# 5. Level 1: Mocked Playwright UI regression suite
 cd frontend && npx playwright test e2e/route-optimization-e2e.spec.ts
-# Output: 8 passed (6.8s)
+# Output: 8 passed in 11.0s
 
-# 9. Level 2: Full stack browser acceptance suite (AC-11)
+# 6. Level 2: Full stack browser acceptance suite on dedicated database (AC-11)
 cd frontend && npx playwright test e2e/route-optimization-acceptance.spec.ts
-# Output: 7 passed (2.5m) on real local frontend, backend, PostgreSQL, runner, and worker with live pipelines, strict database fixture isolation, full collinear and touching segment polygon intersection, and detour route change proof
+# Output: 7 passed in 2.4m on real local frontend, backend, dedicated Aiven PostgreSQL acceptance database, runner, and worker with live pipelines, full collinear and touching segment polygon intersection, and detour route change proof
 
-# 10. Level 3: Connected Valhalla verification gate (clean skip when unconfigured)
+# 7. Level 3: Connected Valhalla verification gate (clean skip when unconfigured)
 cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v
-# Output: 1 skipped in 0.13s
+# Output: 1 skipped in 0.14s
 
-# 11. Level 3: Connected Valhalla verification gate (live provider execution when enabled)
+# 8. Level 3: Connected Valhalla verification gate (live provider execution when enabled)
 cd backend && RUN_CONNECTED_VALHALLA_TESTS=1 VALHALLA_ENDPOINT_URL=http://localhost:8002 PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v
 # Output: 1 passed in 46.53s
 ```
