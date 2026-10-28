@@ -557,92 +557,101 @@ async def submit_route_replan(
         )
         session.add(new_reservation)
 
-    # 6. Save standard operation idempotency record for replay
-    new_idemp = ApiIdempotencyModel(
-        owner_id=current_user.id,
-        operation="route_optimization:replan",
-        key=idemp_key,
-        request_hash=req_hash,
-        response_json=resp_data,
-        status_code=202,
-        expires_at=now + timedelta(days=1),
-    )
-    session.add(new_idemp)
-
-    # 4. Create execution record under ROUTE_OPTIMIZER_GRAPH
-    deadline = now + timedelta(seconds=request.time_limit_seconds + 300)
-    execution = ExecutionModel(
-        id=execution_id,
-        owner_id=current_user.id,
-        trip_id=existing_route.trip_id,
-        workflow="ROUTE_OPTIMIZER_GRAPH",
-        status="CREATED",
-        context_version=1,
-        deadline_at=deadline,
-        created_at=now,
-        updated_at=now,
-    )
-    session.add(execution)
-    await session.flush()
-
-    # 5. Stage EXECUTION_START outbox event (GraphRunnerService owns task dispatch and checkpoint commit)
-    start_payload = {
-        "execution_id": str(execution_id),
-        "workflow": "ROUTE_OPTIMIZER_GRAPH",
-        "request": req_dict,
-        "owner_id": str(current_user.id),
-        "trip_id": str(existing_route.trip_id) if existing_route.trip_id else None,
-    }
-    outbox_event = OutboxEventModel(
-        id=uuid.uuid4(),
-        execution_id=execution_id,
-        aggregate_id=execution_id,
-        task_id=None,
-        kind="EXECUTION_START",
-        event_type="EXECUTION_START",
-        payload_ref=start_payload,
-        payload=start_payload,
-        due_at=now,
-        attempts=0,
-        created_at=now,
-    )
-    session.add(outbox_event)
-    await session.flush()
-
-    # 6. Record job timeline event
-    await record_job_event(
-        session,
-        execution_id=execution_id,
-        event_type="JOB_ACCEPTED",
-        safe_payload={
-            "status": "CREATED",
-            "workflow": "ROUTE_OPTIMIZER_GRAPH",
-            "action": "replan",
-            "parent_route_id": str(route_id),
-            "previous_version": existing_route.route_version,
-            "trip_id": str(existing_route.trip_id) if existing_route.trip_id else None,
-            "completed_stops_count": len(request.completed_stop_ids),
-        },
-    )
-
     try:
+        # 6. Save standard operation idempotency record for replay
+        new_idemp = ApiIdempotencyModel(
+            owner_id=current_user.id,
+            operation="route_optimization:replan",
+            key=idemp_key,
+            request_hash=req_hash,
+            response_json=resp_data,
+            status_code=202,
+            expires_at=now + timedelta(days=1),
+        )
+        session.add(new_idemp)
+
+        # 4. Create execution record under ROUTE_OPTIMIZER_GRAPH
+        deadline = now + timedelta(seconds=request.time_limit_seconds + 300)
+        execution = ExecutionModel(
+            id=execution_id,
+            owner_id=current_user.id,
+            trip_id=existing_route.trip_id,
+            workflow="ROUTE_OPTIMIZER_GRAPH",
+            status="CREATED",
+            context_version=1,
+            deadline_at=deadline,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(execution)
+        await session.flush()
+
+        # 5. Stage EXECUTION_START outbox event (GraphRunnerService owns task dispatch and checkpoint commit)
+        start_payload = {
+            "execution_id": str(execution_id),
+            "workflow": "ROUTE_OPTIMIZER_GRAPH",
+            "request": req_dict,
+            "owner_id": str(current_user.id),
+            "trip_id": str(existing_route.trip_id) if existing_route.trip_id else None,
+        }
+        outbox_event = OutboxEventModel(
+            id=uuid.uuid4(),
+            execution_id=execution_id,
+            aggregate_id=execution_id,
+            task_id=None,
+            kind="EXECUTION_START",
+            event_type="EXECUTION_START",
+            payload_ref=start_payload,
+            payload=start_payload,
+            due_at=now,
+            attempts=0,
+            created_at=now,
+        )
+        session.add(outbox_event)
+        await session.flush()
+
+        # 6. Record job timeline event
+        await record_job_event(
+            session,
+            execution_id=execution_id,
+            event_type="JOB_ACCEPTED",
+            safe_payload={
+                "status": "CREATED",
+                "workflow": "ROUTE_OPTIMIZER_GRAPH",
+                "action": "replan",
+                "parent_route_id": str(route_id),
+                "previous_version": existing_route.route_version,
+                "trip_id": str(existing_route.trip_id) if existing_route.trip_id else None,
+                "completed_stops_count": len(request.completed_stop_ids),
+            },
+        )
+
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
         err_msg = str(exc).lower()
         if "api_idempotency" in err_msg or "uq_api_idempotency" in err_msg:
             existing_idemp = (await session.execute(check_idemp_stmt)).scalar_one_or_none()
-            if existing_idemp is not None and existing_idemp.request_hash == req_hash:
-                cached_json = (
-                    json.loads(existing_idemp.response_json)
-                    if isinstance(existing_idemp.response_json, str)
-                    else existing_idemp.response_json
+            if existing_idemp is not None:
+                if existing_idemp.request_hash == req_hash:
+                    cached_json = (
+                        json.loads(existing_idemp.response_json)
+                        if isinstance(existing_idemp.response_json, str)
+                        else existing_idemp.response_json
+                    )
+                    return AcceptedRouteResponse(
+                        job_id=uuid.UUID(cached_json["job_id"]),
+                        status=cached_json.get("status", "QUEUED"),
+                        status_url=cached_json["status_url"],
+                    )
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Idempotency conflict for key '{idemp_key}' with differing payload",
                 )
-                return AcceptedRouteResponse(
-                    job_id=uuid.UUID(cached_json["job_id"]),
-                    status=cached_json.get("status", "QUEUED"),
-                    status_url=cached_json["status_url"],
-                )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Idempotency conflict for key '{idemp_key}' with differing payload",
+            )
         raise
 
     return AcceptedRouteResponse(

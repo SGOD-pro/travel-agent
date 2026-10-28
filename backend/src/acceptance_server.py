@@ -166,10 +166,9 @@ async def reset_replan_fixtures():
 
         await session.execute(
             delete(ApiIdempotencyModel).where(
-                ApiIdempotencyModel.operation.in_(
-                    ("route_optimization:replan", "route_optimization:replan_reservation")
-                ),
                 ApiIdempotencyModel.owner_id.in_(OWNED_USER_IDS),
+                ApiIdempotencyModel.operation == "route_optimization:replan_reservation",
+                ApiIdempotencyModel.key.in_([str(r) for r in CANONICAL_ROUTE_IDS]),
             )
         )
         await session.commit()

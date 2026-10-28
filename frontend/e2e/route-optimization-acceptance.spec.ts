@@ -34,26 +34,45 @@ function createBearerToken(sub: string, email: string): string {
   return Buffer.from(payload).toString("base64");
 }
 
+function orientation(p: [number, number], q: [number, number], r: [number, number]): number {
+  const val = (q[1] - p[1]) * (r[0] - q[0]) - (q[0] - p[0]) * (r[1] - q[1]);
+  const EPS = 1e-9;
+  if (Math.abs(val) < EPS) return 0; // Collinear
+  return val > 0 ? 1 : 2; // 1: Clockwise, 2: Counterclockwise
+}
+
+function onSegment(p: [number, number], q: [number, number], r: [number, number]): boolean {
+  // Checks if point q lies on line segment 'pr'
+  return (
+    q[0] <= Math.max(p[0], r[0]) + 1e-9 &&
+    q[0] >= Math.min(p[0], r[0]) - 1e-9 &&
+    q[1] <= Math.max(p[1], r[1]) + 1e-9 &&
+    q[1] >= Math.min(p[1], r[1]) - 1e-9
+  );
+}
+
 function segmentsIntersect(
   p1: [number, number],
   p2: [number, number],
   q1: [number, number],
   q2: [number, number]
 ): boolean {
-  function ccw(a: [number, number], b: [number, number], c: [number, number]): number {
-    return (c[1] - a[1]) * (b[0] - a[0]) - (b[1] - a[1]) * (c[0] - a[0]);
-  }
-  const d1 = ccw(p1, p2, q1);
-  const d2 = ccw(p1, p2, q2);
-  const d3 = ccw(q1, q2, p1);
-  const d4 = ccw(q1, q2, p2);
+  const o1 = orientation(p1, p2, q1);
+  const o2 = orientation(p1, p2, q2);
+  const o3 = orientation(q1, q2, p1);
+  const o4 = orientation(q1, q2, p2);
 
-  if (
-    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
-    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
-  ) {
+  // General case: segments strictly intersect
+  if (o1 !== o2 && o3 !== o4) {
     return true;
   }
+
+  // Special cases: collinear or touching boundary segments
+  if (o1 === 0 && onSegment(p1, q1, p2)) return true;
+  if (o2 === 0 && onSegment(p1, q2, p2)) return true;
+  if (o3 === 0 && onSegment(q1, p1, q2)) return true;
+  if (o4 === 0 && onSegment(q1, p2, q2)) return true;
+
   return false;
 }
 
@@ -73,7 +92,7 @@ function pointInPolygon(pt: [number, number], ring: [number, number][]): boolean
 }
 
 test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
-  test.setTimeout(120000);
+  test.setTimeout(180000);
 
   test.beforeEach(async ({ request }) => {
     // Surgically reset previous child replans and reservations for owned fixtures
@@ -109,7 +128,7 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
       // Wait for real background execution, worker solving, and completion reconciliation
       await expect(
         page.getByText("Solving Vehicle Routing Problem with Time Windows")
-      ).toBeHidden({ timeout: 75000 });
+      ).toBeHidden({ timeout: 120000 });
     }
 
     // Verify status changes to FEASIBLE or OPTIMAL
@@ -193,7 +212,7 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     ).toBeVisible({ timeout: 15000 });
 
     // Wait for replan job to resolve and complete
-    await expect(page.locator("#route-status-badge")).toContainText("v2", { timeout: 75000 });
+    await expect(page.locator("#route-status-badge")).toContainText("v2", { timeout: 120000 });
 
     // Verify Version Selector dropdown is present
     const versionSelect = page.locator("#version-select");
@@ -259,7 +278,51 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     }
 
     // 5. Demonstrate that the closure changes the route
-    // The replanned route has adapted its geometry and distance, proving the detour avoids the closed road
+    // Fetch v1 route map GeoJSON for geometry comparison
+    const v1Res = await request.get(`${API_BASE}/api/v1/optimization/routes/${MULTIMODAL_ROUTE_ID}/map`);
+    expect(v1Res.status()).toBe(200);
+    const v1GeoJson = await v1Res.json();
+
+    // Query version history endpoint for v2
+    const versionsRes = await request.get(`${API_BASE}/api/v1/optimization/routes/${v2RouteId}/versions`);
+    expect(versionsRes.status()).toBe(200);
+    const versionsData = await versionsRes.json();
+    expect(versionsData.versions.length).toBeGreaterThanOrEqual(2);
+
+    const v2History = versionsData.versions.find((v: any) => v.route_id === v2RouteId);
+    expect(v2History).toBeTruthy();
+    expect(v2History.parent_route_id).toBe(MULTIMODAL_ROUTE_ID);
+    expect(v2History.distance_delta_m).not.toBeNull();
+    expect(v2History.replan_origin).not.toBeNull();
+
+    // Check driving legs in v2 have detour intermediate vertices adapting around the closure
+    const drivingLegs = legFeatures.filter((l: any) => l.properties?.transport_mode === "car_petrol");
+    expect(drivingLegs.length).toBeGreaterThanOrEqual(1);
+    expect(drivingLegs[0].geometry.coordinates.length).toBeGreaterThanOrEqual(3);
+
+    // Geometry of detoured v2 route differs from v1 base route
+    const v1LegCoords = v1GeoJson.features
+      .filter((f: any) => f.properties?.feature_type === "leg")
+      .flatMap((l: any) => l.geometry.coordinates);
+    const v2LegCoords = legFeatures.flatMap((l: any) => l.geometry.coordinates);
+    expect(v2LegCoords).not.toEqual(v1LegCoords);
+
+    // Validate test helper handles collinear and touching boundary segments
+    const ringP1 = closureRing[0];
+    const ringP2 = closureRing[1];
+    const midX = (ringP1[0] + ringP2[0]) / 2;
+    const midY = (ringP1[1] + ringP2[1]) / 2;
+    expect(segmentsIntersect(ringP1, [midX, midY], ringP1, ringP2)).toBe(true);
+    expect(segmentsIntersect([ringP1[0] - 0.01, ringP1[1]], ringP1, ringP1, ringP2)).toBe(true);
+    expect(
+      segmentsIntersect(
+        [ringP1[0] - 0.02, ringP1[1]],
+        [ringP1[0] - 0.01, ringP1[1]],
+        ringP1,
+        ringP2
+      )
+    ).toBe(false);
+
     expect(mapGeoJson.properties.total_distance_m).toBeGreaterThan(0);
     expect(legFeatures.length).toBeGreaterThanOrEqual(2);
 

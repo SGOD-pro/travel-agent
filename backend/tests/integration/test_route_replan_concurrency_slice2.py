@@ -689,3 +689,111 @@ async def test_concurrent_same_key_replan_returns_same_job(
         app.dependency_overrides.clear()
 
 
+@pytest.mark.asyncio
+async def test_concurrent_same_key_different_parent_replan_conflicts(
+    session_factory: Any,
+) -> None:
+    """Verifies that simultaneous replan requests with the same Idempotency-Key for different parents conflict with 409, not 500."""
+    owner_id = uuid.uuid4()
+    route_1_id = uuid.uuid4()
+    route_2_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        for r_id, name in [(route_1_id, "Route 1"), (route_2_id, "Route 2")]:
+            stop = RouteStopModel(
+                id=uuid.uuid4(),
+                route_id=r_id,
+                stop_order=1,
+                name=f"{name} Depot",
+                location=from_shape(shapely.geometry.Point(88.3639, 22.5726), srid=4326),
+                stop_type="ORIGIN",
+                is_must_visit=True,
+                is_completed=False,
+                is_skipped=False,
+                dwell_seconds=0,
+                wait_seconds=0,
+            )
+            route = RouteModel(
+                id=r_id,
+                owner_id=owner_id,
+                trip_id=None,
+                execution_id=None,
+                parent_route_id=None,
+                route_version=1,
+                status="FEASIBLE",
+                solver_status="OPTIMAL",
+                objective="FASTEST",
+                departure_at=now,
+                total_distance_m=5000,
+                total_travel_seconds=600,
+                total_dwell_seconds=0,
+                total_wait_seconds=0,
+                total_elapsed_seconds=600,
+                driving_distance_m=5000,
+                walking_distance_m=0,
+                fuel_amount=None,
+                fuel_currency="INR",
+                warnings=[],
+                assumptions=[],
+                stops=[stop],
+                legs=[],
+                restrictions=[],
+            )
+            session.add(route)
+        await session.commit()
+
+    async def override_get_session() -> Any:
+        async with session_factory() as session:
+            yield session
+
+    current_user = AuthenticatedUser(id=owner_id, email="different-parent-collision@swena.internal")
+
+    async def override_get_current_user() -> AuthenticatedUser:
+        return current_user
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            shared_key = f"diff-parent-key-{uuid.uuid4()}"
+            replan_payload_1 = {
+                "current_location": {"latitude": 22.5800, "longitude": 88.3700},
+                "completed_stop_ids": [],
+                "expected_previous_version": 1,
+                "replan_at": now.isoformat(),
+            }
+            replan_payload_2 = {
+                "current_location": {"latitude": 22.5850, "longitude": 88.3750},
+                "completed_stop_ids": [],
+                "expected_previous_version": 1,
+                "replan_at": (now + timedelta(minutes=5)).isoformat(),
+            }
+
+            resp_1, resp_2 = await asyncio.gather(
+                client.post(
+                    f"/api/v1/optimization/routes/{route_1_id}/replans",
+                    headers={"Idempotency-Key": shared_key},
+                    json=replan_payload_1,
+                ),
+                client.post(
+                    f"/api/v1/optimization/routes/{route_2_id}/replans",
+                    headers={"Idempotency-Key": shared_key},
+                    json=replan_payload_2,
+                ),
+            )
+
+            status_codes = sorted([resp_1.status_code, resp_2.status_code])
+            assert status_codes == [202, 409], (
+                f"Expected [202, 409], got resp_1={resp_1.status_code} ({resp_1.text}), "
+                f"resp_2={resp_2.status_code} ({resp_2.text})"
+            )
+            conflict_resp = resp_1 if resp_1.status_code == 409 else resp_2
+            assert "idempotency conflict" in conflict_resp.json()["detail"].lower()
+    finally:
+        app.dependency_overrides.clear()
+
+
+

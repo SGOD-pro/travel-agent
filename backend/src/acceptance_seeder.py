@@ -146,12 +146,18 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
             )
             await session.execute(delete(RouteModel).where(RouteModel.id.in_(target_rids)))
 
-        # Find all executions associated with owned trips or users
+        # Find all executions demonstrably associated with owned fixture trips or fixture routes
+        route_exec_stmt = select(RouteModel.execution_id).where(
+            RouteModel.id.in_(target_rids),
+            RouteModel.execution_id.is_not(None),
+        )
+        route_exec_ids = list((await session.execute(route_exec_stmt)).scalars().all())
+
         e_stmt = select(ExecutionModel.id).where(
             ExecutionModel.owner_id.in_(OWNED_USER_IDS),
             (
-                (ExecutionModel.trip_id.in_(OWNED_TRIP_IDS))
-                | (ExecutionModel.trip_id.is_(None))
+                ExecutionModel.trip_id.in_(OWNED_TRIP_IDS)
+                | ExecutionModel.id.in_(route_exec_ids)
             ),
         )
         target_eids = list((await session.execute(e_stmt)).scalars().all())
@@ -166,9 +172,25 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
             )
             await session.execute(delete(ExecutionModel).where(ExecutionModel.id.in_(target_eids)))
 
-        # Clean idempotency records for owned users
+        # Clean only demonstrably fixture-owned idempotency records
+        fixture_idemp_keys = [
+            "seed-multimodal-route",
+            "seed-partial-route",
+            "seed-infeasible-route",
+            "seed-user-b-route",
+        ]
+        canonical_route_key_strs = [str(r) for r in CANONICAL_ROUTE_IDS]
         await session.execute(
-            delete(ApiIdempotencyModel).where(ApiIdempotencyModel.owner_id.in_(OWNED_USER_IDS))
+            delete(ApiIdempotencyModel).where(
+                ApiIdempotencyModel.owner_id.in_(OWNED_USER_IDS),
+                (
+                    ApiIdempotencyModel.key.in_(fixture_idemp_keys)
+                    | (
+                        (ApiIdempotencyModel.operation == "route_optimization:replan_reservation")
+                        & (ApiIdempotencyModel.key.in_(canonical_route_key_strs))
+                    )
+                ),
+            )
         )
 
         # Clean owned places and claims
