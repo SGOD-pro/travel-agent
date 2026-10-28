@@ -94,66 +94,8 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
-@pytest.fixture
-async def session_factory():
-    url = settings.DATABASE_URL
-    connect_args = {"command_timeout": 60, "timeout": 30}
-    if (
-        "sslmode=require" in url
-        or "ssl=require" in url
-        or "aivencloud.com" in url
-        or settings.DB_SSL
-    ):
-        connect_args["ssl"] = "require"
-    if "sslmode=" in url:
-        url = re.sub(r"[?&]sslmode=[^&]+", "", url)
-        if "?" not in url and "&" in url:
-            url = url.replace("&", "?", 1)
-    test_engine = create_async_engine(
-        url,
-        poolclass=NullPool,
-        connect_args=connect_args,
-    )
-    factory = async_sessionmaker(bind=test_engine, expire_on_commit=False, class_=AsyncSession)
-    yield factory
-    await test_engine.dispose()
-
-
-@pytest.fixture
-async def postgres_checkpointer(session_factory):
-    async with session_factory() as session:
-        await session.execute(text("DROP TABLE IF EXISTS checkpoint_writes;"))
-        await session.execute(text("DROP TABLE IF EXISTS checkpoints;"))
-        await session.execute(text("""
-            CREATE TABLE checkpoints (
-                thread_id TEXT NOT NULL,
-                checkpoint_ns TEXT NOT NULL DEFAULT '',
-                checkpoint_id TEXT NOT NULL,
-                parent_checkpoint_id TEXT,
-                type TEXT,
-                checkpoint BYTEA NOT NULL,
-                metadata BYTEA NOT NULL,
-                PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
-            );
-        """))
-        await session.execute(text("""
-            CREATE TABLE checkpoint_writes (
-                thread_id TEXT NOT NULL,
-                checkpoint_ns TEXT NOT NULL DEFAULT '',
-                checkpoint_id TEXT NOT NULL,
-                task_id TEXT NOT NULL,
-                idx INTEGER NOT NULL,
-                channel TEXT NOT NULL,
-                type TEXT,
-                value BYTEA NOT NULL,
-                PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
-            );
-        """))
-        await session.commit()
-
-    checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
-    await checkpointer.setup()
-    yield checkpointer
+# session_factory and postgres_checkpointer fixtures are inherited from conftest.py
+# with isolated test database protection.
 
 
 def build_test_runner_graph(checkpointer: Any):

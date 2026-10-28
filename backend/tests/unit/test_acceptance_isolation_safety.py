@@ -24,8 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from acceptance_database import (
     are_db_urls_equivalent,
+    are_hosts_equivalent,
     normalize_db_connection_target,
     validate_acceptance_database_url,
+    validate_isolated_database_url,
 )
 from acceptance_seeder import (
     CANONICAL_ROUTE_IDS,
@@ -103,27 +105,160 @@ def test_url_normalization_and_equivalence() -> None:
     """Normalizes connection targets and determines equivalence across diverse connection formats."""
     # Differing database names on same host
     assert not are_db_urls_equivalent(
-        "postgres://admin:pass@db.internal:5432/app_db",
-        "postgres://admin:pass@db.internal:5432/acceptance_db",
+        "postgres://admin:pass@10.0.0.1:5432/app_db",
+        "postgres://admin:pass@10.0.0.1:5432/acceptance_db",
     )
 
-    # Differing hosts
+    # Differing ports on same host
     assert not are_db_urls_equivalent(
-        "postgres://admin:pass@db1.internal:5432/testdb",
-        "postgres://admin:pass@db2.internal:5432/testdb",
+        "postgres://admin:pass@10.0.0.1:5432/testdb",
+        "postgres://admin:pass@10.0.0.1:5433/testdb",
     )
 
-    # Differing usernames
+    # Differing resolved IP hosts
     assert not are_db_urls_equivalent(
-        "postgres://user1:pass@db.internal:5432/testdb",
-        "postgres://user2:pass@db.internal:5432/testdb",
+        "postgres://admin:pass@10.0.0.1:5432/testdb",
+        "postgres://admin:pass@10.0.0.2:5432/testdb",
+    )
+
+    # Differing usernames pointing to same host, port, and database are EQUIVALENT (fail closed)
+    assert are_db_urls_equivalent(
+        "postgres://user1:pass@10.0.0.1:5432/testdb",
+        "postgres://user2:pass@10.0.0.1:5432/testdb",
     )
 
     # Same target with different drivers and query strings
     assert are_db_urls_equivalent(
-        "postgresql+asyncpg://admin:pass@db.internal:5432/testdb?ssl=require",
-        "postgres://admin:pass@DB.INTERNAL:5432/testdb?sslmode=require&connect_timeout=10",
+        "postgresql+asyncpg://admin:pass@10.0.0.1:5432/testdb?ssl=require",
+        "postgres://admin:pass@10.0.0.1:5432/testdb?sslmode=require&connect_timeout=10",
     )
+
+
+def test_different_postgresql_users_target_equivalence_regression() -> None:
+    """Proves two URLs pointing to the same host, port, and database are treated as equivalent
+    even when they specify different PostgreSQL users or credentials."""
+    base_app_url = "postgresql+asyncpg://app_user:secret@pg.cloud.internal:5432/defaultdb"
+
+    different_user_urls = [
+        "postgresql+asyncpg://different_user:other_pass@pg.cloud.internal:5432/defaultdb",
+        "postgres://admin:admin123@pg.cloud.internal:5432/defaultdb",
+        "postgres://readonly_role:guest@pg.cloud.internal:5432/defaultdb",
+        "postgres://pg.cloud.internal:5432/defaultdb",  # no user specified
+        "postgresql://service_account:token@PG.CLOUD.INTERNAL:5432/defaultdb?sslmode=require",
+    ]
+
+    for user_url in different_user_urls:
+        # Equivalence must return True
+        assert are_db_urls_equivalent(user_url, base_app_url) is True
+
+        # Validation must fail closed with RuntimeError
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_acceptance_database_url(user_url, base_app_url)
+        assert "cannot point to the same database as DATABASE_URL" in str(exc_info.value)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            validate_isolated_database_url(user_url, base_app_url, label="Test database")
+        assert "cannot point to the same database as DATABASE_URL" in str(exc_info.value)
+
+
+def test_host_alias_and_equivalent_representations_regression() -> None:
+    """Proves host aliases (loopback variants, case differences, trailing dots, bracketed IPv6,
+    and DNS/IP aliases) are recognized as equivalent targets."""
+    # Loopback aliases: localhost, 127.0.0.1, 127.0.0.2, ::1, 0.0.0.0
+    loopback_pairs = [
+        ("postgres://u:p@localhost:5432/db", "postgres://u:p@127.0.0.1:5432/db"),
+        ("postgres://u:p@localhost:5432/db", "postgres://u:p@127.0.0.2:5432/db"),
+        ("postgres://u:p@127.0.0.1:5432/db", "postgres://u:p@127.0.0.99:5432/db"),
+        ("postgres://u:p@localhost:5432/db", "postgres://u:p@[::1]:5432/db"),
+        ("postgres://u:p@0.0.0.0:5432/db", "postgres://u:p@127.0.0.1:5432/db"),
+    ]
+    for url1, url2 in loopback_pairs:
+        assert are_db_urls_equivalent(url1, url2) is True
+        with pytest.raises(RuntimeError):
+            validate_acceptance_database_url(url1, url2)
+
+    # Format variants: trailing dot, case insensitivity, brackets
+    formatting_pairs = [
+        ("postgres://u:p@db.internal.:5432/db", "postgres://u:p@db.internal:5432/db"),
+        ("postgres://u:p@DB.INTERNAL:5432/db", "postgres://u:p@db.internal:5432/db"),
+        ("postgres://u:p@[::1]:5432/db", "postgres://u:p@::1:5432/db"),
+    ]
+    for url1, url2 in formatting_pairs:
+        assert are_db_urls_equivalent(url1, url2) is True
+        with pytest.raises(RuntimeError):
+            validate_acceptance_database_url(url1, url2)
+
+    # Cloud hostname vs resolved active IP alias
+    cloud_host_url = "postgres://u:p@pg-070905-cloud-postgress-db.d.aivencloud.com:20266/defaultdb"
+    cloud_ip_url = "postgres://other_u:p@139.59.42.218:20266/defaultdb"
+    assert are_db_urls_equivalent(cloud_host_url, cloud_ip_url) is True
+    with pytest.raises(RuntimeError):
+        validate_acceptance_database_url(cloud_ip_url, cloud_host_url)
+
+
+def test_indeterminate_database_target_fails_closed_regression() -> None:
+    """Proves that indeterminate targets (missing host, missing db, invalid port, or unresolvable host)
+    fail closed across are_db_urls_equivalent and validation guards."""
+    valid_app_url = "postgres://u:p@10.0.0.1:5432/defaultdb"
+
+    indeterminate_urls = [
+        None,
+        "",
+        "   ",
+        "not-a-valid-connection-string",
+        "postgresql:///defaultdb",  # missing host
+        "postgresql://localhost:5432",  # missing database name
+        "postgresql://localhost:5432/",  # empty database name
+        "postgresql://localhost:99999/defaultdb",  # invalid port
+        "postgresql://localhost:0/defaultdb",  # invalid port 0
+    ]
+
+    for bad_url in indeterminate_urls:
+        # Equivalence must fail closed (return True)
+        assert are_db_urls_equivalent(bad_url, valid_app_url) is True
+        assert are_db_urls_equivalent(valid_app_url, bad_url) is True
+
+        # Validation must fail closed with RuntimeError
+        with pytest.raises(RuntimeError):
+            validate_acceptance_database_url(bad_url, valid_app_url)
+
+    # Unresolvable / indeterminate host target when comparing identical dbname and port
+    # cannot be safely determined, so it must fail closed (return True)
+    unresolvable_url1 = "postgres://u:p@unresolvable-host-alpha.invalid:5432/defaultdb"
+    unresolvable_url2 = "postgres://u:p@unresolvable-host-beta.invalid:5432/defaultdb"
+    assert are_db_urls_equivalent(unresolvable_url1, unresolvable_url2) is True
+    assert are_db_urls_equivalent(unresolvable_url1, valid_app_url) is True
+
+
+def test_conftest_checkpointer_isolation_guards_regression(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proves get_isolated_test_database_url and postgres_checkpointer fail closed
+    when configured with a shared application database or missing configuration."""
+    from tests.integration.conftest import get_isolated_test_database_url
+
+    # 1. When TEST_DATABASE_URL points to the application database (same host/port/dbname)
+    monkeypatch.setenv("TEST_DATABASE_URL", settings.DATABASE_URL)
+    with pytest.raises(RuntimeError) as exc_info:
+        get_isolated_test_database_url()
+    assert "cannot point to the same database as DATABASE_URL" in str(exc_info.value)
+
+    # 2. When TEST_DATABASE_URL uses a different username on the application database
+    tampered_user_url = settings.DATABASE_URL.replace("avnadmin", "tampered_user")
+    monkeypatch.setenv("TEST_DATABASE_URL", tampered_user_url)
+    with pytest.raises(RuntimeError) as exc_info:
+        get_isolated_test_database_url()
+    assert "cannot point to the same database as DATABASE_URL" in str(exc_info.value)
+
+    # 3. When TEST_DATABASE_URL is empty and ACCEPTANCE_DATABASE_URL is also missing or matches app db
+    monkeypatch.setenv("TEST_DATABASE_URL", "")
+    monkeypatch.setattr(settings, "ACCEPTANCE_DATABASE_URL", settings.DATABASE_URL)
+    with pytest.raises(RuntimeError) as exc_info:
+        get_isolated_test_database_url()
+    assert "cannot point to the same database as DATABASE_URL" in str(exc_info.value)
+
+    # 4. When properly isolated database is provided, it succeeds
+    monkeypatch.setenv("TEST_DATABASE_URL", "postgres://u:p@10.0.0.1:5432/isolated_test_db")
+    isolated_url = get_isolated_test_database_url()
+    assert "isolated_test_db" in isolated_url
 
 
 # --- 2. Worker Execution Filtering Tests ---
@@ -416,7 +551,7 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
             trip_id=fixture_trip_id,
             execution_id=fixture_exec_id,
             parent_route_id=None,
-            route_version=1,
+            route_version=999,
             status="FEASIBLE",
             solver_status="OPTIMAL",
             objective="FASTEST",
@@ -436,6 +571,14 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
             restrictions=[],
         )
         session.add(fixture_route)
+
+        existing_idemp = await session.get(
+            ApiIdempotencyModel,
+            (fixture_owner_id, "route_optimization:replan", "seed-multimodal-route"),
+        )
+        if existing_idemp:
+            await session.delete(existing_idemp)
+            await session.flush()
 
         fixture_idemp = ApiIdempotencyModel(
             owner_id=fixture_owner_id,

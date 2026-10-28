@@ -62,9 +62,95 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
+import ipaddress
+
+
+def is_loopback_host(host: str) -> bool:
+    """Returns True if the host represents a loopback or local binding address."""
+    cleaned = host.strip("[]").lower().rstrip(".")
+    if cleaned in ("localhost", "localhost.localdomain", "::1", "0.0.0.0", "::"):
+        return True
+    try:
+        ip = ipaddress.ip_address(cleaned)
+        return ip.is_loopback or ip.is_unspecified
+    except ValueError:
+        return False
+
+
+import concurrent.futures
+
+_resolver_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4)
+
+
+def resolve_host_ips(host: str, timeout: float = 1.0) -> set[str]:
+    """Resolves host string to a set of IP addresses using IP literal parsing and DNS caching.
+    Safely times out on unresolvable hosts to avoid blocking."""
+    cleaned = host.strip("[]").lower().rstrip(".")
+    ips: set[str] = set()
+    try:
+        ip = ipaddress.ip_address(cleaned)
+        ips.add(str(ip))
+        return ips
+    except ValueError:
+        pass
+
+    # Check cached entries first
+    for cached_key, cached_val in _dns_cache.items():
+        if cached_key[0] == cleaned:
+            for item in cached_val:
+                sockaddr = item[4]
+                if sockaddr and sockaddr[0]:
+                    ips.add(str(sockaddr[0]))
+            if ips:
+                return ips
+
+    try:
+        future = _resolver_executor.submit(_orig_getaddrinfo, cleaned, 5432)
+        addr_info = future.result(timeout=timeout)
+        for item in addr_info:
+            sockaddr = item[4]
+            if sockaddr and sockaddr[0]:
+                ips.add(str(sockaddr[0]))
+        # Cache successful resolution
+        _dns_cache[(cleaned, 20266)] = addr_info
+        _dns_cache[(cleaned, 5432)] = addr_info
+    except Exception:
+        pass
+    return ips
+
+
+def are_hosts_equivalent(host1: str, host2: str) -> bool:
+    """Determines if two host representations refer to the same physical host or alias.
+    Fails closed (returns True) if target host identity cannot be determined safely."""
+    h1 = host1.strip("[]").lower().rstrip(".")
+    h2 = host2.strip("[]").lower().rstrip(".")
+
+    if not h1 or not h2:
+        return True
+
+    # Exact normalized string match (e.g. case / trailing dot variants)
+    if h1 == h2:
+        return True
+
+    # Both loopback / local addresses (localhost, 127.0.0.1, 127.0.0.2, ::1, 0.0.0.0)
+    if is_loopback_host(h1) and is_loopback_host(h2):
+        return True
+
+    # Resolved IP intersection
+    ips1 = resolve_host_ips(h1)
+    ips2 = resolve_host_ips(h2)
+
+    # Fail closed: if neither or only one host can be resolved safely, target identity is indeterminate
+    if not ips1 or not ips2:
+        return True
+
+    return bool(ips1 & ips2)
+
+
 def normalize_db_connection_target(url: str | None) -> dict[str, Any] | None:
-    """Extracts normalized connection parameters (host, port, username, dbname)
-    accounting for varying schemes (postgres://, postgresql+asyncpg://) and query parameters."""
+    """Extracts normalized connection parameters (host, port, dbname)
+    accounting for varying schemes (postgres://, postgresql+asyncpg://) and query parameters.
+    Fails closed (returns None) if host or dbname is missing or cannot be safely determined."""
     if not url or not url.strip():
         return None
     cleaned = url.strip()
@@ -75,14 +161,19 @@ def normalize_db_connection_target(url: str | None) -> dict[str, Any] | None:
             break
     try:
         parsed = urlparse(cleaned)
-        host = (parsed.hostname or "").lower()
-        port = parsed.port or 5432
-        username = parsed.username or ""
-        dbname = parsed.path.lstrip("/").split("?")[0]
+        host = (parsed.hostname or "").strip("[]").lower().rstrip(".")
+        if not host:
+            return None
+        port = 5432 if parsed.port is None else parsed.port
+        if not (1 <= port <= 65535):
+            return None
+        raw_dbname = parsed.path.lstrip("/").split("?")[0]
+        if not raw_dbname or not raw_dbname.strip():
+            return None
+        dbname = raw_dbname.strip().lower()
         return {
             "host": host,
             "port": port,
-            "username": username,
             "dbname": dbname,
         }
     except Exception:
@@ -90,12 +181,59 @@ def normalize_db_connection_target(url: str | None) -> dict[str, Any] | None:
 
 
 def are_db_urls_equivalent(url1: str | None, url2: str | None) -> bool:
-    """Returns True if two connection strings resolve to the exact same database target."""
+    """Returns True if two connection strings resolve to the exact same database target.
+    Target equivalence is determined by (host, port, dbname) and host aliases.
+    PostgreSQL usernames and credentials are NOT used to differentiate targets because
+    different users access the same physical database.
+    Fails closed (returns True) if either target cannot be determined safely."""
     norm1 = normalize_db_connection_target(url1)
     norm2 = normalize_db_connection_target(url2)
     if norm1 is None or norm2 is None:
+        # Fails closed: if target cannot be safely determined, assume equivalence to prevent bypass
+        return True
+
+    # Different database names on the same host are distinct
+    if norm1["dbname"] != norm2["dbname"]:
         return False
-    return norm1 == norm2
+
+    # Different ports on the same host are distinct
+    if norm1["port"] != norm2["port"]:
+        return False
+
+    # Check host equivalence including loopback and IP aliases
+    return are_hosts_equivalent(norm1["host"], norm2["host"])
+
+
+def validate_isolated_database_url(
+    target_url: str | None,
+    app_url: str | None,
+    *,
+    label: str = "Acceptance database",
+) -> str:
+    """Validates that a dedicated isolated database URL is explicitly configured
+    and does not point to the regular application database. Fails closed."""
+    env_name = "ACCEPTANCE_DATABASE_URL" if "acceptance" in label.lower() else "TEST_DATABASE_URL"
+    if not target_url or not target_url.strip():
+        raise RuntimeError(
+            f"{env_name} must be explicitly configured with a dedicated isolated database URL. "
+            f"{label} execution is strictly isolated and fails closed without it."
+        )
+    norm_target = normalize_db_connection_target(target_url)
+    if norm_target is None:
+        raise RuntimeError(
+            f"{env_name} is invalid or its target cannot be determined safely."
+        )
+    norm_app = normalize_db_connection_target(app_url)
+    if norm_app is None:
+        raise RuntimeError(
+            "DATABASE_URL is invalid or its target cannot be determined safely."
+        )
+    if are_db_urls_equivalent(target_url, app_url):
+        raise RuntimeError(
+            f"{env_name} cannot point to the same database as DATABASE_URL. "
+            "A dedicated isolated database is required to protect application and development data."
+        )
+    return target_url.strip()
 
 
 def validate_acceptance_database_url(
@@ -104,17 +242,11 @@ def validate_acceptance_database_url(
 ) -> str:
     """Validates that a dedicated acceptance database URL is explicitly configured
     and does not point to the regular application database. Fails closed."""
-    if not acceptance_url or not acceptance_url.strip():
-        raise RuntimeError(
-            "ACCEPTANCE_DATABASE_URL must be explicitly configured with a dedicated acceptance database URL. "
-            "Acceptance execution is strictly isolated and fails closed without it."
-        )
-    if are_db_urls_equivalent(acceptance_url, app_url):
-        raise RuntimeError(
-            "ACCEPTANCE_DATABASE_URL cannot point to the same database as DATABASE_URL. "
-            "A dedicated acceptance database is required to protect application and development data."
-        )
-    return acceptance_url.strip()
+    return validate_isolated_database_url(
+        acceptance_url,
+        app_url,
+        label="Acceptance database",
+    )
 
 
 def get_acceptance_session_factory() -> async_sessionmaker[AsyncSession]:

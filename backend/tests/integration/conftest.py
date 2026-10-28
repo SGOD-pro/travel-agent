@@ -56,10 +56,29 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
+import os
+from acceptance_database import are_db_urls_equivalent, validate_isolated_database_url
+
+
+def get_isolated_test_database_url() -> str:
+    """Returns the validated isolated test database URL.
+    Fails closed if configuration is missing or points to the application database."""
+    test_url = (
+        os.environ.get("TEST_DATABASE_URL")
+        or getattr(settings, "TEST_DATABASE_URL", None)
+        or settings.ACCEPTANCE_DATABASE_URL
+    )
+    return validate_isolated_database_url(
+        test_url,
+        settings.DATABASE_URL,
+        label="Integration test database",
+    )
+
+
 @pytest.fixture
 async def session_factory():
-    url = settings.DATABASE_URL
-    connect_args = {"command_timeout": 60, "timeout": 30}
+    url = get_isolated_test_database_url()
+    connect_args = {"command_timeout": 60, "timeout": 60}
     if (
         "sslmode=require" in url
         or "ssl=require" in url
@@ -71,6 +90,10 @@ async def session_factory():
         url = re.sub(r"[?&]sslmode=[^&]+", "", url)
         if "?" not in url and "&" in url:
             url = url.replace("&", "?", 1)
+    if url.startswith("postgres://"):
+        url = "postgresql+asyncpg://" + url[len("postgres://") :]
+    elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://") :]
     test_engine = create_async_engine(
         url,
         poolclass=NullPool,
@@ -83,6 +106,12 @@ async def session_factory():
 
 @pytest.fixture
 async def postgres_checkpointer(session_factory):
+    test_url = get_isolated_test_database_url()
+    if are_db_urls_equivalent(test_url, settings.DATABASE_URL):
+        raise RuntimeError(
+            "Destructive postgres_checkpointer fixture cannot run against the application database. "
+            "An explicitly configured isolated test database is required."
+        )
     async with session_factory() as session:
         await session.execute(text("DROP TABLE IF EXISTS checkpoint_writes;"))
         await session.execute(text("DROP TABLE IF EXISTS checkpoints;"))
