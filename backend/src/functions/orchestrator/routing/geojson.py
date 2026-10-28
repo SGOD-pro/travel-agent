@@ -109,9 +109,7 @@ def assemble_route_map_geojson(route: RouteModel) -> RouteMapGeoJsonResponse:
         mode_str = str(leg.transport_mode).upper()
         is_walking = mode_str in ("WALK", "WALKING")
 
-        if has_applied_closure:
-            stroke = "#f59e0b"  # amber for closure detour
-        elif is_walking:
+        if is_walking:
             stroke = "#10b981"  # emerald for walking
         else:
             stroke = "#3b82f6"  # blue for driving
@@ -186,6 +184,17 @@ def assemble_route_map_geojson(route: RouteModel) -> RouteMapGeoJsonResponse:
         bbox = [min(all_lons), min(all_lats), max(all_lons), max(all_lats)]
 
     diagnostics_list = list(route.assumptions or [])
+    for s in (route.stops or []):
+        if getattr(s, "is_skipped", False):
+            reason_text = f": {s.skip_reason}" if getattr(s, "skip_reason", None) else ""
+            dropped_msg = f"Optional stop '{s.name}' dropped{reason_text}"
+            if dropped_msg not in diagnostics_list:
+                diagnostics_list.append(dropped_msg)
+    if route.warnings:
+        for w in route.warnings:
+            if w not in diagnostics_list:
+                diagnostics_list.append(w)
+
 
     top_level_props: dict[str, Any] = {
         "route_id": str(route.id),

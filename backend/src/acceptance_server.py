@@ -119,5 +119,44 @@ async def lifespan(app: Any):
 app = create_app()
 app.router.lifespan_context = lifespan
 
+
+@app.post("/api/v1/test/reset-replan-fixtures")
+async def reset_replan_fixtures():
+    """Surgically resets child replans and reservations for owned acceptance test entities."""
+    from sqlalchemy import delete, select
+    from acceptance_seeder import CANONICAL_ROUTE_IDS, OWNED_USER_IDS
+    from functions.api.models import ApiIdempotencyModel
+    from functions.orchestrator.routing.models import (
+        RouteLegModel,
+        RouteModel,
+        RouteRestrictionModel,
+        RouteStopModel,
+    )
+
+    sf = get_live_session_factory()
+    async with sf() as session:
+        stmt = select(RouteModel.id).where(RouteModel.parent_route_id.in_(CANONICAL_ROUTE_IDS))
+        child_ids = list((await session.execute(stmt)).scalars().all())
+        if child_ids:
+            await session.execute(delete(RouteLegModel).where(RouteLegModel.route_id.in_(child_ids)))
+            await session.execute(delete(RouteStopModel).where(RouteStopModel.route_id.in_(child_ids)))
+            await session.execute(
+                delete(RouteRestrictionModel).where(RouteRestrictionModel.route_id.in_(child_ids))
+            )
+            await session.execute(delete(RouteModel).where(RouteModel.id.in_(child_ids)))
+
+        await session.execute(
+            delete(ApiIdempotencyModel).where(
+                ApiIdempotencyModel.operation.in_(
+                    ("route_optimization:replan", "route_optimization:replan_reservation")
+                ),
+                ApiIdempotencyModel.owner_id.in_(OWNED_USER_IDS),
+            )
+        )
+        await session.commit()
+    return {"status": "ok", "cleaned_child_ids": [str(c) for c in child_ids]}
+
+
 if __name__ == "__main__":
     uvicorn.run("acceptance_server:app", host="127.0.0.1", port=8000, log_level="info")
+

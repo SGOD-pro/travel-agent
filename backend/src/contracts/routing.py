@@ -222,6 +222,7 @@ class RouteRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    route_id: UUID | None = None
     owner_id: UUID | None = None
     trip_id: UUID | None = None
     execution_id: UUID | None = None

@@ -348,6 +348,9 @@ class RouteOptimizerWorkerService:
                     }
                 )
 
+            if route_req.route_id is not None:
+                solved_route = solved_route.model_copy(update={"id": route_req.route_id})
+
             # Persist solved route
             persisted_route_model = await self._route_repo.save_route(
                 solved_route,

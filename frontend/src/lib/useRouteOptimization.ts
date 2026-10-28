@@ -37,21 +37,42 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
   optionsRef.current = options;
   const autoRecover = options.autoRecover ?? true;
 
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [routeId, setRouteId] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return new URLSearchParams(window.location.search).get("job_id");
+    }
+    return null;
+  });
+  const [routeId, setRouteId] = useState<string | null>(() => {
+    if (typeof window !== "undefined") {
+      return new URLSearchParams(window.location.search).get("route_id");
+    }
+    return null;
+  });
   const [routeMap, setRouteMap] = useState<RouteMapGeoJsonResponse | null>(null);
   const [versions, setVersions] = useState<RouteVersionItem[]>([]);
   const [jobStatus, setJobStatus] = useState<
     "IDLE" | "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED"
-  >("IDLE");
+  >(() => {
+    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("job_id")) {
+      return "RUNNING";
+    }
+    return "IDLE";
+  });
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isPolling, setIsPolling] = useState(false);
+  const [isPolling, setIsPolling] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return !!new URLSearchParams(window.location.search).get("job_id");
+    }
+    return false;
+  });
   const [isReplanning, setIsReplanning] = useState(false);
 
   const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const pollIntervalRef = useRef<number>(1000);
+  const pollIntervalRef = useRef<number>(2000);
   const consecutiveErrorsRef = useRef<number>(0);
+  const hasRecoveredRef = useRef<boolean>(false);
 
   // Fetch GeoJSON Map representation for a given route_id
   const fetchRouteMap = useCallback(
@@ -235,7 +256,7 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
       setIsPolling(true);
       setError(null);
       setJobStatus("RUNNING");
-      pollIntervalRef.current = 1000;
+      pollIntervalRef.current = 2000;
 
       try {
         sessionStorage.setItem(STORAGE_ACTIVE_JOB_KEY, activeJobId);
@@ -379,7 +400,8 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
 
   // Refresh recovery on mount
   useEffect(() => {
-    if (autoRecover === false) return;
+    if (autoRecover === false || hasRecoveredRef.current) return;
+    hasRecoveredRef.current = true;
 
     if (typeof window === "undefined") return;
 

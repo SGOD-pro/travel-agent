@@ -30,15 +30,16 @@ No blockers or major defects were identified.
 * **Resilient data normalization**: Persistent models safely normalize legacy transport modes and traffic basis values, protecting domain logic from unexpected raw values.
 
 ## Verified commands and results
-
-* `cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_replan_concurrency_slice2.py -v`: 1 passed in 9.62s on live PostgreSQL.
-* `cd frontend && npx playwright test e2e/route-optimization-e2e.spec.ts`: 8 passed in 22.8s.
-* `cd frontend && npx playwright test e2e/route-optimization-acceptance.spec.ts`: 7 passed in 2.6m against real local frontend, backend, PostgreSQL, runner, and worker.
+ 
+* `cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_replan_concurrency_slice2.py -v`: 3 passed in 19.29s on live PostgreSQL (concurrency single child race rejection, identical payload replay returning original job, changed payload 409 conflict, and failed job retry when no child route exists).
+* `cd frontend && npx playwright test e2e/route-optimization-e2e.spec.ts`: 8 passed in 6.9s.
+* `cd frontend && npx playwright test e2e/route-optimization-acceptance.spec.ts`: 7 passed in 1.8m against real local frontend, backend, PostgreSQL, runner, and worker, executing multimodal, partial, and infeasible routes through the live graph pipeline with owned fixture isolation and road closure geometry avoidance.
 * `cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v`: 1 skipped in 0.13s (clean skip when unconfigured).
 * `cd backend && RUN_CONNECTED_VALHALLA_TESTS=1 VALHALLA_ENDPOINT_URL=http://localhost:8002 PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v`: 1 passed in 46.53s when connected.
-
+ 
 ## Limitations
-
-1. Browser acceptance tests run against local Next.js and FastAPI instances connected to live cloud PostgreSQL. Because each LangGraph execution stages outbox events and cycles through graph runner and worker reconciliation over the network, full graph solving runs take approximately 50 to 60 seconds per execution cycle.
+ 
+1. Browser acceptance tests run against local Next.js and FastAPI instances connected to live cloud PostgreSQL. Because each LangGraph execution stages outbox events and cycles through graph runner and worker reconciliation over the network, full graph solving runs take approximately 40 to 50 seconds per execution cycle.
 2. Connected Valhalla live tests require an active external Valhalla instance with geographic OSM tiles loaded. They are safely skipped in environments where Valhalla is not deployed.
 3. The development authentication mode uses encoded bearer tokens with subject principals; production deployment requires standard asymmetric JWT verification through the identity provider.
+

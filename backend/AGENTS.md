@@ -104,6 +104,8 @@ uv run alembic upgrade head
 - Standalone completion reconciliation scopes strictly to optimizer workflows, leaving orchestrator graph workflows in waiting states untouched.
 - Route optimizer packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed (0.28 MB lightweight, ~211 MB dependency inclusive), excluding LangGraph, Playwright, and FastAPI dependencies.
 - Optimization endpoints enforce caller tenant ownership with explicit 403 Forbidden responses on tenant mismatch.
+- Replan endpoint enforces (owner_id, "route_optimization:replan", idemp_key) idempotency semantics: identical payload replays the cached 202 response even after completion, changed payload returns 409 Conflict, and retry is permitted after terminal failure or cancellation when no child route was committed.
+- Acceptance testing and local worker polling strictly isolate owned test fixtures and executions without global outbox acknowledgements or unrelated route mutations.
 - RouteOptimizerGraph compiles with interrupt_before=[RouteOptimizerNode.AWAIT_SOLVER_RESULT], clearing pending_tasks upon resumption to eliminate duplicate dispatch, and preserves INFEASIBLE route outcomes with status SUCCEEDED (see spec 0006).
 - GET /api/v1/optimization/routes/{route_id}/map returns RFC 7946 GeoJSON FeatureCollection with PostGIS stop coordinates, JSONB leg polylines, simplestyle presentation attributes, and 4 element bbox (see spec 0006).
 - GET /api/v1/optimization/routes/{route_id}/versions traces root to child replan lineage with recursive PostgreSQL CTE, computing distance deltas, duration deltas, and dropped stops (see spec 0006).

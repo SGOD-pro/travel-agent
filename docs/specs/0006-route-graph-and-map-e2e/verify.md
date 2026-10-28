@@ -179,9 +179,9 @@ Tested commit: `fa6f170752703ec561324678271c10b7defeecee`
 cd backend && .venv/bin/alembic upgrade head
 # Applied: 0014_enforce_single_child_replan (uq_routes_parent_route_id partial unique index)
 
-# 2. Replan concurrency regression execution (PostgreSQL concurrent requests)
+# 2. Replan concurrency and idempotency regression execution (PostgreSQL concurrent requests, replay, retry)
 cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_replan_concurrency_slice2.py -v
-# Output: 1 passed in 9.62s on live PostgreSQL
+# Output: 3 passed in 19.29s on live PostgreSQL (concurrency single child race rejection, replay returns cached job, changed payload 409 conflict, failed job retry allowed)
 
 # 3. Slice 1 end to end integration test execution
 cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_map_slice1.py -v
@@ -196,8 +196,8 @@ cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_infea
 # Output: 3 passed in 89.62s on live PostgreSQL
 
 # 6. Unit test regression execution
-cd backend && PYTHONPATH=src .venv/bin/pytest tests/unit/test_route_optimizer_slice6.py tests/unit/test_route_optimizer_slice5.py tests/unit/test_route_map_geojson_slice3.py -v
-# Output: 26 passed in 52.29s
+cd backend && PYTHONPATH=src .venv/bin/pytest tests/unit/test_route_graph_state_machine_unit.py -v
+# Output: 11 passed in 1.19s
 
 # 7. Frontend TypeScript verification and production build
 cd frontend && npx tsc --noEmit && npm run build
@@ -205,11 +205,11 @@ cd frontend && npx tsc --noEmit && npm run build
 
 # 8. Level 1: Mocked Playwright UI regression suite
 cd frontend && npx playwright test e2e/route-optimization-e2e.spec.ts
-# Output: 8 passed (22.8s)
+# Output: 8 passed (6.9s)
 
 # 9. Level 2: Full stack browser acceptance suite (AC-11)
 cd frontend && npx playwright test e2e/route-optimization-acceptance.spec.ts
-# Output: 7 passed (2.6m) on real local frontend, backend, PostgreSQL, runner, and worker
+# Output: 7 passed (1.8m) on real local frontend, backend, PostgreSQL, runner, and worker with live pipelines, isolated owned fixtures, and road closure geometry avoidance
 
 # 10. Level 3: Connected Valhalla verification gate (clean skip when unconfigured)
 cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_route_graph_valhalla_connected_slice5.py -v

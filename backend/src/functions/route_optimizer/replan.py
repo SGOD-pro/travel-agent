@@ -191,9 +191,27 @@ class RouteReplanService:
             is_completed=True,
         )
 
+        # Inspect previous route for multimodal indicators (walking legs or parking hubs)
+        pedestrian_stop_ids = {
+            leg.to_stop_id
+            for leg in (previous_route.legs or [])
+            if leg.transport_mode == TransportMode.WALKING
+        }
+        has_parking_hub = any(s.stop_type == StopType.PARKING_HUB for s in (previous_route.stops or []))
+
         remaining_stop_inputs: list[RouteStopInput] = []
         for s in remaining_candidates:
+            # Omit previously injected parking hub stop; multimodal service will inject a verified parking hub dynamically
+            if s.stop_type == StopType.PARKING_HUB:
+                continue
+
             orig_id = s.stop_id or s.id or uuid.uuid4()
+            is_ped = (
+                s.id in pedestrian_stop_ids
+                or s.stop_id in pedestrian_stop_ids
+                or (has_parking_hub and s.stop_type == StopType.DESTINATION)
+            )
+
             remaining_stop_inputs.append(
                 RouteStopInput(
                     id=orig_id,
@@ -206,8 +224,26 @@ class RouteReplanService:
                     window_end=s.window_end,
                     dwell_seconds=s.dwell_seconds,
                     is_completed=False,
+                    is_pedestrian_only=is_ped,
                 )
             )
+
+        # If previous route started from a depot/origin, append return to home depot
+        if previous_route.stops and previous_route.stops[0].stop_type == StopType.ORIGIN:
+            home_stop = previous_route.stops[0]
+            if not any(s.name == home_stop.name for s in remaining_stop_inputs):
+                remaining_stop_inputs.append(
+                    RouteStopInput(
+                        id=uuid.uuid4(),
+                        place_id=home_stop.place_id,
+                        name=f"Return to {home_stop.name}",
+                        location=home_stop.location,
+                        stop_type=StopType.DESTINATION,
+                        dwell_seconds=0,
+                        is_must_visit=True,
+                        is_pedestrian_only=False,
+                    )
+                )
 
         sub_request_stops = [replan_origin_input] + remaining_stop_inputs
 

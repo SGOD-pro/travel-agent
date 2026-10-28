@@ -37,6 +37,15 @@ function createBearerToken(sub: string, email: string): string {
 test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
   test.setTimeout(120000);
 
+  test.beforeEach(async ({ request }) => {
+    // Surgically reset previous child replans and reservations for owned fixtures
+    try {
+      await request.post(`${API_BASE}/api/v1/test/reset-replan-fixtures`);
+    } catch {
+      // Ignore if server endpoint unreachable during standalone runs
+    }
+  });
+
   test("Scenario 1: Live Submission, Real Polling, and Map Retrieval", async ({
     page,
   }) => {
@@ -117,6 +126,7 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
 
   test("Scenario 3: Mid-Trip Changed-Road Replan and Version Switching Lineage", async ({
     page,
+    request,
   }) => {
     // Load base route
     await page.goto(`/trips/${MULTIMODAL_TRIP_ID}/route?route_id=${MULTIMODAL_ROUTE_ID}`);
@@ -126,7 +136,13 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     const replanBtn = page.getByRole("button", { name: "Replan & Detour" });
     await expect(replanBtn).toBeVisible({ timeout: 15000 });
 
-    // Click preset location chip to set detour coordinates
+    // Freeze completed stop (Depot) in mid-trip replan form
+    const depotStopCard = page.locator('div:has-text("Bengaluru MG Road Depot")').last();
+    if (await depotStopCard.isVisible()) {
+      await depotStopCard.click();
+    }
+
+    // Click preset location chip to set detour coordinates (Mysuru Outer Bypass)
     const bypassChip = page.getByRole("button", { name: "Mysuru Outer Bypass" });
     await bypassChip.click();
 
@@ -148,6 +164,54 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     // Wait for version history to populate dropdown with both v1 and v2
     await expect(versionSelect).toContainText("v2", { timeout: 15000 });
     await expect(versionSelect).toContainText("v1", { timeout: 15000 });
+
+    // Verify v2 GeoJSON map via API to assert geometry avoids road closure, preserves completed stops, and returns home
+    const v2RouteIdMatch = page.url().match(/route_id=([0-9a-fA-F-]+)/);
+    const v2RouteId = v2RouteIdMatch ? v2RouteIdMatch[1] : null;
+    expect(v2RouteId).toBeTruthy();
+
+    const mapRes = await request.get(`${API_BASE}/api/v1/optimization/routes/${v2RouteId}/map`);
+    expect(mapRes.status()).toBe(200);
+    const mapGeoJson = await mapRes.json();
+
+    // 1. Lineage assertions: v2 has parent_route_id pointing to v1
+    expect(mapGeoJson.properties.route_version).toBe(2);
+    expect(mapGeoJson.properties.parent_route_id).toBe(MULTIMODAL_ROUTE_ID);
+
+    // 2. Preserves completed stops
+    const stops = mapGeoJson.features.filter((f: any) => f.properties?.feature_type === "stop");
+    const completedStops = stops.filter((s: any) => s.properties?.is_completed === true);
+    expect(completedStops.length).toBeGreaterThanOrEqual(1);
+
+    // 3. Multimodal vehicle return and home depot return preserved
+    const parkingHubStops = stops.filter((s: any) => s.properties?.stop_type === "PARKING_HUB");
+    expect(parkingHubStops.length).toBeGreaterThanOrEqual(1);
+    const legModes = mapGeoJson.features
+      .filter((f: any) => f.properties?.feature_type === "leg")
+      .map((l: any) => l.properties?.transport_mode);
+    expect(legModes).toContain("car_petrol");
+    expect(legModes).toContain("walking");
+
+    // 4. Assert geometry avoids the changed-road closure polygon
+    const closureFeatures = mapGeoJson.features.filter(
+      (f: any) => f.properties?.feature_type === "restriction"
+    );
+    expect(closureFeatures.length).toBeGreaterThanOrEqual(1);
+    const closurePolyCoords = closureFeatures[0].geometry.coordinates[0];
+    const minLng = Math.min(...closurePolyCoords.map((c: number[]) => c[0]));
+    const maxLng = Math.max(...closurePolyCoords.map((c: number[]) => c[0]));
+    const minLat = Math.min(...closurePolyCoords.map((c: number[]) => c[1]));
+    const maxLat = Math.max(...closurePolyCoords.map((c: number[]) => c[1]));
+
+    const legFeatures = mapGeoJson.features.filter((f: any) => f.properties?.feature_type === "leg");
+    for (const leg of legFeatures) {
+      for (const pt of leg.geometry.coordinates) {
+        const [lng, lat] = pt;
+        // Verify no vertex falls inside strict interior of road closure polygon
+        const strictlyInside = lng > minLng && lng < maxLng && lat > minLat && lat < maxLat;
+        expect(strictlyInside).toBe(false);
+      }
+    }
 
     const options = await versionSelect.locator("option").allTextContents();
     const v1Option = options.find((opt) => opt.includes("v1"))!;
@@ -179,11 +243,11 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     const map = page.locator(".leaflet-container");
     await expect(map).toBeVisible();
 
-    // Verify stop marker pins rendered (5 stops: Origin, Parking In, Pedestrian, Parking Out, Return)
+    // Verify stop marker pins rendered (Origin, Parking Hub, Pedestrian Sanctuary)
     const markers = page.locator(".leaflet-marker-icon");
     await expect(markers.first()).toBeVisible({ timeout: 15000 });
     const count = await markers.count();
-    expect(count).toBeGreaterThanOrEqual(4);
+    expect(count).toBeGreaterThanOrEqual(3);
 
     // Verify walking legs rendered as emerald dashed polylines
     const walkingLegs = page.locator('.leaflet-pane svg path[stroke="#10b981"]');

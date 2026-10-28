@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from functions.orchestrator.execution import (
     CompletionReconciliationService,
+    ExecutionModel,
     ExecutionResumeEvent,
     ExecutionStartEvent,
     GraphRunnerService,
@@ -81,6 +82,12 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
+DEFAULT_ALLOWED_OWNER_IDS = (
+    uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    uuid.UUID("99999999-9999-9999-9999-999999999999"),
+)
+
+
 class LocalAcceptanceWorker:
     """Processes outbox events locally with injected routing provider for browser acceptance."""
 
@@ -89,10 +96,12 @@ class LocalAcceptanceWorker:
         session_factory: async_sessionmaker[AsyncSession],
         valhalla_client: Any | None = None,
         closure_service: ClosureAvoidanceService | None = None,
+        allowed_owner_ids: tuple[uuid.UUID, ...] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._valhalla_client = valhalla_client or MockValhallaClient()
         self._closure_service = closure_service or ClosureAvoidanceService()
+        self._allowed_owner_ids = allowed_owner_ids or DEFAULT_ALLOWED_OWNER_IDS
 
         checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
         route_graph = compile_route_optimizer_workflow(checkpointer=checkpointer)
@@ -117,10 +126,13 @@ class LocalAcceptanceWorker:
         async with self._session_factory() as session:
             stmt = (
                 select(OutboxEventModel)
+                .join(ExecutionModel, OutboxEventModel.execution_id == ExecutionModel.id)
                 .where(
                     OutboxEventModel.delivered_at.is_(None),
                     OutboxEventModel.failed_at.is_(None),
                     OutboxEventModel.created_at >= recent_cutoff,
+                    ExecutionModel.owner_id.in_(self._allowed_owner_ids),
+                    ExecutionModel.workflow == "ROUTE_OPTIMIZER_GRAPH",
                 )
                 .order_by(OutboxEventModel.created_at.asc())
                 .limit(20)

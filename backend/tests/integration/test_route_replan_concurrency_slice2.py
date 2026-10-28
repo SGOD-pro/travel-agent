@@ -343,3 +343,251 @@ async def test_standalone_route_replan_concurrency_regression(
 
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_replan_idempotency_replay_and_changed_payload_conflict(
+    session_factory: Any,
+) -> None:
+    """Verifies that identical replan replay returns original job even after completion, and changed payload conflicts."""
+    owner_id = uuid.uuid4()
+    route_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        stop1 = RouteStopModel(
+            id=uuid.uuid4(),
+            route_id=route_id,
+            stop_order=1,
+            name="Depot",
+            location=from_shape(shapely.geometry.Point(88.3639, 22.5726), srid=4326),
+            stop_type="ORIGIN",
+            is_must_visit=True,
+            is_completed=False,
+            is_skipped=False,
+            dwell_seconds=0,
+            wait_seconds=0,
+        )
+        route_v1 = RouteModel(
+            id=route_id,
+            owner_id=owner_id,
+            trip_id=None,
+            execution_id=None,
+            parent_route_id=None,
+            route_version=1,
+            status="FEASIBLE",
+            solver_status="OPTIMAL",
+            objective="FASTEST",
+            departure_at=now,
+            total_distance_m=5000,
+            total_travel_seconds=600,
+            total_dwell_seconds=0,
+            total_wait_seconds=0,
+            total_elapsed_seconds=600,
+            driving_distance_m=5000,
+            walking_distance_m=0,
+            fuel_amount=None,
+            fuel_currency="INR",
+            warnings=[],
+            assumptions=[],
+            stops=[stop1],
+            legs=[],
+            restrictions=[],
+        )
+        session.add(route_v1)
+        await session.commit()
+
+    async def override_get_session() -> Any:
+        async with session_factory() as session:
+            yield session
+
+    current_user = AuthenticatedUser(id=owner_id, email="idemp-test@swena.internal")
+
+    async def override_get_current_user() -> AuthenticatedUser:
+        return current_user
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            idemp_key = f"replan-key-{uuid.uuid4()}"
+            replan_payload = {
+                "current_location": {"latitude": 22.5800, "longitude": 88.3700},
+                "completed_stop_ids": [],
+                "expected_previous_version": 1,
+                "replan_at": now.isoformat(),
+            }
+
+            # 1. Initial submission
+            resp1 = await client.post(
+                f"/api/v1/optimization/routes/{route_id}/replans",
+                headers={"Idempotency-Key": idemp_key},
+                json=replan_payload,
+            )
+            assert resp1.status_code == 202
+            job1_id = resp1.json()["job_id"]
+
+            # 2. Simulate child route v2 committed after job completion
+            child_route_id = uuid.uuid4()
+            async with session_factory() as session:
+                route_v2 = RouteModel(
+                    id=child_route_id,
+                    owner_id=owner_id,
+                    trip_id=None,
+                    execution_id=uuid.UUID(job1_id),
+                    parent_route_id=route_id,
+                    route_version=2,
+                    status="FEASIBLE",
+                    solver_status="OPTIMAL",
+                    objective="FASTEST",
+                    departure_at=now,
+                    total_distance_m=5500,
+                    total_travel_seconds=650,
+                    total_dwell_seconds=0,
+                    total_wait_seconds=0,
+                    total_elapsed_seconds=650,
+                    driving_distance_m=5500,
+                    walking_distance_m=0,
+                    fuel_amount=None,
+                    fuel_currency="INR",
+                    warnings=[],
+                    assumptions=[],
+                    stops=[],
+                    legs=[],
+                    restrictions=[],
+                )
+                session.add(route_v2)
+                await session.commit()
+
+            # 3. Identical replay with same Idempotency-Key returns original job even after completion
+            resp_replay = await client.post(
+                f"/api/v1/optimization/routes/{route_id}/replans",
+                headers={"Idempotency-Key": idemp_key},
+                json=replan_payload,
+            )
+            assert resp_replay.status_code in (200, 202)
+            assert resp_replay.json()["job_id"] == job1_id
+
+            # 4. Changed payload with same Idempotency-Key conflicts (409)
+            changed_payload = dict(replan_payload)
+            changed_payload["current_location"] = {"latitude": 22.5999, "longitude": 88.3999}
+            resp_changed = await client.post(
+                f"/api/v1/optimization/routes/{route_id}/replans",
+                headers={"Idempotency-Key": idemp_key},
+                json=changed_payload,
+            )
+            assert resp_changed.status_code == 409
+            assert "idempotency conflict" in resp_changed.json()["detail"].lower()
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_replan_failed_job_retry_when_no_child_committed(
+    session_factory: Any,
+) -> None:
+    """Verifies that a new replan attempt is permitted after terminal failure/cancellation when no child was committed."""
+    owner_id = uuid.uuid4()
+    route_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        stop1 = RouteStopModel(
+            id=uuid.uuid4(),
+            route_id=route_id,
+            stop_order=1,
+            name="Depot",
+            location=from_shape(shapely.geometry.Point(88.3639, 22.5726), srid=4326),
+            stop_type="ORIGIN",
+            is_must_visit=True,
+            is_completed=False,
+            is_skipped=False,
+            dwell_seconds=0,
+            wait_seconds=0,
+        )
+        route_v1 = RouteModel(
+            id=route_id,
+            owner_id=owner_id,
+            trip_id=None,
+            execution_id=None,
+            parent_route_id=None,
+            route_version=1,
+            status="FEASIBLE",
+            solver_status="OPTIMAL",
+            objective="FASTEST",
+            departure_at=now,
+            total_distance_m=5000,
+            total_travel_seconds=600,
+            total_dwell_seconds=0,
+            total_wait_seconds=0,
+            total_elapsed_seconds=600,
+            driving_distance_m=5000,
+            walking_distance_m=0,
+            fuel_amount=None,
+            fuel_currency="INR",
+            warnings=[],
+            assumptions=[],
+            stops=[stop1],
+            legs=[],
+            restrictions=[],
+        )
+        session.add(route_v1)
+        await session.commit()
+
+    async def override_get_session() -> Any:
+        async with session_factory() as session:
+            yield session
+
+    current_user = AuthenticatedUser(id=owner_id, email="retry-test@swena.internal")
+
+    async def override_get_current_user() -> AuthenticatedUser:
+        return current_user
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_current_user] = override_get_current_user
+
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # 1. Attempt 1: submits replan job 1
+            replan_payload_1 = {
+                "current_location": {"latitude": 22.5800, "longitude": 88.3700},
+                "completed_stop_ids": [],
+                "expected_previous_version": 1,
+                "replan_at": now.isoformat(),
+            }
+            resp1 = await client.post(
+                f"/api/v1/optimization/routes/{route_id}/replans",
+                headers={"Idempotency-Key": f"attempt-1-{uuid.uuid4()}"},
+                json=replan_payload_1,
+            )
+            assert resp1.status_code == 202
+            job1_id = uuid.UUID(resp1.json()["job_id"])
+
+            # 2. Simulate terminal failure of job 1 (no child route was committed)
+            async with session_factory() as session:
+                exec1 = await session.get(ExecutionModel, job1_id)
+                assert exec1 is not None
+                exec1.status = "FAILED"
+                await session.commit()
+
+            # 3. Attempt 2 with new Idempotency-Key must succeed (single-child protection allows retry when no child committed)
+            replan_payload_2 = {
+                "current_location": {"latitude": 22.5850, "longitude": 88.3750},
+                "completed_stop_ids": [],
+                "expected_previous_version": 1,
+                "replan_at": (now + timedelta(minutes=5)).isoformat(),
+            }
+            resp2 = await client.post(
+                f"/api/v1/optimization/routes/{route_id}/replans",
+                headers={"Idempotency-Key": f"attempt-2-{uuid.uuid4()}"},
+                json=replan_payload_2,
+            )
+            assert resp2.status_code == 202
+            job2_id = uuid.UUID(resp2.json()["job_id"])
+            assert job2_id != job1_id
+    finally:
+        app.dependency_overrides.clear()
+

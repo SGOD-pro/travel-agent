@@ -140,7 +140,17 @@ class RouteRepository:
             fuel_currency=route.fuel_currency.value,
             fuel_basis=route.fuel_basis,
             warnings=list(route.warnings),
-            assumptions=list(dict.fromkeys(list(route.assumptions or []) + list(route.diagnostics or []))),
+            assumptions=list(
+                dict.fromkeys(
+                    list(route.assumptions or [])
+                    + list(route.diagnostics or [])
+                    + [
+                        f"Optional stop '{s.name}' dropped: {s.skip_reason}"
+                        for s in (list(route.stops or []) + list(route.dropped_stops or []))
+                        if getattr(s, "is_skipped", False)
+                    ]
+                )
+            ),
             previous_route_version=eff_prev_version,
         )
 
@@ -221,14 +231,14 @@ class RouteRepository:
             geom_elem = from_shape(geom_shape, srid=4326)
 
             restr_model = RouteRestrictionModel(
-                id=r.id or uuid.uuid4(),
+                id=uuid.uuid4(),
                 route_id=route_id,
                 restriction_type=r.restriction_type.value,
                 geometry=geom_elem,
                 allowed_modes=list(r.allowed_modes or []),
                 effective_start=r.effective_start,
                 effective_end=r.effective_end,
-                claim_id=r.claim_id,
+                claim_id=r.claim_id or r.id,
                 was_applied=r.was_applied,
                 unresolved_reason=r.unresolved_reason,
             )
@@ -242,7 +252,7 @@ class RouteRepository:
             await self._session.flush()
         except IntegrityError as exc:
             err_msg = str(exc).lower()
-            if "uq_routes_parent_route_id" in err_msg or "parent_route_id" in err_msg:
+            if "uq_routes_parent_route_id" in err_msg:
                 raise RouteVersionConflictError(
                     f"Route {eff_parent_route_id} has already been replanned into a child route"
                 ) from exc

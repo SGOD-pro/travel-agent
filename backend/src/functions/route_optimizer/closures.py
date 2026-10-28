@@ -296,7 +296,11 @@ class ClosureAvoidanceService:
         route: OptimizedRoute,
         restrictions: list[RestrictionClaim],
     ) -> OptimizedRoute:
-        """Applies restriction records and fails closed safely if unsupported restrictions or intersections occur."""
+        if route.status == RouteStatus.INFEASIBLE and not route.legs:
+            # If the route is already infeasible without legs (e.g. NO_VERIFIED_PARKING_HUB),
+            # do not attach unrelated road closure polygons
+            return route
+
         _, restriction_records, unapplied_diagnostics = cls.extract_valhalla_exclude_polygons(
             restrictions
         )
