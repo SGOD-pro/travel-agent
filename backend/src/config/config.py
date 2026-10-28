@@ -198,6 +198,28 @@ class Settings(BaseSettings):
         description="Maximum retry attempts for transient network or 5xx errors on Valhalla requests",
     )
 
+    # Hosted Language Model Integration
+    LLM_PROVIDER: str = Field(
+        default="fixture",
+        description="Language model provider identifier (fixture, bedrock, anthropic, openai)",
+    )
+    LLM_TIMEOUT_SECONDS: float = Field(
+        default=15.0,
+        ge=1.0,
+        le=120.0,
+        description="Socket timeout in seconds for language model calls",
+    )
+    LLM_MAX_RETRIES: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="Maximum retry attempts on transient language model failures",
+    )
+    LLM_FIXTURE_DIR: str | None = Field(
+        default=None,
+        description="Optional directory path for language model fixture JSON files",
+    )
+
     @model_validator(mode="after")
     def validate_laya_deadlines(self) -> Settings:
         if self.LAYA_TOTAL_DEADLINE_SECONDS < self.LAYA_REQUEST_TIMEOUT_SECONDS:
@@ -213,4 +235,3 @@ settings = Settings()
 def get_settings() -> Settings:
     """Returns the singleton application settings instance."""
     return settings
-

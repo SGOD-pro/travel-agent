@@ -1,0 +1,81 @@
+{
+  "provider": "fixture",
+  "recommended_pace": "MODERATE",
+  "regional_travel_notes": [
+    "NH16 and NH116B route offers frequent highway amenities around Kolaghat.",
+    "Bargabhima temple in Tamluk has narrow access roads; park near main approach.",
+    "Monsoon heavy showers can cause slow moving traffic near Kolaghat bridge."
+  ],
+  "candidate_places": [
+    {
+      "name": "Kolaghat Express Highway Dhaba",
+      "category": "restaurant",
+      "estimated_latitude": 22.4285,
+      "estimated_longitude": 87.8712,
+      "description": "Popular roadside food plaza known for fresh Bengali breakfasts and hot tea.",
+      "fit_score": 0.95,
+      "suggested_stay_minutes": 45,
+      "price_estimate_inr": 350.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "06:00 - 23:00",
+      "address": "NH16, Kolaghat, West Bengal 721134"
+    },
+    {
+      "name": "Deulti Rural Heritage Center",
+      "category": "heritage",
+      "estimated_latitude": 22.4691,
+      "estimated_longitude": 87.9154,
+      "description": "Historic residence and peaceful countryside garden along the Rupnarayan river.",
+      "fit_score": 0.88,
+      "suggested_stay_minutes": 60,
+      "price_estimate_inr": 50.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "09:00 - 17:30",
+      "address": "Samtaber, Deulti, Howrah, West Bengal 711303"
+    },
+    {
+      "name": "Tamluk Bargabhima Temple",
+      "category": "heritage",
+      "estimated_latitude": 22.2982,
+      "estimated_longitude": 87.9251,
+      "description": "Ancient 1000 year old terracotta style temple dedicated to Goddess Kali.",
+      "fit_score": 0.92,
+      "suggested_stay_minutes": 45,
+      "price_estimate_inr": 0.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "06:00 - 12:30, 15:30 - 20:30",
+      "address": "Tamluk, Purba Medinipur, West Bengal 721636"
+    },
+    {
+      "name": "Mahishadal Rajbari Palace",
+      "category": "heritage",
+      "estimated_latitude": 22.1865,
+      "estimated_longitude": 87.9892,
+      "description": "Historic estate complex with museum artifacts and traditional temple grounds.",
+      "fit_score": 0.85,
+      "suggested_stay_minutes": 90,
+      "price_estimate_inr": 100.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "10:00 - 17:00",
+      "address": "Mahishadal, Purba Medinipur, West Bengal 721628"
+    },
+    {
+      "name": "Digha Sea Beach Promenade",
+      "category": "nature",
+      "estimated_latitude": 21.6264,
+      "estimated_longitude": 87.5093,
+      "description": "Wide flat coastline on the Bay of Bengal with sea wall walk and cashew groves.",
+      "fit_score": 0.98,
+      "suggested_stay_minutes": 120,
+      "price_estimate_inr": 0.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "Open 24 hours",
+      "address": "Old Digha, Purba Medinipur, West Bengal 721428"
+    }
+  ]
+}

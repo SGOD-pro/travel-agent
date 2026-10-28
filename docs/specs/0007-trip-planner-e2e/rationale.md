@@ -1,4 +1,4 @@
-# Rationale: 0007. Trip Planner End to End Execution, Hosted LLM Integration, and Weather Advisory
+# Rationale: 0007. Trip Planner End to End Execution, Language Model Integration, and Weather Advisory
 
 ## Context
 
@@ -7,28 +7,32 @@ The SWENA travel intelligence platform has successfully built its core execution
 Travelers need a unified experience where a natural language brief turns into an inspectable, evidence backed journey. Producing a realistic itinerary requires combining multiple distinct domains: generative place discovery, deterministic spatial validation, source backed claim verification, road transit optimization with parking injection, weather condition forecasting, and granular budget calculation.
 
 Several critical engineering forces shape this decision:
-1. Generative reliability and drift: Language models excel at creative suggestion and regional knowledge synthesis, but frequently hallucinate coordinates, opening times, and travel distances. The architecture must prevent unverified model hallucinations from masquerading as authoritative travel facts. A coordinate proximity check alone proves neither existence nor operating hours.
+1. Generative reliability and drift: Language models excel at creative suggestion and regional knowledge synthesis, but frequently hallucinate coordinates, opening times, and travel distances. The architecture must prevent unverified model hallucinations from masquerading as authoritative travel facts. A coordinate proximity check alone proves neither existence nor operating hours. Candidate places lacking verified existence must never enter the mathematical route optimizer, while verified places with unknown hours must receive assumed daytime windows labeled explicitly as assumed hours.
 2. Serverless packaging and lease fencing guarantees: The route optimizer worker depends on Google OR Tools, whose native C++ binaries exceed 90 megabytes uncompressed. Bundling OR Tools directly into the orchestrator Lambda ZIP would breach AWS Lambda uncompressed packaging ceilings (250 megabytes) and bypass the battle tested worker lease fencing, parent cancellation barriers, and scheduled crash recovery established in specifications 0001 and 0005.
-3. Provider selection and operational simplicity: Rather than prematurely building and maintaining three distinct third party model clients, the platform needs a provider neutral port implemented with a single robust cloud native adapter. Anthropic Claude on AWS Bedrock via boto3 utilizes AWS native IAM authentication, requires zero additional SDK dependencies in Lambda, and provides exceptional structured JSON output reliability.
-4. Transparent pricing and weather horizon reality: India road travel involves monsoon hazards, ghat road fog, and unquoted expressway tolls. The system must represent weather risks honestly within the valid 16 day meteorological forecast horizon without presenting historical averages as live forecasts. Furthermore, estimated fuel and lodging costs must remain clearly separated from unverified tolls, which must never be defaulted to zero.
-5. Open Meteo licensing terms: Open Meteo provides free API access strictly for non commercial open source, research, and personal evaluation. Commercial production deployment requires an enterprise agreement or a self hosted container instance.
+3. Provider selection and decoupled contracts in Slice 1: Committing immediately to a specific hosted cloud model (such as AWS Bedrock, OpenAI, or direct Anthropic) requires cloud account configuration, IAM roles, or paid API keys before local tests can run. Establishing a provider neutral abstract port with deterministic offline fixtures in Slice 1 guarantees zero cost hermetic development and reproducible CI runs, allowing hosted cloud adapters to plug in once provider selection and credentials are confirmed.
+4. Publication concurrency and locking: The trip planner produces proposals that update shared trip entities. If a traveler modifies their brief while a multi step execution runs, publishing the resulting itinerary would overwrite the traveler's newer brief. The publication stage must execute inside an atomic database transaction using pessimistic row locking (`SELECT FOR UPDATE`), compare base versions, and reject stale proposals with explicit supersession diagnostic events.
+5. Resilient partial result policy: Road routing engines, geocoders, and weather services can experience transient network outages or rate limiting. Failing the entire planning job on any external outage degrades user experience. The platform must provide straight line Euclidean fallback matrices for routing outages, weather unavailable notices for weather API failures, and diagnostic breach explanations for overconstrained routes, reserving job failure strictly for unrecoverable database crashes or cancelled executions.
+6. Transparent pricing and weather horizon reality: India road travel involves monsoon hazards, ghat road fog, and unquoted expressway tolls. The system must represent weather risks honestly within the valid 16 day meteorological forecast horizon without presenting historical averages as live forecasts. Furthermore, estimated fuel and lodging costs must remain clearly separated from unverified tolls, which must never be defaulted to zero.
+7. Open Meteo licensing terms: Open Meteo provides free API access strictly for non commercial open source, research, and personal evaluation. Commercial production deployment requires an enterprise agreement or a self hosted container instance.
 
 ## Options considered
 
-### Option 1: Provider neutral language model client with AWS Bedrock Claude adapter, canonical queue based route optimizer dispatch under lease fencing, and Open Meteo weather client (Recommended)
+### Option 1: Provider neutral language model contracts with offline fixtures in Slice 1, canonical queue based route optimizer dispatch under lease fencing, Open Meteo weather client with 16 day horizon gating, and pessimistic locking proposal publication (Recommended)
 
-Define a provider neutral port `HostedLlmClientPort` implemented in Slice 1 with Anthropic Claude on AWS Bedrock via boto3 and offline test fixtures (basis: your AGENTS.md, simplicity first). Dispatch route optimization asynchronously using the existing transactional outbox and worker lease fencing contract (`WorkerFencingService.claim_task`), yielding execution at an interrupt barrier until the independent route optimizer worker completes and returns `RouteOptimizerWorkerOutput` (basis: orchestrator execution engine in spec 0001 and route optimizer in spec 0005). Integrate Open Meteo with explicit 16 day horizon gating and non commercial terms acknowledgment, while classifying budget lines into quoted, estimated, and unknown categories.
+Define a provider neutral abstract port `HostedLlmClientPort` implemented in Slice 1 with deterministic offline test fixtures (basis: your AGENTS.md, simplicity first). Dispatch route optimization asynchronously using the existing transactional outbox and worker lease fencing contract (`WorkerFencingService.claim_task`), yielding execution at an interrupt barrier until the independent route optimizer worker completes and returns `RouteOptimizerWorkerOutput` (basis: orchestrator execution engine in spec 0001 and route optimizer in spec 0005). Integrate Open Meteo with explicit 16 day horizon gating and non commercial terms acknowledgment, classify budget lines into quoted, estimated, and unknown categories, enforce pessimistic row locking on proposal publication, and apply straight line fallbacks on provider outages.
 
 **Pros**:
 - Preserves independent Lambda ZIP packaging: orchestrator ZIP remains lean while heavy OR Tools binaries remain isolated in the route optimizer package.
 - Enforces parent cancellation barriers, task attempt ceilings, and lease recovery without bypassing the database fencing contract.
-- Anthropic Claude on AWS Bedrock requires no external API keys, authenticates via IAM execution roles, and adds zero package overhead since boto3 is native to the Lambda runtime.
-- Offline fixture adapters enable fast, zero cost local testing and deterministic continuous integration runs without consuming third party API credits.
-- Strict candidate eligibility prevents unverified language model hallucinations from entering the mathematical scheduling solver as confirmed facts.
+- Offline fixture adapters in Slice 1 enable fast, zero cost local testing and deterministic continuous integration runs without consuming third party API credits or requiring cloud accounts.
+- Strict candidate eligibility prevents unverified language model hallucinations from entering the mathematical scheduling solver as confirmed facts, while preserving them as editorial recommendations.
+- Pessimistic row locking on publication protects against lost updates and concurrent brief modifications.
+- Resilient partial results ensure traveler briefs return useful itineraries even when external routing or weather providers experience outages.
 
 **Cons**:
 - Asynchronous routing dispatch introduces an interrupt boundary and transactional outbox relay cycle, adding a brief polling delay compared to an in process call.
 - Open Meteo free tier terms prohibit commercial production usage, requiring an enterprise license key or self hosted instance prior to commercial launch.
+- Hosted cloud provider adapters remain deferred until credentials and provider choices are finalized.
 
 ### Option 2: In process invocation of RouteOptimizerWorkerService within orchestrator worker
 
@@ -62,11 +66,13 @@ We recommend Option 1 because it delivers the optimal balance of architectural i
 
 Preserving the queue based dispatch for route optimization is a critical architectural requirement. Bundling OR Tools into the orchestrator Lambda ZIP would violate our constraint of independent, lean Lambda deployments. More importantly, executing routing via `WorkerFencingService.claim_task` ensures that if a parent execution is cancelled or reaches its deadline, the solver halts immediately without wasting computational resources.
 
-Using Anthropic Claude on AWS Bedrock via boto3 for our initial language model adapter is the most pragmatic choice for our serverless AWS stack. It leverages IAM role authentication rather than exposing third party API keys, introduces zero external wheel weight because boto3 is pre installed in the Lambda Python runtime, and delivers excellent structured JSON adherence. Scoping Slice 1 strictly to Bedrock Claude and offline fixtures avoids premature abstraction sprawl while keeping the domain contract provider neutral for any future adapters.
+Starting Slice 1 with provider neutral contracts and offline fixtures follows the principle of simplicity first. By designing typed Pydantic contracts and a fixture adapter, we can build and verify the orchestrator research and ranking graph flow hermetically without incurring cloud API costs, managing AWS credentials, or facing rate limits. When a hosted provider is selected, implementing the adapter requires only plugging a concrete class into the existing factory without touching graph code.
 
-The evidence and candidate eligibility gate addresses the fundamental problem of generative hallucination. A coordinate or distance check merely proves that a suggested point is near the road; it does not prove the place exists, is open, or has safe parking. Registering proposals as candidates with `is_candidate=True` and `EDITORIAL_DISCOVERY` ensures that only places backed by verified source observations or geocoder provenance enter scheduling as confirmed stops, with unverified places clearly flagged as editorial suggestions.
+The candidate scheduling gate directly resolves the hazard of generative hallucination. A coordinate or distance check merely proves that a suggested point is near the corridor; it does not prove the place exists, is open, or has safe parking. Excluding unverified candidates from the solver protects schedule integrity, while labeling places with unknown hours as `HOURS_ASSUMED` ensures travelers understand the difference between empirical opening hours and default daytime assumptions.
 
-Finally, transparent budgeting and weather gating establish traveler trust. Distinguishing estimated fuel and lodging from unknown tolls ensures travelers are never misled by false precision, while capping weather forecasts at 16 days respects meteorological limits and Open Meteo licensing constraints.
+Pessimistic row locking during proposal publication prevents race conditions where a traveler updates their trip brief during background planning. Checking the version against the base version ensures stale proposals are gracefully superseded rather than silently overwriting fresh traveler intents.
+
+Finally, resilient partial results and transparent budgeting establish traveler trust. Straight line distance fallbacks ensure routing provider outages degrade gracefully rather than aborting the trip, while distinguishing estimated fuel and lodging from unknown tolls ensures travelers are never misled by false precision.
 
 ## References
 
@@ -85,4 +91,4 @@ Finally, transparent budgeting and weather gating establish traveler trust. Dist
 - Deterministic claim verification to prevent generative hallucinations from becoming verified facts.
 - Offline fixture substitution for hermetic continuous integration testing without network dependencies.
 - Tenant ownership isolation gating all database entities by authenticated owner identifier.
-- Idempotency reservation keys preventing duplicate workflow executions.
+- Pessimistic row locking (`SELECT FOR UPDATE`) and version checks preventing stale proposal overwrites.

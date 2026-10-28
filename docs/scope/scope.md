@@ -202,20 +202,23 @@ Spec 0006 (`docs/specs/0006-route-graph-and-map-e2e.md`, Status: Accepted) · co
 
 ## Phase 12: Trip Planner Graph
 
-### 7. Trip planner end to end execution, hosted LLM integration, and weather advisory · in-progress
+### 7. Trip planner end to end execution, language model integration, and weather advisory · in-progress
 Coordinate brief parsing, generative place research, deterministic candidate validation, evidence collection, weather advisory fetching, route optimization, budget computation, and proposal synthesis under transactional checkpointing. Strictly excludes payments, booking checkout, and live AWS deployment.
-**Done when:** TripPlannerGraph executes under transactional checkpointing, hosted language model proposes candidate places via AWS Bedrock Claude with bounded retries, Open Meteo fetches corridor weather metrics with 16 day horizon gating, asynchronous route optimizer worker solves routes under lease fencing and links route_id to trips, GET /api/v1/trips/{trip_id}/itinerary returns the complete proposal, Next.js frontend renders the inspectable itinerary, and automated integration trace passes on live PostgreSQL.
+**Done when:** TripPlannerGraph executes under transactional checkpointing, language model client proposes candidate places via provider neutral port with bounded retries, Open Meteo fetches corridor weather metrics with 16 day horizon gating, asynchronous route optimizer worker solves routes under lease fencing and links route_id to trips, GET /api/v1/trips/{trip_id}/itinerary returns the complete proposal, Next.js frontend renders the inspectable itinerary, and automated integration trace passes on live PostgreSQL.
 - [x] Design it (spec): [0007](../specs/0007-trip-planner-e2e/index.md)
-- [ ] Build it: `/develop trip planner end to end execution, hosted LLM integration, and weather advisory`
-   - [ ] Hosted language model client adapter (Bedrock Claude) and offline fixtures (AC-2, AC-3)
+- [ ] Build it: `/develop trip planner end to end execution, language model integration, and weather advisory`
+   - [x] Provider neutral language model client contracts, abstract port, and offline fixtures (AC-2, AC-3)
    - [ ] Open Meteo weather service, forecast horizon policy, and corridor weather aggregator (AC-6)
    - [ ] Place candidate registration, spatial corridor validation, and deterministic claim eligibility gate (AC-1, AC-3)
    - [ ] Route optimizer task dispatch, interrupt boundary, worker resume, and trip linking (AC-4, AC-5)
-   - [ ] End to end trip planner graph compilation, budget calculation, and atomic proposal publication (AC-1, AC-7, AC-8, AC-9)
+   - [ ] End to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking (AC-1, AC-7, AC-8, AC-9)
    - [ ] REST API updates and Next.js frontend itinerary view integration (AC-8, AC-10, AC-11)
+   - [ ] Gated scenario evaluation suite across offline and live gates (AC-12)
 - [ ] Verify it: `/check verify 0007-trip-planner-e2e`
+   - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
 - [ ] Review it (fresh model): `/check review 0007-trip-planner-e2e`
+   - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 
-Spec 0007 (`docs/specs/0007-trip-planner-e2e/index.md`, Status: Proposed) · code in `backend/src/functions/orchestrator/graphs/trip_planner/`, `backend/src/functions/orchestrator/llm/`, `backend/src/functions/orchestrator/weather/`, `backend/src/functions/api/routes/trips.py`, and `frontend/src/app/trips/[id]/`
+Spec 0007 (`docs/specs/0007-trip-planner-e2e/index.md`, Status: In Progress) · code in `backend/src/functions/orchestrator/graphs/trip_planner/`, `backend/src/functions/orchestrator/llm/`, `backend/src/functions/orchestrator/weather/`, `backend/src/functions/api/routes/trips.py`, and `frontend/src/app/trips/[id]/`

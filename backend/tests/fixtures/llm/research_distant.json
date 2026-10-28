@@ -1,0 +1,37 @@
+{
+  "provider": "fixture",
+  "recommended_pace": "SLOW",
+  "regional_travel_notes": [
+    "Corridor discovery returned regional attractions that span distant northern Bengal hills."
+  ],
+  "candidate_places": [
+    {
+      "name": "Tiger Hill Sunrise Point",
+      "category": "nature",
+      "estimated_latitude": 26.9953,
+      "estimated_longitude": 88.2858,
+      "description": "High altitude Himalayan panoramic viewpoint overlooking Mount Kanchenjunga.",
+      "fit_score": 0.90,
+      "suggested_stay_minutes": 60,
+      "price_estimate_inr": 50.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "04:00 - 07:00",
+      "address": "Senchal Forest, Darjeeling, West Bengal 734102"
+    },
+    {
+      "name": "Batasia Loop War Memorial",
+      "category": "heritage",
+      "estimated_latitude": 27.0167,
+      "estimated_longitude": 88.2464,
+      "description": "Spiral railway loop with landscaped garden and Gorkha soldiers memorial.",
+      "fit_score": 0.85,
+      "suggested_stay_minutes": 45,
+      "price_estimate_inr": 30.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "05:00 - 18:00",
+      "address": "Ghum, Darjeeling, West Bengal 734102"
+    }
+  ]
+}

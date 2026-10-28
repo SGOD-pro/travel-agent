@@ -1,0 +1,52 @@
+{
+  "provider": "fixture",
+  "recommended_pace": "RELAXED",
+  "regional_travel_notes": [
+    "Kolkata street food trails focus on historic north and central culinary clusters.",
+    "Evening stalls at Dacre Lane open around 16:00."
+  ],
+  "candidate_places": [
+    {
+      "name": "Mitra Cafe Heritage Cabin",
+      "category": "restaurant",
+      "estimated_latitude": 22.5996,
+      "estimated_longitude": 88.3695,
+      "description": "Century old north Kolkata dining institution famous for mutton diamond fry and brain cutlets.",
+      "fit_score": 0.96,
+      "suggested_stay_minutes": 45,
+      "price_estimate_inr": 280.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "17:00 - 22:00",
+      "address": "47 Jatindra Mohan Ave, Sovabazar, Kolkata 700005"
+    },
+    {
+      "name": "Dacre Lane Food Street",
+      "category": "street_food",
+      "estimated_latitude": 22.5684,
+      "estimated_longitude": 88.3512,
+      "description": "Historic office district alley lined with artisanal stew, chowmein, and toast stalls.",
+      "fit_score": 0.94,
+      "suggested_stay_minutes": 40,
+      "price_estimate_inr": 150.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "09:00 - 20:00",
+      "address": "James Hickey Sarani, Esplanade, Kolkata 700069"
+    },
+    {
+      "name": "Flurys Tea Room",
+      "category": "cafe",
+      "estimated_latitude": 22.5518,
+      "estimated_longitude": 88.3524,
+      "description": "Iconic Park Street European tearoom established in 1927 celebrated for English breakfast and rum balls.",
+      "fit_score": 0.91,
+      "suggested_stay_minutes": 50,
+      "price_estimate_inr": 450.0,
+      "uncertainty": "EDITORIAL_DISCOVERY",
+      "is_candidate": true,
+      "opening_hours": "07:30 - 23:00",
+      "address": "18A Park St, Stephen Court, Kolkata 700071"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "provider": "fixture",
+  "recommended_pace": "FAST",
+  "regional_travel_notes": [
+    "No intermediate points of interest were discovered within the specified corridor radius."
+  ],
+  "candidate_places": []
+}
