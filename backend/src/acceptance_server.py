@@ -123,6 +123,15 @@ app.router.lifespan_context = lifespan
 @app.post("/api/v1/test/reset-replan-fixtures")
 async def reset_replan_fixtures():
     """Surgically resets child replans and reservations for owned acceptance test entities."""
+    from config.config import settings
+    from fastapi import HTTPException, status
+
+    if getattr(settings, "ENVIRONMENT", "local") == "production":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Fixture reset endpoint is strictly forbidden in production environments",
+        )
+
     from sqlalchemy import delete, select
     from acceptance_seeder import CANONICAL_ROUTE_IDS, OWNED_USER_IDS
     from functions.api.models import ApiIdempotencyModel

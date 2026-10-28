@@ -190,6 +190,7 @@ Orchestrate route solving and dynamic mid trip replanning inside a dedicated Lan
    - [x] Slice 3 infeasible and partial route handling, diagnostic preservation, and failure separation: [2026-10-26-route-optimizer-graph-slice3.md](../reviews/2026-10-26-route-optimizer-graph-slice3.md) (Approve with nits)
    - [x] Slice 4 frontend CorridorMap GeoJSON, safe popups, and polling hook: [2026-10-26-route-optimizer-graph-slice4.md](../reviews/2026-10-26-route-optimizer-graph-slice4.md) (Approve)
    - [x] Slice 5 browser end to end suite and connected Valhalla verification gate: [2026-10-26-route-optimizer-graph-slice5.md](../reviews/2026-10-26-route-optimizer-graph-slice5.md) (Approve)
+   - [x] Acceptance and replan lifecycle gaps: [2026-10-28-route-optimizer-acceptance-gaps.md](../reviews/2026-10-28-route-optimizer-acceptance-gaps.md) (Approve)
 - [x] Test it: `/test 0006-route-graph-and-map-e2e` (26 unit tests, 5 live database integration suites, 8 mocked UI tests, 7 browser acceptance tests, and 1 connected provider gate passing)
 - [x] Document it: `/document 0006-route-graph-and-map-e2e` (10 capability entries in CHANGELOG.md)
 

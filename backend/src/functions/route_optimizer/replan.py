@@ -231,12 +231,15 @@ class RouteReplanService:
         # If previous route started from a depot/origin, append return to home depot
         if previous_route.stops and previous_route.stops[0].stop_type == StopType.ORIGIN:
             home_stop = previous_route.stops[0]
-            if not any(s.name == home_stop.name for s in remaining_stop_inputs):
+            clean_home_name = home_stop.name
+            if clean_home_name.lower().startswith("return to "):
+                clean_home_name = clean_home_name[10:].strip()
+            if not any(s.name in (home_stop.name, f"Return to {clean_home_name}") for s in remaining_stop_inputs):
                 remaining_stop_inputs.append(
                     RouteStopInput(
                         id=uuid.uuid4(),
                         place_id=home_stop.place_id,
-                        name=f"Return to {home_stop.name}",
+                        name=f"Return to {clean_home_name}",
                         location=home_stop.location,
                         stop_type=StopType.DESTINATION,
                         dwell_seconds=0,
