@@ -23,7 +23,7 @@ This change closes the remaining lifecycle and acceptance gaps in specification 
 
 ## Test coverage
 
-- `backend/tests/integration/test_route_replan_concurrency_slice2.py`: 3 passed in 19.29s on live PostgreSQL, verifying concurrent replan rejection (winner 202, loser 409), identical replay and changed payload conflict, and failed job retry when no child route exists.
-- `backend/tests/unit/test_route_graph_state_machine_unit.py`: 11 passed in 1.19s, verifying route graph state machine nodes, interrupts, transitions, and checkpointer behavior.
-- `frontend/e2e/route-optimization-e2e.spec.ts`: 8 passed in 6.9s, verifying mocked UI elements, progress banner, metrics, XSS popup escaping, and replan form interactions.
-- `frontend/e2e/route-optimization-acceptance.spec.ts`: 7 passed in 1.8m, exercising the real local stack across multimodal, partial, infeasible, and tenant isolation scenarios.
+- `backend/tests/integration/test_route_replan_concurrency_slice2.py`: 3 passed in 24.65s on live PostgreSQL, verifying concurrent replan rejection (winner 202, loser 409), identical replay and changed payload conflict, and failed job retry when no child route exists.
+- `backend/tests/unit/test_route_graph_state_machine_unit.py`: 11 passed in 1.96s, verifying route graph state machine nodes, interrupts, transitions, and checkpointer behavior.
+- `frontend/e2e/route-optimization-e2e.spec.ts`: 8 passed in 8.0s, verifying mocked UI elements, progress banner, metrics, XSS popup escaping, and replan form interactions.
+- `frontend/e2e/route-optimization-acceptance.spec.ts`: 7 passed in 1.9m, exercising the real local stack across multimodal, partial, infeasible, and tenant isolation scenarios.
