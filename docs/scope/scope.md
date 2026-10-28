@@ -193,6 +193,7 @@ Orchestrate route solving and dynamic mid trip replanning inside a dedicated Lan
    - [x] Acceptance and replan lifecycle gaps: [2026-10-28-route-optimizer-acceptance-gaps.md](../reviews/2026-10-28-route-optimizer-acceptance-gaps.md) (Approve)
    - [x] Acceptance isolation and cleanup ordering: [2026-10-28-route-optimizer-acceptance-isolation.md](../reviews/2026-10-28-route-optimizer-acceptance-isolation.md) (Approve)
    - [x] Database safety guards and checkpointer isolation: [2026-10-28-route-optimizer-database-safety-guards.md](../reviews/2026-10-28-route-optimizer-database-safety-guards.md) (Approve)
+   - [x] DNS cache port handling: [2026-10-28-route-optimizer-dns-cache-port-handling.md](../reviews/2026-10-28-route-optimizer-dns-cache-port-handling.md) (Approve)
 - [x] Test it: `/test 0006-route-graph-and-map-e2e` (32 unit tests, 5 live database integration suites, 8 mocked UI tests, 7 browser acceptance tests, and 1 connected provider gate passing)
 - [x] Document it: `/document 0006-route-graph-and-map-e2e` (10 capability entries in CHANGELOG.md)
 

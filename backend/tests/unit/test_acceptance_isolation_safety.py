@@ -230,6 +230,129 @@ def test_indeterminate_database_target_fails_closed_regression() -> None:
     assert are_db_urls_equivalent(unresolvable_url1, valid_app_url) is True
 
 
+def test_dns_caching_preserves_requested_port_regression(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Proves that DNS resolution and caching preserve caller requested ports,
+    including non-default ports, string ports, and fallback lookups."""
+    import socket
+    from typing import Any
+
+    from acceptance_database import (
+        _dns_cache,
+        _resilient_getaddrinfo,
+        are_db_urls_equivalent,
+        resolve_host_ips,
+    )
+
+    test_host = "controlled-mock-db.internal"
+    mock_ip = "198.51.100.77"
+
+    # Save original cache state for cleanup
+    original_cache = dict(_dns_cache)
+
+    def mock_orig_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> list[Any]:
+        if str(host).strip("[]").lower().rstrip(".") == test_host:
+            target_port = 0
+            if port is not None and port != "":
+                try:
+                    target_port = int(port)
+                except (ValueError, TypeError):
+                    target_port = socket.getservbyname(str(port))
+            return [
+                (
+                    socket.AddressFamily.AF_INET,
+                    socket.SocketKind.SOCK_STREAM,
+                    6,
+                    "",
+                    (mock_ip, target_port),
+                )
+            ]
+        return [(socket.AddressFamily.AF_INET, socket.SocketKind.SOCK_STREAM, 6, "", ("127.0.0.1", int(port or 0)))]
+
+    monkeypatch.setattr("acceptance_database._orig_getaddrinfo", mock_orig_getaddrinfo)
+
+    try:
+        # 1. Resolve host IPs via resolve_host_ips (which resolves uncached host)
+        resolved_ips = resolve_host_ips(test_host)
+        assert mock_ip in resolved_ips
+
+        # 2. Query port 20266: must return sockaddr with port 20266 (not 5432 or 0)
+        res_20266 = _resilient_getaddrinfo(test_host, 20266)
+        for item in res_20266:
+            assert item[4][0] == mock_ip
+            assert item[4][1] == 20266
+
+        # 3. Query port 5432: must return sockaddr with port 5432 (not 20266)
+        res_5432 = _resilient_getaddrinfo(test_host, 5432)
+        for item in res_5432:
+            assert item[4][0] == mock_ip
+            assert item[4][1] == 5432
+
+        # 4. Query non-default port 65432
+        res_nondefault = _resilient_getaddrinfo(test_host, 65432)
+        for item in res_nondefault:
+            assert item[4][0] == mock_ip
+            assert item[4][1] == 65432
+
+        # 5. Query string port "20266" -> sockaddr port must be integer 20266
+        res_str_20266 = _resilient_getaddrinfo(test_host, "20266")
+        for item in res_str_20266:
+            assert item[4][0] == mock_ip
+            assert item[4][1] == 20266
+            assert isinstance(item[4][1], int)
+
+        # 6. Query string port "5432" -> sockaddr port must be integer 5432
+        res_str_5432 = _resilient_getaddrinfo(test_host, "5432")
+        for item in res_str_5432:
+            assert item[4][0] == mock_ip
+            assert item[4][1] == 5432
+            assert isinstance(item[4][1], int)
+
+        # 7. Query port 0, None, and service name
+        res_zero = _resilient_getaddrinfo(test_host, 0)
+        assert res_zero[0][4][1] == 0
+
+        res_none = _resilient_getaddrinfo(test_host, None)
+        assert res_none[0][4][1] == 0
+
+        res_http = _resilient_getaddrinfo(test_host, "http")
+        assert res_http[0][4][1] == 80
+
+        # 8. Repeated alternating lookups on different ports must preserve their respective ports
+        for _ in range(5):
+            assert _resilient_getaddrinfo(test_host, 20266)[0][4][1] == 20266
+            assert _resilient_getaddrinfo(test_host, 5432)[0][4][1] == 5432
+            assert _resilient_getaddrinfo(test_host, 9000)[0][4][1] == 9000
+            assert _resilient_getaddrinfo(test_host, 20266)[0][4][1] == 20266
+
+        # 9. Fallback on socket.gaierror: when resolver fails, cached host resolution returns requested port
+        def failing_orig_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> list[Any]:
+            raise socket.gaierror(-2, "Name or service not known")
+
+        monkeypatch.setattr("acceptance_database._orig_getaddrinfo", failing_orig_getaddrinfo)
+        res_fallback = _resilient_getaddrinfo(test_host, 3306)
+        assert res_fallback[0][4][0] == mock_ip
+        assert res_fallback[0][4][1] == 3306
+
+        # 10. Database equivalence guard behavior
+        # Same host and same port -> equivalent
+        url_a = f"postgres://u:p@{test_host}:5432/db"
+        url_b = f"postgres://u:p@{mock_ip}:5432/db"
+        assert are_db_urls_equivalent(url_a, url_b) is True
+
+        # Same host but different ports -> NOT equivalent
+        url_c = f"postgres://u:p@{test_host}:20266/db"
+        assert are_db_urls_equivalent(url_a, url_c) is False
+
+        # Host alias vs resolved IP with different ports -> NOT equivalent
+        url_d = f"postgres://u:p@{mock_ip}:20266/db"
+        assert are_db_urls_equivalent(url_a, url_d) is False
+        assert are_db_urls_equivalent(url_c, url_d) is True
+
+    finally:
+        _dns_cache.clear()
+        _dns_cache.update(original_cache)
+
+
 def test_conftest_checkpointer_isolation_guards_regression(monkeypatch: pytest.MonkeyPatch) -> None:
     """Proves get_isolated_test_database_url and postgres_checkpointer fail closed
     when configured with a shared application database or missing configuration."""

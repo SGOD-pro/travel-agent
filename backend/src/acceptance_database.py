@@ -44,18 +44,68 @@ _dns_cache: dict[tuple[Any, ...], Any] = {
 }
 
 
+def _clean_host(host: Any) -> str:
+    """Normalizes hostname for consistent cache lookups."""
+    if host is None:
+        return ""
+    return str(host).strip("[]").lower().rstrip(".")
+
+
+def _normalize_port(port: Any) -> int:
+    """Normalizes port representation to an integer port (0 if omitted, empty, or unresolvable)."""
+    if port is None or port == "":
+        return 0
+    try:
+        return int(port)
+    except (ValueError, TypeError):
+        try:
+            return socket.getservbyname(str(port))
+        except Exception:
+            return 0
+
+
+def _format_addr_info_with_port(addr_info: list[Any], port: Any) -> list[Any]:
+    """Reconstructs getaddrinfo tuples preserving family, type, proto, canonname, and IP,
+    while setting the sockaddr port to the caller's requested port."""
+    target_port = _normalize_port(port)
+    formatted = []
+    for item in addr_info:
+        family, socktype, proto, canonname, sockaddr = item
+        if isinstance(sockaddr, tuple):
+            if len(sockaddr) == 2:
+                new_sockaddr = (sockaddr[0], target_port)
+            elif len(sockaddr) == 4:
+                new_sockaddr = (sockaddr[0], target_port, sockaddr[2], sockaddr[3])
+            else:
+                new_sockaddr = sockaddr
+        else:
+            new_sockaddr = sockaddr
+        formatted.append((family, socktype, proto, canonname, new_sockaddr))
+    return formatted
+
+
 def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
     key = (host, port)
     if key in _dns_cache:
-        return _dns_cache[key]
+        return _format_addr_info_with_port(_dns_cache[key], port)
+
+    cleaned_host = _clean_host(host)
     for cached_key, cached_val in _dns_cache.items():
-        if cached_key[0] == host:
-            return cached_val
+        if _clean_host(cached_key[0]) == cleaned_host:
+            res = _format_addr_info_with_port(cached_val, port)
+            _dns_cache[key] = res
+            return res
+
     try:
         res = _orig_getaddrinfo(host, port, *args, **kwargs)
         _dns_cache[key] = res
         return res
     except socket.gaierror as e:
+        for cached_key, cached_val in _dns_cache.items():
+            if _clean_host(cached_key[0]) == cleaned_host:
+                res = _format_addr_info_with_port(cached_val, port)
+                _dns_cache[key] = res
+                return res
         raise e
 
 
@@ -96,7 +146,7 @@ def resolve_host_ips(host: str, timeout: float = 1.0) -> set[str]:
 
     # Check cached entries first
     for cached_key, cached_val in _dns_cache.items():
-        if cached_key[0] == cleaned:
+        if _clean_host(cached_key[0]) == cleaned:
             for item in cached_val:
                 sockaddr = item[4]
                 if sockaddr and sockaddr[0]:
@@ -105,15 +155,14 @@ def resolve_host_ips(host: str, timeout: float = 1.0) -> set[str]:
                 return ips
 
     try:
-        future = _resolver_executor.submit(_orig_getaddrinfo, cleaned, 5432)
+        future = _resolver_executor.submit(_orig_getaddrinfo, cleaned, 0)
         addr_info = future.result(timeout=timeout)
         for item in addr_info:
             sockaddr = item[4]
             if sockaddr and sockaddr[0]:
                 ips.add(str(sockaddr[0]))
-        # Cache successful resolution
-        _dns_cache[(cleaned, 20266)] = addr_info
-        _dns_cache[(cleaned, 5432)] = addr_info
+        if addr_info:
+            _dns_cache[(cleaned, 0)] = addr_info
     except Exception:
         pass
     return ips

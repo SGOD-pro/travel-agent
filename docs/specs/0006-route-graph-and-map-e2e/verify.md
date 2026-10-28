@@ -180,9 +180,9 @@ cd backend && .venv/bin/alembic upgrade head
 # Tested Commit: 66eb322
 # Applied: 0014_enforce_single_child_replan (uq_routes_parent_route_id partial unique index)
 
-# 2. Acceptance database safety and isolation unit test execution
+# 2. Acceptance database safety, DNS port preservation, and isolation unit test execution
 cd backend && PYTHONPATH=src .venv/bin/pytest tests/unit/test_acceptance_isolation_safety.py -v
-# Output: 10 passed in 25.00s on live dedicated acceptance database (user agnostic database equivalence, host alias resolution, indeterminate targets fail closed, conftest checkpointer isolation guard, worker trip filtering, and fixture cleanup ordering with 100% unrelated data preservation)
+# Output: 11 passed in 11.63s on live dedicated acceptance database (DNS caching requested port preservation across non default ports and fallback lookups, user agnostic database equivalence, host alias resolution, indeterminate targets fail closed, conftest checkpointer isolation guard, worker trip filtering, and fixture cleanup ordering with 100% unrelated data preservation)
 
 # 3. Integration checkpointer protection suite on isolated test database
 cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_checkpoint_protection.py -v

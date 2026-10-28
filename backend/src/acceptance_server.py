@@ -20,6 +20,7 @@ import uvicorn
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from acceptance_database import (
+    _resilient_getaddrinfo,
     get_acceptance_session_factory,
     validate_acceptance_database_url,
 )
@@ -33,44 +34,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("acceptance_server")
 
 # Resilient DNS caching for PostgreSQL connectivity
-_orig_getaddrinfo = socket.getaddrinfo
-_dns_cache: dict[tuple[Any, ...], Any] = {
-    ("pg-070905-cloud-postgress-db.d.aivencloud.com", 20266): [
-        (
-            socket.AddressFamily.AF_INET,
-            socket.SocketKind.SOCK_STREAM,
-            6,
-            "",
-            ("139.59.42.218", 20266),
-        )
-    ],
-    ("pg-070905-cloud-postgress-db.d.aivencloud.com", "20266"): [
-        (
-            socket.AddressFamily.AF_INET,
-            socket.SocketKind.SOCK_STREAM,
-            6,
-            "",
-            ("139.59.42.218", 20266),
-        )
-    ],
-}
-
-
-def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
-    key = (host, port)
-    if key in _dns_cache:
-        return _dns_cache[key]
-    try:
-        res = _orig_getaddrinfo(host, port, *args, **kwargs)
-        _dns_cache[key] = res
-        return res
-    except socket.gaierror:
-        for cached_key, cached_val in _dns_cache.items():
-            if cached_key[0] == host:
-                return cached_val
-        raise
-
-
 socket.getaddrinfo = _resilient_getaddrinfo
 
 

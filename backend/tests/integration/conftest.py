@@ -15,49 +15,15 @@ from sqlalchemy.pool import NullPool
 from config.config import settings
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
 
-_orig_getaddrinfo = socket.getaddrinfo
-_dns_cache: dict[tuple[Any, ...], Any] = {
-    ("pg-070905-cloud-postgress-db.d.aivencloud.com", 20266): [
-        (
-            socket.AddressFamily.AF_INET,
-            socket.SocketKind.SOCK_STREAM,
-            6,
-            "",
-            ("139.59.42.218", 20266),
-        )
-    ],
-    ("pg-070905-cloud-postgress-db.d.aivencloud.com", "20266"): [
-        (
-            socket.AddressFamily.AF_INET,
-            socket.SocketKind.SOCK_STREAM,
-            6,
-            "",
-            ("139.59.42.218", 20266),
-        )
-    ],
-}
+import os
 
-
-def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
-    key = (host, port)
-    if key in _dns_cache:
-        return _dns_cache[key]
-    for cached_key, cached_val in _dns_cache.items():
-        if cached_key[0] == host:
-            return cached_val
-    try:
-        res = _orig_getaddrinfo(host, port, *args, **kwargs)
-        _dns_cache[key] = res
-        return res
-    except socket.gaierror as e:
-        raise e
-
+from acceptance_database import (
+    _resilient_getaddrinfo,
+    are_db_urls_equivalent,
+    validate_isolated_database_url,
+)
 
 socket.getaddrinfo = _resilient_getaddrinfo
-
-
-import os
-from acceptance_database import are_db_urls_equivalent, validate_isolated_database_url
 
 
 def get_isolated_test_database_url() -> str:
