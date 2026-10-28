@@ -23,7 +23,7 @@ _dns_cache: dict[tuple[Any, ...], Any] = {
             socket.SocketKind.SOCK_STREAM,
             6,
             "",
-            ("165.232.185.214", 20266),
+            ("139.59.42.218", 20266),
         )
     ],
     ("pg-070905-cloud-postgress-db.d.aivencloud.com", "20266"): [
@@ -32,7 +32,7 @@ _dns_cache: dict[tuple[Any, ...], Any] = {
             socket.SocketKind.SOCK_STREAM,
             6,
             "",
-            ("165.232.185.214", 20266),
+            ("139.59.42.218", 20266),
         )
     ],
 }
@@ -42,20 +42,15 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
     key = (host, port)
     if key in _dns_cache:
         return _dns_cache[key]
-    last_err: Exception | None = None
-    for _ in range(5):
-        try:
-            res = _orig_getaddrinfo(host, port, *args, **kwargs)
-            _dns_cache[key] = res
-            return res
-        except socket.gaierror as e:
-            last_err = e
-            time.sleep(0.3)
-    if key in _dns_cache:
-        return _dns_cache[key]
-    if last_err:
-        raise last_err
-    raise socket.gaierror(-5, "No address associated with hostname")
+    for cached_key, cached_val in _dns_cache.items():
+        if cached_key[0] == host:
+            return cached_val
+    try:
+        res = _orig_getaddrinfo(host, port, *args, **kwargs)
+        _dns_cache[key] = res
+        return res
+    except socket.gaierror as e:
+        raise e
 
 
 socket.getaddrinfo = _resilient_getaddrinfo

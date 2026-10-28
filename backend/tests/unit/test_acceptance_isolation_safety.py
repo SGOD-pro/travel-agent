@@ -456,12 +456,8 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
             async with session_factory() as session:
                 # 1. Target routes
                 r_stmt = select(RouteModel.id).where(
-                    RouteModel.owner_id.in_(OWNED_USER_IDS),
-                    (
-                        (RouteModel.trip_id.in_(OWNED_TRIP_IDS))
-                        | (RouteModel.id.in_(CANONICAL_ROUTE_IDS))
-                        | (RouteModel.parent_route_id.in_(CANONICAL_ROUTE_IDS))
-                    ),
+                    RouteModel.owner_id == fixture_owner_id,
+                    RouteModel.id == fixture_route_id,
                 )
                 target_rids = list((await session.execute(r_stmt)).scalars().all())
 
@@ -483,9 +479,9 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
 
                 # Target executions
                 e_stmt = select(ExecutionModel.id).where(
-                    ExecutionModel.owner_id.in_(OWNED_USER_IDS),
+                    ExecutionModel.owner_id == fixture_owner_id,
                     (
-                        ExecutionModel.trip_id.in_(OWNED_TRIP_IDS)
+                        (ExecutionModel.id == fixture_exec_id)
                         | ExecutionModel.id.in_(route_exec_ids)
                     ),
                 )

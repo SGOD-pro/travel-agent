@@ -64,7 +64,7 @@ _dns_cache: dict[tuple[Any, ...], Any] = {
             socket.SocketKind.SOCK_STREAM,
             6,
             "",
-            ("165.232.185.214", 20266),
+            ("139.59.42.218", 20266),
         )
     ],
     ("pg-070905-cloud-postgress-db.d.aivencloud.com", "20266"): [
@@ -73,7 +73,7 @@ _dns_cache: dict[tuple[Any, ...], Any] = {
             socket.SocketKind.SOCK_STREAM,
             6,
             "",
-            ("165.232.185.214", 20266),
+            ("139.59.42.218", 20266),
         )
     ],
 }

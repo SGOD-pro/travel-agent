@@ -50,7 +50,7 @@ _dns_cache: dict[tuple[Any, ...], Any] = {
             socket.SocketKind.SOCK_STREAM,
             6,
             "",
-            ("165.232.185.214", 20266),
+            ("139.59.42.218", 20266),
         )
     ],
     ("pg-070905-cloud-postgress-db.d.aivencloud.com", "20266"): [
@@ -59,7 +59,7 @@ _dns_cache: dict[tuple[Any, ...], Any] = {
             socket.SocketKind.SOCK_STREAM,
             6,
             "",
-            ("165.232.185.214", 20266),
+            ("139.59.42.218", 20266),
         )
     ],
 }
@@ -76,7 +76,7 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
                 socket.SocketKind.SOCK_STREAM,
                 6,
                 "",
-                ("165.232.185.214", int(port)),
+                ("139.59.42.218", int(port)),
             )
         ]
         _dns_cache[key] = res
