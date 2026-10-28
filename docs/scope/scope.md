@@ -15,6 +15,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 | 4 | Remote LAYA decision router integration | Phase 6: Decision Routing | done |
 | 5 | Route optimizer and multimodal itinerary planning | Phase 7: Route Optimization | done |
 | 6 | Route graph, map GeoJSON, and end to end vertical slice | Phase 8: Route Graph & Map | done |
+| 7 | Trip planner end to end execution, hosted LLM integration, and weather advisory | Phase 12: Trip Planner Graph | in-progress |
 
 ## Foundations
 
@@ -198,3 +199,23 @@ Orchestrate route solving and dynamic mid trip replanning inside a dedicated Lan
 - [x] Document it: `/document 0006-route-graph-and-map-e2e` (10 capability entries in CHANGELOG.md)
 
 Spec 0006 (`docs/specs/0006-route-graph-and-map-e2e.md`, Status: Accepted) · code in `backend/src/functions/orchestrator/graphs/route_optimizer/`, `backend/src/functions/api/routes/optimization.py`, and `frontend/src/components/map/`
+
+## Phase 12: Trip Planner Graph
+
+### 7. Trip planner end to end execution, hosted LLM integration, and weather advisory · in-progress
+Coordinate brief parsing, generative place research, deterministic candidate validation, evidence collection, weather advisory fetching, route optimization, budget computation, and proposal synthesis under transactional checkpointing. Strictly excludes payments, booking checkout, and live AWS deployment.
+**Done when:** TripPlannerGraph executes under transactional checkpointing, hosted language model proposes candidate places via configurable providers with bounded retries, Open Meteo fetches corridor weather metrics, RouteOptimizerWorkerService solves routes in process and links route_id to trips, GET /api/v1/trips/{trip_id}/itinerary returns the complete proposal, Next.js frontend renders the inspectable itinerary, and automated integration trace passes on live PostgreSQL.
+- [x] Design it (spec): [0007](../specs/0007-trip-planner-e2e/index.md)
+- [ ] Build it: `/develop trip planner end to end execution, hosted LLM integration, and weather advisory`
+   - [ ] Hosted language model client adapter and offline fixtures (AC-2, AC-3)
+   - [ ] Open Meteo weather service and corridor weather aggregator (AC-6)
+   - [ ] Place research, ranking, and deterministic claim verification integration (AC-1, AC-3)
+   - [ ] Route optimizer in process workflow integration and persistence linking (AC-4, AC-5)
+   - [ ] End to end trip planner graph compilation and itinerary synthesis (AC-1, AC-7, AC-8, AC-9)
+   - [ ] REST API updates and Next.js frontend itinerary view integration (AC-8, AC-10, AC-11)
+- [ ] Verify it: `/check verify 0007-trip-planner-e2e`
+- [ ] Review it (fresh model): `/check review 0007-trip-planner-e2e`
+- [ ] Test it: `/test 0007-trip-planner-e2e`
+- [ ] Document it: `/document 0007-trip-planner-e2e`
+
+Spec 0007 (`docs/specs/0007-trip-planner-e2e/index.md`, Status: Proposed) · code in `backend/src/functions/orchestrator/graphs/trip_planner/`, `backend/src/functions/orchestrator/llm/`, `backend/src/functions/orchestrator/weather/`, `backend/src/functions/api/routes/trips.py`, and `frontend/src/app/trips/[id]/`
