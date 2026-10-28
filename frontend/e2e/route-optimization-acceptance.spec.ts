@@ -300,7 +300,9 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     expect(drivingLegs.length).toBeGreaterThanOrEqual(1);
     expect(drivingLegs[0].geometry.coordinates.length).toBeGreaterThanOrEqual(3);
 
-    // Geometry of detoured v2 route differs from v1 base route
+    // Geometry of detoured v2 route differs from v1 base route.
+    // Note: In browser E2E, replan shifts origin from depot to mid-trip detour location and avoids the closure polygon.
+    // The controlled same-input comparison proving the closure itself changes geometry and increases distance between identical endpoints is verified in backend unit tests (test_changed_road_closure_full_intersection_and_route_change).
     const v1LegCoords = v1GeoJson.features
       .filter((f: any) => f.properties?.feature_type === "leg")
       .flatMap((l: any) => l.geometry.coordinates);

@@ -60,6 +60,7 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
 
 socket.getaddrinfo = _resilient_getaddrinfo
 
+from acceptance_database import ensure_acceptance_schema, validate_acceptance_database_url
 from acceptance_worker import LocalAcceptanceWorker
 from contracts.routing import Point, RouteRequest, RouteStopInput, StopType
 from contracts.trips import TransportMode
@@ -68,6 +69,7 @@ from functions.api.routes.optimization import submit_route_optimization
 from functions.orchestrator.evidence.models import ClaimModel
 from functions.orchestrator.execution.models import (
     ExecutionModel,
+    JobEventModel,
     OutboxEventModel,
     TaskModel,
     WorkerResultModel,
@@ -123,6 +125,12 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
     if getattr(settings, "ENVIRONMENT", "local") == "production":
         raise RuntimeError("Acceptance fixture seeding is strictly forbidden in production")
 
+    validate_acceptance_database_url(
+        settings.ACCEPTANCE_DATABASE_URL,
+        settings.DATABASE_URL,
+    )
+    await ensure_acceptance_schema(session_factory)
+
     now = datetime.now(UTC)
 
     # 1. Surgical cleanup strictly restricted to owned test entities
@@ -138,20 +146,21 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
         )
         target_rids = list((await session.execute(r_stmt)).scalars().all())
 
+        # Collect route execution IDs BEFORE deleting route records
+        route_exec_ids = []
         if target_rids:
+            route_exec_stmt = select(RouteModel.execution_id).where(
+                RouteModel.id.in_(target_rids),
+                RouteModel.execution_id.is_not(None),
+            )
+            route_exec_ids = list((await session.execute(route_exec_stmt)).scalars().all())
+
             await session.execute(delete(RouteLegModel).where(RouteLegModel.route_id.in_(target_rids)))
             await session.execute(delete(RouteStopModel).where(RouteStopModel.route_id.in_(target_rids)))
             await session.execute(
                 delete(RouteRestrictionModel).where(RouteRestrictionModel.route_id.in_(target_rids))
             )
             await session.execute(delete(RouteModel).where(RouteModel.id.in_(target_rids)))
-
-        # Find all executions demonstrably associated with owned fixture trips or fixture routes
-        route_exec_stmt = select(RouteModel.execution_id).where(
-            RouteModel.id.in_(target_rids),
-            RouteModel.execution_id.is_not(None),
-        )
-        route_exec_ids = list((await session.execute(route_exec_stmt)).scalars().all())
 
         e_stmt = select(ExecutionModel.id).where(
             ExecutionModel.owner_id.in_(OWNED_USER_IDS),
@@ -163,6 +172,9 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
         target_eids = list((await session.execute(e_stmt)).scalars().all())
 
         if target_eids:
+            await session.execute(
+                delete(JobEventModel).where(JobEventModel.execution_id.in_(target_eids))
+            )
             await session.execute(
                 delete(OutboxEventModel).where(OutboxEventModel.execution_id.in_(target_eids))
             )

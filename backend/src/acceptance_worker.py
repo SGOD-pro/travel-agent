@@ -82,9 +82,20 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
+from acceptance_database import validate_acceptance_database_url
+from config.config import settings
+
 DEFAULT_ALLOWED_OWNER_IDS = (
     uuid.UUID("00000000-0000-0000-0000-000000000001"),
     uuid.UUID("99999999-9999-9999-9999-999999999999"),
+)
+
+DEFAULT_ALLOWED_TRIP_IDS = (
+    uuid.UUID("00000000-0000-0000-0000-000000000001"),
+    uuid.UUID("40000000-0000-0000-0000-000000000001"),
+    uuid.UUID("50000000-0000-0000-0000-000000000001"),
+    uuid.UUID("60000000-0000-0000-0000-000000000001"),
+    uuid.UUID("99999999-0000-0000-0000-000000000001"),
 )
 
 
@@ -97,11 +108,17 @@ class LocalAcceptanceWorker:
         valhalla_client: Any | None = None,
         closure_service: ClosureAvoidanceService | None = None,
         allowed_owner_ids: tuple[uuid.UUID, ...] | None = None,
+        allowed_trip_ids: tuple[uuid.UUID, ...] | None = None,
     ) -> None:
+        validate_acceptance_database_url(
+            settings.ACCEPTANCE_DATABASE_URL,
+            settings.DATABASE_URL,
+        )
         self._session_factory = session_factory
         self._valhalla_client = valhalla_client or MockValhallaClient()
         self._closure_service = closure_service or ClosureAvoidanceService()
         self._allowed_owner_ids = allowed_owner_ids or DEFAULT_ALLOWED_OWNER_IDS
+        self._allowed_trip_ids = allowed_trip_ids or DEFAULT_ALLOWED_TRIP_IDS
 
         checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
         route_graph = compile_route_optimizer_workflow(checkpointer=checkpointer)
@@ -132,6 +149,7 @@ class LocalAcceptanceWorker:
                     OutboxEventModel.failed_at.is_(None),
                     OutboxEventModel.created_at >= recent_cutoff,
                     ExecutionModel.owner_id.in_(self._allowed_owner_ids),
+                    ExecutionModel.trip_id.in_(self._allowed_trip_ids),
                     ExecutionModel.workflow == "ROUTE_OPTIMIZER_GRAPH",
                 )
                 .order_by(OutboxEventModel.created_at.asc())

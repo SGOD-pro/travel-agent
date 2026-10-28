@@ -312,6 +312,22 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
       });
     });
 
+    await page.route(`**/api/v1/optimization/routes/${REPLAN_ROUTE_ID}/map*`, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ...mockFeasibleMapGeoJson,
+          properties: {
+            ...mockFeasibleMapGeoJson.properties,
+            route_id: REPLAN_ROUTE_ID,
+            route_version: 2,
+            parent_route_id: BASE_ROUTE_ID,
+          },
+        }),
+      });
+    });
+
     await page.route(`**/api/v1/optimization/routes/${INFEASIBLE_ROUTE_ID}/map*`, async (route) => {
       await route.fulfill({
         status: 200,
@@ -360,7 +376,7 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
     let pollCount = 0;
     await page.route("**/api/v1/jobs/test-active-job-999", async (route) => {
       pollCount += 1;
-      if (pollCount === 1) {
+      if (pollCount <= 2) {
         await route.fulfill({
           status: 200,
           contentType: "application/json",

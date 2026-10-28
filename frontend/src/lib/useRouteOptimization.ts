@@ -387,13 +387,12 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
   const selectVersion = useCallback(
     async (versionRouteId: string) => {
       setRouteId(versionRouteId);
-      await fetchRouteMap(versionRouteId);
-
       if (typeof window !== "undefined" && window.history) {
         const url = new URL(window.location.href);
         url.searchParams.set("route_id", versionRouteId);
         window.history.replaceState({}, "", url.toString());
       }
+      await fetchRouteMap(versionRouteId);
     },
     [fetchRouteMap]
   );
