@@ -32,6 +32,7 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/api/routes/optimization.py` | Asynchronous route optimization, job discovery by-job, map GeoJSON, route retrieval, and replanning endpoints |
 | `src/functions/orchestrator/graphs/route_optimizer/` | RouteOptimizerGraph LangGraph state machine, solver task emission, and route finalization |
 | `src/functions/orchestrator/routing/` | Route persistence repository, single child replan constraint, PostGIS spatial models, and RFC 7946 GeoJSON map assembler |
+| `src/acceptance_database.py` | Dedicated acceptance database URL validation, normalization, and isolated session factory |
 | `src/acceptance_server.py` | Local acceptance server and worker orchestration with injected MockValhallaClient for browser testing |
 
 ## Commands
@@ -106,6 +107,7 @@ uv run alembic upgrade head
 - Optimization endpoints enforce caller tenant ownership with explicit 403 Forbidden responses on tenant mismatch.
 - Replan endpoint enforces (owner_id, "route_optimization:replan", idemp_key) idempotency semantics: identical payload replays the cached 202 response even after completion, changed payload returns 409 Conflict, and retry is permitted after terminal failure or cancellation when no child route was committed.
 - Acceptance testing and local worker polling strictly isolate owned test fixtures and executions without global outbox acknowledgements or unrelated route mutations.
+- Acceptance environment requires an explicitly configured dedicated PostgreSQL database via ACCEPTANCE_DATABASE_URL and fails closed on missing configuration or reuse of DATABASE_URL; the acceptance worker processes only owned fixtures matching DEFAULT_ALLOWED_TRIP_IDS.
 - RouteOptimizerGraph compiles with interrupt_before=[RouteOptimizerNode.AWAIT_SOLVER_RESULT], clearing pending_tasks upon resumption to eliminate duplicate dispatch, and preserves INFEASIBLE route outcomes with status SUCCEEDED (see spec 0006).
 - GET /api/v1/optimization/routes/{route_id}/map returns RFC 7946 GeoJSON FeatureCollection with PostGIS stop coordinates, JSONB leg polylines, simplestyle presentation attributes, and 4 element bbox (see spec 0006).
 - GET /api/v1/optimization/routes/{route_id}/versions traces root to child replan lineage with recursive PostgreSQL CTE, computing distance deltas, duration deltas, and dropped stops (see spec 0006).
