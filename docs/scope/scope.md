@@ -204,14 +204,14 @@ Spec 0006 (`docs/specs/0006-route-graph-and-map-e2e.md`, Status: Accepted) · co
 
 ### 7. Trip planner end to end execution, hosted LLM integration, and weather advisory · in-progress
 Coordinate brief parsing, generative place research, deterministic candidate validation, evidence collection, weather advisory fetching, route optimization, budget computation, and proposal synthesis under transactional checkpointing. Strictly excludes payments, booking checkout, and live AWS deployment.
-**Done when:** TripPlannerGraph executes under transactional checkpointing, hosted language model proposes candidate places via configurable providers with bounded retries, Open Meteo fetches corridor weather metrics, RouteOptimizerWorkerService solves routes in process and links route_id to trips, GET /api/v1/trips/{trip_id}/itinerary returns the complete proposal, Next.js frontend renders the inspectable itinerary, and automated integration trace passes on live PostgreSQL.
+**Done when:** TripPlannerGraph executes under transactional checkpointing, hosted language model proposes candidate places via AWS Bedrock Claude with bounded retries, Open Meteo fetches corridor weather metrics with 16 day horizon gating, asynchronous route optimizer worker solves routes under lease fencing and links route_id to trips, GET /api/v1/trips/{trip_id}/itinerary returns the complete proposal, Next.js frontend renders the inspectable itinerary, and automated integration trace passes on live PostgreSQL.
 - [x] Design it (spec): [0007](../specs/0007-trip-planner-e2e/index.md)
 - [ ] Build it: `/develop trip planner end to end execution, hosted LLM integration, and weather advisory`
-   - [ ] Hosted language model client adapter and offline fixtures (AC-2, AC-3)
-   - [ ] Open Meteo weather service and corridor weather aggregator (AC-6)
-   - [ ] Place research, ranking, and deterministic claim verification integration (AC-1, AC-3)
-   - [ ] Route optimizer in process workflow integration and persistence linking (AC-4, AC-5)
-   - [ ] End to end trip planner graph compilation and itinerary synthesis (AC-1, AC-7, AC-8, AC-9)
+   - [ ] Hosted language model client adapter (Bedrock Claude) and offline fixtures (AC-2, AC-3)
+   - [ ] Open Meteo weather service, forecast horizon policy, and corridor weather aggregator (AC-6)
+   - [ ] Place candidate registration, spatial corridor validation, and deterministic claim eligibility gate (AC-1, AC-3)
+   - [ ] Route optimizer task dispatch, interrupt boundary, worker resume, and trip linking (AC-4, AC-5)
+   - [ ] End to end trip planner graph compilation, budget calculation, and atomic proposal publication (AC-1, AC-7, AC-8, AC-9)
    - [ ] REST API updates and Next.js frontend itinerary view integration (AC-8, AC-10, AC-11)
 - [ ] Verify it: `/check verify 0007-trip-planner-e2e`
 - [ ] Review it (fresh model): `/check review 0007-trip-planner-e2e`

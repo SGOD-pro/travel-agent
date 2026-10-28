@@ -7,43 +7,45 @@ The SWENA travel intelligence platform has successfully built its core execution
 Travelers need a unified experience where a natural language brief turns into an inspectable, evidence backed journey. Producing a realistic itinerary requires combining multiple distinct domains: generative place discovery, deterministic spatial validation, source backed claim verification, road transit optimization with parking injection, weather condition forecasting, and granular budget calculation.
 
 Several critical engineering forces shape this decision:
-1. Generative reliability and drift: Language models excel at creative suggestion and regional knowledge synthesis, but frequently hallucinate coordinates, opening times, and travel distances. The architecture must prevent unverified model hallucinations from masquerading as authoritative travel facts.
-2. Provider agility and cost control: Relying on a single proprietary model provider creates operational vulnerabilities, rate limit risks, and cost instability. The platform needs provider flexibility with deterministic offline fixtures for continuous integration.
-3. Execution simplicity versus microservice sprawl: The route optimizer already exists as a thoroughly tested service with OR Tools and Valhalla integration. Invoking it inside the trip planner workflow must avoid unnecessary message queue hops, worker races, or redundant schema layers.
-4. Transparent pricing and weather attribution: India road travel involves monsoon hazards, ghat road fog, and unquoted highway tolls. The system must represent weather risks honestly and document unknown costs explicitly rather than inventing figures.
+1. Generative reliability and drift: Language models excel at creative suggestion and regional knowledge synthesis, but frequently hallucinate coordinates, opening times, and travel distances. The architecture must prevent unverified model hallucinations from masquerading as authoritative travel facts. A coordinate proximity check alone proves neither existence nor operating hours.
+2. Serverless packaging and lease fencing guarantees: The route optimizer worker depends on Google OR Tools, whose native C++ binaries exceed 90 megabytes uncompressed. Bundling OR Tools directly into the orchestrator Lambda ZIP would breach AWS Lambda uncompressed packaging ceilings (250 megabytes) and bypass the battle tested worker lease fencing, parent cancellation barriers, and scheduled crash recovery established in specifications 0001 and 0005.
+3. Provider selection and operational simplicity: Rather than prematurely building and maintaining three distinct third party model clients, the platform needs a provider neutral port implemented with a single robust cloud native adapter. Anthropic Claude on AWS Bedrock via boto3 utilizes AWS native IAM authentication, requires zero additional SDK dependencies in Lambda, and provides exceptional structured JSON output reliability.
+4. Transparent pricing and weather horizon reality: India road travel involves monsoon hazards, ghat road fog, and unquoted expressway tolls. The system must represent weather risks honestly within the valid 16 day meteorological forecast horizon without presenting historical averages as live forecasts. Furthermore, estimated fuel and lodging costs must remain clearly separated from unverified tolls, which must never be defaulted to zero.
+5. Open Meteo licensing terms: Open Meteo provides free API access strictly for non commercial open source, research, and personal evaluation. Commercial production deployment requires an enterprise agreement or a self hosted container instance.
 
 ## Options considered
 
-### Option 1: Multi provider hosted language model adapter, in process route optimizer invocation, and Open Meteo weather client (Recommended)
+### Option 1: Provider neutral language model client with AWS Bedrock Claude adapter, canonical queue based route optimizer dispatch under lease fencing, and Open Meteo weather client (Recommended)
 
-Build a clean adapter port for hosted language models supporting Google Gemini as default with OpenAI and Anthropic adapters, configurable via environment variables (basis: your AGENTS.md, simplicity first). Invoke `RouteOptimizerWorkerService` directly in process within the orchestrator worker to solve constraints and persist PostGIS geometries, linking the resulting route identifier directly to the trip (basis: route optimizer service pattern in spec 0005). Integrate Open Meteo as the free weather forecasting provider with required attribution and offline test fixtures (basis: offline fixture substitution for hermetic tests).
-
-**Pros**:
-- Multi provider adapter eliminates vendor lock in, allowing rapid switching between models as capabilities and pricing shift.
-- In process execution of the route optimizer preserves transactional database boundaries, avoids extra SQS latency, and reuses tested solver logic without code duplication.
-- Open Meteo requires no API key for development, offers hourly forecast resolution across India, and pairs with offline fixtures for hermetic test suites.
-- Strict separation ensures language model suggestions are tagged as editorial discoveries while PostGIS and policy engines handle spatial and factual verification.
-
-**Cons**:
-- In process solver execution means the orchestrator worker environment must include the OR Tools native dependencies.
-- Free Open Meteo usage carries rate limits that may require local caching or commercial upgrade under high production concurrency.
-
-### Option 2: Single provider OpenAI adapter with asynchronous SQS route optimizer task dispatch and commercial weather service
-
-Couple the trip planner exclusively to OpenAI structured outputs, dispatch route optimization as an asynchronous task across SQS queues to the standalone route optimizer worker, and subscribe to a paid commercial weather service like OpenWeatherMap.
+Define a provider neutral port `HostedLlmClientPort` implemented in Slice 1 with Anthropic Claude on AWS Bedrock via boto3 and offline test fixtures (basis: your AGENTS.md, simplicity first). Dispatch route optimization asynchronously using the existing transactional outbox and worker lease fencing contract (`WorkerFencingService.claim_task`), yielding execution at an interrupt barrier until the independent route optimizer worker completes and returns `RouteOptimizerWorkerOutput` (basis: orchestrator execution engine in spec 0001 and route optimizer in spec 0005). Integrate Open Meteo with explicit 16 day horizon gating and non commercial terms acknowledgment, while classifying budget lines into quoted, estimated, and unknown categories.
 
 **Pros**:
-- Complete decoupling of worker processes allows independent scaling of the orchestrator and solver Lambda containers.
-- Commercial weather APIs offer formal service level agreements and higher unauthenticated rate limits.
+- Preserves independent Lambda ZIP packaging: orchestrator ZIP remains lean while heavy OR Tools binaries remain isolated in the route optimizer package.
+- Enforces parent cancellation barriers, task attempt ceilings, and lease recovery without bypassing the database fencing contract.
+- Anthropic Claude on AWS Bedrock requires no external API keys, authenticates via IAM execution roles, and adds zero package overhead since boto3 is native to the Lambda runtime.
+- Offline fixture adapters enable fast, zero cost local testing and deterministic continuous integration runs without consuming third party API credits.
+- Strict candidate eligibility prevents unverified language model hallucinations from entering the mathematical scheduling solver as confirmed facts.
 
 **Cons**:
-- Enforces hard vendor lock in to OpenAI, preventing cost optimization or failover to alternative providers during outages.
-- Asynchronous SQS dispatch introduces unnecessary message relay latency, distributed state synchronization, and complex graph interruption mechanics for an operation that takes under three seconds.
-- Commercial weather services require paid subscription keys before local development or automated continuous integration can run.
+- Asynchronous routing dispatch introduces an interrupt boundary and transactional outbox relay cycle, adding a brief polling delay compared to an in process call.
+- Open Meteo free tier terms prohibit commercial production usage, requiring an enterprise license key or self hosted instance prior to commercial launch.
 
-### Option 3: End to end generative language model synthesis without deterministic routing constraints or external weather verification
+### Option 2: In process invocation of RouteOptimizerWorkerService within orchestrator worker
 
-Prompt a large frontier language model to generate the complete itinerary, including daily stop schedules, driving durations, fuel costs, and weather expectations directly in one long JSON response, bypassing the OR Tools solver and external weather APIs.
+Import and execute `RouteOptimizerWorkerService.execute_task` directly inside the orchestrator worker process, bypassing SQS queues and outbox event relay.
+
+**Pros**:
+- Slightly lower execution latency by avoiding message queue round trips.
+- Simplifies graph control flow by removing the interrupt boundary.
+
+**Cons**:
+- Severe packaging defect: bundling OR Tools C++ libraries into the orchestrator ZIP adds ~90 megabytes, risking breach of AWS Lambda 250 megabyte limits when combined with LangGraph, Playwright, and Scrapling.
+- Circumvents the platform lease fencing architecture: in process execution bypasses `WorkerFencingService.claim_task`, lease renewal, parent cancellation barriers, and scheduled recovery.
+- Couples routing compute directly to the graph runner process, causing potential worker memory exhaustion on large route solving instances.
+
+### Option 3: Monolithic generative language model trip synthesis without deterministic routing or external weather verification
+
+Prompt a frontier language model to generate the complete itinerary, including daily stop schedules, driving durations, fuel costs, and weather expectations directly in one long JSON response, bypassing the OR Tools solver and external weather APIs.
 
 **Pros**:
 - Lowest architectural complexity with zero worker coordination, no PostGIS route tables, and no external weather client code.
@@ -56,13 +58,15 @@ Prompt a large frontier language model to generate the complete itinerary, inclu
 
 ## Rationale
 
-We recommend Option 1 because it delivers the optimal balance of architectural integrity, operational simplicity, and traveler trust. 
+We recommend Option 1 because it delivers the optimal balance of architectural integrity, operational reliability, and traveler trust.
 
-The primary lesson from earlier platform phases is that generative language models must be constrained by deterministic policy engines (basis: deterministic claim verification in spec 0002 and remote LAYA decision routing in spec 0004). By restricting language models to proposing candidate places and descriptive summaries while using PostGIS for spatial thresholding, OR Tools for schedule optimization, and Open Meteo for weather metrics, the platform guarantees that every itinerary element is verifiable.
+Preserving the queue based dispatch for route optimization is a critical architectural requirement. Bundling OR Tools into the orchestrator Lambda ZIP would violate our constraint of independent, lean Lambda deployments. More importantly, executing routing via `WorkerFencingService.claim_task` ensures that if a parent execution is cancelled or reaches its deadline, the solver halts immediately without wasting computational resources.
 
-Invoking `RouteOptimizerWorkerService` directly in process within the orchestrator worker honors the repository core principle of simplicity (basis: your AGENTS.md, minimum code that solves the problem). The route optimizer logic is already modularized and tested; routing it through intermediate SQS queues when called from the trip planner would add latency and failure modes without any operational benefit.
+Using Anthropic Claude on AWS Bedrock via boto3 for our initial language model adapter is the most pragmatic choice for our serverless AWS stack. It leverages IAM role authentication rather than exposing third party API keys, introduces zero external wheel weight because boto3 is pre installed in the Lambda Python runtime, and delivers excellent structured JSON adherence. Scoping Slice 1 strictly to Bedrock Claude and offline fixtures avoids premature abstraction sprawl while keeping the domain contract provider neutral for any future adapters.
 
-The multi provider language model design provides business resilience. Google Gemini offers exceptional speed, large context windows, and cost efficiency as the default provider, while OpenAI and Anthropic adapters ensure operational continuity. The inclusion of offline fixtures ensures all unit and lifecycle tests run hermetically in continuous integration without network access or cloud API spend.
+The evidence and candidate eligibility gate addresses the fundamental problem of generative hallucination. A coordinate or distance check merely proves that a suggested point is near the road; it does not prove the place exists, is open, or has safe parking. Registering proposals as candidates with `is_candidate=True` and `EDITORIAL_DISCOVERY` ensures that only places backed by verified source observations or geocoder provenance enter scheduling as confirmed stops, with unverified places clearly flagged as editorial suggestions.
+
+Finally, transparent budgeting and weather gating establish traveler trust. Distinguishing estimated fuel and lodging from unknown tolls ensures travelers are never misled by false precision, while capping weather forecasts at 16 days respects meteorological limits and Open Meteo licensing constraints.
 
 ## References
 
@@ -75,8 +79,9 @@ The multi provider language model design provides business resilience. Google Ge
 - `docs/specs/0006-route-graph-and-map-e2e.md`: Route optimizer graph, PostGIS GeoJSON assembly, and Leaflet CorridorMap visualization.
 
 **Practices & standards**:
-- Multi provider adapter pattern for third party API resilience and vendor independence.
-- Bounded exponential backoff and socket timeouts for resilient distributed HTTP calls.
+- Provider neutral port and adapter architecture for external service decoupling.
+- Parent first lease fencing and cooperative cancellation barriers for long running worker tasks.
+- Transactional outbox pattern for reliable, at least once task dispatch.
 - Deterministic claim verification to prevent generative hallucinations from becoming verified facts.
 - Offline fixture substitution for hermetic continuous integration testing without network dependencies.
 - Tenant ownership isolation gating all database entities by authenticated owner identifier.
