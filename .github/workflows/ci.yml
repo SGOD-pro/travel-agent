@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "latest"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: uv sync --dev
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Start backend OpenAPI server
+        working-directory: backend
+        run: |
+          uv run uvicorn main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/backend.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/backend.pid"
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/openapi.json > /dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          cat "$RUNNER_TEMP/backend.log"
+          exit 1
+
+      - name: Generate frontend API types
+        working-directory: frontend
+        run: npm run generate-types
+
+      - name: Verify Types are Up-to-Date
+        run: git diff --exit-code -- frontend/src/lib/generated-api.d.ts
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
