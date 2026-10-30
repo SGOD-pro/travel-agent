@@ -122,6 +122,8 @@ uv run alembic upgrade head
 - Language model proposals enforce uncertainty labels (EDITORIAL_DISCOVERY) and strict coordinate bounds, with unverified candidates excluded from route solver execution.
 - Visiting hours support structured opening hours (DayOpeningHours, StructuredOpeningHours) alongside human readable strings to support deterministic claim eligibility and scheduling.
 - Weather integration consumes Open Meteo forecast API under non commercial terms with required attribution ("Weather data by Open Meteo.com") and 16 day forecast horizon gating without presenting historical averages as live forecasts.
+- Weather corridor forecasts sample each stop for its actual local arrival date and hour, defaulting to departure midday only with an explicit diagnostic note, support multi day trips and midnight arrival, represent missing or partial metrics as unknown rather than assuming low risk, and validate provider array bounds safely.
+- Open Meteo licensing status models commercial subscriptions explicitly via CommercialLicenseStatus, never inferring commercial rights from API keys alone, and strictly prevents key leakage into diagnostics or logs.
 - Routing provider outages adhere to specification 0005 fail closed routing without straight line Euclidean distance guesswork, publishing incomplete itineraries with unrouted stops preserved.
 
 ## Gotchas

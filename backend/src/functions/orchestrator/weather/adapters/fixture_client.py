@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from contracts.weather import (
+    CommercialLicenseStatus,
     CorridorWeatherAdvisoryReport,
     CorridorWeatherRequest,
     MonsoonRisk,
@@ -34,6 +35,7 @@ class FixtureWeatherClient(WeatherClientPort):
     def __init__(
         self,
         fixture_dir: Path | str | None = None,
+        commercial_license: bool | None = None,
         timeout_seconds: float = 10.0,
         max_retries: int = 2,
         simulate_timeout: bool = False,
@@ -41,6 +43,7 @@ class FixtureWeatherClient(WeatherClientPort):
         simulate_unavailable: bool = False,
         enforce_horizon_check: bool = True,
     ) -> None:
+        self.commercial_license = commercial_license
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
         self.simulate_timeout = simulate_timeout
@@ -48,6 +51,41 @@ class FixtureWeatherClient(WeatherClientPort):
         self.simulate_unavailable = simulate_unavailable
         self.enforce_horizon_check = enforce_horizon_check
         self._fixture_dir = self._resolve_fixture_dir(fixture_dir)
+
+    def _resolve_licensing_status(self) -> tuple[CommercialLicenseStatus, bool | None]:
+        """Resolves commercial licensing status for fixture client."""
+        if self.commercial_license is True:
+            return CommercialLicenseStatus.COMMERCIAL_LICENSED, True
+        if self.commercial_license is False:
+            return CommercialLicenseStatus.NON_COMMERCIAL, False
+        return CommercialLicenseStatus.NON_COMMERCIAL, False
+
+    def _resolve_stop_target_date(
+        self,
+        stop: WeatherStopInput,
+        default_departure: date | datetime,
+        tz: zoneinfo.ZoneInfo,
+    ) -> date:
+        """Resolves target local date for a stop considering arrival or departure timestamps."""
+        if stop.arrival_time is not None:
+            arrival_dt = (
+                stop.arrival_time.replace(tzinfo=tz)
+                if stop.arrival_time.tzinfo is None
+                else stop.arrival_time.astimezone(tz)
+            )
+            return arrival_dt.date()
+        if stop.departure_time is not None:
+            dep_dt = (
+                stop.departure_time.replace(tzinfo=tz)
+                if stop.departure_time.tzinfo is None
+                else stop.departure_time.astimezone(tz)
+            )
+            return dep_dt.date()
+        return (
+            default_departure.date()
+            if isinstance(default_departure, datetime)
+            else default_departure
+        )
 
     @classmethod
     def _resolve_fixture_dir(cls, explicit_dir: Path | str | None) -> Path:
@@ -121,6 +159,8 @@ class FixtureWeatherClient(WeatherClientPort):
         if self.simulate_error is not None:
             raise self.simulate_error
 
+        licensing_status, is_commercial = self._resolve_licensing_status()
+
         if self.simulate_unavailable:
             return CorridorWeatherAdvisoryReport(
                 status=WeatherAdvisoryStatus.WEATHER_UNAVAILABLE,
@@ -130,25 +170,40 @@ class FixtureWeatherClient(WeatherClientPort):
                         latitude=s.latitude,
                         longitude=s.longitude,
                         condition=StopWeatherCondition.UNKNOWN,
-                        monsoon_risk=MonsoonRisk.LOW,
+                        monsoon_risk=MonsoonRisk.UNKNOWN,
                     )
                     for s in request.stops
                 ],
                 overall_caution="Weather service temporarily unavailable; proceeding with regional defaults.",
                 provider="fixture",
                 attribution=OPEN_METEO_ATTRIBUTION,
+                licensing_status=licensing_status,
+                is_commercial_licensed=is_commercial,
             )
 
-        req_date = (
-            request.departure_date.date()
-            if isinstance(request.departure_date, datetime)
-            else request.departure_date
-        )
+        try:
+            tz = zoneinfo.ZoneInfo(request.timezone)
+        except Exception:
+            tz = zoneinfo.ZoneInfo("Asia/Kolkata")
 
-        # Check forecast horizon policy if enabled
+        # Check forecast horizon policy per stop if enabled
         if self.enforce_horizon_check:
-            is_valid, reason = self._check_horizon(req_date, request.timezone)
-            if not is_valid:
+            horizon_checks = [
+                (
+                    s,
+                    self._resolve_stop_target_date(s, request.departure_date, tz),
+                    self._check_horizon(
+                        self._resolve_stop_target_date(s, request.departure_date, tz),
+                        request.timezone,
+                    ),
+                )
+                for s in request.stops
+            ]
+            valid_checks = [c for c in horizon_checks if c[2][0]]
+            invalid_checks = [c for c in horizon_checks if not c[2][0]]
+
+            if not valid_checks:
+                # All stops exceed forecast horizon
                 return CorridorWeatherAdvisoryReport(
                     status=WeatherAdvisoryStatus.OUT_OF_FORECAST_HORIZON,
                     stops=[
@@ -157,15 +212,62 @@ class FixtureWeatherClient(WeatherClientPort):
                             latitude=s.latitude,
                             longitude=s.longitude,
                             condition=StopWeatherCondition.UNKNOWN,
-                            monsoon_risk=MonsoonRisk.LOW,
+                            monsoon_risk=MonsoonRisk.UNKNOWN,
+                            diagnostics={
+                                "status": "OUT_OF_FORECAST_HORIZON",
+                                "target_date": str(target_dt),
+                                "reason": reason,
+                            },
                         )
-                        for s in request.stops
+                        for s, target_dt, (_, reason) in horizon_checks
                     ],
-                    overall_caution=reason,
+                    overall_caution=(
+                        "Requested stops are beyond the 16 day meteorological forecast horizon. "
+                        "Live forecasts are unavailable; check back closer to departure for live conditions. "
+                        "Historical averages are not presented as live forecasts."
+                    ),
                     provider="fixture",
                     attribution=OPEN_METEO_ATTRIBUTION,
+                    licensing_status=licensing_status,
+                    is_commercial_licensed=is_commercial,
                     forecast_horizon_days=MAX_FORECAST_HORIZON_DAYS,
-                    diagnostics={"horizon_check_failed": True, "target_date": str(req_date)},
+                    diagnostics={"horizon_check_failed": True},
+                )
+
+            if invalid_checks:
+                # Partial: some stops exceed horizon
+                out_stops = [
+                    StopWeatherReport(
+                        stop_name=s.name,
+                        latitude=s.latitude,
+                        longitude=s.longitude,
+                        condition=StopWeatherCondition.UNKNOWN,
+                        monsoon_risk=MonsoonRisk.UNKNOWN,
+                        diagnostics={
+                            "status": "OUT_OF_FORECAST_HORIZON",
+                            "target_date": str(target_dt),
+                            "reason": reason,
+                        },
+                    )
+                    for s, target_dt, (_, reason) in invalid_checks
+                ]
+                # Sample remaining valid stops from sunny fixture
+                valid_sample = self._load_json_fixture("weather_sunny_corridor.json")
+                base_report = CorridorWeatherAdvisoryReport.model_validate(valid_sample)
+                combined_stops = base_report.stops[: len(valid_checks)] + out_stops
+                return CorridorWeatherAdvisoryReport(
+                    status=WeatherAdvisoryStatus.PARTIAL,
+                    stops=combined_stops,
+                    overall_caution=(
+                        f"Partial weather advisory: live forecasts available for {len(valid_checks)} of "
+                        f"{len(request.stops)} stops; remaining stops are beyond forecast horizon or unavailable."
+                    ),
+                    provider="fixture",
+                    attribution=OPEN_METEO_ATTRIBUTION,
+                    licensing_status=licensing_status,
+                    is_commercial_licensed=is_commercial,
+                    forecast_horizon_days=MAX_FORECAST_HORIZON_DAYS,
+                    diagnostics={"partial": True, "valid_stops": len(valid_checks)},
                 )
 
         stop_names_lower = [s.name.lower() for s in request.stops]
@@ -177,18 +279,39 @@ class FixtureWeatherClient(WeatherClientPort):
 
         if "empty" in stop_names_lower:
             data = self._load_json_fixture("weather_empty.json")
-            return CorridorWeatherAdvisoryReport.model_validate(data)
+            report = CorridorWeatherAdvisoryReport.model_validate(data)
+            return report.model_copy(
+                update={
+                    "licensing_status": licensing_status,
+                    "is_commercial_licensed": is_commercial,
+                }
+            )
 
         if any_ghat or any("monsoon" in name for name in stop_names_lower):
             data = self._load_json_fixture("weather_monsoon_ghat.json")
-            return CorridorWeatherAdvisoryReport.model_validate(data)
+            report = CorridorWeatherAdvisoryReport.model_validate(data)
+            return report.model_copy(
+                update={
+                    "licensing_status": licensing_status,
+                    "is_commercial_licensed": is_commercial,
+                }
+            )
 
         if any("sunny" in name for name in stop_names_lower):
             data = self._load_json_fixture("weather_sunny_corridor.json")
-            return CorridorWeatherAdvisoryReport.model_validate(data)
+            report = CorridorWeatherAdvisoryReport.model_validate(data)
+            return report.model_copy(
+                update={
+                    "licensing_status": licensing_status,
+                    "is_commercial_licensed": is_commercial,
+                }
+            )
 
         data = self._load_json_fixture("weather_kolkata_digha.json")
-        return CorridorWeatherAdvisoryReport.model_validate(data)
+        report = CorridorWeatherAdvisoryReport.model_validate(data)
+        return report.model_copy(
+            update={"licensing_status": licensing_status, "is_commercial_licensed": is_commercial}
+        )
 
     async def get_stop_weather(
         self,
@@ -210,8 +333,6 @@ class FixtureWeatherClient(WeatherClientPort):
             stop_name=stop.name,
             latitude=stop.latitude,
             longitude=stop.longitude,
-            condition=StopWeatherCondition.SUNNY,
-            temperature_celsius=28.0,
-            humidity_percent=60,
-            monsoon_risk=MonsoonRisk.LOW,
+            condition=StopWeatherCondition.UNKNOWN,
+            monsoon_risk=MonsoonRisk.UNKNOWN,
         )

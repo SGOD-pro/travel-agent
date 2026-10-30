@@ -15,6 +15,7 @@ from functions.orchestrator.weather.port import WeatherClientPort
 def create_weather_client(
     settings: Settings | None = None,
     provider: str | None = None,
+    commercial_license: bool | None = None,
     timeout_seconds: float | None = None,
     max_retries: int | None = None,
     fixture_dir: Path | str | None = None,
@@ -27,6 +28,7 @@ def create_weather_client(
     Args:
         settings: Application settings instance (defaults to singleton get_settings()).
         provider: Optional explicit provider override ("fixture", "open_meteo").
+        commercial_license: Optional explicit commercial license status flag.
         timeout_seconds: Optional socket timeout in seconds.
         max_retries: Optional maximum retry attempts.
         fixture_dir: Optional custom directory containing JSON fixture files.
@@ -45,6 +47,11 @@ def create_weather_client(
         (provider if provider is not None else effective_settings.WEATHER_PROVIDER).strip().lower()
     )
 
+    effective_commercial_license = (
+        commercial_license
+        if commercial_license is not None
+        else effective_settings.OPEN_METEO_COMMERCIAL_LICENSE
+    )
     effective_timeout = (
         timeout_seconds
         if timeout_seconds is not None
@@ -64,6 +71,7 @@ def create_weather_client(
             resolved_fixture_dir = Path(effective_settings.WEATHER_FIXTURE_DIR)
         return FixtureWeatherClient(
             fixture_dir=resolved_fixture_dir,
+            commercial_license=effective_commercial_license,
             timeout_seconds=effective_timeout,
             max_retries=effective_retries,
         )
@@ -72,6 +80,7 @@ def create_weather_client(
         return OpenMeteoWeatherClient(
             base_url=effective_base_url,
             api_key=effective_api_key,
+            commercial_license=effective_commercial_license,
             timeout_seconds=effective_timeout,
             max_retries=effective_retries,
             http_client=http_client,

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+import zoneinfo
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -12,6 +14,7 @@ from pydantic import ValidationError
 
 from config.config import Settings
 from contracts.weather import (
+    CommercialLicenseStatus,
     CorridorWeatherAdvisoryReport,
     CorridorWeatherRequest,
     MonsoonRisk,
@@ -384,3 +387,344 @@ class TestWeatherClientFactory:
         with pytest.raises(ValueError) as exc_info:
             create_weather_client(provider="unknown_weather_corp")
         assert "unsupported weather provider" in str(exc_info.value).lower()
+
+
+class TestSlice2Corrections:
+    """Verifies targeted corrections for Slice 2 findings: timing, missing data, bounds safety, tests, and licensing."""
+
+    async def test_finding_1_multi_day_trip_and_exact_hour_timing(self) -> None:
+        """Finding 1: Forecast each stop for its actual local arrival date and hour, not departure midday."""
+        tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+        dep_date = date.today() + timedelta(days=2)
+        arrival_stop1 = datetime(dep_date.year, dep_date.month, dep_date.day, 10, 0, tzinfo=tz)
+        arrival_stop2 = datetime(
+            dep_date.year, dep_date.month, dep_date.day, 14, 0, tzinfo=tz
+        ) + timedelta(days=1)
+
+        stop1 = WeatherStopInput(
+            name="Stop Day 1", latitude=22.5, longitude=88.3, arrival_time=arrival_stop1
+        )
+        stop2 = WeatherStopInput(
+            name="Stop Day 2", latitude=23.5, longitude=87.3, arrival_time=arrival_stop2
+        )
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+
+        def mock_get(url: str, params: dict[str, Any], timeout: float) -> MagicMock:
+            resp = MagicMock()
+            resp.status_code = 200
+            target_date_str = params["start_date"]
+            resp.json.return_value = {
+                "hourly": {
+                    "time": [f"{target_date_str}T{h:02d}:00" for h in range(24)],
+                    "temperature_2m": [20.0 + h for h in range(24)],
+                    "relative_humidity_2m": [50 for _ in range(24)],
+                    "precipitation_probability": [5 for _ in range(24)],
+                    "precipitation": [0.0 for _ in range(24)],
+                    "weather_code": [0 for _ in range(24)],
+                    "is_day": [1 for _ in range(24)],
+                }
+            }
+            return resp
+
+        mock_http.get.side_effect = mock_get
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        req = CorridorWeatherRequest(departure_date=dep_date, stops=[stop1, stop2])
+
+        report = await client.get_corridor_weather(req)
+        assert report.status == WeatherAdvisoryStatus.AVAILABLE
+        assert len(report.stops) == 2
+
+        # Stop 1 arrived at 10:00 on Day 1 -> temperature should be 20.0 + 10 = 30.0
+        assert report.stops[0].temperature_celsius == 30.0
+        assert report.stops[0].forecast_time is not None
+        assert report.stops[0].forecast_time.hour == 10
+        assert report.stops[0].forecast_time.date() == dep_date
+
+        # Stop 2 arrived at 14:00 on Day 2 -> temperature should be 20.0 + 14 = 34.0
+        assert report.stops[1].temperature_celsius == 34.0
+        assert report.stops[1].forecast_time is not None
+        assert report.stops[1].forecast_time.hour == 14
+        assert report.stops[1].forecast_time.date() == dep_date + timedelta(days=1)
+
+    async def test_finding_1_midnight_arrival_hour(self) -> None:
+        """Finding 1: Midnight arrival (00:00) resolves to hour 0 without defaulting to midday."""
+        tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+        dep_date = date.today() + timedelta(days=2)
+        midnight_time = datetime(dep_date.year, dep_date.month, dep_date.day, 0, 0, tzinfo=tz)
+        stop = WeatherStopInput(
+            name="Midnight Stop", latitude=22.5, longitude=88.3, arrival_time=midnight_time
+        )
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "hourly": {
+                "time": [f"{dep_date.isoformat()}T{h:02d}:00" for h in range(24)],
+                "temperature_2m": [18.0 + h for h in range(24)],
+                "relative_humidity_2m": [80 for _ in range(24)],
+                "precipitation_probability": [0 for _ in range(24)],
+                "precipitation": [0.0 for _ in range(24)],
+                "weather_code": [0 for _ in range(24)],
+                "is_day": [0 for _ in range(24)],
+            }
+        }
+        mock_http.get.return_value = mock_resp
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        stop_report = await client.get_stop_weather(stop, dep_date)
+
+        assert stop_report.temperature_celsius == 18.0  # hour 0 temperature
+        assert stop_report.forecast_time is not None
+        assert stop_report.forecast_time.hour == 0
+
+    async def test_finding_1_missing_arrival_time_fallback_with_diagnostic(self) -> None:
+        """Finding 1: When arrival is missing, fallback to departure date midday with honest diagnostic note."""
+        dep_date = date.today() + timedelta(days=1)
+        stop = WeatherStopInput(
+            name="No Arrival Stop", latitude=22.5, longitude=88.3, arrival_time=None
+        )
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "hourly": {
+                "time": [f"{dep_date.isoformat()}T{h:02d}:00" for h in range(24)],
+                "temperature_2m": [22.0 + h for h in range(24)],
+                "relative_humidity_2m": [60 for _ in range(24)],
+                "precipitation_probability": [10 for _ in range(24)],
+                "precipitation": [0.0 for _ in range(24)],
+                "weather_code": [1 for _ in range(24)],
+                "is_day": [1 for _ in range(24)],
+            }
+        }
+        mock_http.get.return_value = mock_resp
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        stop_report = await client.get_stop_weather(stop, dep_date)
+
+        assert stop_report.temperature_celsius == 34.0  # hour 12 midday: 22 + 12
+        assert "timing_note" in stop_report.diagnostics
+        assert "midday (12:00 local time)" in stop_report.diagnostics["timing_note"]
+
+    def test_finding_2_missing_weather_metrics_evaluates_unknown_risk(self) -> None:
+        """Finding 2: Missing precipitation and weather codes evaluate to MonsoonRisk.UNKNOWN, never LOW."""
+        risk = evaluate_monsoon_risk(precipitation_mm=None, precip_prob=None, code=None)
+        assert risk == MonsoonRisk.UNKNOWN
+
+    async def test_finding_2_missing_metrics_represented_in_diagnostics(self) -> None:
+        """Finding 2: Stop reports record missing_metrics in diagnostics when provider payload lacks fields."""
+        dep_date = date.today() + timedelta(days=1)
+        stop = WeatherStopInput(name="Missing Metric Stop", latitude=22.5, longitude=88.3)
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Omit precipitation and relative_humidity_2m
+        mock_resp.json.return_value = {
+            "hourly": {
+                "time": [f"{dep_date.isoformat()}T{h:02d}:00" for h in range(24)],
+                "temperature_2m": [25.0 for _ in range(24)],
+                "weather_code": [0 for _ in range(24)],
+            }
+        }
+        mock_http.get.return_value = mock_resp
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        stop_report = await client.get_stop_weather(stop, dep_date)
+
+        assert stop_report.temperature_celsius == 25.0
+        assert stop_report.humidity_percent is None
+        assert stop_report.precipitation_mm is None
+        assert "missing_metrics" in stop_report.diagnostics
+        assert "relative_humidity_2m" in stop_report.diagnostics["missing_metrics"]
+        assert "precipitation" in stop_report.diagnostics["missing_metrics"]
+
+    async def test_finding_3_empty_or_malformed_provider_payload_no_crash(self) -> None:
+        """Finding 3: Validate provider response shapes before indexing without raising IndexError or KeyError."""
+        dep_date = date.today() + timedelta(days=1)
+        stop = WeatherStopInput(name="Malformed Stop", latitude=22.5, longitude=88.3)
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"hourly": {"time": []}}  # Empty time array
+        mock_http.get.return_value = mock_resp
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        stop_report = await client.get_stop_weather(stop, dep_date)
+
+        assert stop_report.condition == StopWeatherCondition.UNKNOWN
+        assert stop_report.monsoon_risk == MonsoonRisk.UNKNOWN
+        assert "error" in stop_report.diagnostics
+        assert "empty time array" in stop_report.diagnostics["error"].lower()
+
+    async def test_finding_3_short_hourly_arrays_no_index_error(self) -> None:
+        """Finding 3: Truncated hourly arrays do not trigger IndexError; missing elements return None."""
+        dep_date = date.today() + timedelta(days=1)
+        tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+        arrival = datetime(dep_date.year, dep_date.month, dep_date.day, 18, 0, tzinfo=tz)
+        stop = WeatherStopInput(
+            name="Short Array Stop", latitude=22.5, longitude=88.3, arrival_time=arrival
+        )
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # time has 24 entries, but temperature_2m only has 3 entries
+        mock_resp.json.return_value = {
+            "hourly": {
+                "time": [f"{dep_date.isoformat()}T{h:02d}:00" for h in range(24)],
+                "temperature_2m": [21.0, 22.0, 23.0],  # Truncated!
+                "weather_code": [0 for _ in range(24)],
+            }
+        }
+        mock_http.get.return_value = mock_resp
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        stop_report = await client.get_stop_weather(stop, dep_date)
+
+        # Should not raise IndexError
+        assert stop_report.temperature_celsius is None
+        assert "missing_metrics" in stop_report.diagnostics
+        assert "temperature_2m" in stop_report.diagnostics["missing_metrics"]
+
+    async def test_finding_3_partial_status_preserves_valid_stops(self) -> None:
+        """Finding 3: Corridor with 1 valid stop and 1 failing stop returns PARTIAL and preserves valid stop."""
+        dep_date = date.today() + timedelta(days=1)
+        stop_ok = WeatherStopInput(name="Valid Stop", latitude=22.5, longitude=88.3)
+        stop_bad = WeatherStopInput(name="Bad Stop", latitude=23.5, longitude=87.3)
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+
+        def mock_get(url: str, params: dict[str, Any], timeout: float) -> MagicMock:
+            resp = MagicMock()
+            resp.status_code = 200
+            if params["latitude"] == 22.5:
+                resp.json.return_value = {
+                    "hourly": {
+                        "time": [f"{dep_date.isoformat()}T{h:02d}:00" for h in range(24)],
+                        "temperature_2m": [28.0 for _ in range(24)],
+                        "relative_humidity_2m": [60 for _ in range(24)],
+                        "precipitation_probability": [0 for _ in range(24)],
+                        "precipitation": [0.0 for _ in range(24)],
+                        "weather_code": [0 for _ in range(24)],
+                        "is_day": [1 for _ in range(24)],
+                    }
+                }
+            else:
+                resp.json.return_value = {"hourly": "not a dictionary"}
+            return resp
+
+        mock_http.get.side_effect = mock_get
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        req = CorridorWeatherRequest(departure_date=dep_date, stops=[stop_ok, stop_bad])
+
+        report = await client.get_corridor_weather(req)
+        assert report.status == WeatherAdvisoryStatus.PARTIAL
+        assert len(report.stops) == 2
+        assert report.stops[0].condition == StopWeatherCondition.SUNNY
+        assert report.stops[0].temperature_celsius == 28.0
+        assert report.stops[1].condition == StopWeatherCondition.UNKNOWN
+        assert "error" in report.stops[1].diagnostics
+
+    def test_finding_5_commercial_licensing_resolution(self) -> None:
+        """Finding 5: Commercial licensing is explicitly configured or unknown; never inferred from key alone."""
+        # 1. No key, no flag -> NON_COMMERCIAL
+        c1 = OpenMeteoWeatherClient(api_key=None, commercial_license=None)
+        status1, is_comm1 = c1._resolve_licensing_status()
+        assert status1 == CommercialLicenseStatus.NON_COMMERCIAL
+        assert is_comm1 is False
+
+        # 2. Key present, no flag -> UNKNOWN (cannot infer commercial rights from key alone)
+        c2 = OpenMeteoWeatherClient(api_key="om_test_key_xyz", commercial_license=None)
+        status2, is_comm2 = c2._resolve_licensing_status()
+        assert status2 == CommercialLicenseStatus.UNKNOWN
+        assert is_comm2 is None
+
+        # 3. Explicit commercial_license=True
+        c3 = OpenMeteoWeatherClient(api_key="om_comm_key", commercial_license=True)
+        status3, is_comm3 = c3._resolve_licensing_status()
+        assert status3 == CommercialLicenseStatus.COMMERCIAL_LICENSED
+        assert is_comm3 is True
+
+        # 4. Explicit commercial_license=False
+        c4 = OpenMeteoWeatherClient(api_key="om_free_key", commercial_license=False)
+        status4, is_comm4 = c4._resolve_licensing_status()
+        assert status4 == CommercialLicenseStatus.NON_COMMERCIAL
+        assert is_comm4 is False
+
+    async def test_finding_1_multi_day_trip_horizon_partial(self) -> None:
+        """Finding 1: Multi-day trip where stop 1 is within horizon and stop 2 exceeds 16-day horizon."""
+        tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+        dep_date = date.today() + timedelta(days=2)
+        arrival_stop1 = datetime(dep_date.year, dep_date.month, dep_date.day, 12, 0, tzinfo=tz)
+        # Stop 2 arrives 20 days after today, exceeding the 16-day horizon
+        future_dt = datetime.now(tz) + timedelta(days=20)
+        arrival_stop2 = datetime(future_dt.year, future_dt.month, future_dt.day, 14, 0, tzinfo=tz)
+
+        stop1 = WeatherStopInput(
+            name="Near Stop", latitude=22.5, longitude=88.3, arrival_time=arrival_stop1
+        )
+        stop2 = WeatherStopInput(
+            name="Far Stop", latitude=23.5, longitude=87.3, arrival_time=arrival_stop2
+        )
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "hourly": {
+                "time": [f"{dep_date.isoformat()}T{h:02d}:00" for h in range(24)],
+                "temperature_2m": [28.0 for _ in range(24)],
+                "relative_humidity_2m": [60 for _ in range(24)],
+                "precipitation_probability": [0 for _ in range(24)],
+                "precipitation": [0.0 for _ in range(24)],
+                "weather_code": [0 for _ in range(24)],
+                "is_day": [1 for _ in range(24)],
+            }
+        }
+        mock_http.get.return_value = mock_resp
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        req = CorridorWeatherRequest(departure_date=dep_date, stops=[stop1, stop2])
+
+        report = await client.get_corridor_weather(req)
+        assert report.status == WeatherAdvisoryStatus.PARTIAL
+        assert len(report.stops) == 2
+        assert report.stops[0].condition == StopWeatherCondition.SUNNY
+        assert report.stops[0].temperature_celsius == 28.0
+        assert report.stops[1].condition == StopWeatherCondition.UNKNOWN
+        assert report.stops[1].diagnostics.get("status") == "OUT_OF_FORECAST_HORIZON"
+        assert "16 day meteorological forecast horizon" in str(
+            report.stops[1].diagnostics.get("reason")
+        )
+
+    async def test_finding_5_secret_masking_no_key_leakage(self) -> None:
+        """Finding 5: API keys must not be leaked into diagnostics, cautions, or stop reports."""
+        secret_key = "super_secret_open_meteo_key_98765"
+        dep_date = date.today() + timedelta(days=1)
+        stop = WeatherStopInput(name="Secret Stop", latitude=22.5, longitude=88.3)
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        # Simulate network error where raw exception text embeds URL with query param
+        mock_http.get.side_effect = httpx.ConnectError(
+            f"Failed to connect to https://api.open-meteo.com/v1/forecast?apikey={secret_key}&lat=22.5"
+        )
+
+        client = OpenMeteoWeatherClient(api_key=secret_key, http_client=mock_http, max_retries=0)
+        req = CorridorWeatherRequest(departure_date=dep_date, stops=[stop])
+
+        report = await client.get_corridor_weather(req)
+        assert report.status == WeatherAdvisoryStatus.WEATHER_UNAVAILABLE
+
+        # Check serialized payload and all string representations
+        report_dump = report.model_dump_json()
+        assert secret_key not in report_dump
+        assert secret_key not in str(report.diagnostics)
+        assert secret_key not in str(report.stops[0].diagnostics)
+        assert "***" in str(report.stops[0].diagnostics.get("error"))

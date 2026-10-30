@@ -33,7 +33,7 @@ async def test_live_open_meteo_connected_smoke() -> None:
             "Connected Open Meteo test skipped; set RUN_CONNECTED_WEATHER_TESTS=1 to execute live API checks."
         )
 
-    client = OpenMeteoWeatherClient(timeout_seconds=5.0, max_retries=1)
+    client = OpenMeteoWeatherClient(timeout_seconds=15.0, max_retries=2)
     target_date = date.today() + timedelta(days=2)
     req = CorridorWeatherRequest(
         departure_date=target_date,
@@ -47,14 +47,32 @@ async def test_live_open_meteo_connected_smoke() -> None:
         timezone="Asia/Kolkata",
     )
 
+    network_exceptions = (
+        httpx.ConnectError,
+        httpx.ConnectTimeout,
+        httpx.NetworkError,
+        TimeoutError,
+        OSError,
+    )
+
     try:
         report = await client.get_corridor_weather(req)
-    except (httpx.TimeoutException, httpx.NetworkError, Exception) as exc:
+    except network_exceptions as exc:
         pytest.skip(f"Live Open Meteo endpoint unreachable ({exc}); reporting as skipped/pending.")
 
     if report.status == WeatherAdvisoryStatus.WEATHER_UNAVAILABLE:
-        pytest.skip(
-            f"Live Open Meteo service returned unavailable status ({report.diagnostics}); reporting as skipped/pending."
+        stop_error = ""
+        if report.stops and report.stops[0].diagnostics:
+            stop_error = str(report.stops[0].diagnostics.get("error", ""))
+        if any(
+            term in stop_error.lower()
+            for term in ("network", "timeout", "connect", "name or service not known", "resolution")
+        ):
+            pytest.skip(
+                f"Live Open Meteo endpoint network error ({stop_error}); reporting as skipped/pending."
+            )
+        pytest.fail(
+            f"Live Open Meteo returned unavailable due to unexpected error: {stop_error or report.diagnostics}"
         )
 
     assert report.status == WeatherAdvisoryStatus.AVAILABLE

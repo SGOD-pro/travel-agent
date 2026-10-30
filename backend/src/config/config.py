@@ -256,7 +256,11 @@ class Settings(BaseSettings):
     )
     OPEN_METEO_API_KEY: str | None = Field(
         default=None,
-        description="Commercial subscription key for Open Meteo API (required for commercial use)",
+        description="Subscription key for Open Meteo API (required for commercial use)",
+    )
+    OPEN_METEO_COMMERCIAL_LICENSE: bool | None = Field(
+        default=None,
+        description="Explicit flag indicating whether commercial Open Meteo license is held",
     )
 
     @model_validator(mode="after")

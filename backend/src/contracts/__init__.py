@@ -23,6 +23,7 @@ from contracts.trips import (
     TripVersion,
 )
 from contracts.weather import (
+    CommercialLicenseStatus,
     CorridorWeatherAdvisoryReport,
     CorridorWeatherRequest,
     MonsoonRisk,
@@ -57,6 +58,7 @@ __all__ = [
     "RankingRequest",
     "RankingResponse",
     "LlmProviderConfig",
+    "CommercialLicenseStatus",
     "StopWeatherCondition",
     "MonsoonRisk",
     "WeatherAdvisoryStatus",

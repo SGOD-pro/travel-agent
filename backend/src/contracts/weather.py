@@ -36,14 +36,24 @@ class MonsoonRisk(StrEnum):
     LOW = "low"
     MODERATE = "moderate"
     SEVERE = "severe"
+    UNKNOWN = "unknown"
 
 
 class WeatherAdvisoryStatus(StrEnum):
     """Operational status of the corridor weather advisory."""
 
     AVAILABLE = "AVAILABLE"
+    PARTIAL = "PARTIAL"
     OUT_OF_FORECAST_HORIZON = "OUT_OF_FORECAST_HORIZON"
     WEATHER_UNAVAILABLE = "WEATHER_UNAVAILABLE"
+
+
+class CommercialLicenseStatus(StrEnum):
+    """Commercial licensing configuration status for Open Meteo usage."""
+
+    COMMERCIAL_LICENSED = "commercial_licensed"
+    NON_COMMERCIAL = "non_commercial"
+    UNKNOWN = "unknown"
 
 
 class WeatherStopInput(BaseModel):
@@ -95,7 +105,7 @@ class StopWeatherReport(BaseModel):
         default=None, description="Standard WMO weather interpretation code"
     )
     monsoon_risk: MonsoonRisk = Field(
-        default=MonsoonRisk.LOW, description="Evaluated monsoon hazard severity"
+        default=MonsoonRisk.UNKNOWN, description="Evaluated monsoon hazard severity"
     )
     ghat_caution: str | None = Field(
         default=None, description="Specific driving advisory for ghat or mountain terrain"
@@ -104,6 +114,10 @@ class StopWeatherReport(BaseModel):
         default=None, description="Timestamp corresponding to sampled forecast"
     )
     is_day: bool = Field(default=True, description="Flag indicating daylight hours")
+    diagnostics: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Honest per stop diagnostics for unavailable or malformed data",
+    )
 
 
 class CorridorWeatherRequest(BaseModel):
@@ -151,9 +165,13 @@ class CorridorWeatherAdvisoryReport(BaseModel):
         default="Weather data by Open Meteo.com",
         description="Mandatory provider attribution notice for non commercial usage",
     )
-    is_commercial_licensed: bool = Field(
+    licensing_status: CommercialLicenseStatus = Field(
+        default=CommercialLicenseStatus.NON_COMMERCIAL,
+        description="Explicit licensing status for Open Meteo usage",
+    )
+    is_commercial_licensed: bool | None = Field(
         default=False,
-        description="Flag indicating whether a commercial Open Meteo subscription is active",
+        description="Explicitly configured commercial license flag, or None if unconfigured",
     )
     forecast_horizon_days: int = Field(
         default=16,
@@ -162,4 +180,3 @@ class CorridorWeatherAdvisoryReport(BaseModel):
     diagnostics: dict[str, Any] = Field(
         default_factory=dict, description="Diagnostic provider or execution details"
     )
-

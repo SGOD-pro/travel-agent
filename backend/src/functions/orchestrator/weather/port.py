@@ -52,4 +52,3 @@ class WeatherClientPort(ABC):
             Evaluated weather report for the stop.
         """
         ...
-

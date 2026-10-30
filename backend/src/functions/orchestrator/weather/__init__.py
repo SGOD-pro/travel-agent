@@ -7,4 +7,3 @@ __all__ = [
     "WeatherClientPort",
     "create_weather_client",
 ]
-
