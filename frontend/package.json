@@ -8,7 +8,7 @@
     "start": "next start -p 3000",
     "lint": "next lint",
     "test:e2e": "playwright test",
-    "generate-types": "openapi-typescript http://localhost:8000/openapi.json -o src/lib/generated-api.d.ts"
+    "generate:api": "openapi-typescript http://localhost:8000/openapi.json -o src/lib/generated-api.d.ts"
   },
   "dependencies": {
     "@gsap/react": "^2.1.1",
