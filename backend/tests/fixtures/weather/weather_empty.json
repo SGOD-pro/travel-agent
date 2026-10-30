@@ -1,0 +1,14 @@
+{
+  "status": "AVAILABLE",
+  "stops": [],
+  "overall_caution": "No stop locations provided for weather evaluation.",
+  "ghat_caution": null,
+  "provider": "fixture",
+  "attribution": "Weather data by Open Meteo.com",
+  "is_commercial_licensed": false,
+  "forecast_horizon_days": 16,
+  "diagnostics": {
+    "fixture_scenario": "empty"
+  }
+}
+

@@ -1,11 +1,16 @@
-# Verify: 0007 Trip Planner End to End Execution · updated 2026-10-29
+# Verify: 0007 Trip Planner End to End Execution · updated 2026-10-31
 _Steps derived from spec 0007 acceptance criteria. `/check verify` runs these; `/test` locks the durable ones._
 
 ## Commands
-- [x] `cd backend && PYTHONPATH=src pytest tests/unit/test_llm_client.py -v` -> 20 tests pass verifying schema validation, coordinate limits, fit score bounds, research and ranking fixture loading, timeout simulation, error simulation, and client factory overrides -> AC-2, AC-3
-- [x] `cd backend && PYTHONPATH=src mypy src/contracts/llm.py src/functions/orchestrator/llm tests/unit/test_llm_client.py` -> strict typing clean with no errors -> AC-2
-- [x] `cd backend && ruff check src/contracts/llm.py src/contracts/__init__.py src/functions/orchestrator/llm tests/unit/test_llm_client.py` -> linting clean with all checks passing -> AC-2
+- [x] `cd backend && PYTHONPATH=src .venv/bin/pytest tests/unit/test_llm_client.py -v` -> 25 tests pass in 1.28s at commit 9a8423b428f37cf97b63fae16473123f67455d0c (20 original contract and fixture tests plus 5 added for DayOpeningHours, StructuredOpeningHours, PlaceProposal.structured_hours, LLM_FIXTURE_DIR resolution, and descriptive missing fixture errors) -> AC-2, AC-3
+- [x] `cd backend && PYTHONPATH=src .venv/bin/pytest tests/unit/test_weather_client.py -v` -> 26 tests pass in 2.28s verifying weather contracts, Open Meteo adapter, WMO code mappings, monsoon risk, ghat cautions, 16 day forecast horizon policy, offline fixtures, resilient directory resolution, error simulations, and factory configuration -> AC-6
+- [x] `cd backend && RUN_CONNECTED_WEATHER_TESTS=1 PYTHONPATH=src .venv/bin/pytest tests/integration/test_open_meteo_connected.py -v` -> 1 passed in 0.92s when live provider tests are explicitly enabled -> AC-6, AC-12
+- [x] `cd backend && PYTHONPATH=src .venv/bin/pytest tests/integration/test_open_meteo_connected.py -v` -> 1 skipped in 0.02s when live provider tests are not enabled, reporting as skipped/pending without false passing -> AC-6, AC-12
+- [x] `cd backend && PYTHONPATH=src .venv/bin/mypy src/contracts/weather.py src/contracts/llm.py src/contracts/__init__.py src/config/config.py src/functions/orchestrator/weather src/functions/orchestrator/llm tests/unit/test_weather_client.py tests/unit/test_llm_client.py tests/integration/test_open_meteo_connected.py` -> strict typing clean with no errors across 18 source files -> AC-2, AC-6
+- [x] `cd backend && .venv/bin/ruff check src/contracts/weather.py src/contracts/llm.py src/contracts/__init__.py src/config/config.py src/functions/orchestrator/weather src/functions/orchestrator/llm tests/unit/test_weather_client.py tests/unit/test_llm_client.py tests/integration/test_open_meteo_connected.py && .venv/bin/ruff format --check src/contracts/weather.py src/contracts/llm.py src/contracts/__init__.py src/config/config.py src/functions/orchestrator/weather src/functions/orchestrator/llm tests/unit/test_weather_client.py tests/unit/test_llm_client.py tests/integration/test_open_meteo_connected.py` -> linting clean and all 18 files formatted -> AC-2, AC-6
 
 ## Acceptance criteria coverage
-- AC-2: Covered by domain contract tests, port conformance tests, and factory configuration checks in `test_llm_client.py`.
-- AC-3: Covered by `PlaceProposal` uncertainty default `EDITORIAL_DISCOVERY` and `is_candidate` flag, plus deterministic fixture assertions in `test_research_places`.
+- AC-2: Covered by domain contract tests, structured hours schemas, port conformance tests, LLM_FIXTURE_DIR resolution, and factory configuration checks in `test_llm_client.py`.
+- AC-3: Covered by `PlaceProposal` uncertainty default `EDITORIAL_DISCOVERY`, `is_candidate` flag, structured hours model, plus deterministic fixture assertions in `test_research_places`.
+- AC-6: Covered by `StopWeatherReport`, `CorridorWeatherRequest`, and `CorridorWeatherAdvisoryReport` contracts, `OpenMeteoWeatherClient` horizon gating, WMO code mappings, monsoon hazard evaluation, ghat cautions, deterministic offline fixtures in `FixtureWeatherClient`, factory resolution in `test_weather_client.py`, and separately gated connected smoke tests in `test_open_meteo_connected.py`.
+- AC-12: Covered by separate offline fixture gates and gated connected live checks in `test_open_meteo_connected.py`.

@@ -34,6 +34,10 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/orchestrator/routing/` | Route persistence repository, single child replan constraint, PostGIS spatial models, and RFC 7946 GeoJSON map assembler |
 | `src/acceptance_database.py` | Dedicated acceptance database URL validation, normalization, and isolated session factory |
 | `src/acceptance_server.py` | Local acceptance server and worker orchestration with injected MockValhallaClient for browser testing |
+| `src/contracts/llm.py` | Pydantic domain contracts for language model proposals, structured opening hours, and provider configuration |
+| `src/functions/orchestrator/llm/` | Provider neutral language model client abstract port, deterministic FixtureLlmClient, and factory |
+| `src/contracts/weather.py` | Pydantic domain contracts for stop forecasts, corridor weather advisories, and risk enums |
+| `src/functions/orchestrator/weather/` | Weather client abstract port, Open Meteo adapter, deterministic FixtureWeatherClient, and factory |
 
 ## Commands
 
@@ -114,6 +118,11 @@ uv run alembic upgrade head
 - RouteOptimizerGraph compiles with interrupt_before=[RouteOptimizerNode.AWAIT_SOLVER_RESULT], clearing pending_tasks upon resumption to eliminate duplicate dispatch, and preserves INFEASIBLE route outcomes with status SUCCEEDED (see spec 0006).
 - GET /api/v1/optimization/routes/{route_id}/map returns RFC 7946 GeoJSON FeatureCollection with PostGIS stop coordinates, JSONB leg polylines, simplestyle presentation attributes, and 4 element bbox (see spec 0006).
 - GET /api/v1/optimization/routes/{route_id}/versions traces root to child replan lineage with recursive PostgreSQL CTE, computing distance deltas, duration deltas, and dropped stops (see spec 0006).
+- Language model integration uses a provider neutral abstract port (HostedLlmClientPort) with deterministic offline fixtures (FixtureLlmClient) for hermetic local testing and continuous integration without cloud dependencies.
+- Language model proposals enforce uncertainty labels (EDITORIAL_DISCOVERY) and strict coordinate bounds, with unverified candidates excluded from route solver execution.
+- Visiting hours support structured opening hours (DayOpeningHours, StructuredOpeningHours) alongside human readable strings to support deterministic claim eligibility and scheduling.
+- Weather integration consumes Open Meteo forecast API under non commercial terms with required attribution ("Weather data by Open Meteo.com") and 16 day forecast horizon gating without presenting historical averages as live forecasts.
+- Routing provider outages adhere to specification 0005 fail closed routing without straight line Euclidean distance guesswork, publishing incomplete itineraries with unrouted stops preserved.
 
 ## Gotchas
 

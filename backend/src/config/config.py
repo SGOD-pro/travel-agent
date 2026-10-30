@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
     DEBUG: bool = False
 
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def parse_debug_flag(cls, v: Any) -> bool:
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.strip().lower() in ("true", "1", "yes", "on", "debug")
+        return bool(v)
+
     # Database (PostgreSQL + PostGIS)
     DATABASE_URL: str = Field(
         default="postgresql+asyncpg://postgres:postgres@localhost:5432/travel_planning",
@@ -218,6 +227,36 @@ class Settings(BaseSettings):
     LLM_FIXTURE_DIR: str | None = Field(
         default=None,
         description="Optional directory path for language model fixture JSON files",
+    )
+
+    # Weather Advisory Integration (Open Meteo)
+    WEATHER_PROVIDER: str = Field(
+        default="fixture",
+        description="Weather provider identifier (fixture, open_meteo)",
+    )
+    WEATHER_TIMEOUT_SECONDS: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=60.0,
+        description="Socket timeout in seconds for weather API calls",
+    )
+    WEATHER_MAX_RETRIES: int = Field(
+        default=2,
+        ge=0,
+        le=5,
+        description="Maximum retry attempts on transient weather API failures",
+    )
+    WEATHER_FIXTURE_DIR: str | None = Field(
+        default=None,
+        description="Optional directory path for weather fixture JSON files",
+    )
+    OPEN_METEO_BASE_URL: str = Field(
+        default="https://api.open-meteo.com/v1/forecast",
+        description="Base URL for Open Meteo forecast API",
+    )
+    OPEN_METEO_API_KEY: str | None = Field(
+        default=None,
+        description="Commercial subscription key for Open Meteo API (required for commercial use)",
     )
 
     @model_validator(mode="after")

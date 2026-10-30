@@ -36,10 +36,10 @@ A resilient partial result policy guarantees that external outages or solver inf
   (a) Language model failure or timeout exhausts bounded retries and falls back to deterministic brief destination stops, producing a valid partial itinerary.
   (b) Weather API failure or timeout marks `weather_status` as `WEATHER_UNAVAILABLE`, includes an informational advisory caution, and allows the trip proposal to complete.
   (c) Route solver infeasibility due to overconstrained stop windows preserves diagnostics and produces a valid partial plan with dropped stops diagnostics without a road polyline.
-  (d) Routing provider timeout or outage (such as Valhalla failure) falls back to straight line Euclidean distance matrix with speed estimates, flags the route as `DEGRADED_ROUTING`, and annotates the itinerary with `ROUTING_UNAVAILABLE_ESTIMATED`.
+  (d) Routing provider timeout or outage (such as Valhalla failure) adheres to accepted specification 0005 fail closed routing: the system never invents straight line Euclidean distance matrices or guessed road speeds. The trip planner preserves verified places, editorial recommendations, weather advisories, and available non route budget lines, publishing an inspectable incomplete itinerary with `route_id=None`, `routing_status="ROUTING_UNAVAILABLE"`, and diagnostic notice "Road routing engine unavailable; stops preserved without driving schedule or route polyline".
   (e) Absent required evidence or search budget exhaustion leaves unverified candidates out of the solver schedule, retaining them as editorial discovery cards.
   (f) Cancellation or deadline expiry halts execution immediately at the nearest cooperative barrier with status `CANCELLED`, publishing no proposal.
-  (g) Worker retries: if a worker exhausts retries (`attempts >= max_attempts`), task transitions to `FAILED`. For non critical enrichments (weather, dynamic evidence), the workflow proceeds with partial results. For critical route solver tasks where straight line fallback also fails, the execution transitions to `FAILED` with a structured error summary in job events. Only unhandled database errors, unrecoverable worker crashes, or cancelled executions fail the parent job.
+  (g) Worker retries: if a worker exhausts retries (`attempts >= max_attempts`), task transitions to `FAILED`. For non critical enrichments (weather, dynamic evidence) and routing provider outages, the workflow proceeds with partial results, publishing an incomplete itinerary with diagnostic notices. Only unhandled database errors, unrecoverable worker crashes, or cancelled executions fail the parent job.
 - **AC-10**: Strict tenant isolation is enforced across all trip, route, and itinerary endpoints, returning HTTP 403 Forbidden for cross tenant access attempts and HTTP 404 Not Found for non existent resources.
 - **AC-11**: The Next.js frontend trip page renders the complete itinerary view, displaying stop timelines, place evidence cards with uncertainty tags, the Leaflet CorridorMap, the CorridorWeatherAdvisory component with attribution, and a printable brief view.
 - **AC-12**: Comprehensive test coverage includes unit tests for language model contracts and weather parsers, PostgreSQL lifecycle integration tests with transactional rollback, offline end to end graph execution, and measurable scenario evaluation suites separated into offline and live gates:
@@ -198,7 +198,7 @@ Workflow graph execution moves sequentially through twelve stages:
 - Food versus business scenario: Kolkata foodie brief requesting authentic dining; assertion: candidate places belong exclusively to `restaurant`, `street_food`, or `cafe`, with exactly 0 corporate office locations and 1.0 precision, verifies **AC-12**.
 - Category relevance scenario: Specialized architectural heritage brief; assertion: candidate places match heritage and architecture tags with precision at or above 0.8, verifies **AC-12**.
 - Unknown cost scenario: Route passing unquoted toll plaza; assertion: budget contains explicit `UNKNOWN` line item with documented reason, total budget excludes unknown items without defaulting to zero, verifies **AC-7**, **AC-12**.
-- Routing provider outage scenario: Valhalla routing engine failure; worker falls back to straight line distance matrix, marks route as `DEGRADED_ROUTING`, and annotates itinerary with `ROUTING_UNAVAILABLE_ESTIMATED`, verifies **AC-4**, **AC-9**.
+- Routing provider outage scenario: Valhalla routing engine failure; retains specification 0005 fail closed routing without straight line guesswork, records `route_id` as None with `routing_status` as `ROUTING_UNAVAILABLE`, and produces an inspectable incomplete itinerary preserving places and weather advisories without guessed road polylines, verifies **AC-4**, **AC-9**.
 - Auth and tenant isolation: Request for trip or route belonging to another tenant returns HTTP 403 Forbidden, verifies **AC-10**.
 
 ## Build plan
@@ -227,6 +227,21 @@ The build plan follows the Tracer Bullet approach, delivering thin, testable ver
 Verification commands for Slice 1:
 ```bash
 cd backend && PYTHONPATH=src pytest tests/unit/test_llm_client.py -v
+```
+
+### Detailed Tasks for Slice 2: Open Meteo Weather Service, Forecast Horizon Policy, and Corridor Weather Aggregator
+
+- [x] 1. Define typed domain contracts in `backend/src/contracts/weather.py` for `StopWeatherCondition`, `MonsoonRisk`, `WeatherAdvisoryStatus`, `WeatherStopInput`, `StopWeatherReport`, `CorridorWeatherRequest`, and `CorridorWeatherAdvisoryReport`, satisfies **AC-6**.
+- [x] 2. Implement abstract port `WeatherClientPort` in `backend/src/functions/orchestrator/weather/port.py` declaring `get_corridor_weather` and `get_stop_weather` methods, satisfies **AC-6**.
+- [x] 3. Implement `OpenMeteoWeatherClient` in `backend/src/functions/orchestrator/weather/adapters/open_meteo.py` supporting configurable base URL, timeouts, bounded retries, 16 day forecast horizon gating, WMO code interpretation, monsoon risk assessment, and ghat road cautions, satisfies **AC-6**.
+- [x] 4. Implement `FixtureWeatherClient` in `backend/src/functions/orchestrator/weather/adapters/fixture_client.py` reading structured responses from deterministic JSON fixtures with resilient path resolution and simulation flags, satisfies **AC-6**.
+- [x] 5. Implement factory `create_weather_client` in `backend/src/functions/orchestrator/weather/factory.py` reading `WEATHER_PROVIDER` (defaulting to `fixture`), satisfies **AC-6**.
+- [x] 6. Add deterministic test fixtures in `backend/tests/fixtures/weather/` covering standard corridor, monsoon ghat, sunny corridor, and empty stop scenarios, satisfies **AC-6**.
+- [x] 7. Add comprehensive unit tests in `backend/tests/unit/test_weather_client.py` (26 tests) and separately gated connected integration smoke test in `backend/tests/integration/test_open_meteo_connected.py`, satisfies **AC-6**, **AC-12**.
+
+Verification commands for Slice 2:
+```bash
+cd backend && PYTHONPATH=src pytest tests/unit/test_weather_client.py -v
 ```
 
 ## Consequences

@@ -22,6 +22,15 @@ from contracts.trips import (
     TripState,
     TripVersion,
 )
+from contracts.weather import (
+    CorridorWeatherAdvisoryReport,
+    CorridorWeatherRequest,
+    MonsoonRisk,
+    StopWeatherCondition,
+    StopWeatherReport,
+    WeatherAdvisoryStatus,
+    WeatherStopInput,
+)
 
 __all__ = [
     "Money",
@@ -48,4 +57,11 @@ __all__ = [
     "RankingRequest",
     "RankingResponse",
     "LlmProviderConfig",
+    "StopWeatherCondition",
+    "MonsoonRisk",
+    "WeatherAdvisoryStatus",
+    "WeatherStopInput",
+    "StopWeatherReport",
+    "CorridorWeatherRequest",
+    "CorridorWeatherAdvisoryReport",
 ]

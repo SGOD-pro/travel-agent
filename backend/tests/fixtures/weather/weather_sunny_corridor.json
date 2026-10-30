@@ -1,0 +1,63 @@
+{
+  "status": "AVAILABLE",
+  "stops": [
+    {
+      "stop_name": "Kolkata City Hub",
+      "latitude": 22.5726,
+      "longitude": 88.3639,
+      "temperature_celsius": 29.0,
+      "apparent_temperature_celsius": 30.5,
+      "condition": "sunny",
+      "humidity_percent": 50,
+      "precipitation_probability": 0,
+      "precipitation_mm": 0.0,
+      "weather_code": 0,
+      "monsoon_risk": "low",
+      "ghat_caution": null,
+      "forecast_time": "2026-11-01T10:00:00+05:30",
+      "is_day": true
+    },
+    {
+      "stop_name": "Burdwan Grand Trunk Plaza",
+      "latitude": 23.2324,
+      "longitude": 87.8615,
+      "temperature_celsius": 30.0,
+      "apparent_temperature_celsius": 31.0,
+      "condition": "sunny",
+      "humidity_percent": 48,
+      "precipitation_probability": 5,
+      "precipitation_mm": 0.0,
+      "weather_code": 0,
+      "monsoon_risk": "low",
+      "ghat_caution": null,
+      "forecast_time": "2026-11-01T13:00:00+05:30",
+      "is_day": true
+    },
+    {
+      "stop_name": "Shantiniketan Heritage Enclave",
+      "latitude": 23.6797,
+      "longitude": 87.6974,
+      "temperature_celsius": 28.5,
+      "apparent_temperature_celsius": 29.5,
+      "condition": "cloudy",
+      "humidity_percent": 55,
+      "precipitation_probability": 10,
+      "precipitation_mm": 0.0,
+      "weather_code": 1,
+      "monsoon_risk": "low",
+      "ghat_caution": null,
+      "forecast_time": "2026-11-01T16:00:00+05:30",
+      "is_day": true
+    }
+  ],
+  "overall_caution": "Favorable weather conditions expected along the corridor.",
+  "ghat_caution": null,
+  "provider": "fixture",
+  "attribution": "Weather data by Open Meteo.com",
+  "is_commercial_licensed": false,
+  "forecast_horizon_days": 16,
+  "diagnostics": {
+    "fixture_scenario": "sunny_corridor"
+  }
+}
+

@@ -1,0 +1,79 @@
+{
+  "status": "AVAILABLE",
+  "stops": [
+    {
+      "stop_name": "Siliguri Junction Point",
+      "latitude": 26.7271,
+      "longitude": 88.4239,
+      "temperature_celsius": 26.0,
+      "apparent_temperature_celsius": 29.0,
+      "condition": "rainy",
+      "humidity_percent": 88,
+      "precipitation_probability": 75,
+      "precipitation_mm": 18.0,
+      "weather_code": 63,
+      "monsoon_risk": "moderate",
+      "ghat_caution": null,
+      "forecast_time": "2026-11-01T10:00:00+05:30",
+      "is_day": true
+    },
+    {
+      "stop_name": "Rohini Ghat Mountain Pass",
+      "latitude": 26.8500,
+      "longitude": 88.2800,
+      "temperature_celsius": 18.0,
+      "apparent_temperature_celsius": 17.5,
+      "condition": "foggy",
+      "humidity_percent": 96,
+      "precipitation_probability": 85,
+      "precipitation_mm": 32.0,
+      "weather_code": 45,
+      "monsoon_risk": "severe",
+      "ghat_caution": "Dense fog and severe rainfall warning along ghat section; high risk of waterlogging, rockfall, and slick road surfaces.",
+      "forecast_time": "2026-11-01T12:00:00+05:30",
+      "is_day": true
+    },
+    {
+      "stop_name": "Kurseong Tourist Lodge",
+      "latitude": 26.8804,
+      "longitude": 88.2778,
+      "temperature_celsius": 16.5,
+      "apparent_temperature_celsius": 16.0,
+      "condition": "rainy",
+      "humidity_percent": 92,
+      "precipitation_probability": 80,
+      "precipitation_mm": 15.0,
+      "weather_code": 61,
+      "monsoon_risk": "moderate",
+      "ghat_caution": "Wet road surfaces and reduced traction expected along ghat section; exercise caution on hairpin turns.",
+      "forecast_time": "2026-11-01T14:30:00+05:30",
+      "is_day": true
+    },
+    {
+      "stop_name": "Darjeeling Mall Ridge",
+      "latitude": 27.0410,
+      "longitude": 88.2663,
+      "temperature_celsius": 14.0,
+      "apparent_temperature_celsius": 13.0,
+      "condition": "foggy",
+      "humidity_percent": 95,
+      "precipitation_probability": 70,
+      "precipitation_mm": 11.0,
+      "weather_code": 48,
+      "monsoon_risk": "moderate",
+      "ghat_caution": "Dense fog and reduced visibility expected along ghat section; reduce speed and engage fog lamps.",
+      "forecast_time": "2026-11-01T16:00:00+05:30",
+      "is_day": true
+    }
+  ],
+  "overall_caution": "Severe monsoon conditions detected along corridor stops. Potential travel delays and localized waterlogging expected.",
+  "ghat_caution": "Dense fog and severe rainfall warning along ghat section; high risk of waterlogging, rockfall, and slick road surfaces.",
+  "provider": "fixture",
+  "attribution": "Weather data by Open Meteo.com",
+  "is_commercial_licensed": false,
+  "forecast_horizon_days": 16,
+  "diagnostics": {
+    "fixture_scenario": "monsoon_ghat_advisory"
+  }
+}
+
