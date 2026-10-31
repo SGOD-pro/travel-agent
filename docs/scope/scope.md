@@ -221,7 +221,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
 - [ ] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
-   - [x] Slice 3 place candidate registration, spatial corridor validation, and deterministic claim eligibility gate: [2026-10-31-trip-planner-candidate-slice3.md](../reviews/2026-10-31-trip-planner-candidate-slice3.md) (Approve)
+   - [x] Slice 3 place candidate registration, spatial corridor validation, and deterministic claim eligibility gate: [2026-10-31-trip-planner-candidate-slice3.md](../reviews/2026-10-31-trip-planner-candidate-slice3.md) · [2026-11-01-main.md](../reviews/2026-11-01-main.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

@@ -66,6 +66,7 @@ class CandidateHoursStatus(StrEnum):
     VERIFIED_HOURS = "VERIFIED_HOURS"
     HOURS_ASSUMED = "HOURS_ASSUMED"
     UNKNOWN = "UNKNOWN"
+    USER_SUPPLIED_UNVERIFIED = "USER_SUPPLIED_UNVERIFIED"
 
 
 class CandidateCorridorResult(BaseModel):

@@ -230,9 +230,16 @@ class DeterministicEvidenceEligibilityGate:
                 )
             )
             if cand_place_id is not None:
-                claim_stmt = claim_stmt.where(ClaimModel.place_id == cand_place_id)
+                claim_stmt = claim_stmt.where(
+                    (ClaimModel.place_id == cand_place_id)
+                    | (ClaimModel.subject_id == cand_name_norm)
+                    | (ClaimModel.subject_id == candidate.primary_name)
+                )
             else:
-                claim_stmt = claim_stmt.where(ClaimModel.subject_id == cand_name_norm)
+                claim_stmt = claim_stmt.where(
+                    (ClaimModel.subject_id == cand_name_norm)
+                    | (ClaimModel.subject_id == candidate.primary_name)
+                )
 
             if execution_id is not None:
                 claim_stmt = claim_stmt.where(ClaimModel.execution_id == execution_id)

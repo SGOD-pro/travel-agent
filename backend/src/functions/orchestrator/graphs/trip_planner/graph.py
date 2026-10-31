@@ -30,6 +30,7 @@ from config.db import get_session_factory
 from contracts.browser import BrowserTaskPayload, BrowserWaitUntil
 from contracts.candidate import (
     CandidateEligibilityReport,
+    CandidateExistenceStatus,
     RegisteredCandidate,
 )
 from contracts.decision import (
@@ -163,7 +164,10 @@ def discover_candidates_node(state: TripPlanningState) -> dict[str, Any]:
     }
 
 
-async def evaluate_candidates_node(state: TripPlanningState) -> dict[str, Any]:
+async def evaluate_candidates_node(
+    state: TripPlanningState,
+    config: RunnableConfig = _DEFAULT_RUNNABLE_CONFIG,
+) -> dict[str, Any]:
     """Registers candidate proposals, validates corridors, and evaluates deterministic evidence eligibility.
 
     Conforms to spec 0007 AC-1 and AC-3:
@@ -187,10 +191,26 @@ async def evaluate_candidates_node(state: TripPlanningState) -> dict[str, Any]:
             CoordinatePoint(lat=float(d.latitude), lng=float(d.longitude))
         )
 
-    # 2. Extract candidate proposals, distinguishing brief destinations from unverified proposals
+    # 2. Extract candidate proposals: register brief destinations as well as discovered candidates
     brief_dest_names = {d.name.strip().lower() for d in brief.destinations}
+    brief_proposals: list[PlaceProposal] = []
+    for d in brief.destinations:
+        try:
+            brief_proposals.append(
+                PlaceProposal(
+                    name=d.name,
+                    category="destination",
+                    estimated_latitude=float(d.latitude),
+                    estimated_longitude=float(d.longitude),
+                    suggested_stay_minutes=d.stay_days * 180,
+                    address=d.name,
+                )
+            )
+        except Exception as e:
+            logger.debug("Skipping unparseable brief destination proposal %s: %s", d, e)
+
     discovered = state.get("discovered_places", [])
-    proposals: list[PlaceProposal] = []
+    candidate_proposals: list[PlaceProposal] = []
     for p in discovered:
         p_name = p.get("name", "")
         if p_name.strip().lower() in brief_dest_names:
@@ -204,9 +224,11 @@ async def evaluate_candidates_node(state: TripPlanningState) -> dict[str, Any]:
                 suggested_stay_minutes=p.get("stay_minutes", 60),
                 address=p.get("address"),
             )
-            proposals.append(prop)
+            candidate_proposals.append(prop)
         except Exception as e:
             logger.debug("Skipping unparseable candidate proposal %s: %s", p, e)
+
+    proposals = brief_proposals + candidate_proposals
 
     # Resolve execution and owner IDs
     exec_id_raw = state.get("execution_id")
@@ -214,9 +236,26 @@ async def evaluate_candidates_node(state: TripPlanningState) -> dict[str, Any]:
     owner_id_raw = state.get("owner_id")
     owner_uuid = uuid.UUID(str(owner_id_raw)) if owner_id_raw else None
 
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    session_factory = cast(
+        Any,
+        state.get("_session_factory") or configurable.get("session_factory"),
+    )
     db_session = state.get("_db_session")
-    session_factory = state.get("_session_factory")
-    is_offline_fixture = state.get("_offline_fixture_mode", False)
+    is_offline_fixture = bool(
+        state.get("_offline_fixture_mode") or configurable.get("offline_fixture_mode")
+    )
+
+    if not is_offline_fixture and db_session is None and session_factory is None:
+        try:
+            session_factory = get_session_factory()
+        except Exception:
+            session_factory = None
+        if session_factory is None:
+            raise RuntimeError(
+                "Database session factory is required for candidate registration in production. "
+                "Silent in-memory registration fallback is prohibited."
+            )
 
     if not proposals:
         report = CandidateEligibilityReport(
@@ -260,6 +299,8 @@ async def evaluate_candidates_node(state: TripPlanningState) -> dict[str, Any]:
             execution_id=exec_uuid,
             owner_id=owner_uuid,
         )
+        if session is not None:
+            await session.commit()
         gate = DeterministicEvidenceEligibilityGate(session=session)
         elig_report = await gate.evaluate_candidate_eligibility(
             valid_cands,
@@ -276,9 +317,11 @@ async def evaluate_candidates_node(state: TripPlanningState) -> dict[str, Any]:
 
     if db_session is not None:
         valid_cands, elig_report, excluded_corr = await _run_with_session(db_session)
+        await db_session.commit()
     elif session_factory is not None and not is_offline_fixture:
         async with session_factory() as session:
             valid_cands, elig_report, excluded_corr = await _run_with_session(session)
+            await session.commit()
     else:
         valid_cands, elig_report, excluded_corr = await _run_with_session(None)
 
@@ -301,35 +344,105 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
 
     Conforms to spec 0007 AC-3:
     1. Consumes candidate eligibility gate output.
-    2. Explicitly verified brief destinations are always scheduled.
-    3. Eligible stops from the candidate gate (verified existence) are scheduled.
+    2. Applies source-backed existence policy to brief destinations:
+       - If contradicted by evidence, excludes them from solver schedule.
+       - If verified by supporting evidence, schedules with verified status.
+       - If unverified, schedules with explicit USER_SUPPLIED_UNVERIFIED status and assumed hours.
+         Never falsely claims verification.
+    3. Discovered candidate proposals enter solver schedule ONLY when existence is VERIFIED.
+       Unverified discovered proposals remain strictly in editorial_recommendations.
     4. Safe path for missing gate output: if gate output is missing, unverified proposals
        are safely excluded from the solver schedule and preserved in editorial recommendations.
     5. Verified or assumed opening windows are passed to the solver and preserved with accurate labeling.
     """
     brief = TripBrief.model_validate(state["brief"])
-    eligible_stops_data = state.get("eligible_stops")
+    brief_names = {d.name.strip().lower() for d in brief.destinations}
 
-    # 1. Always schedule explicitly verified brief destinations
-    places: list[dict[str, Any]] = [
-        {
-            "name": d.name,
-            "lat": d.latitude,
-            "lng": d.longitude,
-            "confidence": d.confidence,
-            "stay_minutes": d.stay_days * 180,  # 3 hours per stay day
-            "is_hours_assumed": False,
-            "hours_status": "BRIEF_DESTINATION",
-            "window_start": None,
-            "window_end": None,
-        }
-        for d in brief.destinations
-    ]
+    excluded_candidates = state.get("excluded_candidates", [])
+    excluded_names = {
+        str(
+            c.get("primary_name")
+            if isinstance(c, dict)
+            else getattr(c, "primary_name", "") or ""
+        ).strip().lower()
+        for c in excluded_candidates
+        if c is not None
+    }
+
+    eligible_stops_data = state.get("eligible_stops")
+    eligible_by_name: dict[str, dict[str, Any]] = {}
+    if eligible_stops_data is not None:
+        for s in eligible_stops_data:
+            s_name = str(
+                s.get("primary_name")
+                if isinstance(s, dict)
+                else getattr(s, "primary_name", "") or ""
+            ).strip().lower()
+            if s_name:
+                eligible_by_name[s_name] = s if isinstance(s, dict) else s.model_dump(mode="json")
+
+    places: list[dict[str, Any]] = []
+
+    # 1. Evaluate brief destinations against evidence
+    for d in brief.destinations:
+        d_name_norm = d.name.strip().lower()
+        if d_name_norm in excluded_names:
+            logger.warning(
+                "Brief destination %s contradicted by evidence; excluded from solver schedule",
+                d.name,
+            )
+            continue
+
+        if d_name_norm in eligible_by_name:
+            verified_stop = eligible_by_name[d_name_norm]
+            places.append(
+                {
+                    "name": d.name,
+                    "lat": float(d.latitude),
+                    "lng": float(d.longitude),
+                    "confidence": float(d.confidence),
+                    "stay_minutes": d.stay_days * 180,
+                    "is_hours_assumed": verified_stop.get("is_hours_assumed", False),
+                    "hours_status": verified_stop.get("hours_status", "VERIFIED_HOURS"),
+                    "window_start": verified_stop.get("window_start"),
+                    "window_end": verified_stop.get("window_end"),
+                }
+            )
+        else:
+            # Unverified brief destination: explicit user-supplied destination status
+            # Never falsely claims verification; sets is_hours_assumed=True
+            places.append(
+                {
+                    "name": d.name,
+                    "lat": float(d.latitude),
+                    "lng": float(d.longitude),
+                    "confidence": float(d.confidence),
+                    "stay_minutes": d.stay_days * 180,
+                    "is_hours_assumed": True,
+                    "hours_status": "USER_SUPPLIED_UNVERIFIED",
+                    "window_start": None,
+                    "window_end": None,
+                }
+            )
 
     editorial_recs = list(state.get("editorial_recommendations", []))
 
+    # 2. Add verified candidate stops (discovered candidates with verified existence)
     if eligible_stops_data is not None:
         for s in eligible_stops_data:
+            s_name = str(
+                s.get("primary_name")
+                if isinstance(s, dict)
+                else getattr(s, "primary_name", "") or ""
+            ).strip().lower()
+            if s_name in brief_names:
+                continue
+            exist_st = s.get("existence_status")
+            if exist_st and exist_st not in (
+                CandidateExistenceStatus.VERIFIED,
+                CandidateExistenceStatus.VERIFIED.value,
+            ):
+                continue
             pt = s.get("point", {})
             raw_lat = pt.get("lat") if isinstance(pt, dict) else getattr(pt, "lat", 0.0)
             raw_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", 0.0)
@@ -353,7 +466,6 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
         # Discovered places are unverified proposals. Do NOT schedule them!
         # Relegate any unverified proposals to editorial_recommendations with diagnostic.
         discovered = state.get("discovered_places", [])
-        brief_names = {d.name.strip().lower() for d in brief.destinations}
         for p in discovered:
             p_name = p.get("name", "")
             if p_name.strip().lower() not in brief_names:
@@ -936,10 +1048,7 @@ async def route_evidence_decision_node(
     # 3. Check evidence prerequisites via fail-closed authoritative validation
     db_session = state.get("_db_session")
     is_offline_fixture = bool(
-        state.get("_offline_fixture_mode")
-        or configurable.get("offline_fixture_mode")
-        or isinstance(adapter, FixtureLayaDecisionAdapter)
-        or getattr(adapter, "is_fixture", False)
+        state.get("_offline_fixture_mode") or configurable.get("offline_fixture_mode")
     )
     db_queried = False
     db_lookup_failed = False
@@ -1184,7 +1293,7 @@ async def route_evidence_decision_node(
         if reused is not None:
             envelope = reused
         else:
-            adapter = state.get("_laya_adapter")
+            adapter = state.get("_laya_adapter") or configurable.get("laya_adapter")
             owns_adapter = False
             if adapter is None:
                 settings = get_settings()

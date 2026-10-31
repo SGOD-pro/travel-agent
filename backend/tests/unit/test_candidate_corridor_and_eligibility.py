@@ -1160,3 +1160,96 @@ class TestSlice3CorrectionRegressions:
         scheduled_names = [s["name"] for s in schedule["stops"]]
         assert "Digha" in scheduled_names
         assert "Digha Marine Station" in scheduled_names
+
+    @pytest.mark.asyncio
+    async def test_evaluate_candidates_node_rejects_silent_in_memory_fallback_in_production(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Verifies that evaluate_candidates_node raises RuntimeError rather than falling back silently in memory."""
+        from functions.orchestrator.graphs.trip_planner.graph import evaluate_candidates_node
+
+        def _mock_no_factory() -> None:
+            raise RuntimeError("Database unconfigured in test environment")
+
+        monkeypatch.setattr(
+            "functions.orchestrator.graphs.trip_planner.graph.get_session_factory",
+            _mock_no_factory,
+        )
+
+        state: TripPlanningState = {
+            "execution_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "_offline_fixture_mode": False,
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 1,
+                        "confidence": 1.0,
+                    }
+                ],
+                "start_date": "2026-11-01",
+                "end_date": "2026-11-02",
+                "travelers": 2,
+                "rooms": 1,
+                "budget": {"amount": "15000.00", "currency": "INR"},
+            },
+            "discovered_places": [
+                {
+                    "name": "Production Landmark",
+                    "category": "museum",
+                    "lat": 21.6300,
+                    "lng": 87.5100,
+                    "stay_minutes": 60,
+                }
+            ],
+        }
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await evaluate_candidates_node(state)
+
+        assert "silent in-memory registration fallback is prohibited" in str(exc_info.value).lower()
+
+    def test_solve_schedule_node_labels_unverified_brief_destination_honestly(self) -> None:
+        """Verifies that brief destinations without source-backed evidence are honestly labeled USER_SUPPLIED_UNVERIFIED."""
+        from functions.orchestrator.graphs.trip_planner.graph import solve_schedule_node
+
+        state: TripPlanningState = {
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Unverified Digha Destination",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 1,
+                        "confidence": 1.0,
+                    }
+                ],
+                "start_date": "2026-11-01",
+                "end_date": "2026-11-02",
+                "travelers": 2,
+                "rooms": 1,
+                "budget": {"amount": "15000.00", "currency": "INR"},
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "excluded_candidates": [],
+        }
+
+        result = solve_schedule_node(state)
+        schedule = result["optimized_schedule"]
+        stops_by_name = {s["name"]: s for s in schedule["stops"]}
+
+        assert "Unverified Digha Destination" in stops_by_name
+        dest_stop = stops_by_name["Unverified Digha Destination"]
+        assert dest_stop["hours_status"] == "USER_SUPPLIED_UNVERIFIED"
+        assert dest_stop["is_hours_assumed"] is True
