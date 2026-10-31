@@ -16,7 +16,7 @@ from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from contracts.candidate import (
     CandidateExistenceStatus,
@@ -37,9 +37,16 @@ from functions.orchestrator.evidence.schemas import (
     VerificationStatus,
 )
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
-from functions.orchestrator.execution.models import ExecutionModel
-from functions.orchestrator.execution.runner import ExecutionStartEvent, GraphRunnerService
-from functions.orchestrator.graphs.trip_planner.graph import compile_trip_planning_workflow
+from functions.orchestrator.execution.models import ExecutionModel, TaskModel
+from functions.orchestrator.execution.runner import (
+    ExecutionResumeEvent,
+    ExecutionStartEvent,
+    GraphRunnerService,
+)
+from functions.orchestrator.graphs.trip_planner.graph import (
+    compile_trip_planning_workflow,
+    evaluate_candidates_node,
+)
 from functions.orchestrator.places.candidate_service import (
     CandidateRegistrationService,
 )
@@ -618,6 +625,75 @@ async def test_candidate_registration_same_named_places_far_apart_remain_distinc
         rows_after_replay = (await session.execute(stmt)).scalars().all()
         assert len(rows_after_replay) == 2
 
+        # 4. Link verified claim and observation explicitly to Place A
+        now = datetime.now(UTC)
+        obs_kolkata = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            source_url="https://wbtourism.gov.in/kolkata_shiva",
+            canonical_url=f"https://wbtourism.gov.in/{shared_name.lower().replace(' ', '_')}",
+            publisher="wbtourism.gov.in",
+            content_hash=f"hash_{uuid.uuid4().hex}",
+            retrieved_at=now,
+            published_at=now - timedelta(days=5),
+            excerpt_text=f"The ancient {shared_name} in Kolkata is an active pilgrimage temple.",
+            excerpt_locator="article p",
+            extraction_method="SCRAPLING_HTTP",
+            artifact_ref={
+                "status": "SUCCESS",
+                "gps": {"lat": 22.5700, "lng": 88.3600},
+            },
+            created_at=now,
+        )
+        session.add(obs_kolkata)
+        await session.flush()
+
+        claim_kolkata = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            place_id=pass_kolkata[0].place_id,
+            subject_id=shared_name,
+            category=ClaimCategory.ATTRACTION.value,
+            typed_value={"verified_name": shared_name, "locality": "Kolkata"},
+            verification=VerificationStatus.VERIFIED.value,
+            availability="AVAILABLE",
+            freshness=FreshnessStatus.FRESH.value,
+            valid_from=now - timedelta(days=30),
+            valid_until=now + timedelta(days=60),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(claim_kolkata)
+        await session.flush()
+
+        evidence_link = ClaimEvidenceModel(
+            claim_id=claim_kolkata.id,
+            observation_id=obs_kolkata.id,
+            support_type="SUPPORTS",
+            locator="article p",
+            created_at=now,
+        )
+        session.add(evidence_link)
+        await session.commit()
+
+        # 5. Evaluate evidence eligibility on PostgreSQL
+        gate = DeterministicEvidenceEligibilityGate(session=session)
+        report = await gate.evaluate_candidate_eligibility(
+            [pass_kolkata[0], pass_digha[0]],
+            execution_id=exec_id,
+            owner_id=owner_id,
+        )
+
+        # Place A (Kolkata) has verified evidence linked to its place_id -> eligible stop
+        eligible_place_ids = {s.place_id for s in report.eligible_stops}
+        assert pass_kolkata[0].place_id in eligible_place_ids
+
+        # Place B (Digha, 140km away) has identical name, but evidence is linked only to Place A
+        # Place B MUST NOT be verified by Place A's evidence
+        assert pass_digha[0].place_id not in eligible_place_ids
+        rec_place_ids = {r.place_id for r in report.editorial_recommendations}
+        assert pass_digha[0].place_id in rec_place_ids
+
 
 @pytest.mark.asyncio
 async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
@@ -627,10 +703,12 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
 
     Proves:
     1. Runner provided session factory is used by evaluate_candidates_node.
-    2. Candidate records persist in PostgreSQL after session closure.
-    3. Linked verified evidence permits an eligible stop into the solver schedule.
-    4. Unverified brief and discovered candidates cannot bypass the policy.
-    5. Replay and resume does not duplicate registrations.
+    2. Genuine interrupt and resume lifecycle through LangGraph and PostgreSQL checkpointer.
+    3. Candidate records persist in PostgreSQL after session closure.
+    4. Linked verified evidence permits eligible stops into the solver schedule.
+    5. Unverified candidate proposals cannot enter the solver schedule.
+    6. Replay and resume does not duplicate registrations.
+    7. Owner authorization and cancellation barriers protect persistent writes.
     """
     now = datetime.now(UTC)
     owner_id = uuid.uuid4()
@@ -641,7 +719,7 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
     verified_cand_name = f"Digha Science Center {uuid.uuid4().hex[:6]}"
     unverified_cand_name = f"Unverified Beach Shack {uuid.uuid4().hex[:6]}"
 
-    # Phase 1: Seed parent trip, execution, verified observation, and claim in PostgreSQL
+    # Phase 1: Seed parent trip and execution record in PostgreSQL
     async with session_factory() as setup_session:
         trip = TripModel(
             id=trip_id,
@@ -665,57 +743,9 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
             updated_at=now,
         )
         setup_session.add(execution)
-        await setup_session.flush()
-
-        obs = SourceObservationModel(
-            id=uuid.uuid4(),
-            execution_id=exec_id,
-            source_url="https://wbtourism.gov.in/science_center",
-            canonical_url=f"https://wbtourism.gov.in/{brief_dest_name.lower().replace(' ', '')}",
-            publisher="wbtourism.gov.in",
-            content_hash=f"hash_{uuid.uuid4().hex}",
-            retrieved_at=now,
-            published_at=now - timedelta(days=5),
-            excerpt_text=f"The {verified_cand_name} is an active science center and planetarium near {brief_dest_name}.",
-            excerpt_locator="article p",
-            extraction_method="SCRAPLING_HTTP",
-            artifact_ref={
-                "status": "SUCCESS",
-                "gps": {"lat": 21.6300, "lng": 87.5100},
-            },
-            created_at=now,
-        )
-        setup_session.add(obs)
-        await setup_session.flush()
-
-        claim = ClaimModel(
-            id=uuid.uuid4(),
-            execution_id=exec_id,
-            subject_id=verified_cand_name,
-            category=ClaimCategory.ATTRACTION.value,
-            typed_value={"verified_name": verified_cand_name},
-            verification=VerificationStatus.VERIFIED.value,
-            availability="AVAILABLE",
-            freshness=FreshnessStatus.FRESH.value,
-            valid_from=now - timedelta(days=30),
-            valid_until=now + timedelta(days=60),
-            created_at=now,
-            updated_at=now,
-        )
-        setup_session.add(claim)
-        await setup_session.flush()
-
-        evidence_link = ClaimEvidenceModel(
-            claim_id=claim.id,
-            observation_id=obs.id,
-            support_type="SUPPORTS",
-            locator="article p",
-            created_at=now,
-        )
-        setup_session.add(evidence_link)
         await setup_session.commit()
 
-    # Phase 2: Run through GraphRunnerService and the compiled graph
+    # Phase 2: Run through GraphRunnerService with genuine interrupt at AWAIT_EVIDENCE_RESULTS
     checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
     compiled_graph = compile_trip_planning_workflow(checkpointer=checkpointer)
     runner = GraphRunnerService(
@@ -723,15 +753,15 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
         default_graph=compiled_graph,
     )
 
-    event = ExecutionStartEvent(
+    start_event = ExecutionStartEvent(
         execution_id=exec_id,
         workflow="PLANNING",
         context_version=1,
         payload={
             "owner_id": str(owner_id),
             "trip_id": str(trip_id),
-            "static_search_completed": True,
-            "remaining_search_budget": 0,
+            "static_search_completed": False,
+            "remaining_search_budget": 1,
             "brief": {
                 "origin_name": "Kolkata",
                 "origin_lat": 22.5726,
@@ -770,17 +800,136 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
         },
     )
 
-    result = await runner.handle_execution_start(event=event)
-    assert result.status == "SUCCEEDED"
+    start_result = await runner.handle_execution_start(event=start_event)
+    # Proves genuine graph interrupt before AWAIT_EVIDENCE_RESULTS
+    assert start_result.status == "WAITING_TASKS"
+    assert start_result.graph_advanced is True
 
-    # Phase 3: Inspect persisted state in a fresh database session
+    # Phase 3: Seed verified observations and claims in PostgreSQL during WAITING_TASKS
+    async with session_factory() as evidence_session:
+        # Observation and claim for verified brief destination
+        obs_brief = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            source_url="https://wbtourism.gov.in/digha_beach",
+            canonical_url=f"https://wbtourism.gov.in/{brief_dest_name.lower().replace(' ', '_')}",
+            publisher="wbtourism.gov.in",
+            content_hash=f"hash_{uuid.uuid4().hex}",
+            retrieved_at=now,
+            published_at=now - timedelta(days=5),
+            excerpt_text=f"The {brief_dest_name} is the primary coastal beach destination in Digha.",
+            excerpt_locator="article p",
+            extraction_method="SCRAPLING_HTTP",
+            artifact_ref={
+                "status": "SUCCESS",
+                "gps": {"lat": 21.6266, "lng": 87.5074},
+            },
+            created_at=now,
+        )
+        evidence_session.add(obs_brief)
+        await evidence_session.flush()
+
+        claim_brief = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            subject_id=brief_dest_name,
+            category=ClaimCategory.ATTRACTION.value,
+            typed_value={"verified_name": brief_dest_name},
+            verification=VerificationStatus.VERIFIED.value,
+            availability="AVAILABLE",
+            freshness=FreshnessStatus.FRESH.value,
+            valid_from=now - timedelta(days=30),
+            valid_until=now + timedelta(days=60),
+            created_at=now,
+            updated_at=now,
+        )
+        evidence_session.add(claim_brief)
+        await evidence_session.flush()
+
+        link_brief = ClaimEvidenceModel(
+            claim_id=claim_brief.id,
+            observation_id=obs_brief.id,
+            support_type="SUPPORTS",
+            locator="article p",
+            created_at=now,
+        )
+        evidence_session.add(link_brief)
+
+        # Observation and claim for verified discovered candidate
+        obs_cand = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            source_url="https://wbtourism.gov.in/science_center",
+            canonical_url=f"https://wbtourism.gov.in/{verified_cand_name.lower().replace(' ', '_')}",
+            publisher="wbtourism.gov.in",
+            content_hash=f"hash_{uuid.uuid4().hex}",
+            retrieved_at=now,
+            published_at=now - timedelta(days=5),
+            excerpt_text=f"The {verified_cand_name} is an active science center and planetarium near {brief_dest_name}.",
+            excerpt_locator="article p",
+            extraction_method="SCRAPLING_HTTP",
+            artifact_ref={
+                "status": "SUCCESS",
+                "gps": {"lat": 21.6300, "lng": 87.5100},
+            },
+            created_at=now,
+        )
+        evidence_session.add(obs_cand)
+        await evidence_session.flush()
+
+        claim_cand = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            subject_id=verified_cand_name,
+            category=ClaimCategory.ATTRACTION.value,
+            typed_value={"verified_name": verified_cand_name},
+            verification=VerificationStatus.VERIFIED.value,
+            availability="AVAILABLE",
+            freshness=FreshnessStatus.FRESH.value,
+            valid_from=now - timedelta(days=30),
+            valid_until=now + timedelta(days=60),
+            created_at=now,
+            updated_at=now,
+        )
+        evidence_session.add(claim_cand)
+        await evidence_session.flush()
+
+        link_cand = ClaimEvidenceModel(
+            claim_id=claim_cand.id,
+            observation_id=obs_cand.id,
+            support_type="SUPPORTS",
+            locator="article p",
+            created_at=now,
+        )
+        evidence_session.add(link_cand)
+
+        # Complete dispatched evidence collection tasks so runner can resume
+        await evidence_session.execute(
+            update(TaskModel)
+            .where(TaskModel.execution_id == exec_id)
+            .values(status="COMPLETED", updated_at=now)
+        )
+        await evidence_session.commit()
+
+    # Phase 4: Resume graph execution from persisted checkpoint in PostgreSQL
+    resume_event = ExecutionResumeEvent(
+        execution_id=exec_id,
+        context_version=1,
+        action="resume_graph",
+    )
+    resume_result = await runner.handle_execution_resume(event=resume_event)
+    assert resume_result.status == "SUCCEEDED"
+
+    # Phase 5: Inspect persisted state in a fresh database session
     async with session_factory() as verify_session:
         stmt = select(CanonicalPlaceModel).where(
-            CanonicalPlaceModel.primary_name.in_([
-                brief_dest_name,
-                verified_cand_name,
-                unverified_cand_name,
-            ])
+            CanonicalPlaceModel.primary_name.in_(
+                [
+                    brief_dest_name,
+                    verified_cand_name,
+                    unverified_cand_name,
+                ]
+            )
         )
         persisted_places = (await verify_session.execute(stmt)).scalars().all()
         persisted_by_name = {p.primary_name: p for p in persisted_places}
@@ -796,7 +945,7 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
         assert unverified_cand_name in persisted_by_name
         assert persisted_by_name[unverified_cand_name].is_candidate is True
 
-    # Phase 4: Verify graph schedule output
+    # Phase 6: Verify graph schedule output
     graph_state = await compiled_graph.aget_state(
         config={"configurable": {"thread_id": str(exec_id)}}
     )
@@ -805,68 +954,71 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
     stops = schedule["stops"]
     stops_by_name = {s["name"]: s for s in stops}
 
-    # Linked verified evidence permits an eligible stop into the schedule
+    # Verified brief destination is scheduled with assumed daytime window
+    assert brief_dest_name in stops_by_name
+    assert stops_by_name[brief_dest_name]["is_hours_assumed"] is True
+    assert stops_by_name[brief_dest_name]["hours_status"] == "HOURS_ASSUMED"
+    assert stops_by_name[brief_dest_name]["window_start"] is not None
+    assert stops_by_name[brief_dest_name]["window_end"] is not None
+
+    # Linked verified evidence permits eligible discovered stop into the schedule
     assert verified_cand_name in stops_by_name
     assert stops_by_name[verified_cand_name]["is_hours_assumed"] is True
     assert stops_by_name[verified_cand_name]["hours_status"] == "HOURS_ASSUMED"
 
     # Unverified discovered candidate cannot enter the solver schedule
     assert unverified_cand_name not in stops_by_name
+
     rec_names = [
         (r.get("primary_name") if isinstance(r, dict) else getattr(r, "primary_name", ""))
         for r in state_vals.get("editorial_recommendations", [])
     ]
     assert unverified_cand_name in rec_names
 
-    # Unverified brief destination cannot falsely claim verification
-    assert brief_dest_name in stops_by_name
-    assert stops_by_name[brief_dest_name]["hours_status"] == "USER_SUPPLIED_UNVERIFIED"
-    assert stops_by_name[brief_dest_name]["is_hours_assumed"] is True
+    # Phase 7: Replay / Retry through handle_execution_resume does not duplicate records
+    replay_result = await runner.handle_execution_resume(event=resume_event)
+    assert replay_result.status == "SUCCEEDED"
 
-    # Phase 5: Replay registration in a fresh session does not duplicate canonical place records
     async with session_factory() as replay_session:
-        reg_service = CandidateRegistrationService(session=replay_session)
-        proposals = [
-            PlaceProposal(
-                name=brief_dest_name,
-                category="destination",
-                estimated_latitude=21.6266,
-                estimated_longitude=87.5074,
-            ),
-            PlaceProposal(
-                name=verified_cand_name,
-                category="attraction",
-                estimated_latitude=21.6300,
-                estimated_longitude=87.5100,
-            ),
-            PlaceProposal(
-                name=unverified_cand_name,
-                category="restaurant",
-                estimated_latitude=21.6400,
-                estimated_longitude=87.5200,
-            ),
-        ]
-        corridor = [
-            CoordinatePoint(lat=22.5726, lng=88.3639),
-            CoordinatePoint(lat=21.6266, lng=87.5074),
-        ]
-        replayed_cands, _ = await reg_service.register_candidate_proposals(
-            proposals, corridor, execution_id=exec_id, owner_id=owner_id
-        )
-        await replay_session.commit()
-
-        assert len(replayed_cands) == 3
-        replayed_by_name = {c.primary_name: c for c in replayed_cands}
-        assert replayed_by_name[brief_dest_name].place_id == persisted_by_name[brief_dest_name].id
-        assert replayed_by_name[verified_cand_name].place_id == persisted_by_name[verified_cand_name].id
-        assert replayed_by_name[unverified_cand_name].place_id == persisted_by_name[unverified_cand_name].id
-
         stmt = select(CanonicalPlaceModel).where(
-            CanonicalPlaceModel.primary_name.in_([
-                brief_dest_name,
-                verified_cand_name,
-                unverified_cand_name,
-            ])
+            CanonicalPlaceModel.primary_name.in_(
+                [
+                    brief_dest_name,
+                    verified_cand_name,
+                    unverified_cand_name,
+                ]
+            )
         )
         all_rows = (await replay_session.execute(stmt)).scalars().all()
+        # Exactly 3 canonical places exist: no duplicate rows created
         assert len(all_rows) == 3
+
+    # Phase 8: Caller supplying another owner real execution ID is rejected before persistent writes
+    other_owner_id = uuid.uuid4()
+    with pytest.raises(PermissionError):
+        await evaluate_candidates_node(
+            {
+                "brief": {
+                    "origin_name": "Kolkata",
+                    "origin_lat": 22.5726,
+                    "origin_lng": 88.3639,
+                    "destinations": [
+                        {
+                            "name": brief_dest_name,
+                            "latitude": 21.6266,
+                            "longitude": 87.5074,
+                            "stay_days": 1,
+                            "confidence": 1.0,
+                        }
+                    ],
+                    "start_date": "2026-11-01",
+                    "end_date": "2026-11-02",
+                    "travelers": 2,
+                    "rooms": 1,
+                    "budget": {"amount": "15000.00", "currency": "INR"},
+                },
+                "execution_id": str(exec_id),
+                "owner_id": str(other_owner_id),
+            },
+            config={"configurable": {"session_factory": session_factory}},
+        )

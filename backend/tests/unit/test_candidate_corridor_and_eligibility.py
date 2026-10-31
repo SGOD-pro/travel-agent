@@ -268,7 +268,10 @@ class TestDeterministicEvidenceEligibilityGate:
                 "verification": VerificationStatus.VERIFIED.value,
                 "freshness": FreshnessStatus.FRESH.value,
                 "evidence_links": [
-                    {"support_type": EvidenceSupportType.SUPPORTS.value, "observation": fixture_obs[0]}
+                    {
+                        "support_type": EvidenceSupportType.SUPPORTS.value,
+                        "observation": fixture_obs[0],
+                    }
                 ],
             },
             {
@@ -341,7 +344,10 @@ class TestDeterministicEvidenceEligibilityGate:
                 "verification": VerificationStatus.VERIFIED.value,
                 "freshness": FreshnessStatus.FRESH.value,
                 "evidence_links": [
-                    {"support_type": EvidenceSupportType.SUPPORTS.value, "observation": fixture_obs[0]}
+                    {
+                        "support_type": EvidenceSupportType.SUPPORTS.value,
+                        "observation": fixture_obs[0],
+                    }
                 ],
             }
         ]
@@ -469,7 +475,10 @@ class TestDeterministicEvidenceEligibilityGate:
                 "verification": VerificationStatus.VERIFIED.value,
                 "freshness": FreshnessStatus.FRESH.value,
                 "evidence_links": [
-                    {"support_type": EvidenceSupportType.SUPPORTS.value, "observation": fixture_obs[0]}
+                    {
+                        "support_type": EvidenceSupportType.SUPPORTS.value,
+                        "observation": fixture_obs[0],
+                    }
                 ],
             },
             {
@@ -984,13 +993,14 @@ class TestSlice3CorrectionRegressions:
         schedule = result["optimized_schedule"]
         scheduled_names = [s["name"] for s in schedule["stops"]]
 
-        # Explicitly verified brief destination is scheduled
-        assert "Digha" in scheduled_names
-        # Safe path: unverified proposal must NOT be scheduled!
+        # Reconciled 0007 policy: unverified brief destination must NOT enter solver schedule
+        assert "Digha" not in scheduled_names
+        # Safe path: unverified proposal must NOT be scheduled
         assert "Unverified Proposal Beach Shack" not in scheduled_names
-        # Unverified proposal is preserved in editorial recommendations
+        # Both unverified brief destination and proposal are preserved in editorial recommendations
         recs = result.get("editorial_recommendations", [])
         assert any(r.get("primary_name") == "Unverified Proposal Beach Shack" for r in recs)
+        assert any(r.get("primary_name") == "Digha" for r in recs)
 
     def test_finding_5_scheduled_stops_preserve_windows_and_labels(self) -> None:
         state: TripPlanningState = {
@@ -1113,7 +1123,10 @@ class TestSlice3CorrectionRegressions:
                             "excerpt_text": "Digha is a coastal resort town in West Bengal with beaches and attractions.",
                             "support_type": "SUPPORTS",
                             "extraction_method": "SCRAPLING_HTTP",
-                            "artifact_ref": {"status": "SUCCESS", "gps": {"lat": 21.6266, "lng": 87.5074}},
+                            "artifact_ref": {
+                                "status": "SUCCESS",
+                                "gps": {"lat": 21.6266, "lng": 87.5074},
+                            },
                         },
                         {
                             "execution_id": str(exec_id),
@@ -1123,10 +1136,33 @@ class TestSlice3CorrectionRegressions:
                             "excerpt_text": "Digha Marine Station is a research facility and aquarium in Digha.",
                             "support_type": "SUPPORTS",
                             "extraction_method": "SCRAPLING_HTTP",
-                            "artifact_ref": {"status": "SUCCESS", "gps": {"lat": 21.6300, "lng": 87.5100}},
+                            "artifact_ref": {
+                                "status": "SUCCESS",
+                                "gps": {"lat": 21.6300, "lng": 87.5100},
+                            },
                         },
                     ],
                     "claims": [
+                        {
+                            "execution_id": str(exec_id),
+                            "owner_id": str(owner_id),
+                            "subject_id": "Digha",
+                            "category": "ATTRACTION",
+                            "verification": "VERIFIED",
+                            "freshness": "FRESH",
+                            "evidence_links": [
+                                {
+                                    "support_type": "SUPPORTS",
+                                    "observation": {
+                                        "extraction_method": "SCRAPLING_HTTP",
+                                        "artifact_ref": {
+                                            "status": "SUCCESS",
+                                            "gps": {"lat": 21.6266, "lng": 87.5074},
+                                        },
+                                    },
+                                }
+                            ],
+                        },
                         {
                             "execution_id": str(exec_id),
                             "owner_id": str(owner_id),
@@ -1139,11 +1175,14 @@ class TestSlice3CorrectionRegressions:
                                     "support_type": "SUPPORTS",
                                     "observation": {
                                         "extraction_method": "SCRAPLING_HTTP",
-                                        "artifact_ref": {"status": "SUCCESS"},
+                                        "artifact_ref": {
+                                            "status": "SUCCESS",
+                                            "gps": {"lat": 21.6300, "lng": 87.5100},
+                                        },
                                     },
                                 }
                             ],
-                        }
+                        },
                     ],
                     "search_completed": True,
                 }
@@ -1249,7 +1288,14 @@ class TestSlice3CorrectionRegressions:
         schedule = result["optimized_schedule"]
         stops_by_name = {s["name"]: s for s in schedule["stops"]}
 
-        assert "Unverified Digha Destination" in stops_by_name
-        dest_stop = stops_by_name["Unverified Digha Destination"]
-        assert dest_stop["hours_status"] == "USER_SUPPLIED_UNVERIFIED"
-        assert dest_stop["is_hours_assumed"] is True
+        # Under spec 0007 AC-3, unverified candidate places never enter the route solver
+        assert "Unverified Digha Destination" not in stops_by_name
+
+        # Retained in editorial recommendations with honest user supplied labeling
+        recs = result["editorial_recommendations"]
+        recs_by_name = {r["primary_name"]: r for r in recs}
+        assert "Unverified Digha Destination" in recs_by_name
+        dest_rec = recs_by_name["Unverified Digha Destination"]
+        assert dest_rec["hours_status"] == CandidateHoursStatus.USER_SUPPLIED_UNVERIFIED.value
+        assert dest_rec["is_hours_assumed"] is True
+        assert dest_rec["existence_status"] == CandidateExistenceStatus.UNVERIFIED.value

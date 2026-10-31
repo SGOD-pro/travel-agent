@@ -36,6 +36,7 @@ from functions.orchestrator.evidence.schemas import (
     FreshnessStatus,
     VerificationStatus,
 )
+from functions.orchestrator.places.corridor import haversine_distance_km
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +205,77 @@ class DeterministicEvidenceEligibilityGate:
             summary=summary,
         )
 
+    @staticmethod
+    def _extract_coordinates_from_data(data: Any) -> tuple[float, float] | None:
+        """Extracts latitude and longitude from dictionary or object if present."""
+        if not data or not isinstance(data, dict):
+            return None
+        lat = data.get("lat") if data.get("lat") is not None else data.get("latitude")
+        lng = (
+            data.get("lng")
+            if data.get("lng") is not None
+            else (data.get("longitude") if data.get("longitude") is not None else data.get("lon"))
+        )
+        if lat is not None and lng is not None:
+            try:
+                return float(lat), float(lng)
+            except (ValueError, TypeError):
+                pass
+        coords = data.get("coordinates")
+        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            try:
+                return float(coords[1]), float(coords[0])
+            except (ValueError, TypeError):
+                pass
+        gps = data.get("gps")
+        if isinstance(gps, dict):
+            return DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(gps)
+        return None
+
+    def _claim_matches_candidate_location(
+        self,
+        claim: Any,
+        candidate: RegisteredCandidate,
+    ) -> bool:
+        """Determines whether a name-only claim has an established identity/location match to candidate."""
+        geo = getattr(claim, "geographic_scope", None) or (
+            claim.get("geographic_scope") if isinstance(claim, dict) else None
+        )
+        geo_coords = self._extract_coordinates_from_data(geo)
+        typed_val = getattr(claim, "typed_value", None) or (
+            claim.get("typed_value") if isinstance(claim, dict) else None
+        )
+        typed_coords = self._extract_coordinates_from_data(typed_val)
+        target_coords = geo_coords or typed_coords
+
+        if target_coords is None:
+            links = getattr(claim, "evidence_links", None) or (
+                claim.get("evidence_links") if isinstance(claim, dict) else None
+            )
+            for link in links or []:
+                obs = getattr(link, "observation", None) or (
+                    link.get("observation") if isinstance(link, dict) else None
+                )
+                if obs is not None:
+                    art_ref = getattr(obs, "artifact_ref", None) or (
+                        obs.get("artifact_ref") if isinstance(obs, dict) else None
+                    )
+                    obs_coords = self._extract_coordinates_from_data(art_ref)
+                    if obs_coords is not None:
+                        target_coords = obs_coords
+                        break
+
+        if target_coords is not None and candidate.point is not None:
+            dist = haversine_distance_km(
+                candidate.point.lat,
+                candidate.point.lng,
+                target_coords[0],
+                target_coords[1],
+            )
+            return dist <= 1.0
+
+        return target_coords is None
+
     async def _retrieve_evidence_for_candidate(
         self,
         candidate: RegisteredCandidate,
@@ -221,33 +293,46 @@ class DeterministicEvidenceEligibilityGate:
 
         # Database retrieval with execution isolation and explicit claim-evidence links
         if self._session is not None:
-            claim_stmt = (
-                select(ClaimModel)
-                .options(
-                    selectinload(ClaimModel.evidence_links).selectinload(
-                        ClaimEvidenceModel.observation
-                    )
-                )
+            claim_stmt = select(ClaimModel).options(
+                selectinload(ClaimModel.evidence_links).selectinload(ClaimEvidenceModel.observation)
             )
             if cand_place_id is not None:
                 claim_stmt = claim_stmt.where(
                     (ClaimModel.place_id == cand_place_id)
-                    | (ClaimModel.subject_id == cand_name_norm)
-                    | (ClaimModel.subject_id == candidate.primary_name)
+                    | (
+                        ClaimModel.place_id.is_(None)
+                        & (
+                            (ClaimModel.subject_id == cand_name_norm)
+                            | (ClaimModel.subject_id == candidate.primary_name)
+                        )
+                    )
                 )
             else:
                 claim_stmt = claim_stmt.where(
-                    (ClaimModel.subject_id == cand_name_norm)
-                    | (ClaimModel.subject_id == candidate.primary_name)
+                    ClaimModel.place_id.is_(None)
+                    & (
+                        (ClaimModel.subject_id == cand_name_norm)
+                        | (ClaimModel.subject_id == candidate.primary_name)
+                    )
                 )
 
             if execution_id is not None:
                 claim_stmt = claim_stmt.where(ClaimModel.execution_id == execution_id)
 
             claim_exec = await self._session.execute(claim_stmt)
-            claims_results = list(claim_exec.scalars().all())
+            raw_claims = list(claim_exec.scalars().all())
 
-            # Only extract observations explicitly linked to claims for this place
+            for c in raw_claims:
+                if c.place_id is not None:
+                    # Place ID is explicitly set: must match this candidate's place ID
+                    if cand_place_id is not None and c.place_id == cand_place_id:
+                        claims_results.append(c)
+                else:
+                    # Name-only claim (place_id is None): require subject match AND established location match
+                    if self._claim_matches_candidate_location(c, candidate):
+                        claims_results.append(c)
+
+            # Only extract observations explicitly linked to claims for this candidate
             for c in claims_results:
                 for link in getattr(c, "evidence_links", []) or []:
                     if link.observation is not None and link.observation not in obs_results:
@@ -259,11 +344,15 @@ class DeterministicEvidenceEligibilityGate:
                 clm_exec_id = getattr(clm, "execution_id", None) or (
                     clm.get("execution_id") if isinstance(clm, dict) else None
                 )
-                subj = str(
-                    getattr(clm, "subject_id", "")
-                    if not isinstance(clm, dict)
-                    else clm.get("subject_id", "")
-                ).strip().lower()
+                subj = (
+                    str(
+                        getattr(clm, "subject_id", "")
+                        if not isinstance(clm, dict)
+                        else clm.get("subject_id", "")
+                    )
+                    .strip()
+                    .lower()
+                )
                 pid = getattr(clm, "place_id", None) or (
                     clm.get("place_id") if isinstance(clm, dict) else None
                 )
@@ -272,10 +361,15 @@ class DeterministicEvidenceEligibilityGate:
                 if execution_id and clm_exec_id and str(clm_exec_id) != str(execution_id):
                     continue
 
-                matches_place = cand_place_id and str(pid) == str(cand_place_id)
-                matches_subj = subj == cand_name_norm
-                if matches_place or matches_subj:
-                    claims_results.append(clm)
+                if pid is not None:
+                    if cand_place_id and str(pid) == str(cand_place_id):
+                        claims_results.append(clm)
+                    continue
+
+                # Name-only claim: require subject match AND established location match
+                if subj == cand_name_norm or subj == candidate.primary_name.strip().lower():
+                    if self._claim_matches_candidate_location(clm, candidate):
+                        claims_results.append(clm)
 
         if fixture_observations:
             for obs in fixture_observations:
@@ -290,32 +384,52 @@ class DeterministicEvidenceEligibilityGate:
                 if execution_id and obs_exec_id and str(obs_exec_id) != str(execution_id):
                     continue
 
-                matches_place = cand_place_id and obs_pid and str(obs_pid) == str(cand_place_id)
-                obs_subj = str(
-                    getattr(obs, "subject_id", None)
-                    or (obs.get("subject_id") if isinstance(obs, dict) else "")
-                ).strip().lower()
-                obs_name = str(
-                    getattr(obs, "place_name", None)
-                    or (obs.get("place_name") if isinstance(obs, dict) else "")
-                ).strip().lower()
+                if obs_pid is not None:
+                    if cand_place_id and str(obs_pid) == str(cand_place_id):
+                        obs_results.append(obs)
+                    continue
+
+                # Name-only observation: check spatial distance if coordinates are present
+                art_ref = getattr(obs, "artifact_ref", None) or (
+                    obs.get("artifact_ref") if isinstance(obs, dict) else None
+                )
+                obs_coords = self._extract_coordinates_from_data(art_ref)
+                if obs_coords is not None and candidate.point is not None:
+                    dist = haversine_distance_km(
+                        candidate.point.lat,
+                        candidate.point.lng,
+                        obs_coords[0],
+                        obs_coords[1],
+                    )
+                    if dist > 1.0:
+                        continue
+
+                obs_subj = (
+                    str(
+                        getattr(obs, "subject_id", None)
+                        or (obs.get("subject_id") if isinstance(obs, dict) else "")
+                    )
+                    .strip()
+                    .lower()
+                )
+                obs_name = (
+                    str(
+                        getattr(obs, "place_name", None)
+                        or (obs.get("place_name") if isinstance(obs, dict) else "")
+                    )
+                    .strip()
+                    .lower()
+                )
                 excerpt = str(
                     getattr(obs, "excerpt_text", None)
                     or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
                 ).lower()
-                c_url = str(
-                    getattr(obs, "canonical_url", None)
-                    or (obs.get("canonical_url") if isinstance(obs, dict) else "")
-                ).lower()
 
-                matches_text = (
-                    cand_name_norm in excerpt
-                    or cand_name_norm.replace(" ", "") in c_url
-                    or (obs_subj == cand_name_norm)
-                    or (obs_name == cand_name_norm)
-                )
-
-                if matches_place or matches_text:
+                if (
+                    obs_subj == cand_name_norm
+                    or obs_name == cand_name_norm
+                    or cand_name_norm in excerpt
+                ):
                     obs_results.append(obs)
 
         return obs_results, claims_results

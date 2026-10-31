@@ -31,6 +31,7 @@ from contracts.browser import BrowserTaskPayload, BrowserWaitUntil
 from contracts.candidate import (
     CandidateEligibilityReport,
     CandidateExistenceStatus,
+    CandidateHoursStatus,
     RegisteredCandidate,
 )
 from contracts.decision import (
@@ -47,7 +48,6 @@ from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
 from contracts.trips import TransportMode, TripBrief
 from functions.decision_router.client import RemoteLayaDecisionAdapter
-from functions.decision_router.fixtures import FixtureLayaDecisionAdapter
 from functions.evidence_collector.models import SourceObservationModel
 from functions.optimizer.solver import ItineraryScheduler
 from functions.orchestrator.decision.policy import LayaPolicyValidator
@@ -140,11 +140,7 @@ def discover_candidates_node(state: TripPlanningState) -> dict[str, Any]:
     """Discovers transit corridors and destination points."""
     brief = TripBrief.model_validate(state["brief"])
     discovered: list[dict[str, Any]] = list(state.get("discovered_places", []))
-    existing_names = {
-        d.get("name")
-        for d in discovered
-        if isinstance(d, dict) and d.get("name")
-    }
+    existing_names = {d.get("name") for d in discovered if isinstance(d, dict) and d.get("name")}
 
     for d in brief.destinations:
         if d.name not in existing_names:
@@ -183,13 +179,9 @@ async def evaluate_candidates_node(
     brief = TripBrief.model_validate(brief_data)
 
     # 1. Build corridor points from origin through brief destinations
-    corridor_points = [
-        CoordinatePoint(lat=float(brief.origin_lat), lng=float(brief.origin_lng))
-    ]
+    corridor_points = [CoordinatePoint(lat=float(brief.origin_lat), lng=float(brief.origin_lng))]
     for d in brief.destinations:
-        corridor_points.append(
-            CoordinatePoint(lat=float(d.latitude), lng=float(d.longitude))
-        )
+        corridor_points.append(CoordinatePoint(lat=float(d.latitude), lng=float(d.longitude)))
 
     # 2. Extract candidate proposals: register brief destinations as well as discovered candidates
     brief_dest_names = {d.name.strip().lower() for d in brief.destinations}
@@ -289,9 +281,39 @@ async def evaluate_candidates_node(
                     if "claims" in sub and isinstance(sub["claims"], list):
                         fixture_claims_list.extend(sub["claims"])
 
+    async def _verify_execution_barriers(session: Any | None) -> None:
+        """Verifies authorization, cancellation, and deadline barriers before persistent writes."""
+        if session is None or exec_uuid is None:
+            return
+
+        from functions.orchestrator.execution.models import ExecutionModel
+
+        exec_stmt = select(ExecutionModel).where(ExecutionModel.id == exec_uuid)
+        exec_res = await session.execute(exec_stmt)
+        execution_record = exec_res.scalar_one_or_none()
+        if execution_record is not None:
+            if owner_uuid is not None and execution_record.owner_id != owner_uuid:
+                raise PermissionError(
+                    f"Execution authorization failed: execution {exec_uuid} belongs to owner {execution_record.owner_id}, caller is {owner_uuid}"
+                )
+            if execution_record.status == "CANCELLED" or execution_record.cancelled_at is not None:
+                raise RuntimeError(
+                    f"Execution {exec_uuid} is cancelled, aborting persistent candidate writes"
+                )
+            if (
+                execution_record.deadline_at is not None
+                and execution_record.deadline_at <= datetime.now(UTC)
+            ):
+                raise RuntimeError(
+                    f"Execution {exec_uuid} deadline has expired, aborting persistent candidate writes"
+                )
+
     async def _run_with_session(
         session: Any | None,
+        is_caller_owned: bool,
     ) -> tuple[list[RegisteredCandidate], CandidateEligibilityReport, list[RegisteredCandidate]]:
+        await _verify_execution_barriers(session)
+
         reg_service = CandidateRegistrationService(session=session)
         valid_cands, excluded_corr = await reg_service.register_candidate_proposals(
             proposals,
@@ -300,7 +322,10 @@ async def evaluate_candidates_node(
             owner_id=owner_uuid,
         )
         if session is not None:
-            await session.commit()
+            if is_caller_owned:
+                await session.flush()
+            else:
+                await session.commit()
         gate = DeterministicEvidenceEligibilityGate(session=session)
         elig_report = await gate.evaluate_candidate_eligibility(
             valid_cands,
@@ -316,14 +341,18 @@ async def evaluate_candidates_node(
     excluded_corr: list[RegisteredCandidate] = []
 
     if db_session is not None:
-        valid_cands, elig_report, excluded_corr = await _run_with_session(db_session)
-        await db_session.commit()
+        valid_cands, elig_report, excluded_corr = await _run_with_session(
+            db_session, is_caller_owned=True
+        )
     elif session_factory is not None and not is_offline_fixture:
         async with session_factory() as session:
-            valid_cands, elig_report, excluded_corr = await _run_with_session(session)
-            await session.commit()
+            valid_cands, elig_report, excluded_corr = await _run_with_session(
+                session, is_caller_owned=False
+            )
     else:
-        valid_cands, elig_report, excluded_corr = await _run_with_session(None)
+        valid_cands, elig_report, excluded_corr = await _run_with_session(
+            None, is_caller_owned=False
+        )
 
     all_excluded = list(elig_report.excluded_candidates) + list(excluded_corr)
 
@@ -340,17 +369,16 @@ async def evaluate_candidates_node(
 
 
 def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
-    """Applies OR-Tools scheduling solver to generate optimal sequence and timestamps.
+    """Applies OR Tools scheduling solver to generate optimal sequence and timestamps.
 
     Conforms to spec 0007 AC-3:
     1. Consumes candidate eligibility gate output.
-    2. Applies source-backed existence policy to brief destinations:
-       - If contradicted by evidence, excludes them from solver schedule.
-       - If verified by supporting evidence, schedules with verified status.
-       - If unverified, schedules with explicit USER_SUPPLIED_UNVERIFIED status and assumed hours.
-         Never falsely claims verification.
+    2. Applies source backed existence policy to brief destinations:
+       * If contradicted by evidence, excludes them from solver schedule.
+       * If verified by supporting evidence, schedules with verified status.
+       * If unverified, retains in editorial recommendations without falsely claiming verification.
     3. Discovered candidate proposals enter solver schedule ONLY when existence is VERIFIED.
-       Unverified discovered proposals remain strictly in editorial_recommendations.
+       Unverified discovered proposals remain strictly in editorial recommendations.
     4. Safe path for missing gate output: if gate output is missing, unverified proposals
        are safely excluded from the solver schedule and preserved in editorial recommendations.
     5. Verified or assumed opening windows are passed to the solver and preserved with accurate labeling.
@@ -360,11 +388,9 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
 
     excluded_candidates = state.get("excluded_candidates", [])
     excluded_names = {
-        str(
-            c.get("primary_name")
-            if isinstance(c, dict)
-            else getattr(c, "primary_name", "") or ""
-        ).strip().lower()
+        str(c.get("primary_name") if isinstance(c, dict) else getattr(c, "primary_name", "") or "")
+        .strip()
+        .lower()
         for c in excluded_candidates
         if c is not None
     }
@@ -373,15 +399,20 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
     eligible_by_name: dict[str, dict[str, Any]] = {}
     if eligible_stops_data is not None:
         for s in eligible_stops_data:
-            s_name = str(
-                s.get("primary_name")
-                if isinstance(s, dict)
-                else getattr(s, "primary_name", "") or ""
-            ).strip().lower()
+            s_name = (
+                str(
+                    s.get("primary_name")
+                    if isinstance(s, dict)
+                    else getattr(s, "primary_name", "") or ""
+                )
+                .strip()
+                .lower()
+            )
             if s_name:
                 eligible_by_name[s_name] = s if isinstance(s, dict) else s.model_dump(mode="json")
 
     places: list[dict[str, Any]] = []
+    editorial_recs = list(state.get("editorial_recommendations", []))
 
     # 1. Evaluate brief destinations against evidence
     for d in brief.destinations:
@@ -395,6 +426,12 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
 
         if d_name_norm in eligible_by_name:
             verified_stop = eligible_by_name[d_name_norm]
+            is_assumed = bool(
+                verified_stop.get("is_hours_assumed", False)
+                or verified_stop.get("hours_status") == "HOURS_ASSUMED"
+            )
+            w_start = verified_stop.get("window_start") or (time(9, 0) if is_assumed else None)
+            w_end = verified_stop.get("window_end") or (time(18, 0) if is_assumed else None)
             places.append(
                 {
                     "name": d.name,
@@ -402,39 +439,50 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
                     "lng": float(d.longitude),
                     "confidence": float(d.confidence),
                     "stay_minutes": d.stay_days * 180,
-                    "is_hours_assumed": verified_stop.get("is_hours_assumed", False),
-                    "hours_status": verified_stop.get("hours_status", "VERIFIED_HOURS"),
-                    "window_start": verified_stop.get("window_start"),
-                    "window_end": verified_stop.get("window_end"),
+                    "is_hours_assumed": is_assumed,
+                    "hours_status": verified_stop.get(
+                        "hours_status", "HOURS_ASSUMED" if is_assumed else "VERIFIED_HOURS"
+                    ),
+                    "window_start": w_start,
+                    "window_end": w_end,
                 }
             )
         else:
-            # Unverified brief destination: explicit user-supplied destination status
-            # Never falsely claims verification; sets is_hours_assumed=True
-            places.append(
+            # Unverified brief destination:
+            # Under spec 0007 AC-3, unverified candidate places never enter the route optimizer solver as stops.
+            # They are preserved in editorial recommendations with honest user supplied labeling.
+            logger.info(
+                "Brief destination %s lacks verified existence evidence; retained in editorial recommendations",
+                d.name,
+            )
+            editorial_recs.append(
                 {
-                    "name": d.name,
-                    "lat": float(d.latitude),
-                    "lng": float(d.longitude),
-                    "confidence": float(d.confidence),
-                    "stay_minutes": d.stay_days * 180,
+                    "primary_name": d.name,
+                    "category": "destination",
+                    "point": {"lat": float(d.latitude), "lng": float(d.longitude)},
+                    "uncertainty": "EDITORIAL_DISCOVERY",
+                    "is_candidate": True,
+                    "existence_status": CandidateExistenceStatus.UNVERIFIED.value,
+                    "hours_status": CandidateHoursStatus.USER_SUPPLIED_UNVERIFIED.value,
                     "is_hours_assumed": True,
-                    "hours_status": "USER_SUPPLIED_UNVERIFIED",
-                    "window_start": None,
-                    "window_end": None,
+                    "diagnostics": {
+                        "rejection_reason": "User supplied brief destination lacks verified existence evidence; excluded from solver schedule"
+                    },
                 }
             )
-
-    editorial_recs = list(state.get("editorial_recommendations", []))
 
     # 2. Add verified candidate stops (discovered candidates with verified existence)
     if eligible_stops_data is not None:
         for s in eligible_stops_data:
-            s_name = str(
-                s.get("primary_name")
-                if isinstance(s, dict)
-                else getattr(s, "primary_name", "") or ""
-            ).strip().lower()
+            s_name = (
+                str(
+                    s.get("primary_name")
+                    if isinstance(s, dict)
+                    else getattr(s, "primary_name", "") or ""
+                )
+                .strip()
+                .lower()
+            )
             if s_name in brief_names:
                 continue
             exist_st = s.get("existence_status")
@@ -448,6 +496,11 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
             raw_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", 0.0)
             lat_val = float(raw_lat) if raw_lat is not None else 0.0
             lng_val = float(raw_lng) if raw_lng is not None else 0.0
+            is_assumed = bool(
+                s.get("is_hours_assumed", False) or s.get("hours_status") == "HOURS_ASSUMED"
+            )
+            w_start = s.get("window_start") or (time(9, 0) if is_assumed else None)
+            w_end = s.get("window_end") or (time(18, 0) if is_assumed else None)
             places.append(
                 {
                     "name": s["primary_name"],
@@ -455,16 +508,18 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
                     "lng": lng_val,
                     "confidence": 1.0,
                     "stay_minutes": s.get("suggested_stay_minutes", 60),
-                    "is_hours_assumed": s.get("is_hours_assumed", False),
-                    "hours_status": s.get("hours_status", "UNKNOWN"),
-                    "window_start": s.get("window_start"),
-                    "window_end": s.get("window_end"),
+                    "is_hours_assumed": is_assumed,
+                    "hours_status": s.get(
+                        "hours_status", "HOURS_ASSUMED" if is_assumed else "VERIFIED_HOURS"
+                    ),
+                    "window_start": w_start,
+                    "window_end": w_end,
                 }
             )
     else:
         # Safe path for missing gate output:
         # Discovered places are unverified proposals. Do NOT schedule them!
-        # Relegate any unverified proposals to editorial_recommendations with diagnostic.
+        # Relegate any unverified proposals to editorial recommendations with diagnostic.
         discovered = state.get("discovered_places", [])
         for p in discovered:
             p_name = p.get("name", "")
@@ -490,13 +545,11 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
         start_datetime=start_dt,
     )
 
-    update: dict[str, Any] = {
+    return {
         "current_step": "schedule_optimized",
         "optimized_schedule": schedule.model_dump(mode="json"),
+        "editorial_recommendations": editorial_recs,
     }
-    if eligible_stops_data is None:
-        update["editorial_recommendations"] = editorial_recs
-    return update
 
 
 def compute_budget_node(state: TripPlanningState) -> dict[str, Any]:
@@ -1401,6 +1454,8 @@ def await_evidence_results_node(state: TripPlanningState) -> dict[str, Any]:
     return {
         "pending_tasks": [],
         "current_step": "awaiting_evidence_results",
+        "static_search_completed": True,
+        "remaining_search_budget": 0,
     }
 
 
