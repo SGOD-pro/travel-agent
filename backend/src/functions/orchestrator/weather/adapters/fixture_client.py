@@ -251,17 +251,43 @@ class FixtureWeatherClient(WeatherClientPort):
                     )
                     for s, target_dt, (_, reason) in invalid_checks
                 ]
-                # Sample remaining valid stops from sunny fixture
-                valid_sample = self._load_json_fixture("weather_sunny_corridor.json")
+                stop_names_lower = [s.name.lower() for s in request.stops]
+                any_ghat = any(
+                    s.is_ghat_section
+                    or any(k in s.name.lower() for k in ("ghat", "pass", "mountain", "hill"))
+                    for s in request.stops
+                )
+                if any_ghat or any("monsoon" in name for name in stop_names_lower):
+                    valid_sample = self._load_json_fixture("weather_monsoon_ghat.json")
+                else:
+                    valid_sample = self._load_json_fixture("weather_sunny_corridor.json")
+
                 base_report = CorridorWeatherAdvisoryReport.model_validate(valid_sample)
                 combined_stops = base_report.stops[: len(valid_checks)] + out_stops
+
+                has_severe = any(r.monsoon_risk == MonsoonRisk.SEVERE for r in combined_stops)
+                has_fog = any(r.condition == StopWeatherCondition.FOGGY for r in combined_stops)
+                hazard_prefix = ""
+                if has_severe:
+                    hazard_prefix = (
+                        "Severe monsoon conditions detected along corridor stops. "
+                        "Potential travel delays and localized waterlogging expected. "
+                    )
+                elif has_fog:
+                    hazard_prefix = (
+                        "Patchy fog expected along sections of the corridor. "
+                        "Reduced driving visibility possible during morning hours. "
+                    )
+
+                partial_notice = (
+                    f"Partial weather advisory: live forecasts available for {len(valid_checks)} of "
+                    f"{len(request.stops)} stops; remaining stops are beyond forecast horizon or unavailable."
+                )
                 return CorridorWeatherAdvisoryReport(
                     status=WeatherAdvisoryStatus.PARTIAL,
                     stops=combined_stops,
-                    overall_caution=(
-                        f"Partial weather advisory: live forecasts available for {len(valid_checks)} of "
-                        f"{len(request.stops)} stops; remaining stops are beyond forecast horizon or unavailable."
-                    ),
+                    overall_caution=f"{hazard_prefix}{partial_notice}".strip(),
+                    ghat_caution=base_report.ghat_caution if any_ghat else None,
                     provider="fixture",
                     attribution=OPEN_METEO_ATTRIBUTION,
                     licensing_status=licensing_status,

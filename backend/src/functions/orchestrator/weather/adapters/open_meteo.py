@@ -82,22 +82,39 @@ def evaluate_monsoon_risk(
     precip_prob: int | None,
     code: int | None,
 ) -> MonsoonRisk:
-    """Evaluates monsoon hazard severity from precipitation volume and probability.
+    """Evaluates monsoon hazard severity from precipitation volume, probability, and WMO code.
 
-    If precipitation volume, probability, and weather codes are all missing or None,
-    evaluates to MonsoonRisk.UNKNOWN rather than guessing low risk.
+    Missing risk critical inputs must not produce LOW merely through zero defaults.
+    Known severe and moderate warnings are preserved when other inputs are missing.
     """
-    if precipitation_mm is None and precip_prob is None and code is None:
-        return MonsoonRisk.UNKNOWN
-
-    precip = precipitation_mm if precipitation_mm is not None else 0.0
-    prob = precip_prob if precip_prob is not None else 0
-
-    if precip >= 25.0 or (prob >= 70 and code in (63, 65, 81, 82, 95, 96, 99)):
+    # 1. Check known severe indicators
+    if precipitation_mm is not None and precipitation_mm >= 25.0:
         return MonsoonRisk.SEVERE
-    if precip >= 10.0 or (prob >= 40 and code in (53, 55, 61, 63, 80, 81, 95)):
+    if precip_prob is not None and precip_prob >= 70 and code in (63, 65, 81, 82, 95, 96, 99):
+        return MonsoonRisk.SEVERE
+    if code in (65, 82, 96, 99):
+        return MonsoonRisk.SEVERE
+
+    # 2. Check known moderate indicators
+    if precipitation_mm is not None and precipitation_mm >= 10.0:
         return MonsoonRisk.MODERATE
-    return MonsoonRisk.LOW
+    if precip_prob is not None and precip_prob >= 40 and code in (53, 55, 61, 63, 80, 81, 95):
+        return MonsoonRisk.MODERATE
+    if code in (63, 81, 95):
+        return MonsoonRisk.MODERATE
+
+    # 3. Minimum input requirements to classify as LOW risk
+    # If precipitation_mm is measured and below 10.0 mm without rain codes:
+    if precipitation_mm is not None:
+        return MonsoonRisk.LOW
+
+    # If precipitation_mm is missing, require clear corroboration from both
+    # a dry weather code and a low precipitation probability:
+    if code in (0, 1, 2, 3, 45, 48) and precip_prob is not None and precip_prob < 40:
+        return MonsoonRisk.LOW
+
+    # Otherwise, missing risk critical inputs prevent reliable low risk classification
+    return MonsoonRisk.UNKNOWN
 
 
 def evaluate_ghat_caution(
@@ -339,15 +356,67 @@ class OpenMeteoWeatherClient(WeatherClientPort):
                 diagnostics={"error": "Missing or empty time array in provider response"},
             )
 
-        # Match exact ISO hour prefix if possible (e.g. 2026-11-01T00 for midnight or 2026-11-01T14)
+        # Target requested local datetime and exact ISO hour prefix
+        target_dt = datetime(
+            stop_date.year, stop_date.month, stop_date.day, stop_hour, 0, tzinfo=tz
+        )
         target_iso_prefix = f"{stop_date.isoformat()}T{stop_hour:02d}:"
-        selected_idx = min(stop_hour, len(times) - 1)
+
+        selected_idx: int | None = None
         matched_exact_hour = False
-        for idx, time_str in enumerate(times):
-            if isinstance(time_str, str) and time_str.startswith(target_iso_prefix):
-                selected_idx = idx
-                matched_exact_hour = True
+        parsed_times: list[datetime | None] = []
+
+        for idx, time_item in enumerate(times):
+            cand_dt: datetime | None = None
+            if isinstance(time_item, str):
+                if time_item.startswith(target_iso_prefix):
+                    selected_idx = idx
+                    matched_exact_hour = True
+                try:
+                    cand_dt = datetime.fromisoformat(time_item).replace(tzinfo=tz)
+                except Exception:
+                    cand_dt = None
+            parsed_times.append(cand_dt)
+            if matched_exact_hour:
                 break
+
+        # If exact hour not found, find nearest time within bounded window (2.0 hours)
+        drift_seconds: float = 0.0
+        if selected_idx is None:
+            best_idx: int | None = None
+            min_diff_sec: float = float("inf")
+            for idx, cand_dt in enumerate(parsed_times):
+                if cand_dt is not None:
+                    diff_sec = abs((cand_dt - target_dt).total_seconds())
+                    if diff_sec < min_diff_sec:
+                        min_diff_sec = diff_sec
+                        best_idx = idx
+
+            max_drift_sec = 2.0 * 3600.0  # 2.0 hours allowable drift bound
+            if best_idx is not None and min_diff_sec <= max_drift_sec:
+                selected_idx = best_idx
+                drift_seconds = min_diff_sec
+            else:
+                stop_diag: dict[str, Any] = {
+                    "status": "REQUESTED_HOUR_UNAVAILABLE",
+                    "error": (
+                        f"Requested forecast hour ({target_dt.isoformat()}) absent from provider "
+                        f"response within allowable bound (2.0 hours)"
+                    ),
+                    "requested_datetime": target_dt.isoformat(),
+                }
+                if not is_arrival_explicit:
+                    stop_diag["timing_note"] = (
+                        "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+                    )
+                return StopWeatherReport(
+                    stop_name=stop.name,
+                    latitude=stop.latitude,
+                    longitude=stop.longitude,
+                    condition=StopWeatherCondition.UNKNOWN,
+                    monsoon_risk=MonsoonRisk.UNKNOWN,
+                    diagnostics=stop_diag,
+                )
 
         def _get_hourly_val(key: str) -> Any:
             arr = hourly.get(key)
@@ -367,12 +436,7 @@ class OpenMeteoWeatherClient(WeatherClientPort):
         monsoon = evaluate_monsoon_risk(precip_mm, precip_prob, weather_code)
         ghat_adv = evaluate_ghat_caution(stop, condition, monsoon)
 
-        forecast_time: datetime | None = None
-        if 0 <= selected_idx < len(times) and isinstance(times[selected_idx], str):
-            try:
-                forecast_time = datetime.fromisoformat(times[selected_idx]).replace(tzinfo=tz)
-            except Exception:
-                forecast_time = None
+        forecast_time = parsed_times[selected_idx] if selected_idx < len(parsed_times) else None
 
         stop_diagnostics: dict[str, Any] = {}
         if not is_arrival_explicit:
@@ -380,7 +444,14 @@ class OpenMeteoWeatherClient(WeatherClientPort):
                 "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
             )
         if not matched_exact_hour:
-            stop_diagnostics["hour_match"] = "exact hour not found; using closest available index"
+            chosen_dt = parsed_times[selected_idx] if selected_idx < len(parsed_times) else None
+            resolved_dt_str = (
+                chosen_dt.isoformat() if chosen_dt is not None else str(times[selected_idx])
+            )
+            stop_diagnostics["timing_resolution"] = (
+                f"Exact hour ({target_dt.isoformat()}) missing; bounded nearest time "
+                f"({resolved_dt_str}) used (drift: {drift_seconds / 3600.0:.1f}h)"
+            )
 
         missing_fields: list[str] = [
             f
@@ -498,6 +569,23 @@ class OpenMeteoWeatherClient(WeatherClientPort):
         has_fog = any(r.condition == StopWeatherCondition.FOGGY for r in reports)
         ghat_cautions = [r.ghat_caution for r in reports if r.ghat_caution]
 
+        hazard_parts: list[str] = []
+        if has_severe_monsoon:
+            hazard_parts.append(
+                "Severe monsoon conditions detected along corridor stops. "
+                "Potential travel delays and localized waterlogging expected."
+            )
+        elif has_moderate_monsoon:
+            hazard_parts.append(
+                "Moderate rain showers expected along the travel corridor. "
+                "Carry umbrellas and anticipate wet roads."
+            )
+        if has_fog:
+            hazard_parts.append(
+                "Patchy fog expected along sections of the corridor. "
+                "Reduced driving visibility possible during morning hours."
+            )
+
         overall_caution: str
         if status == WeatherAdvisoryStatus.WEATHER_UNAVAILABLE:
             overall_caution = "Weather forecast service temporarily unavailable; proceeding with regional defaults."
@@ -508,25 +596,16 @@ class OpenMeteoWeatherClient(WeatherClientPort):
                 "Historical averages are not presented as live forecasts."
             )
         elif status == WeatherAdvisoryStatus.PARTIAL:
-            overall_caution = (
+            partial_notice = (
                 f"Partial weather advisory: live forecasts available for {len(valid_reports)} of {len(reports)} stops; "
                 "remaining stops are beyond forecast horizon or unavailable."
             )
-        elif has_severe_monsoon:
-            overall_caution = (
-                "Severe monsoon conditions detected along corridor stops. "
-                "Potential travel delays and localized waterlogging expected."
-            )
-        elif has_moderate_monsoon:
-            overall_caution = (
-                "Moderate rain showers expected along the travel corridor. "
-                "Carry umbrellas and anticipate wet roads."
-            )
-        elif has_fog:
-            overall_caution = (
-                "Patchy fog expected along sections of the corridor. "
-                "Reduced driving visibility possible during morning hours."
-            )
+            if hazard_parts:
+                overall_caution = f"{' '.join(hazard_parts)} {partial_notice}"
+            else:
+                overall_caution = partial_notice
+        elif hazard_parts:
+            overall_caution = " ".join(hazard_parts)
         elif all(r.condition == StopWeatherCondition.SUNNY for r in valid_reports):
             overall_caution = "Favorable sunny weather conditions expected along the corridor."
         else:

@@ -155,11 +155,12 @@ class TestOpenMeteoLogicAndAdapter:
         assert report.stops[0].condition == StopWeatherCondition.UNKNOWN
 
     async def test_open_meteo_client_mock_successful_response(self) -> None:
+        target_date = date.today() + timedelta(days=2)
         mock_response_data = {
             "latitude": 22.57,
             "longitude": 88.36,
             "hourly": {
-                "time": [f"2026-11-01T{h:02d}:00" for h in range(24)],
+                "time": [f"{target_date.isoformat()}T{h:02d}:00" for h in range(24)],
                 "temperature_2m": [25.0 + h * 0.5 for h in range(24)],
                 "apparent_temperature": [28.0 + h * 0.5 for h in range(24)],
                 "relative_humidity_2m": [60 for _ in range(24)],
@@ -178,7 +179,6 @@ class TestOpenMeteoLogicAndAdapter:
 
         client = OpenMeteoWeatherClient(http_client=mock_http)
         stop = WeatherStopInput(name="Kolkata Hub", latitude=22.57, longitude=88.36)
-        target_date = date.today() + timedelta(days=2)
         req = CorridorWeatherRequest(departure_date=target_date, stops=[stop])
 
         report = await client.get_corridor_weather(req)
@@ -728,3 +728,155 @@ class TestSlice2Corrections:
         assert secret_key not in str(report.diagnostics)
         assert secret_key not in str(report.stops[0].diagnostics)
         assert "***" in str(report.stops[0].diagnostics.get("error"))
+
+    async def test_regression_partial_corridor_preserves_severe_hazard(self) -> None:
+        """Regression 1: Severe rain or fog warnings must be preserved when a corridor is PARTIAL."""
+        dep_date = date.today() + timedelta(days=1)
+        stop_severe = WeatherStopInput(name="Severe Rain Stop", latitude=22.5, longitude=88.3)
+        stop_unavail = WeatherStopInput(name="Failing Stop", latitude=23.5, longitude=87.3)
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+
+        def mock_get(url: str, params: dict[str, Any], timeout: float) -> MagicMock:
+            resp = MagicMock()
+            resp.status_code = 200
+            if params["latitude"] == 22.5:
+                resp.json.return_value = {
+                    "hourly": {
+                        "time": [f"{dep_date.isoformat()}T{h:02d}:00" for h in range(24)],
+                        "temperature_2m": [24.0 for _ in range(24)],
+                        "relative_humidity_2m": [95 for _ in range(24)],
+                        "precipitation_probability": [90 for _ in range(24)],
+                        "precipitation": [35.0 for _ in range(24)],  # Severe monsoon rain
+                        "weather_code": [65 for _ in range(24)],
+                        "is_day": [1 for _ in range(24)],
+                    }
+                }
+            else:
+                resp.status_code = 500
+                resp.text = "Internal Server Error"
+            return resp
+
+        mock_http.get.side_effect = mock_get
+
+        client = OpenMeteoWeatherClient(http_client=mock_http, max_retries=0)
+        req = CorridorWeatherRequest(departure_date=dep_date, stops=[stop_severe, stop_unavail])
+
+        report = await client.get_corridor_weather(req)
+        assert report.status == WeatherAdvisoryStatus.PARTIAL
+        assert len(report.stops) == 2
+        assert report.stops[0].monsoon_risk == MonsoonRisk.SEVERE
+        assert report.stops[1].condition == StopWeatherCondition.UNKNOWN
+
+        # Both the known severe hazard and the partial/unavailable stop notice must be preserved
+        assert report.overall_caution is not None
+        assert (
+            "severe monsoon conditions detected along corridor stops"
+            in report.overall_caution.lower()
+        )
+        assert (
+            "partial weather advisory: live forecasts available for 1 of 2 stops"
+            in report.overall_caution.lower()
+        )
+
+    async def test_regression_requested_hour_absent_from_provider_response(self) -> None:
+        """Regression 2: When requested hour is missing beyond bound, return honest unavailable rather than list index."""
+        tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+        dep_date = date.today() + timedelta(days=1)
+        # Requested arrival is 14:00
+        arrival_dt = datetime(dep_date.year, dep_date.month, dep_date.day, 14, 0, tzinfo=tz)
+        stop = WeatherStopInput(
+            name="Midday Stop", latitude=22.5, longitude=88.3, arrival_time=arrival_dt
+        )
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Provider returns only early morning hours 00:00, 01:00, 02:00 (drift is 12h, beyond 2h allowable bound)
+        mock_resp.json.return_value = {
+            "hourly": {
+                "time": [
+                    f"{dep_date.isoformat()}T00:00",
+                    f"{dep_date.isoformat()}T01:00",
+                    f"{dep_date.isoformat()}T02:00",
+                ],
+                "temperature_2m": [18.0, 18.5, 19.0],
+                "weather_code": [0, 0, 0],
+            }
+        }
+        mock_http.get.return_value = mock_resp
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        stop_report = await client.get_stop_weather(stop, dep_date)
+
+        # Must NOT return temperature from index 2 (19.0) as if 02:00 was closest to 14:00
+        assert stop_report.condition == StopWeatherCondition.UNKNOWN
+        assert stop_report.monsoon_risk == MonsoonRisk.UNKNOWN
+        assert stop_report.temperature_celsius is None
+        assert stop_report.diagnostics.get("status") == "REQUESTED_HOUR_UNAVAILABLE"
+        assert "absent from provider response within allowable bound" in str(
+            stop_report.diagnostics.get("error")
+        )
+
+    async def test_regression_requested_hour_bounded_nearest_time_used(self) -> None:
+        """Regression 2b: When requested hour is absent but within allowable 2h bound, use bounded nearest time."""
+        tz = zoneinfo.ZoneInfo("Asia/Kolkata")
+        dep_date = date.today() + timedelta(days=1)
+        # Requested arrival is 14:00
+        arrival_dt = datetime(dep_date.year, dep_date.month, dep_date.day, 14, 0, tzinfo=tz)
+        stop = WeatherStopInput(
+            name="Midday Stop", latitude=22.5, longitude=88.3, arrival_time=arrival_dt
+        )
+
+        mock_http = AsyncMock(spec=httpx.AsyncClient)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        # Provider returns 3-hourly forecasts: nearest to 14:00 is 15:00 (1.0h drift <= 2.0h bound)
+        mock_resp.json.return_value = {
+            "hourly": {
+                "time": [f"{dep_date.isoformat()}T12:00", f"{dep_date.isoformat()}T15:00"],
+                "temperature_2m": [30.0, 31.5],
+                "weather_code": [0, 1],
+            }
+        }
+        mock_http.get.return_value = mock_resp
+
+        client = OpenMeteoWeatherClient(http_client=mock_http)
+        stop_report = await client.get_stop_weather(stop, dep_date)
+
+        assert stop_report.temperature_celsius == 31.5  # Sampled from 15:00
+        assert stop_report.forecast_time is not None
+        assert stop_report.forecast_time.hour == 15
+        assert "timing_resolution" in stop_report.diagnostics
+        assert "drift: 1.0h" in stop_report.diagnostics["timing_resolution"]
+
+    def test_regression_partial_risk_input_combinations(self) -> None:
+        """Regression 3: Defined minimum inputs needed for monsoon risk; zero defaults never produce false LOW."""
+        # Missing all inputs -> UNKNOWN
+        assert evaluate_monsoon_risk(None, None, None) == MonsoonRisk.UNKNOWN
+
+        # Missing precipitation volume must NOT zero-default to LOW
+        assert evaluate_monsoon_risk(None, 20, None) == MonsoonRisk.UNKNOWN
+        assert evaluate_monsoon_risk(None, None, 0) == MonsoonRisk.UNKNOWN
+
+        # Verified dry code + low probability -> LOW
+        assert evaluate_monsoon_risk(None, 10, 0) == MonsoonRisk.LOW
+        assert evaluate_monsoon_risk(None, 25, 2) == MonsoonRisk.LOW
+
+        # Verified precipitation volume below threshold -> LOW
+        assert evaluate_monsoon_risk(0.0, None, None) == MonsoonRisk.LOW
+        assert evaluate_monsoon_risk(4.5, 30, 61) == MonsoonRisk.LOW
+
+        # Known severe warnings preserved even when other inputs are missing
+        assert evaluate_monsoon_risk(30.0, None, None) == MonsoonRisk.SEVERE
+        assert evaluate_monsoon_risk(None, 80, 95) == MonsoonRisk.SEVERE
+        assert evaluate_monsoon_risk(None, None, 65) == MonsoonRisk.SEVERE
+        assert evaluate_monsoon_risk(None, None, 82) == MonsoonRisk.SEVERE
+
+        # Known moderate warnings preserved
+        assert evaluate_monsoon_risk(15.0, None, None) == MonsoonRisk.MODERATE
+        assert evaluate_monsoon_risk(None, 50, 61) == MonsoonRisk.MODERATE
+        assert evaluate_monsoon_risk(None, None, 63) == MonsoonRisk.MODERATE
+
+        # Rainy code with unknown precipitation volume and probability cannot assume LOW
+        assert evaluate_monsoon_risk(None, None, 61) == MonsoonRisk.UNKNOWN
