@@ -1,5 +1,13 @@
 """Domain layer package for travel planning platform."""
 
+from contracts.candidate import (
+    CandidateCorridorResult,
+    CandidateEligibilityReport,
+    CandidateExistenceStatus,
+    CandidateHoursStatus,
+    CorridorValidationStatus,
+    RegisteredCandidate,
+)
 from contracts.jobs import Job, JobStatus, OutboxEvent
 from contracts.llm import (
     DayOpeningHours,
@@ -66,4 +74,10 @@ __all__ = [
     "StopWeatherReport",
     "CorridorWeatherRequest",
     "CorridorWeatherAdvisoryReport",
+    "CandidateCorridorResult",
+    "CandidateEligibilityReport",
+    "CandidateExistenceStatus",
+    "CandidateHoursStatus",
+    "CorridorValidationStatus",
+    "RegisteredCandidate",
 ]

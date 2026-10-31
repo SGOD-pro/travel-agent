@@ -244,6 +244,21 @@ Verification commands for Slice 2:
 cd backend && PYTHONPATH=src pytest tests/unit/test_weather_client.py -v
 ```
 
+### Detailed Tasks for Slice 3: Place Candidate Registration, Spatial Corridor Validation, and Deterministic Claim Eligibility Gate
+
+- [x] 1. Define typed domain contracts in `backend/src/contracts/candidate.py` for `CorridorValidationStatus`, `CandidateExistenceStatus`, `CandidateHoursStatus`, `CandidateCorridorResult`, `RegisteredCandidate`, and `CandidateEligibilityReport`, satisfies **AC-3**.
+- [x] 2. Implement spatial corridor boundary calculation and coordinate bounds validation in `backend/src/functions/orchestrator/places/corridor.py`, enforcing 100km corridor limits, satisfies **AC-3**.
+- [x] 3. Implement candidate registration service in `backend/src/functions/orchestrator/places/candidate_service.py` registering proposals into `canonical_places` with `is_candidate=True` and `geocoder_provenance="EDITORIAL_DISCOVERY"`, preserving deduplication and replay idempotency, satisfies **AC-3**.
+- [x] 4. Implement deterministic evidence eligibility gate in `backend/src/functions/orchestrator/evidence/eligibility.py`, evaluating candidate existence and operating hours against source observations and claims, preserving stale, conflicting, and unverified states, and isolating solver stops from unverified or contradicted candidates, satisfies **AC-1**, **AC-3**.
+- [x] 5. Enforce scheduling boundaries in `TripPlannerGraph` (`backend/src/functions/orchestrator/graphs/trip_planner/graph.py`), ensuring unverified and contradicted candidates never enter the route solver schedule, satisfies **AC-1**, **AC-3**.
+- [x] 6. Add comprehensive unit tests in `backend/tests/unit/test_candidate_corridor_and_eligibility.py` (19 tests) and live PostgreSQL integration tests in `backend/tests/integration/test_candidate_registration_persistence.py` (6 tests), satisfies **AC-1**, **AC-3**.
+
+Verification commands for Slice 3:
+```bash
+cd backend && PYTHONPATH=src pytest tests/unit/test_candidate_corridor_and_eligibility.py -v
+cd backend && PYTHONPATH=src pytest tests/integration/test_candidate_registration_persistence.py -v
+```
+
 ## Consequences
 
 **Positive**:

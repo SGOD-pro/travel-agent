@@ -57,9 +57,15 @@ _DEFAULT_RUNNABLE_CONFIG: RunnableConfig = cast(RunnableConfig, {})
 
 class TripPlanningState(TypedDict, total=False):
     trip_id: str
+    owner_id: str
     version: int
     brief: dict[str, Any]
     discovered_places: list[dict[str, Any]]
+    validated_candidates: list[dict[str, Any]]
+    candidate_eligibility: dict[str, Any]
+    eligible_stops: list[dict[str, Any]]
+    editorial_recommendations: list[dict[str, Any]]
+    excluded_candidates: list[dict[str, Any]]
     optimized_schedule: dict[str, Any]
     budget_lines: list[dict[str, Any]]
     budget_summary: dict[str, Any]
@@ -139,9 +145,40 @@ def discover_candidates_node(state: TripPlanningState) -> dict[str, Any]:
 
 
 def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
-    """Applies OR-Tools scheduling solver to generate optimal sequence and timestamps."""
+    """Applies OR-Tools scheduling solver to generate optimal sequence and timestamps.
+
+    Conforms to spec 0007 AC-3: Unverified or contradicted places must not enter the route solver.
+    Only eligible stops with verified existence (or brief destination points) are scheduled.
+    Places with verified existence but unknown hours use an explicitly labeled HOURS_ASSUMED window.
+    """
     brief = TripBrief.model_validate(state["brief"])
-    places = state.get("discovered_places", [])
+    eligible_stops_data = state.get("eligible_stops")
+
+    if eligible_stops_data is not None:
+        places: list[dict[str, Any]] = [
+            {
+                "name": s["primary_name"],
+                "lat": s["point"]["lat"] if isinstance(s["point"], dict) else s["point"].lat,
+                "lng": s["point"]["lng"] if isinstance(s["point"], dict) else s["point"].lng,
+                "confidence": 1.0,
+                "stay_minutes": s.get("suggested_stay_minutes", 60),
+                "is_hours_assumed": s.get("is_hours_assumed", False),
+                "hours_status": s.get("hours_status", "UNKNOWN"),
+            }
+            for s in eligible_stops_data
+        ]
+    else:
+        # Default to verified destinations from brief
+        places = [
+            {
+                "name": d.name,
+                "lat": d.latitude,
+                "lng": d.longitude,
+                "confidence": d.confidence,
+                "stay_minutes": d.stay_days * 180,  # 3 hours per stay day
+            }
+            for d in brief.destinations
+        ]
 
     start_dt = datetime.combine(brief.start_date, time(hour=9, minute=0), tzinfo=UTC)
 
@@ -214,6 +251,8 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "schedule": state.get("optimized_schedule"),
         "budget_summary": state.get("budget_summary"),
         "budget_lines": state.get("budget_lines"),
+        "editorial_recommendations": state.get("editorial_recommendations", []),
+        "excluded_candidates": state.get("excluded_candidates", []),
         "generated_at": datetime.now(UTC).isoformat(),
         "status": "ready_for_approval",
     }
@@ -353,9 +392,14 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
 
 _UNAVAILABLE_EXCERPT_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\b(?:destination\s+)?information\s+(?:is\s+)?unavailable\b", re.IGNORECASE),
-    re.compile(r"\b(?:content|details?|data|service|source)\s+(?:is\s+)?unavailable\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:content|details?|data|service|source)\s+(?:is\s+)?unavailable\b", re.IGNORECASE
+    ),
     re.compile(r"\b(?:temporarily|currently)\s+unavailable\b", re.IGNORECASE),
-    re.compile(r"\bno\s+(?:results?|information|details?|data|records?)\s+(?:found|available)\b", re.IGNORECASE),
+    re.compile(
+        r"\bno\s+(?:results?|information|details?|data|records?)\s+(?:found|available)\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b(?:page\s+not\s+found|404\s+not\s+found|not\s+found)\b", re.IGNORECASE),
     re.compile(r"\b(?:access\s+denied|403\s+forbidden|unauthorized)\b", re.IGNORECASE),
     re.compile(r"\b(?:failed|unable)\s+to\s+(?:retrieve|load|fetch|find|locate)\b", re.IGNORECASE),
@@ -445,11 +489,21 @@ def _is_valid_source_evidence_for_destination(
     - Malformed source coordinates (conversion errors, NaN, inf, or out-of-bounds geographic ranges).
     - Conflicting coordinates (if both destination and observation coordinates exist and haversine distance > 100 km).
     """
-    url = getattr(obs, "canonical_url", None) or (obs.get("canonical_url") if isinstance(obs, dict) else "")
-    method = getattr(obs, "extraction_method", None) or (obs.get("extraction_method") if isinstance(obs, dict) else "")
-    content_hash = getattr(obs, "content_hash", None) or (obs.get("content_hash") if isinstance(obs, dict) else "")
-    excerpt = getattr(obs, "excerpt_text", None) or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
-    artifact_ref = getattr(obs, "artifact_ref", None) or (obs.get("artifact_ref") if isinstance(obs, dict) else {})
+    url = getattr(obs, "canonical_url", None) or (
+        obs.get("canonical_url") if isinstance(obs, dict) else ""
+    )
+    method = getattr(obs, "extraction_method", None) or (
+        obs.get("extraction_method") if isinstance(obs, dict) else ""
+    )
+    content_hash = getattr(obs, "content_hash", None) or (
+        obs.get("content_hash") if isinstance(obs, dict) else ""
+    )
+    excerpt = getattr(obs, "excerpt_text", None) or (
+        obs.get("excerpt_text") if isinstance(obs, dict) else ""
+    )
+    artifact_ref = getattr(obs, "artifact_ref", None) or (
+        obs.get("artifact_ref") if isinstance(obs, dict) else {}
+    )
 
     # 1. Reject NEEDS_BROWSER dynamic rendering placeholders and error/unavailable metadata
     if method == "NEEDS_BROWSER":
@@ -460,7 +514,11 @@ def _is_valid_source_evidence_for_destination(
         status_val = str(artifact_ref.get("status") or "").upper().strip()
         if status_val in ("UNAVAILABLE", "BLOCKED", "TIMED_OUT", "FAILED", "ERROR", "NOT_FOUND"):
             return False
-        if artifact_ref.get("unavailable_reason") or artifact_ref.get("unavailable_sources") or artifact_ref.get("error"):
+        if (
+            artifact_ref.get("unavailable_reason")
+            or artifact_ref.get("unavailable_sources")
+            or artifact_ref.get("error")
+        ):
             return False
 
     if "[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED]" in (excerpt or ""):
@@ -592,14 +650,22 @@ async def route_evidence_decision_node(
         destinations = brief.get("destinations", [])
         primary_destination = (
             brief.get("destination_name")
-            or (destinations[0].get("name") if destinations and isinstance(destinations[0], dict) else None)
+            or (
+                destinations[0].get("name")
+                if destinations and isinstance(destinations[0], dict)
+                else None
+            )
             or (destinations[0].name if destinations and hasattr(destinations[0], "name") else None)
             or ""
         )
     else:
         destinations = getattr(brief, "destinations", [])
         primary_destination = getattr(brief, "destination_name", "") or ""
-    dest_name = primary_destination or (destinations[0].get("name") if destinations and isinstance(destinations[0], dict) else "Unknown")
+    dest_name = primary_destination or (
+        destinations[0].get("name")
+        if destinations and isinstance(destinations[0], dict)
+        else "Unknown"
+    )
 
     discovered_places = state.get("discovered_places", [])
     task_outputs = state.get("task_outputs", {})
@@ -618,7 +684,11 @@ async def route_evidence_decision_node(
         extracted_requests.extend(state["browser_requests"])
 
     unhandled_browser_requests = len(
-        [r for r in extracted_requests if r.get("canonical_url", r.get("url")) not in already_dispatched]
+        [
+            r
+            for r in extracted_requests
+            if r.get("canonical_url", r.get("url")) not in already_dispatched
+        ]
     )
 
     max_slots = 3
@@ -634,17 +704,21 @@ async def route_evidence_decision_node(
         if isinstance(d, dict):
             name = d.get("name")
             if name and str(name).strip():
-                destinations_info.append({
-                    "name": str(name).strip(),
-                    "lat": d.get("latitude"),
-                    "lng": d.get("longitude"),
-                })
+                destinations_info.append(
+                    {
+                        "name": str(name).strip(),
+                        "lat": d.get("latitude"),
+                        "lng": d.get("longitude"),
+                    }
+                )
         elif hasattr(d, "name") and d.name:
-            destinations_info.append({
-                "name": str(d.name).strip(),
-                "lat": getattr(d, "latitude", None),
-                "lng": getattr(d, "longitude", None),
-            })
+            destinations_info.append(
+                {
+                    "name": str(d.name).strip(),
+                    "lat": getattr(d, "latitude", None),
+                    "lng": getattr(d, "longitude", None),
+                }
+            )
 
     if not destinations_info and primary_destination:
         destinations_info.append({"name": primary_destination.strip(), "lat": None, "lng": None})
@@ -652,17 +726,21 @@ async def route_evidence_decision_node(
     if not destinations_info:
         for p in discovered_places:
             if isinstance(p, dict) and p.get("name"):
-                destinations_info.append({
-                    "name": str(p["name"]).strip(),
-                    "lat": p.get("lat") or p.get("latitude"),
-                    "lng": p.get("lng") or p.get("longitude"),
-                })
+                destinations_info.append(
+                    {
+                        "name": str(p["name"]).strip(),
+                        "lat": p.get("lat") or p.get("latitude"),
+                        "lng": p.get("lng") or p.get("longitude"),
+                    }
+                )
             elif hasattr(p, "name") and p.name:
-                destinations_info.append({
-                    "name": str(p.name).strip(),
-                    "lat": getattr(p, "lat", None) or getattr(p, "latitude", None),
-                    "lng": getattr(p, "lng", None) or getattr(p, "longitude", None),
-                })
+                destinations_info.append(
+                    {
+                        "name": str(p.name).strip(),
+                        "lat": getattr(p, "lat", None) or getattr(p, "latitude", None),
+                        "lng": getattr(p, "lng", None) or getattr(p, "longitude", None),
+                    }
+                )
 
     # 3. Check evidence prerequisites via fail-closed authoritative validation
     db_session = state.get("_db_session")
@@ -755,7 +833,9 @@ async def route_evidence_decision_node(
                                 valid_persisted_count += 1
 
         if destinations_info:
-            validated_evidence_satisfied = len(offline_matched) == len(destinations_info) and valid_persisted_count > 0
+            validated_evidence_satisfied = (
+                len(offline_matched) == len(destinations_info) and valid_persisted_count > 0
+            )
         else:
             validated_evidence_satisfied = valid_persisted_count > 0
 
@@ -773,7 +853,9 @@ async def route_evidence_decision_node(
     # a stale state flag must not override current authoritative validation.
     required_evidence_satisfied = validated_evidence_satisfied
 
-    remaining_search_budget = int(state.get("remaining_search_budget", 1 if not static_search_completed else 0))
+    remaining_search_budget = int(
+        state.get("remaining_search_budget", 1 if not static_search_completed else 0)
+    )
 
     # 4. Determine explicit workflow phase
     if not static_search_completed:
@@ -795,9 +877,8 @@ async def route_evidence_decision_node(
     )
 
     destinations = brief.get("destinations", [])
-    dest_name = (
-        brief.get("destination_name")
-        or (destinations[0].get("name") if destinations else "Unknown")
+    dest_name = brief.get("destination_name") or (
+        destinations[0].get("name") if destinations else "Unknown"
     )
     sanitized_context = {
         "execution_id": str(exec_uuid),
@@ -817,7 +898,9 @@ async def route_evidence_decision_node(
         context_version=context_version,
         policy_version=LayaPolicyValidator.POLICY_VERSION,
         question_version="evidence_routing:v1",
-        eligible_actions=eligible_choices if eligible_choices else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
+        eligible_actions=eligible_choices
+        if eligible_choices
+        else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
         sanitized_context=sanitized_context,
     )
 
@@ -833,7 +916,9 @@ async def route_evidence_decision_node(
         context_version=context_version,
         policy_version=LayaPolicyValidator.POLICY_VERSION,
         question_version="evidence_routing:v1",
-        policy_derived_eligible_choices=eligible_choices if eligible_choices else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
+        policy_derived_eligible_choices=eligible_choices
+        if eligible_choices
+        else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
         budget_remaining=remaining_browser_slots,
         context=sanitized_context,
         idempotency_key=idempotency_key,
@@ -874,7 +959,9 @@ async def route_evidence_decision_node(
                     confidence=recorded.get("confidence"),
                     answer_confidence=recorded.get("answer_confidence"),
                     model_version=recorded.get("model_version"),
-                    policy_version=recorded.get("policy_version", LayaPolicyValidator.POLICY_VERSION),
+                    policy_version=recorded.get(
+                        "policy_version", LayaPolicyValidator.POLICY_VERSION
+                    ),
                     rationale=recorded.get("rationale"),
                     latency_ms=recorded.get("latency_ms", 0),
                     request_digest=request_digest,
@@ -891,7 +978,9 @@ async def route_evidence_decision_node(
                     logger.debug("Database reusable decision lookup missed: %s", repo_exc)
             elif not is_offline_fixture:
                 try:
-                    factory = session_factory if session_factory is not None else get_session_factory()
+                    factory = (
+                        session_factory if session_factory is not None else get_session_factory()
+                    )
                     async with factory() as session:
                         repo = LayaDecisionRepository(session=session)
                         reused = await repo.find_reusable_decision(decision_req, active_phase=phase)
@@ -1064,7 +1153,9 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
             TripPlanningNode.SOLVE_SCHEDULE: TripPlanningNode.SOLVE_SCHEDULE,
         },
     )
-    graph.add_edge(TripPlanningNode.AWAIT_EVIDENCE_RESULTS, TripPlanningNode.ROUTE_EVIDENCE_DECISION)
+    graph.add_edge(
+        TripPlanningNode.AWAIT_EVIDENCE_RESULTS, TripPlanningNode.ROUTE_EVIDENCE_DECISION
+    )
     graph.add_edge(TripPlanningNode.SOLVE_SCHEDULE, TripPlanningNode.COMPUTE_BUDGET)
     graph.add_edge(TripPlanningNode.COMPUTE_BUDGET, TripPlanningNode.SYNTHESIZE_PROPOSAL)
     graph.add_edge(TripPlanningNode.SYNTHESIZE_PROPOSAL, END)

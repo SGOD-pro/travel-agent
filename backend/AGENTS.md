@@ -38,6 +38,10 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/orchestrator/llm/` | Provider neutral language model client abstract port, deterministic FixtureLlmClient, and factory |
 | `src/contracts/weather.py` | Pydantic domain contracts for stop forecasts, corridor weather advisories, and risk enums |
 | `src/functions/orchestrator/weather/` | Weather client abstract port, Open Meteo adapter, deterministic FixtureWeatherClient, and factory |
+| `src/contracts/candidate.py` | Pydantic domain contracts for corridor validation, candidate statuses, and eligibility reports |
+| `src/functions/orchestrator/places/candidate_service.py` | Place proposal registration, PostGIS persistence, deduplication, and replay idempotency |
+| `src/functions/orchestrator/places/corridor.py` | Geodesic corridor boundary calculation and coordinate bounds validation |
+| `src/functions/orchestrator/evidence/eligibility.py` | Deterministic evidence eligibility gate, assumed hours labeling, and contradiction exclusion |
 
 ## Commands
 
@@ -125,6 +129,10 @@ uv run alembic upgrade head
 - Weather corridor forecasts sample each stop for its actual local arrival date and hour, defaulting to departure midday only with an explicit diagnostic note, support multi day trips and midnight arrival, bound missing hour drift with explicit diagnostics, preserve severe hazards on partial corridors, require verified inputs for monsoon risk without zero defaulting to low risk, and validate provider array bounds safely.
 - Open Meteo licensing status models commercial subscriptions explicitly via CommercialLicenseStatus, never inferring commercial rights from API keys alone, and strictly prevents key leakage into diagnostics or logs.
 - Routing provider outages adhere to specification 0005 fail closed routing without straight line Euclidean distance guesswork, publishing incomplete itineraries with unrouted stops preserved.
+- Candidate places must lie within 100 kilometers of the travel corridor connecting origin to destination stops, with coordinate or distance match alone proving neither existence nor operating hours.
+- Unverified candidate places are retained solely as editorial recommendations cards with uncertainty EDITORIAL_DISCOVERY and never enter the route optimizer solver schedule.
+- Contradicted candidate places refuted by negative observations or conflicting claims are excluded entirely from both route solver stops and recommendation cards.
+- Places with verified existence but unknown operating hours receive assumed daytime visiting windows (09:00 to 18:00) explicitly labeled in state and schedule as HOURS_ASSUMED, never presented as verified hours.
 
 ## Gotchas
 

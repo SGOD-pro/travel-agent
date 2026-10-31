@@ -209,7 +209,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
 - [ ] Build it: `/develop trip planner end to end execution, language model integration, and weather advisory`
    - [x] Provider neutral language model client contracts, abstract port, and offline fixtures (AC-2, AC-3)
    - [x] Open Meteo weather service, forecast horizon policy, and corridor weather aggregator (AC-6)
-   - [ ] Place candidate registration, spatial corridor validation, and deterministic claim eligibility gate (AC-1, AC-3)
+   - [x] Place candidate registration, spatial corridor validation, and deterministic claim eligibility gate (AC-1, AC-3)
    - [ ] Route optimizer task dispatch, interrupt boundary, worker resume, and trip linking (AC-4, AC-5)
    - [ ] End to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking (AC-1, AC-7, AC-8, AC-9)
    - [ ] REST API updates and Next.js frontend itinerary view integration (AC-8, AC-10, AC-11)
@@ -217,9 +217,11 @@ Coordinate brief parsing, generative place research, deterministic candidate val
 - [ ] Verify it: `/check verify 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, separately gated live smoke, strict mypy typing, and ruff linting)
+   - [x] Slice 3 place candidate registration, spatial corridor validation, and deterministic claim eligibility gate: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL integration suite, strict mypy typing, and ruff linting)
 - [ ] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
+   - [x] Slice 3 place candidate registration, spatial corridor validation, and deterministic claim eligibility gate: [2026-10-31-trip-planner-candidate-slice3.md](../reviews/2026-10-31-trip-planner-candidate-slice3.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 
