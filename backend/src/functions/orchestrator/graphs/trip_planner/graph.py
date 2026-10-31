@@ -28,6 +28,10 @@ from sqlalchemy import select
 from config.config import get_settings
 from config.db import get_session_factory
 from contracts.browser import BrowserTaskPayload, BrowserWaitUntil
+from contracts.candidate import (
+    CandidateEligibilityReport,
+    RegisteredCandidate,
+)
 from contracts.decision import (
     DecisionAction,
     DecisionEnvelope,
@@ -37,6 +41,7 @@ from contracts.decision import (
     LayaDecisionPort,
     LayaDecisionRequest,
 )
+from contracts.llm import PlaceProposal
 from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
 from contracts.trips import TransportMode, TripBrief
@@ -49,6 +54,13 @@ from functions.orchestrator.decision.repository import (
     LayaDecisionRepository,
     compute_canonical_replay_digest,
 )
+from functions.orchestrator.evidence.eligibility import (
+    DeterministicEvidenceEligibilityGate,
+)
+from functions.orchestrator.places.candidate_service import (
+    CandidateRegistrationService,
+)
+from functions.orchestrator.places.schemas import CoordinatePoint
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +109,7 @@ class TripPlanningNode(StrEnum):
     ROUTE_EVIDENCE_DECISION = "route_evidence_decision"
     AWAIT_EVIDENCE_RESULTS = "await_evidence_results"
     ESCALATE_DYNAMIC_EVIDENCE = "escalate_dynamic_evidence"
+    EVALUATE_CANDIDATES = "evaluate_candidates"
     SOLVE_SCHEDULE = "solve_schedule"
     COMPUTE_BUDGET = "compute_budget"
     SYNTHESIZE_PROPOSAL = "synthesize_proposal"
@@ -125,18 +138,24 @@ def parse_and_validate_brief_node(state: TripPlanningState) -> dict[str, Any]:
 def discover_candidates_node(state: TripPlanningState) -> dict[str, Any]:
     """Discovers transit corridors and destination points."""
     brief = TripBrief.model_validate(state["brief"])
-    discovered: list[dict[str, Any]] = []
+    discovered: list[dict[str, Any]] = list(state.get("discovered_places", []))
+    existing_names = {
+        d.get("name")
+        for d in discovered
+        if isinstance(d, dict) and d.get("name")
+    }
 
     for d in brief.destinations:
-        discovered.append(
-            {
-                "name": d.name,
-                "lat": d.latitude,
-                "lng": d.longitude,
-                "confidence": d.confidence,
-                "stay_minutes": d.stay_days * 180,  # 3 hours per stay day
-            }
-        )
+        if d.name not in existing_names:
+            discovered.append(
+                {
+                    "name": d.name,
+                    "lat": d.latitude,
+                    "lng": d.longitude,
+                    "confidence": d.confidence,
+                    "stay_minutes": d.stay_days * 180,  # 3 hours per stay day
+                }
+            )
 
     return {
         "current_step": "candidates_discovered",
@@ -144,41 +163,210 @@ def discover_candidates_node(state: TripPlanningState) -> dict[str, Any]:
     }
 
 
+async def evaluate_candidates_node(state: TripPlanningState) -> dict[str, Any]:
+    """Registers candidate proposals, validates corridors, and evaluates deterministic evidence eligibility.
+
+    Conforms to spec 0007 AC-1 and AC-3:
+    1. Distinguishes explicitly verified brief destinations from unverified proposals.
+    2. Registers candidate proposals into canonical places with spatial corridor filtering (100km).
+    3. Evaluates evidence eligibility gate enforcing tenant and execution authorization.
+    4. Categorizes candidates into:
+       - eligible_stops: verified existence places with verified or assumed hours.
+       - editorial_recommendations: unverified candidates within corridor.
+       - excluded_candidates: contradicted or out-of-corridor candidates.
+    """
+    brief_data = state.get("brief", {})
+    brief = TripBrief.model_validate(brief_data)
+
+    # 1. Build corridor points from origin through brief destinations
+    corridor_points = [
+        CoordinatePoint(lat=float(brief.origin_lat), lng=float(brief.origin_lng))
+    ]
+    for d in brief.destinations:
+        corridor_points.append(
+            CoordinatePoint(lat=float(d.latitude), lng=float(d.longitude))
+        )
+
+    # 2. Extract candidate proposals, distinguishing brief destinations from unverified proposals
+    brief_dest_names = {d.name.strip().lower() for d in brief.destinations}
+    discovered = state.get("discovered_places", [])
+    proposals: list[PlaceProposal] = []
+    for p in discovered:
+        p_name = p.get("name", "")
+        if p_name.strip().lower() in brief_dest_names:
+            continue
+        try:
+            prop = PlaceProposal(
+                name=p_name,
+                category=p.get("category", "attraction"),
+                estimated_latitude=float(p.get("lat", p.get("latitude", 0.0))),
+                estimated_longitude=float(p.get("lng", p.get("longitude", 0.0))),
+                suggested_stay_minutes=p.get("stay_minutes", 60),
+                address=p.get("address"),
+            )
+            proposals.append(prop)
+        except Exception as e:
+            logger.debug("Skipping unparseable candidate proposal %s: %s", p, e)
+
+    # Resolve execution and owner IDs
+    exec_id_raw = state.get("execution_id")
+    exec_uuid = uuid.UUID(str(exec_id_raw)) if exec_id_raw else None
+    owner_id_raw = state.get("owner_id")
+    owner_uuid = uuid.UUID(str(owner_id_raw)) if owner_id_raw else None
+
+    db_session = state.get("_db_session")
+    session_factory = state.get("_session_factory")
+    is_offline_fixture = state.get("_offline_fixture_mode", False)
+
+    if not proposals:
+        report = CandidateEligibilityReport(
+            eligible_stops=[],
+            editorial_recommendations=[],
+            excluded_candidates=[],
+            summary={"total_candidates": 0, "eligible_stops": 0},
+        )
+        return {
+            "current_step": "candidates_evaluated",
+            "validated_candidates": [],
+            "candidate_eligibility": report.model_dump(mode="json"),
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "excluded_candidates": [],
+        }
+
+    fixture_obs_list: list[Any] = []
+    fixture_claims_list: list[Any] = []
+    if is_offline_fixture:
+        task_out = state.get("task_outputs", {})
+        if isinstance(task_out, dict):
+            if "observations" in task_out and isinstance(task_out["observations"], list):
+                fixture_obs_list.extend(task_out["observations"])
+            if "claims" in task_out and isinstance(task_out["claims"], list):
+                fixture_claims_list.extend(task_out["claims"])
+            for sub in task_out.values():
+                if isinstance(sub, dict):
+                    if "observations" in sub and isinstance(sub["observations"], list):
+                        fixture_obs_list.extend(sub["observations"])
+                    if "claims" in sub and isinstance(sub["claims"], list):
+                        fixture_claims_list.extend(sub["claims"])
+
+    async def _run_with_session(
+        session: Any | None,
+    ) -> tuple[list[RegisteredCandidate], CandidateEligibilityReport, list[RegisteredCandidate]]:
+        reg_service = CandidateRegistrationService(session=session)
+        valid_cands, excluded_corr = await reg_service.register_candidate_proposals(
+            proposals,
+            corridor_points,
+            execution_id=exec_uuid,
+            owner_id=owner_uuid,
+        )
+        gate = DeterministicEvidenceEligibilityGate(session=session)
+        elig_report = await gate.evaluate_candidate_eligibility(
+            valid_cands,
+            execution_id=exec_uuid,
+            owner_id=owner_uuid,
+            fixture_observations=fixture_obs_list if is_offline_fixture else None,
+            fixture_claims=fixture_claims_list if is_offline_fixture else None,
+        )
+        return valid_cands, elig_report, excluded_corr
+
+    valid_cands: list[RegisteredCandidate] = []
+    elig_report: CandidateEligibilityReport
+    excluded_corr: list[RegisteredCandidate] = []
+
+    if db_session is not None:
+        valid_cands, elig_report, excluded_corr = await _run_with_session(db_session)
+    elif session_factory is not None and not is_offline_fixture:
+        async with session_factory() as session:
+            valid_cands, elig_report, excluded_corr = await _run_with_session(session)
+    else:
+        valid_cands, elig_report, excluded_corr = await _run_with_session(None)
+
+    all_excluded = list(elig_report.excluded_candidates) + list(excluded_corr)
+
+    return {
+        "current_step": "candidates_evaluated",
+        "validated_candidates": [c.model_dump(mode="json") for c in valid_cands],
+        "candidate_eligibility": elig_report.model_dump(mode="json"),
+        "eligible_stops": [s.model_dump(mode="json") for s in elig_report.eligible_stops],
+        "editorial_recommendations": [
+            r.model_dump(mode="json") for r in elig_report.editorial_recommendations
+        ],
+        "excluded_candidates": [x.model_dump(mode="json") for x in all_excluded],
+    }
+
+
 def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
     """Applies OR-Tools scheduling solver to generate optimal sequence and timestamps.
 
-    Conforms to spec 0007 AC-3: Unverified or contradicted places must not enter the route solver.
-    Only eligible stops with verified existence (or brief destination points) are scheduled.
-    Places with verified existence but unknown hours use an explicitly labeled HOURS_ASSUMED window.
+    Conforms to spec 0007 AC-3:
+    1. Consumes candidate eligibility gate output.
+    2. Explicitly verified brief destinations are always scheduled.
+    3. Eligible stops from the candidate gate (verified existence) are scheduled.
+    4. Safe path for missing gate output: if gate output is missing, unverified proposals
+       are safely excluded from the solver schedule and preserved in editorial recommendations.
+    5. Verified or assumed opening windows are passed to the solver and preserved with accurate labeling.
     """
     brief = TripBrief.model_validate(state["brief"])
     eligible_stops_data = state.get("eligible_stops")
 
+    # 1. Always schedule explicitly verified brief destinations
+    places: list[dict[str, Any]] = [
+        {
+            "name": d.name,
+            "lat": d.latitude,
+            "lng": d.longitude,
+            "confidence": d.confidence,
+            "stay_minutes": d.stay_days * 180,  # 3 hours per stay day
+            "is_hours_assumed": False,
+            "hours_status": "BRIEF_DESTINATION",
+            "window_start": None,
+            "window_end": None,
+        }
+        for d in brief.destinations
+    ]
+
+    editorial_recs = list(state.get("editorial_recommendations", []))
+
     if eligible_stops_data is not None:
-        places: list[dict[str, Any]] = [
-            {
-                "name": s["primary_name"],
-                "lat": s["point"]["lat"] if isinstance(s["point"], dict) else s["point"].lat,
-                "lng": s["point"]["lng"] if isinstance(s["point"], dict) else s["point"].lng,
-                "confidence": 1.0,
-                "stay_minutes": s.get("suggested_stay_minutes", 60),
-                "is_hours_assumed": s.get("is_hours_assumed", False),
-                "hours_status": s.get("hours_status", "UNKNOWN"),
-            }
-            for s in eligible_stops_data
-        ]
+        for s in eligible_stops_data:
+            pt = s.get("point", {})
+            raw_lat = pt.get("lat") if isinstance(pt, dict) else getattr(pt, "lat", 0.0)
+            raw_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", 0.0)
+            lat_val = float(raw_lat) if raw_lat is not None else 0.0
+            lng_val = float(raw_lng) if raw_lng is not None else 0.0
+            places.append(
+                {
+                    "name": s["primary_name"],
+                    "lat": lat_val,
+                    "lng": lng_val,
+                    "confidence": 1.0,
+                    "stay_minutes": s.get("suggested_stay_minutes", 60),
+                    "is_hours_assumed": s.get("is_hours_assumed", False),
+                    "hours_status": s.get("hours_status", "UNKNOWN"),
+                    "window_start": s.get("window_start"),
+                    "window_end": s.get("window_end"),
+                }
+            )
     else:
-        # Default to verified destinations from brief
-        places = [
-            {
-                "name": d.name,
-                "lat": d.latitude,
-                "lng": d.longitude,
-                "confidence": d.confidence,
-                "stay_minutes": d.stay_days * 180,  # 3 hours per stay day
-            }
-            for d in brief.destinations
-        ]
+        # Safe path for missing gate output:
+        # Discovered places are unverified proposals. Do NOT schedule them!
+        # Relegate any unverified proposals to editorial_recommendations with diagnostic.
+        discovered = state.get("discovered_places", [])
+        brief_names = {d.name.strip().lower() for d in brief.destinations}
+        for p in discovered:
+            p_name = p.get("name", "")
+            if p_name.strip().lower() not in brief_names:
+                editorial_recs.append(
+                    {
+                        "primary_name": p_name,
+                        "uncertainty": "EDITORIAL_DISCOVERY",
+                        "is_candidate": True,
+                        "diagnostics": {
+                            "rejection_reason": "Eligibility gate output missing; unverified proposal excluded from solver schedule"
+                        },
+                    }
+                )
 
     start_dt = datetime.combine(brief.start_date, time(hour=9, minute=0), tzinfo=UTC)
 
@@ -190,10 +378,13 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
         start_datetime=start_dt,
     )
 
-    return {
+    update: dict[str, Any] = {
         "current_step": "schedule_optimized",
         "optimized_schedule": schedule.model_dump(mode="json"),
     }
+    if eligible_stops_data is None:
+        update["editorial_recommendations"] = editorial_recs
+    return update
 
 
 def compute_budget_node(state: TripPlanningState) -> dict[str, Any]:
@@ -820,7 +1011,10 @@ async def route_evidence_decision_node(
     elif is_offline_fixture:
         # Offline or fixture mode: inspect task_outputs in memory strictly when explicitly isolated
         offline_matched: set[str] = set()
-        for output in task_outputs.values():
+        outputs_to_inspect = list(task_outputs.values())
+        if isinstance(task_outputs, dict):
+            outputs_to_inspect.append(task_outputs)
+        for output in outputs_to_inspect:
             if isinstance(output, dict):
                 obs_list = output.get("observations") or output.get("source_observations") or []
                 if isinstance(obs_list, list):
@@ -1108,14 +1302,14 @@ def route_evidence_decision_edge(state: TripPlanningState) -> str:
         return TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE
     elif action == DecisionAction.DISPATCH_EVIDENCE_SEARCH.value:
         return TripPlanningNode.AWAIT_EVIDENCE_RESULTS
-    return TripPlanningNode.SOLVE_SCHEDULE
+    return TripPlanningNode.EVALUATE_CANDIDATES
 
 
 def escalate_dynamic_evidence_edge(state: TripPlanningState) -> str:
-    """Routes to await_evidence_results if browser tasks are pending, else to solve_schedule."""
+    """Routes to await_evidence_results if browser tasks are pending, else to evaluate_candidates."""
     if state.get("pending_tasks"):
         return TripPlanningNode.AWAIT_EVIDENCE_RESULTS
-    return TripPlanningNode.SOLVE_SCHEDULE
+    return TripPlanningNode.EVALUATE_CANDIDATES
 
 
 # --- Graph Construction ---
@@ -1129,6 +1323,7 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_node(TripPlanningNode.ROUTE_EVIDENCE_DECISION, route_evidence_decision_node)
     graph.add_node(TripPlanningNode.AWAIT_EVIDENCE_RESULTS, await_evidence_results_node)
     graph.add_node(TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE, escalate_dynamic_evidence_node)
+    graph.add_node(TripPlanningNode.EVALUATE_CANDIDATES, evaluate_candidates_node)
     graph.add_node(TripPlanningNode.SOLVE_SCHEDULE, solve_schedule_node)
     graph.add_node(TripPlanningNode.COMPUTE_BUDGET, compute_budget_node)
     graph.add_node(TripPlanningNode.SYNTHESIZE_PROPOSAL, synthesize_proposal_node)
@@ -1142,7 +1337,7 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
         {
             TripPlanningNode.AWAIT_EVIDENCE_RESULTS: TripPlanningNode.AWAIT_EVIDENCE_RESULTS,
             TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE: TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE,
-            TripPlanningNode.SOLVE_SCHEDULE: TripPlanningNode.SOLVE_SCHEDULE,
+            TripPlanningNode.EVALUATE_CANDIDATES: TripPlanningNode.EVALUATE_CANDIDATES,
         },
     )
     graph.add_conditional_edges(
@@ -1150,12 +1345,13 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
         escalate_dynamic_evidence_edge,
         {
             TripPlanningNode.AWAIT_EVIDENCE_RESULTS: TripPlanningNode.AWAIT_EVIDENCE_RESULTS,
-            TripPlanningNode.SOLVE_SCHEDULE: TripPlanningNode.SOLVE_SCHEDULE,
+            TripPlanningNode.EVALUATE_CANDIDATES: TripPlanningNode.EVALUATE_CANDIDATES,
         },
     )
     graph.add_edge(
         TripPlanningNode.AWAIT_EVIDENCE_RESULTS, TripPlanningNode.ROUTE_EVIDENCE_DECISION
     )
+    graph.add_edge(TripPlanningNode.EVALUATE_CANDIDATES, TripPlanningNode.SOLVE_SCHEDULE)
     graph.add_edge(TripPlanningNode.SOLVE_SCHEDULE, TripPlanningNode.COMPUTE_BUDGET)
     graph.add_edge(TripPlanningNode.COMPUTE_BUDGET, TripPlanningNode.SYNTHESIZE_PROPOSAL)
     graph.add_edge(TripPlanningNode.SYNTHESIZE_PROPOSAL, END)

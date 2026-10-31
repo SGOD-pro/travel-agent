@@ -8,7 +8,7 @@ Optimizes multi-stop travel sequences and daily time schedules:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from typing import Any, TypedDict
 
 from pydantic import BaseModel, ConfigDict
@@ -33,6 +33,10 @@ class ScheduledStop(BaseModel):
     arrival_time: datetime
     departure_time: datetime
     stay_duration_minutes: int
+    window_start: datetime | None = None
+    window_end: datetime | None = None
+    is_hours_assumed: bool = False
+    hours_status: str = "UNKNOWN"
 
 
 class ScheduledLeg(BaseModel):
@@ -108,15 +112,62 @@ class ItineraryScheduler:
                 dwell_seconds=0,
             )
         ]
+        stop_input_map: dict[str, dict[str, Any]] = {}
         for s in stops:
+            s_name = str(s["name"])
+            stop_input_map[s_name] = s
             stay_mins = int(s.get("stay_minutes", 120))
+
+            w_start_val = s.get("window_start")
+            w_end_val = s.get("window_end")
+            dt_w_start: datetime | None = None
+            dt_w_end: datetime | None = None
+
+            if isinstance(w_start_val, datetime):
+                dt_w_start = w_start_val
+            elif isinstance(w_start_val, time):
+                dt_w_start = datetime.combine(
+                    start_datetime.date(), w_start_val, tzinfo=start_datetime.tzinfo
+                )
+            elif isinstance(w_start_val, str) and w_start_val.strip():
+                parts = w_start_val.strip().split(":")
+                if len(parts) >= 2:
+                    try:
+                        dt_w_start = datetime.combine(
+                            start_datetime.date(),
+                            time(int(parts[0]), int(parts[1])),
+                            tzinfo=start_datetime.tzinfo,
+                        )
+                    except Exception:
+                        pass
+
+            if isinstance(w_end_val, datetime):
+                dt_w_end = w_end_val
+            elif isinstance(w_end_val, time):
+                dt_w_end = datetime.combine(
+                    start_datetime.date(), w_end_val, tzinfo=start_datetime.tzinfo
+                )
+            elif isinstance(w_end_val, str) and w_end_val.strip():
+                parts = w_end_val.strip().split(":")
+                if len(parts) >= 2:
+                    try:
+                        dt_w_end = datetime.combine(
+                            start_datetime.date(),
+                            time(int(parts[0]), int(parts[1])),
+                            tzinfo=start_datetime.tzinfo,
+                        )
+                    except Exception:
+                        pass
+
             route_stops.append(
                 RouteStopInput(
-                    name=str(s["name"]),
+                    name=s_name,
                     location=Point(latitude=float(s["lat"]), longitude=float(s["lng"])),
                     stop_type=StopType.DESTINATION,
                     is_must_visit=True,
                     dwell_seconds=stay_mins * 60,
+                    window_start=dt_w_start,
+                    window_end=dt_w_end,
                 )
             )
 
@@ -132,6 +183,8 @@ class ItineraryScheduler:
                         arrival_time=start_datetime,
                         departure_time=start_datetime,
                         stay_duration_minutes=0,
+                        is_hours_assumed=False,
+                        hours_status="ORIGIN",
                     )
                 ],
                 legs=[],
@@ -179,6 +232,8 @@ class ItineraryScheduler:
         # 4. Map back to OptimizedSchedule
         sched_stops: list[ScheduledStop] = []
         for stop_out in optimized.stops:
+            info = stop_input_map.get(stop_out.name, {})
+            is_origin = (stop_out.name == origin_name and stop_out.stop_order == 0)
             sched_stops.append(
                 ScheduledStop(
                     position=stop_out.stop_order,
@@ -188,6 +243,10 @@ class ItineraryScheduler:
                     arrival_time=stop_out.planned_arrival_at or start_datetime,
                     departure_time=stop_out.planned_departure_at or start_datetime,
                     stay_duration_minutes=stop_out.dwell_seconds // 60,
+                    window_start=stop_out.window_start,
+                    window_end=stop_out.window_end,
+                    is_hours_assumed=bool(info.get("is_hours_assumed", False)) if not is_origin else False,
+                    hours_status=str(info.get("hours_status", "ORIGIN" if is_origin else "UNKNOWN")),
                 )
             )
 

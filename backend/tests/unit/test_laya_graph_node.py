@@ -252,9 +252,9 @@ async def test_route_evidence_decision_phase2_evaluation_bypass_to_solve_schedul
     assert result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
     assert result["pending_tasks"] == []
 
-    # Verify edge routing directs directly to solve_schedule
+    # Verify edge routing directs to evaluate_candidates before solve_schedule
     merged_state = cast(TripPlanningState, {**state, **result})
-    assert route_evidence_decision_edge(merged_state) == "solve_schedule"
+    assert route_evidence_decision_edge(merged_state) == "evaluate_candidates"
 
 
 @pytest.mark.asyncio

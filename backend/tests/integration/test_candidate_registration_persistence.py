@@ -30,7 +30,7 @@ from functions.orchestrator.evidence.eligibility import (
     DEFAULT_ASSUMED_WINDOW_START,
     DeterministicEvidenceEligibilityGate,
 )
-from functions.orchestrator.evidence.models import ClaimModel
+from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
 from functions.orchestrator.evidence.schemas import (
     ClaimCategory,
     FreshnessStatus,
@@ -129,7 +129,7 @@ async def test_candidate_registration_persists_canonical_place_in_postgresql(
         assert place_row.is_candidate is True
         assert place_row.geocoder_provenance == "EDITORIAL_DISCOVERY"
         assert place_row.access_status == "UNKNOWN"
-        assert place_row.provider_ids.get("llm_proposal") == unique_name
+        assert place_row.provider_ids.get("category") == "temple"
 
 
 @pytest.mark.asyncio
@@ -216,6 +216,35 @@ async def test_candidate_eligibility_with_persisted_evidence_and_assumed_hours(
             created_at=now,
         )
         session.add(obs)
+        await session.flush()
+
+        # Insert verified fresh ATTRACTION claim confirming existence and link it to observation
+        claim = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            subject_id=unique_name,
+            place_id=registered.place_id,
+            category=ClaimCategory.ATTRACTION.value,
+            typed_value={"verified_name": unique_name},
+            verification=VerificationStatus.VERIFIED.value,
+            availability="AVAILABLE",
+            freshness=FreshnessStatus.FRESH.value,
+            valid_from=now - timedelta(days=30),
+            valid_until=now + timedelta(days=60),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(claim)
+        await session.flush()
+
+        evidence_link = ClaimEvidenceModel(
+            claim_id=claim.id,
+            observation_id=obs.id,
+            support_type="SUPPORTS",
+            locator="article p",
+            created_at=now,
+        )
+        session.add(evidence_link)
         await session.commit()
 
         # Evaluate candidate eligibility using live PostgreSQL queries
@@ -277,8 +306,37 @@ async def test_candidate_eligibility_with_persisted_verified_hours_claim(
             created_at=now,
         )
         session.add(obs)
+        await session.flush()
 
-        # Insert verified fresh HOURS claim
+        # Insert verified fresh ATTRACTION claim confirming existence and link it
+        exist_claim = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            subject_id=unique_name,
+            place_id=registered.place_id,
+            category=ClaimCategory.ATTRACTION.value,
+            typed_value={"verified_name": unique_name},
+            verification=VerificationStatus.VERIFIED.value,
+            availability="AVAILABLE",
+            freshness=FreshnessStatus.FRESH.value,
+            valid_from=now - timedelta(days=30),
+            valid_until=now + timedelta(days=60),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(exist_claim)
+        await session.flush()
+
+        exist_link = ClaimEvidenceModel(
+            claim_id=exist_claim.id,
+            observation_id=obs.id,
+            support_type="SUPPORTS",
+            locator="main p",
+            created_at=now,
+        )
+        session.add(exist_link)
+
+        # Insert verified fresh HOURS claim and link it
         claim = ClaimModel(
             id=uuid.uuid4(),
             execution_id=exec_id,
@@ -295,6 +353,16 @@ async def test_candidate_eligibility_with_persisted_verified_hours_claim(
             updated_at=now,
         )
         session.add(claim)
+        await session.flush()
+
+        hours_link = ClaimEvidenceModel(
+            claim_id=claim.id,
+            observation_id=obs.id,
+            support_type="SUPPORTS",
+            locator="main p",
+            created_at=now,
+        )
+        session.add(hours_link)
         await session.commit()
 
         gate = DeterministicEvidenceEligibilityGate(session=session)
@@ -445,3 +513,104 @@ async def test_candidate_eligibility_with_persisted_contradiction_in_postgresql(
         assert (
             report.excluded_candidates[0].existence_status == CandidateExistenceStatus.CONTRADICTED
         )
+
+
+@pytest.mark.asyncio
+async def test_candidate_eligibility_caller_supplying_another_owner_real_execution_id_raises_permission_error(
+    session_factory: Any,
+) -> None:
+    """Verifies that an owner supplying another owner's real execution ID in PostgreSQL raises PermissionError."""
+    async with session_factory() as session:
+        exec_a, owner_a = await _create_test_execution_and_trip(session)
+        exec_b, owner_b = await _create_test_execution_and_trip(session)
+        service = CandidateRegistrationService(session=session)
+        corridor = [CoordinatePoint(lat=22.5726, lng=88.3639)]
+
+        unique_name = f"Guarded Spot {uuid.uuid4().hex[:6]}"
+        proposal = PlaceProposal(
+            name=unique_name,
+            category="museum",
+            estimated_latitude=22.5000,
+            estimated_longitude=88.3000,
+        )
+
+        valid_cands, _ = await service.register_candidate_proposals(
+            [proposal], corridor, execution_id=exec_b, owner_id=owner_b
+        )
+        registered = valid_cands[0]
+
+        gate = DeterministicEvidenceEligibilityGate(session=session)
+        # Caller is owner_b, but supplies owner_a's real execution ID
+        with pytest.raises(PermissionError) as exc_info:
+            await gate.evaluate_candidate_eligibility(
+                candidates=[registered],
+                execution_id=exec_a,
+                owner_id=owner_b,
+            )
+
+        assert "authorization failed" in str(exc_info.value).lower()
+
+
+@pytest.mark.asyncio
+async def test_candidate_registration_same_named_places_far_apart_remain_distinct_in_postgresql(
+    session_factory: Any,
+) -> None:
+    """Verifies that same-named places far apart remain distinct and replay does not create duplicates."""
+    async with session_factory() as session:
+        exec_id, owner_id = await _create_test_execution_and_trip(session)
+        service = CandidateRegistrationService(session=session)
+        corridor = [
+            CoordinatePoint(lat=22.5726, lng=88.3639),  # Kolkata
+            CoordinatePoint(lat=21.6266, lng=87.5074),  # Digha (~140 km)
+        ]
+
+        shared_name = f"Shiva Temple {uuid.uuid4().hex[:6]}"
+        proposal_kolkata = PlaceProposal(
+            name=shared_name,
+            category="temple",
+            estimated_latitude=22.5700,
+            estimated_longitude=88.3600,
+        )
+        proposal_digha = PlaceProposal(
+            name=shared_name,
+            category="temple",
+            estimated_latitude=21.6300,
+            estimated_longitude=87.5100,
+        )
+
+        # 1. Register Kolkata place
+        pass_kolkata, _ = await service.register_candidate_proposals(
+            [proposal_kolkata], corridor, execution_id=exec_id, owner_id=owner_id
+        )
+        await session.commit()
+
+        # 2. Register Digha place with identical name ~140km away
+        pass_digha, _ = await service.register_candidate_proposals(
+            [proposal_digha], corridor, execution_id=exec_id, owner_id=owner_id
+        )
+        await session.commit()
+
+        assert len(pass_kolkata) == 1
+        assert len(pass_digha) == 1
+        # Distinct places created because they are far apart
+        assert pass_kolkata[0].place_id != pass_digha[0].place_id
+        assert pass_kolkata[0].primary_name == pass_digha[0].primary_name
+
+        stmt = select(CanonicalPlaceModel).where(CanonicalPlaceModel.primary_name == shared_name)
+        rows = (await session.execute(stmt)).scalars().all()
+        assert len(rows) == 2
+        row_ids = {r.id for r in rows}
+        assert pass_kolkata[0].place_id in row_ids
+        assert pass_digha[0].place_id in row_ids
+
+        # 3. Replay Digha registration: must resolve to existing Digha record without creating a 3rd record
+        replay_digha, _ = await service.register_candidate_proposals(
+            [proposal_digha], corridor, execution_id=exec_id, owner_id=owner_id
+        )
+        await session.commit()
+
+        assert len(replay_digha) == 1
+        assert replay_digha[0].place_id == pass_digha[0].place_id
+
+        rows_after_replay = (await session.execute(stmt)).scalars().all()
+        assert len(rows_after_replay) == 2

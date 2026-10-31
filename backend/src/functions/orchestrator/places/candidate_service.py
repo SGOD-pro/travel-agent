@@ -104,22 +104,25 @@ class CandidateRegistrationService:
         resolved_place_id: uuid.UUID | None = None
 
         if self._repo is not None and self._session is not None:
-            # 1. Authoritative check: provider_id match
-            existing_place = await self._repo.find_by_provider_id("llm_proposal", proposal.name)
-
-            # 2. Spatial proximity and name similarity match within 100m
-            if existing_place is None:
-                nearby = await self._repo.find_nearby(point, max_distance_meters=100.0, limit=10)
-                for candidate_model, _ in nearby:
-                    sim = compute_name_similarity(proposal.name, candidate_model.primary_name)
-                    if sim >= 0.8:
-                        existing_place = candidate_model
-                        break
+            # 1. Spatial proximity and name similarity match within 100m
+            # Places with the same name far apart remain distinct;
+            # Replay of the same candidate within 100m resolves to the existing record.
+            existing_place = None
+            nearby = await self._repo.find_candidates_by_proximity(
+                point,
+                max_distance_meters=100.0,
+            )
+            for candidate_model, _ in nearby:
+                cand_names = [candidate_model.primary_name] + list(candidate_model.names or [])
+                sim = max(compute_name_similarity(proposal.name, cn) for cn in cand_names)
+                if sim >= 0.8:
+                    existing_place = candidate_model
+                    break
 
             if existing_place is not None:
                 resolved_place_id = existing_place.id
             else:
-                # 3. Create new canonical candidate place
+                # 2. Create new canonical candidate place
                 new_id = uuid.uuid4()
                 create_data = CanonicalPlaceCreate(
                     id=new_id,
@@ -131,7 +134,6 @@ class CandidateRegistrationService:
                     is_candidate=True,
                     geocoder_provenance="EDITORIAL_DISCOVERY",
                     provider_ids={
-                        "llm_proposal": proposal.name,
                         "category": proposal.category,
                     },
                 )

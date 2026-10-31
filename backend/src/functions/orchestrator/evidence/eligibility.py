@@ -20,6 +20,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from contracts.candidate import (
     CandidateEligibilityReport,
@@ -27,8 +28,7 @@ from contracts.candidate import (
     CandidateHoursStatus,
     RegisteredCandidate,
 )
-from functions.evidence_collector.models import SourceObservationModel
-from functions.orchestrator.evidence.models import ClaimModel
+from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
 from functions.orchestrator.evidence.schemas import (
     AvailabilityStatus,
     ClaimCategory,
@@ -91,11 +91,43 @@ class DeterministicEvidenceEligibilityGate:
         editorial_recommendations: list[RegisteredCandidate] = []
         excluded_candidates: list[RegisteredCandidate] = []
 
+        # Enforce owner-to-execution authorization at the evidence boundary
+        if self._session is not None and execution_id is not None and owner_id is not None:
+            from functions.orchestrator.execution.models import ExecutionModel
+
+            exec_stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id)
+            exec_res = await self._session.execute(exec_stmt)
+            execution_record = exec_res.scalar_one_or_none()
+            if execution_record is not None and execution_record.owner_id != owner_id:
+                raise PermissionError(
+                    f"Execution authorization failed: execution {execution_id} belongs to owner {execution_record.owner_id}, caller is {owner_id}"
+                )
+
+        if execution_id is not None and owner_id is not None:
+            # Check in-memory / fixture items for ownership mismatch
+            for item in (fixture_observations or []) + (fixture_claims or []):
+                item_exec = getattr(item, "execution_id", None) or (
+                    item.get("execution_id") if isinstance(item, dict) else None
+                )
+                item_owner = getattr(item, "owner_id", None) or (
+                    item.get("owner_id") if isinstance(item, dict) else None
+                )
+                if (
+                    item_exec
+                    and str(item_exec) == str(execution_id)
+                    and item_owner
+                    and str(item_owner) != str(owner_id)
+                ):
+                    raise PermissionError(
+                        f"Execution authorization failed: fixture execution {execution_id} belongs to owner {item_owner}, caller is {owner_id}"
+                    )
+
         for candidate in candidates:
             # 1. Retrieve evidence for this candidate
             obs_list, claims_list = await self._retrieve_evidence_for_candidate(
                 candidate=candidate,
                 execution_id=execution_id,
+                owner_id=owner_id,
                 fixture_observations=fixture_observations,
                 fixture_claims=fixture_claims,
             )
@@ -176,6 +208,7 @@ class DeterministicEvidenceEligibilityGate:
         self,
         candidate: RegisteredCandidate,
         execution_id: uuid.UUID | None,
+        owner_id: uuid.UUID | None,
         fixture_observations: list[Any] | None,
         fixture_claims: list[Any] | None,
     ) -> tuple[list[Any], list[Any]]:
@@ -186,70 +219,97 @@ class DeterministicEvidenceEligibilityGate:
         cand_name_norm = candidate.primary_name.strip().lower()
         cand_place_id = candidate.place_id
 
-        # Database retrieval with execution isolation
+        # Database retrieval with execution isolation and explicit claim-evidence links
         if self._session is not None:
-            if execution_id is not None:
-                # Query source observations scoped to execution_id
-                obs_stmt = select(SourceObservationModel).where(
-                    SourceObservationModel.execution_id == execution_id
+            claim_stmt = (
+                select(ClaimModel)
+                .options(
+                    selectinload(ClaimModel.evidence_links).selectinload(
+                        ClaimEvidenceModel.observation
+                    )
                 )
-                obs_exec = await self._session.execute(obs_stmt)
-                all_obs = obs_exec.scalars().all()
-                for o in all_obs:
-                    # Match by place_id in artifact_ref or place name in excerpt
-                    matches_name = cand_name_norm in (o.excerpt_text or "").lower()
-                    matches_url = cand_name_norm.replace(" ", "") in o.canonical_url.lower()
-                    if matches_name or matches_url:
-                        obs_results.append(o)
+            )
+            if cand_place_id is not None:
+                claim_stmt = claim_stmt.where(ClaimModel.place_id == cand_place_id)
+            else:
+                claim_stmt = claim_stmt.where(ClaimModel.subject_id == cand_name_norm)
 
-                # Query claims scoped to execution_id or matching place_id
-                claim_stmt = select(ClaimModel).where(ClaimModel.execution_id == execution_id)
-                claim_exec = await self._session.execute(claim_stmt)
-                all_claims = claim_exec.scalars().all()
-                for c in all_claims:
-                    matches_place = cand_place_id is not None and c.place_id == cand_place_id
-                    matches_subj = c.subject_id.strip().lower() == cand_name_norm
-                    if matches_place or matches_subj:
-                        claims_results.append(c)
+            if execution_id is not None:
+                claim_stmt = claim_stmt.where(ClaimModel.execution_id == execution_id)
+
+            claim_exec = await self._session.execute(claim_stmt)
+            claims_results = list(claim_exec.scalars().all())
+
+            # Only extract observations explicitly linked to claims for this place
+            for c in claims_results:
+                for link in getattr(c, "evidence_links", []) or []:
+                    if link.observation is not None and link.observation not in obs_results:
+                        obs_results.append(link.observation)
 
         # Fixture / in-memory retrieval for offline mode
-        if fixture_observations:
-            for obs in fixture_observations:
-                obs_exec_id = getattr(obs, "execution_id", None)
-                if isinstance(obs, dict):
-                    obs_exec_id = obs.get("execution_id")
-                    text = (obs.get("excerpt_text") or obs.get("content") or "").lower()
-                    url = (obs.get("canonical_url") or obs.get("source_url") or "").lower()
-                else:
-                    text = (getattr(obs, "excerpt_text", "") or "").lower()
-                    url = (
-                        getattr(obs, "canonical_url", "") or getattr(obs, "source_url", "")
-                    ).lower()
-
-                # Verify execution isolation if execution_id specified
-                if execution_id and obs_exec_id and str(obs_exec_id) != str(execution_id):
-                    continue
-
-                if cand_name_norm in text or cand_name_norm.replace(" ", "") in url:
-                    obs_results.append(obs)
-
         if fixture_claims:
             for clm in fixture_claims:
-                clm_exec_id = getattr(clm, "execution_id", None)
-                if isinstance(clm, dict):
-                    clm_exec_id = clm.get("execution_id")
-                    subj = str(clm.get("subject_id", "")).strip().lower()
-                    pid = clm.get("place_id")
-                else:
-                    subj = str(getattr(clm, "subject_id", "")).strip().lower()
-                    pid = getattr(clm, "place_id", None)
+                clm_exec_id = getattr(clm, "execution_id", None) or (
+                    clm.get("execution_id") if isinstance(clm, dict) else None
+                )
+                subj = str(
+                    getattr(clm, "subject_id", "")
+                    if not isinstance(clm, dict)
+                    else clm.get("subject_id", "")
+                ).strip().lower()
+                pid = getattr(clm, "place_id", None) or (
+                    clm.get("place_id") if isinstance(clm, dict) else None
+                )
 
                 # Verify execution isolation if execution_id specified
                 if execution_id and clm_exec_id and str(clm_exec_id) != str(execution_id):
                     continue
 
-                if subj == cand_name_norm or (cand_place_id and str(pid) == str(cand_place_id)):
+                matches_place = cand_place_id and str(pid) == str(cand_place_id)
+                matches_subj = subj == cand_name_norm
+                if matches_place or matches_subj:
                     claims_results.append(clm)
+
+        if fixture_observations:
+            for obs in fixture_observations:
+                obs_exec_id = getattr(obs, "execution_id", None) or (
+                    obs.get("execution_id") if isinstance(obs, dict) else None
+                )
+                obs_pid = getattr(obs, "place_id", None) or (
+                    obs.get("place_id") if isinstance(obs, dict) else None
+                )
+
+                # Verify execution isolation if execution_id specified
+                if execution_id and obs_exec_id and str(obs_exec_id) != str(execution_id):
+                    continue
+
+                matches_place = cand_place_id and obs_pid and str(obs_pid) == str(cand_place_id)
+                obs_subj = str(
+                    getattr(obs, "subject_id", None)
+                    or (obs.get("subject_id") if isinstance(obs, dict) else "")
+                ).strip().lower()
+                obs_name = str(
+                    getattr(obs, "place_name", None)
+                    or (obs.get("place_name") if isinstance(obs, dict) else "")
+                ).strip().lower()
+                excerpt = str(
+                    getattr(obs, "excerpt_text", None)
+                    or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
+                ).lower()
+                c_url = str(
+                    getattr(obs, "canonical_url", None)
+                    or (obs.get("canonical_url") if isinstance(obs, dict) else "")
+                ).lower()
+
+                matches_text = (
+                    cand_name_norm in excerpt
+                    or cand_name_norm.replace(" ", "") in c_url
+                    or (obs_subj == cand_name_norm)
+                    or (obs_name == cand_name_norm)
+                )
+
+                if matches_place or matches_text:
+                    obs_results.append(obs)
 
         return obs_results, claims_results
 
@@ -259,29 +319,30 @@ class DeterministicEvidenceEligibilityGate:
         observations: list[Any],
         claims: list[Any],
     ) -> tuple[CandidateExistenceStatus, dict[str, Any]]:
-        """Evaluates whether existence is verified, contradicted, or unverified."""
-        # 1. Contradiction checks: refuting observations or conflicted/closed claims
-        for obs in observations:
-            sup_type = getattr(obs, "support_type", None)
-            if isinstance(obs, dict):
-                sup_type = obs.get("support_type")
-            if str(sup_type).upper() in (
-                EvidenceSupportType.REFUTES.value,
-                "REFUTES",
-                "CONTRADICTED",
-            ):
-                return CandidateExistenceStatus.CONTRADICTED, {
-                    "contradiction_reason": "Refuting evidence observation asserts place does not exist or is permanently closed"
-                }
+        """Evaluates whether existence is verified, contradicted, or unverified.
 
+        Conforms strictly to spec 0007 AC-3 and verification policy:
+        1. Checks for refuting evidence or conflicted claims -> CONTRADICTED.
+        2. Positive verification requires a VERIFIED, FRESH claim supporting the place's existence,
+           linked via ClaimEvidenceModel with support_type == SUPPORTS to an active, valid,
+           non-NEEDS_BROWSER, non-unavailable source observation.
+        3. Never infers verification from a name mention, URL substring, missing support_type,
+           unavailable page, NEEDS_BROWSER placeholder, stale observation, or unrelated claim.
+        4. If evidence is missing, unverified, or insufficient, candidate remains UNVERIFIED.
+        """
+        # 1. Contradiction checks: refuting observations, conflicted claims, or closed/demolished
         for clm in claims:
-            verif = getattr(clm, "verification", None)
-            avail = getattr(clm, "availability", None)
-            typed_val = getattr(clm, "typed_value", {}) or {}
-            if isinstance(clm, dict):
-                verif = clm.get("verification")
-                avail = clm.get("availability")
-                typed_val = clm.get("typed_value", {})
+            verif = getattr(clm, "verification", None) or (
+                clm.get("verification") if isinstance(clm, dict) else None
+            )
+            avail = getattr(clm, "availability", None) or (
+                clm.get("availability") if isinstance(clm, dict) else None
+            )
+            typed_val = (
+                getattr(clm, "typed_value", {})
+                or (clm.get("typed_value", {}) if isinstance(clm, dict) else {})
+                or {}
+            )
 
             if str(verif).upper() in (VerificationStatus.CONFLICTED.value, "CONFLICTED"):
                 return CandidateExistenceStatus.CONTRADICTED, {
@@ -299,42 +360,175 @@ class DeterministicEvidenceEligibilityGate:
                         "contradiction_reason": f"Place marked unavailable/closed: {status_str}"
                     }
 
-        # 2. Supporting evidence checks
-        has_supporting_obs = False
-        for obs in observations:
-            sup_type = getattr(obs, "support_type", None)
-            ext_method = getattr(obs, "extraction_method", None)
-            if isinstance(obs, dict):
-                sup_type = obs.get("support_type")
-                ext_method = obs.get("extraction_method")
+            # Check evidence links on the claim
+            links = (
+                getattr(clm, "evidence_links", [])
+                or (clm.get("evidence_links", []) if isinstance(clm, dict) else [])
+                or []
+            )
+            for link in links:
+                sup_type = getattr(link, "support_type", None) or (
+                    link.get("support_type") if isinstance(link, dict) else None
+                )
+                if str(sup_type).upper() in (EvidenceSupportType.REFUTES.value, "REFUTES"):
+                    return CandidateExistenceStatus.CONTRADICTED, {
+                        "contradiction_reason": "Linked evidence observation refutes existence or asserts place is closed/demolished"
+                    }
 
-            if str(ext_method).upper() == "NEEDS_BROWSER":
-                # Pending browser escalation does not grant verification
+        for obs in observations:
+            sup_type = getattr(obs, "support_type", None) or (
+                obs.get("support_type") if isinstance(obs, dict) else None
+            )
+            if str(sup_type).upper() in (
+                EvidenceSupportType.REFUTES.value,
+                "REFUTES",
+                "CONTRADICTED",
+            ):
+                return CandidateExistenceStatus.CONTRADICTED, {
+                    "contradiction_reason": "Refuting evidence observation asserts place does not exist or is permanently closed"
+                }
+
+        # 2. Positive existence verification checks
+        EXISTENCE_CATEGORIES = {
+            ClaimCategory.ATTRACTION.value,
+            "EXISTENCE",
+            "ATTRACTION",
+            "LODGING",
+            "TRANSIT",
+        }
+
+        has_verified_existence = False
+        for clm in claims:
+            cat = str(
+                getattr(clm, "category", "")
+                or (clm.get("category", "") if isinstance(clm, dict) else "")
+            ).upper()
+            if cat not in EXISTENCE_CATEGORIES:
+                # Unrelated verified claims (e.g. WEATHER, FEES) must not verify existence
                 continue
 
-            if sup_type is None or str(sup_type).upper() in (
-                EvidenceSupportType.SUPPORTS.value,
-                "SUPPORTS",
+            verif = str(
+                getattr(clm, "verification", "")
+                or (clm.get("verification", "") if isinstance(clm, dict) else "")
+            ).upper()
+            if verif not in (VerificationStatus.VERIFIED.value, "VERIFIED"):
+                continue
+
+            freshness = str(
+                getattr(clm, "freshness", "")
+                or (clm.get("freshness", "") if isinstance(clm, dict) else "")
+            ).upper()
+            valid_until = getattr(clm, "valid_until", None) or (
+                clm.get("valid_until") if isinstance(clm, dict) else None
+            )
+            if freshness == FreshnessStatus.STALE.value or (
+                valid_until is not None and self._as_of > valid_until
             ):
-                has_supporting_obs = True
+                # Stale claims do not verify existence
+                continue
+
+            # Check linked evidence
+            links = (
+                getattr(clm, "evidence_links", [])
+                or (clm.get("evidence_links", []) if isinstance(clm, dict) else [])
+                or []
+            )
+            obs_to_check: list[Any] = []
+            for link in links:
+                sup_type = getattr(link, "support_type", None) or (
+                    link.get("support_type") if isinstance(link, dict) else None
+                )
+                # Must have explicit SUPPORTS (missing support_type rejected!)
+                if sup_type is None or str(sup_type).upper() not in (
+                    EvidenceSupportType.SUPPORTS.value,
+                    "SUPPORTS",
+                ):
+                    continue
+                obs_obj = getattr(link, "observation", None) or (
+                    link.get("observation") if isinstance(link, dict) else None
+                )
+                if obs_obj is not None:
+                    obs_to_check.append(obs_obj)
+
+            if not links and observations:
+                # Direct observations explicitly associated with candidate
+                for obs in observations:
+                    sup_type = getattr(obs, "support_type", None) or (
+                        obs.get("support_type") if isinstance(obs, dict) else None
+                    )
+                    if sup_type is not None and str(sup_type).upper() in (
+                        EvidenceSupportType.SUPPORTS.value,
+                        "SUPPORTS",
+                    ):
+                        obs_to_check.append(obs)
+
+            # Check if any observation is valid, non-error, non-NEEDS_BROWSER, fresh
+            for obs in obs_to_check:
+                ext_method = str(
+                    getattr(obs, "extraction_method", "")
+                    or (obs.get("extraction_method", "") if isinstance(obs, dict) else "")
+                ).upper()
+                if ext_method == "NEEDS_BROWSER":
+                    continue
+
+                artifact_ref = (
+                    getattr(obs, "artifact_ref", None)
+                    or (obs.get("artifact_ref", {}) if isinstance(obs, dict) else {})
+                    or {}
+                )
+                if isinstance(artifact_ref, dict):
+                    status_val = str(artifact_ref.get("status") or "").upper().strip()
+                    if status_val in (
+                        "UNAVAILABLE",
+                        "BLOCKED",
+                        "TIMED_OUT",
+                        "FAILED",
+                        "ERROR",
+                        "NOT_FOUND",
+                    ):
+                        continue
+                    if (
+                        artifact_ref.get("error")
+                        or artifact_ref.get("unavailable_reason")
+                        or artifact_ref.get("unavailable_sources")
+                    ):
+                        continue
+                    if artifact_ref.get("browser_reason"):
+                        continue
+
+                excerpt = getattr(obs, "excerpt_text", None) or (
+                    obs.get("excerpt_text", "") if isinstance(obs, dict) else ""
+                )
+                if "[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED]" in (excerpt or ""):
+                    continue
+
+                # Check observation freshness if retrieved_at is available
+                retrieved_at = getattr(obs, "retrieved_at", None) or (
+                    obs.get("retrieved_at") if isinstance(obs, dict) else None
+                )
+                if retrieved_at is not None and isinstance(retrieved_at, datetime):
+                    ret_dt = (
+                        retrieved_at
+                        if retrieved_at.tzinfo is not None
+                        else retrieved_at.replace(tzinfo=UTC)
+                    )
+                    if (self._as_of - ret_dt).days > 365:
+                        continue
+
+                # Valid supporting observation found for this verified claim!
+                has_verified_existence = True
                 break
 
-        has_verified_claim = False
-        for clm in claims:
-            verif = getattr(clm, "verification", None)
-            if isinstance(clm, dict):
-                verif = clm.get("verification")
-            if str(verif).upper() in (VerificationStatus.VERIFIED.value, "VERIFIED"):
-                has_verified_claim = True
+            if has_verified_existence:
                 break
 
-        if has_supporting_obs or has_verified_claim:
+        if has_verified_existence:
             return CandidateExistenceStatus.VERIFIED, {
                 "existence_verification": "VERIFIED",
-                "evidence_note": "Existence confirmed by supporting observations or verified claims",
+                "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
             }
 
-        # 3. Missing evidence check
+        # 3. Missing or unverified evidence
         return CandidateExistenceStatus.UNVERIFIED, {
             "existence_verification": "UNVERIFIED",
             "evidence_note": (

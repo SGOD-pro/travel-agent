@@ -234,9 +234,11 @@ class TestDeterministicEvidenceEligibilityGate:
     async def test_scenario_a_verified_existence_and_verified_hours(self) -> None:
         gate = DeterministicEvidenceEligibilityGate(session=None)
         exec_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
 
         candidate = RegisteredCandidate(
-            place_id=uuid.uuid4(),
+            place_id=cand_id,
             primary_name="Indian Museum",
             category="museum",
             point=CoordinatePoint(lat=22.5579, lng=88.3511),
@@ -246,26 +248,45 @@ class TestDeterministicEvidenceEligibilityGate:
         fixture_obs = [
             {
                 "execution_id": str(exec_id),
+                "owner_id": str(owner_id),
+                "place_id": str(cand_id),
                 "excerpt_text": "Indian Museum in Kolkata is open to visitors",
                 "canonical_url": "https://indianmuseumkolkata.org",
                 "support_type": EvidenceSupportType.SUPPORTS.value,
+                "extraction_method": "SCRAPLING_HTTP",
+                "artifact_ref": {"status": "SUCCESS"},
             }
         ]
 
         fixture_claims = [
             {
                 "execution_id": str(exec_id),
+                "owner_id": str(owner_id),
+                "place_id": str(cand_id),
+                "subject_id": "Indian Museum",
+                "category": ClaimCategory.ATTRACTION.value,
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "evidence_links": [
+                    {"support_type": EvidenceSupportType.SUPPORTS.value, "observation": fixture_obs[0]}
+                ],
+            },
+            {
+                "execution_id": str(exec_id),
+                "owner_id": str(owner_id),
+                "place_id": str(cand_id),
                 "subject_id": "Indian Museum",
                 "category": ClaimCategory.HOURS.value,
                 "verification": VerificationStatus.VERIFIED.value,
                 "freshness": FreshnessStatus.FRESH.value,
                 "typed_value": {"opens": "10:00", "closes": "17:00"},
-            }
+            },
         ]
 
         report = await gate.evaluate_candidate_eligibility(
             candidates=[candidate],
             execution_id=exec_id,
+            owner_id=owner_id,
             fixture_observations=fixture_obs,
             fixture_claims=fixture_claims,
         )
@@ -285,30 +306,52 @@ class TestDeterministicEvidenceEligibilityGate:
     async def test_scenario_b_verified_existence_with_unknown_hours_assumes_daytime(self) -> None:
         gate = DeterministicEvidenceEligibilityGate(session=None)
         exec_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
 
         candidate = RegisteredCandidate(
-            place_id=uuid.uuid4(),
+            place_id=cand_id,
             primary_name="Princep Ghat",
             category="heritage",
             point=CoordinatePoint(lat=22.5540, lng=88.3320),
             existence_status=CandidateExistenceStatus.UNVERIFIED,
         )
 
-        # Supporting observation confirms existence, but operating hours are absent
+        # Supporting observation and verified attraction claim confirm existence, but operating hours are absent
         fixture_obs = [
             {
                 "execution_id": str(exec_id),
+                "owner_id": str(owner_id),
+                "place_id": str(cand_id),
                 "excerpt_text": "Princep Ghat is a historic riverside memorial in Kolkata",
                 "canonical_url": "https://wbtourism.gov.in/princep_ghat",
                 "support_type": EvidenceSupportType.SUPPORTS.value,
+                "extraction_method": "SCRAPLING_HTTP",
+                "artifact_ref": {"status": "SUCCESS"},
+            }
+        ]
+
+        fixture_claims = [
+            {
+                "execution_id": str(exec_id),
+                "owner_id": str(owner_id),
+                "place_id": str(cand_id),
+                "subject_id": "Princep Ghat",
+                "category": ClaimCategory.ATTRACTION.value,
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "evidence_links": [
+                    {"support_type": EvidenceSupportType.SUPPORTS.value, "observation": fixture_obs[0]}
+                ],
             }
         ]
 
         report = await gate.evaluate_candidate_eligibility(
             candidates=[candidate],
             execution_id=exec_id,
+            owner_id=owner_id,
             fixture_observations=fixture_obs,
-            fixture_claims=[],
+            fixture_claims=fixture_claims,
         )
 
         assert len(report.eligible_stops) == 1
@@ -417,8 +460,18 @@ class TestDeterministicEvidenceEligibilityGate:
             }
         ]
 
-        # Hours claim has expired validity or STALE freshness
+        # Verified attraction claim confirms existence, while hours claim has expired validity or STALE freshness
         fixture_claims = [
+            {
+                "execution_id": str(exec_id),
+                "subject_id": "Science City",
+                "category": ClaimCategory.ATTRACTION.value,
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "evidence_links": [
+                    {"support_type": EvidenceSupportType.SUPPORTS.value, "observation": fixture_obs[0]}
+                ],
+            },
             {
                 "execution_id": str(exec_id),
                 "subject_id": "Science City",
@@ -426,7 +479,7 @@ class TestDeterministicEvidenceEligibilityGate:
                 "verification": VerificationStatus.VERIFIED.value,
                 "freshness": FreshnessStatus.STALE.value,
                 "typed_value": {"opens": "09:00", "closes": "20:00"},
-            }
+            },
         ]
 
         report = await gate.evaluate_candidate_eligibility(
@@ -565,3 +618,545 @@ class TestGraphSchedulingBoundaries:
             proposal["editorial_recommendations"][0]["primary_name"] == "Editorial Discovery Cafe"
         )
         assert len(proposal["excluded_candidates"]) == 1
+
+
+class TestSlice3CorrectionRegressions:
+    """Tests covering the five reviewed Slice 3 correction findings."""
+
+    @pytest.mark.asyncio
+    async def test_finding_2_name_mention_only_does_not_verify_existence(self) -> None:
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
+
+        candidate = RegisteredCandidate(
+            place_id=cand_id,
+            primary_name="Casual Name Mention Spot",
+            category="sight",
+            point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        # Observation merely mentions name in text without any verified existence claim
+        fixture_obs = [
+            {
+                "execution_id": str(exec_id),
+                "excerpt_text": "We walked past Casual Name Mention Spot on our way to the hotel.",
+                "canonical_url": "https://travel-blog.com/post",
+                "support_type": EvidenceSupportType.SUPPORTS.value,
+            }
+        ]
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[candidate],
+            execution_id=exec_id,
+            fixture_observations=fixture_obs,
+            fixture_claims=[],
+        )
+
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 1
+        assert (
+            report.editorial_recommendations[0].existence_status
+            == CandidateExistenceStatus.UNVERIFIED
+        )
+
+    @pytest.mark.asyncio
+    async def test_finding_2_url_substring_does_not_verify_existence(self) -> None:
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
+
+        candidate = RegisteredCandidate(
+            place_id=cand_id,
+            primary_name="Url Match Place",
+            category="sight",
+            point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        fixture_obs = [
+            {
+                "execution_id": str(exec_id),
+                "excerpt_text": "Generic article with no verified facts.",
+                "canonical_url": "https://example.com/urlmatchplace/details",
+                "support_type": EvidenceSupportType.SUPPORTS.value,
+            }
+        ]
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[candidate],
+            execution_id=exec_id,
+            fixture_observations=fixture_obs,
+            fixture_claims=[],
+        )
+
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 1
+        assert (
+            report.editorial_recommendations[0].existence_status
+            == CandidateExistenceStatus.UNVERIFIED
+        )
+
+    @pytest.mark.asyncio
+    async def test_finding_2_missing_support_type_rejected(self) -> None:
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
+
+        candidate = RegisteredCandidate(
+            place_id=cand_id,
+            primary_name="Missing Support Spot",
+            category="museum",
+            point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        obs = {
+            "execution_id": str(exec_id),
+            "place_id": str(cand_id),
+            "excerpt_text": "Missing Support Spot text.",
+            "canonical_url": "https://example.com/missing",
+            "support_type": None,  # Missing support_type
+        }
+
+        claims = [
+            {
+                "execution_id": str(exec_id),
+                "place_id": str(cand_id),
+                "subject_id": "Missing Support Spot",
+                "category": ClaimCategory.ATTRACTION.value,
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "evidence_links": [{"support_type": None, "observation": obs}],
+            }
+        ]
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[candidate],
+            execution_id=exec_id,
+            fixture_observations=[obs],
+            fixture_claims=claims,
+        )
+
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 1
+
+    @pytest.mark.asyncio
+    async def test_finding_2_unavailable_page_rejected(self) -> None:
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
+
+        candidate = RegisteredCandidate(
+            place_id=cand_id,
+            primary_name="Unavailable Page Spot",
+            category="museum",
+            point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        obs = {
+            "execution_id": str(exec_id),
+            "place_id": str(cand_id),
+            "excerpt_text": "Unavailable Page Spot text.",
+            "canonical_url": "https://example.com/unavail",
+            "support_type": EvidenceSupportType.SUPPORTS.value,
+            "artifact_ref": {"status": "UNAVAILABLE", "error": "404 Not Found"},
+        }
+
+        claims = [
+            {
+                "execution_id": str(exec_id),
+                "place_id": str(cand_id),
+                "subject_id": "Unavailable Page Spot",
+                "category": ClaimCategory.ATTRACTION.value,
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "evidence_links": [{"support_type": "SUPPORTS", "observation": obs}],
+            }
+        ]
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[candidate],
+            execution_id=exec_id,
+            fixture_observations=[obs],
+            fixture_claims=claims,
+        )
+
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 1
+
+    @pytest.mark.asyncio
+    async def test_finding_2_needs_browser_placeholder_rejected(self) -> None:
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
+
+        candidate = RegisteredCandidate(
+            place_id=cand_id,
+            primary_name="Pending Render Spot",
+            category="museum",
+            point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        obs = {
+            "execution_id": str(exec_id),
+            "place_id": str(cand_id),
+            "excerpt_text": "[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED]",
+            "canonical_url": "https://example.com/dynamic",
+            "support_type": EvidenceSupportType.SUPPORTS.value,
+            "extraction_method": "NEEDS_BROWSER",
+        }
+
+        claims = [
+            {
+                "execution_id": str(exec_id),
+                "place_id": str(cand_id),
+                "subject_id": "Pending Render Spot",
+                "category": ClaimCategory.ATTRACTION.value,
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "evidence_links": [{"support_type": "SUPPORTS", "observation": obs}],
+            }
+        ]
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[candidate],
+            execution_id=exec_id,
+            fixture_observations=[obs],
+            fixture_claims=claims,
+        )
+
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 1
+
+    @pytest.mark.asyncio
+    async def test_finding_2_unrelated_verified_claim_rejected(self) -> None:
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
+
+        candidate = RegisteredCandidate(
+            place_id=cand_id,
+            primary_name="Place With Weather Claim",
+            category="museum",
+            point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        obs = {
+            "execution_id": str(exec_id),
+            "place_id": str(cand_id),
+            "excerpt_text": "Kolkata weather report for region.",
+            "canonical_url": "https://example.com/weather",
+            "support_type": EvidenceSupportType.SUPPORTS.value,
+            "extraction_method": "OPEN_METEO",
+        }
+
+        # Unrelated claim category (WEATHER) must NOT verify existence of the place!
+        claims = [
+            {
+                "execution_id": str(exec_id),
+                "place_id": str(cand_id),
+                "subject_id": "Place With Weather Claim",
+                "category": ClaimCategory.WEATHER.value,
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "evidence_links": [{"support_type": "SUPPORTS", "observation": obs}],
+            }
+        ]
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[candidate],
+            execution_id=exec_id,
+            fixture_observations=[obs],
+            fixture_claims=claims,
+        )
+
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 1
+
+    @pytest.mark.asyncio
+    async def test_finding_3_owner_authorization_mismatch_raises_permission_error(self) -> None:
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        real_owner_id = uuid.uuid4()
+        imposter_owner_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
+
+        candidate = RegisteredCandidate(
+            place_id=cand_id,
+            primary_name="Fenced Spot",
+            category="museum",
+            point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        fixture_obs = [
+            {
+                "execution_id": str(exec_id),
+                "owner_id": str(real_owner_id),
+                "place_id": str(cand_id),
+                "excerpt_text": "Fenced Spot details.",
+                "canonical_url": "https://example.com/fenced",
+                "support_type": EvidenceSupportType.SUPPORTS.value,
+            }
+        ]
+
+        # Imposter supplies real execution ID belonging to real_owner_id
+        with pytest.raises(PermissionError) as exc_info:
+            await gate.evaluate_candidate_eligibility(
+                candidates=[candidate],
+                execution_id=exec_id,
+                owner_id=imposter_owner_id,
+                fixture_observations=fixture_obs,
+                fixture_claims=[],
+            )
+
+        assert "authorization failed" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
+    async def test_finding_4_same_name_different_location_remain_distinct_in_memory(self) -> None:
+        service = CandidateRegistrationService(session=None)
+        corridor = [
+            CoordinatePoint(lat=22.5726, lng=88.3639),  # Kolkata
+            CoordinatePoint(lat=21.6266, lng=87.5074),  # Digha
+        ]
+
+        proposal_kolkata = PlaceProposal(
+            name="Kali Temple",
+            category="temple",
+            estimated_latitude=22.5700,
+            estimated_longitude=88.3600,
+        )
+        proposal_digha = PlaceProposal(
+            name="Kali Temple",  # Same name!
+            category="temple",
+            estimated_latitude=21.6300,
+            estimated_longitude=87.5100,
+        )
+
+        valid_cands, _ = await service.register_candidate_proposals(
+            [proposal_kolkata, proposal_digha], corridor
+        )
+
+        assert len(valid_cands) == 2
+        # Same name in different locations must have distinct place IDs
+        assert valid_cands[0].place_id != valid_cands[1].place_id
+        assert valid_cands[0].primary_name == valid_cands[1].primary_name
+
+    def test_finding_1_missing_gate_output_safe_path(self) -> None:
+        state: TripPlanningState = {
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                        "confidence": 0.95,
+                    }
+                ],
+                "start_date": "2026-11-01",
+                "end_date": "2026-11-03",
+                "travelers": 2,
+                "rooms": 1,
+                "budget": {"amount": "25000.00", "currency": "INR"},
+            },
+            # Gate output is missing entirely (eligible_stops not in state)
+            "discovered_places": [
+                {
+                    "name": "Unverified Proposal Beach Shack",
+                    "lat": 21.6400,
+                    "lng": 87.5200,
+                    "confidence": 0.5,
+                    "stay_minutes": 60,
+                }
+            ],
+        }
+
+        result = solve_schedule_node(state)
+        schedule = result["optimized_schedule"]
+        scheduled_names = [s["name"] for s in schedule["stops"]]
+
+        # Explicitly verified brief destination is scheduled
+        assert "Digha" in scheduled_names
+        # Safe path: unverified proposal must NOT be scheduled!
+        assert "Unverified Proposal Beach Shack" not in scheduled_names
+        # Unverified proposal is preserved in editorial recommendations
+        recs = result.get("editorial_recommendations", [])
+        assert any(r.get("primary_name") == "Unverified Proposal Beach Shack" for r in recs)
+
+    def test_finding_5_scheduled_stops_preserve_windows_and_labels(self) -> None:
+        state: TripPlanningState = {
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 1,
+                        "confidence": 1.0,
+                    }
+                ],
+                "start_date": "2026-11-01",
+                "end_date": "2026-11-02",
+                "travelers": 1,
+                "rooms": 1,
+                "budget": {"amount": "10000.00", "currency": "INR"},
+            },
+            "eligible_stops": [
+                {
+                    "primary_name": "Verified Museum",
+                    "point": {"lat": 21.6300, "lng": 87.5100},
+                    "suggested_stay_minutes": 60,
+                    "is_hours_assumed": False,
+                    "hours_status": "VERIFIED_HOURS",
+                    "window_start": "10:00",
+                    "window_end": "17:00",
+                },
+                {
+                    "primary_name": "Assumed Garden",
+                    "point": {"lat": 21.6350, "lng": 87.5150},
+                    "suggested_stay_minutes": 60,
+                    "is_hours_assumed": True,
+                    "hours_status": "HOURS_ASSUMED",
+                    "window_start": time(9, 0),
+                    "window_end": time(18, 0),
+                },
+            ],
+        }
+
+        result = solve_schedule_node(state)
+        schedule = result["optimized_schedule"]
+        stops_by_name = {s["name"]: s for s in schedule["stops"]}
+
+        assert "Verified Museum" in stops_by_name
+        vm_stop = stops_by_name["Verified Museum"]
+        assert vm_stop["is_hours_assumed"] is False
+        assert vm_stop["hours_status"] == "VERIFIED_HOURS"
+        assert vm_stop["window_start"] is not None
+        assert vm_stop["window_end"] is not None
+
+        assert "Assumed Garden" in stops_by_name
+        ag_stop = stops_by_name["Assumed Garden"]
+        assert ag_stop["is_hours_assumed"] is True
+        assert ag_stop["hours_status"] == "HOURS_ASSUMED"
+        assert ag_stop["window_start"] is not None
+        assert ag_stop["window_end"] is not None
+
+    @pytest.mark.asyncio
+    async def test_finding_1_compiled_graph_lifecycle_with_evaluate_candidates(self) -> None:
+        from functions.decision_router.fixtures import FixtureLayaDecisionAdapter
+        from functions.orchestrator.graphs.trip_planner.graph import (
+            compile_trip_planning_workflow,
+        )
+
+        workflow = compile_trip_planning_workflow()
+
+        exec_id = uuid.uuid4()
+        owner_id = uuid.uuid4()
+
+        initial_state: TripPlanningState = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(owner_id),
+            "execution_id": str(exec_id),
+            "version": 1,
+            "_offline_fixture_mode": True,
+            "_laya_adapter": FixtureLayaDecisionAdapter(),
+            "static_search_completed": True,
+            "remaining_search_budget": 0,
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 1,
+                        "confidence": 1.0,
+                    }
+                ],
+                "start_date": "2026-11-01",
+                "end_date": "2026-11-02",
+                "travelers": 2,
+                "rooms": 1,
+                "budget": {"amount": "15000.00", "currency": "INR"},
+            },
+            "discovered_places": [
+                {
+                    "name": "Digha Marine Station",
+                    "category": "museum",
+                    "lat": 21.6300,
+                    "lng": 87.5100,
+                    "stay_minutes": 60,
+                }
+            ],
+            "task_outputs": {
+                "search-1": {
+                    "observations": [
+                        {
+                            "execution_id": str(exec_id),
+                            "owner_id": str(owner_id),
+                            "canonical_url": "https://digha.org/guide",
+                            "content_hash": "hash_dest_digha",
+                            "excerpt_text": "Digha is a coastal resort town in West Bengal with beaches and attractions.",
+                            "support_type": "SUPPORTS",
+                            "extraction_method": "SCRAPLING_HTTP",
+                            "artifact_ref": {"status": "SUCCESS", "gps": {"lat": 21.6266, "lng": 87.5074}},
+                        },
+                        {
+                            "execution_id": str(exec_id),
+                            "owner_id": str(owner_id),
+                            "canonical_url": "https://digha.org/marine",
+                            "content_hash": "hash_marine_cand",
+                            "excerpt_text": "Digha Marine Station is a research facility and aquarium in Digha.",
+                            "support_type": "SUPPORTS",
+                            "extraction_method": "SCRAPLING_HTTP",
+                            "artifact_ref": {"status": "SUCCESS", "gps": {"lat": 21.6300, "lng": 87.5100}},
+                        },
+                    ],
+                    "claims": [
+                        {
+                            "execution_id": str(exec_id),
+                            "owner_id": str(owner_id),
+                            "subject_id": "Digha Marine Station",
+                            "category": "ATTRACTION",
+                            "verification": "VERIFIED",
+                            "freshness": "FRESH",
+                            "evidence_links": [
+                                {
+                                    "support_type": "SUPPORTS",
+                                    "observation": {
+                                        "extraction_method": "SCRAPLING_HTTP",
+                                        "artifact_ref": {"status": "SUCCESS"},
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                    "search_completed": True,
+                }
+            },
+        }
+
+        result = await workflow.ainvoke(initial_state)
+        assert result["status"] == "completed"
+        assert result["current_step"] == "proposal_synthesized"
+        assert "validated_candidates" in result
+        assert "candidate_eligibility" in result
+        assert "optimized_schedule" in result
+        schedule = result["optimized_schedule"]
+        scheduled_names = [s["name"] for s in schedule["stops"]]
+        assert "Digha" in scheduled_names
+        assert "Digha Marine Station" in scheduled_names
