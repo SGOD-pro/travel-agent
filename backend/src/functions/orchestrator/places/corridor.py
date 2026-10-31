@@ -24,6 +24,8 @@ def validate_coordinates(lat: Any, lng: Any) -> tuple[bool, str | None]:
     """Validates that latitude and longitude are finite numbers within valid geographic ranges."""
     if lat is None or lng is None:
         return False, "Coordinates cannot be None"
+    if isinstance(lat, bool) or isinstance(lng, bool):
+        return False, "Coordinates cannot be boolean"
     if not isinstance(lat, (int, float)) or not isinstance(lng, (int, float)):
         return (
             False,

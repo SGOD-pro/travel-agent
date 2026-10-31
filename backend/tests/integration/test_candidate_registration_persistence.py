@@ -1022,3 +1022,177 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
             },
             config={"configurable": {"session_factory": session_factory}},
         )
+
+
+@pytest.mark.asyncio
+async def test_name_only_claim_requires_established_location_in_postgresql(
+    session_factory: Any,
+) -> None:
+    """Verifies that in PostgreSQL, name-only claims with no or invalid location cannot verify candidates,
+
+    while established nearby locations verify matching candidates and cross-place links remain isolated.
+    """
+    async with session_factory() as session:
+        exec_id, owner_id = await _create_test_execution_and_trip(session)
+        service = CandidateRegistrationService(session=session)
+        corridor = [
+            CoordinatePoint(lat=22.5726, lng=88.3639),  # Kolkata
+            CoordinatePoint(lat=21.6266, lng=87.5074),  # Digha (~140 km)
+        ]
+
+        shared_name = f"Radha Krishna Temple {uuid.uuid4().hex[:6]}"
+        proposal_kolkata = PlaceProposal(
+            name=shared_name,
+            category="temple",
+            estimated_latitude=22.5700,
+            estimated_longitude=88.3600,
+        )
+        proposal_digha = PlaceProposal(
+            name=shared_name,
+            category="temple",
+            estimated_latitude=21.6300,
+            estimated_longitude=87.5100,
+        )
+
+        pass_kolkata, _ = await service.register_candidate_proposals(
+            [proposal_kolkata], corridor, execution_id=exec_id, owner_id=owner_id
+        )
+        pass_digha, _ = await service.register_candidate_proposals(
+            [proposal_digha], corridor, execution_id=exec_id, owner_id=owner_id
+        )
+        await session.commit()
+
+        cand_k = pass_kolkata[0]
+        cand_d = pass_digha[0]
+
+        now = datetime.now(UTC)
+
+        # 1. Observation with NO coordinates and a name-only claim (place_id=None)
+        obs_no_coords = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            source_url="https://wbtourism.gov.in/temple_no_coords",
+            canonical_url=f"https://wbtourism.gov.in/{shared_name.lower().replace(' ', '_')}_no_coords",
+            publisher="wbtourism.gov.in",
+            content_hash=f"hash_{uuid.uuid4().hex}",
+            retrieved_at=now,
+            published_at=now - timedelta(days=2),
+            excerpt_text=f"The famous {shared_name} is visited by pilgrims.",
+            excerpt_locator="article p",
+            extraction_method="SCRAPLING_HTTP",
+            artifact_ref={"status": "SUCCESS"},  # No coordinates!
+            created_at=now,
+        )
+        session.add(obs_no_coords)
+        await session.flush()
+
+        claim_name_only = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            place_id=None,  # Name-only claim without place_id
+            subject_id=shared_name,
+            category=ClaimCategory.ATTRACTION.value,
+            typed_value={"verified_name": shared_name},
+            verification=VerificationStatus.VERIFIED.value,
+            availability="AVAILABLE",
+            freshness=FreshnessStatus.FRESH.value,
+            valid_from=now - timedelta(days=30),
+            valid_until=now + timedelta(days=60),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(claim_name_only)
+        await session.flush()
+
+        link_1 = ClaimEvidenceModel(
+            claim_id=claim_name_only.id,
+            observation_id=obs_no_coords.id,
+            support_type="SUPPORTS",
+            locator="article p",
+            created_at=now,
+        )
+        session.add(link_1)
+        await session.commit()
+
+        gate = DeterministicEvidenceEligibilityGate(session=session)
+        report_1 = await gate.evaluate_candidate_eligibility(
+            [cand_k, cand_d],
+            execution_id=exec_id,
+            owner_id=owner_id,
+        )
+
+        # Neither candidate may be verified by name-only claim without established location
+        assert len(report_1.eligible_stops) == 0
+        assert len(report_1.editorial_recommendations) == 2
+
+        # 2. Update observation with malformed / out-of-bounds coordinates
+        obs_no_coords.artifact_ref = {
+            "status": "SUCCESS",
+            "gps": {"lat": 95.0, "lng": 88.3600},  # Latitude out of bounds [-90, 90]
+        }
+        await session.commit()
+
+        report_2 = await gate.evaluate_candidate_eligibility(
+            [cand_k, cand_d],
+            execution_id=exec_id,
+            owner_id=owner_id,
+        )
+        assert len(report_2.eligible_stops) == 0
+        assert len(report_2.editorial_recommendations) == 2
+
+        # 3. Update observation with valid nearby coordinates matching Kolkata (~30 meters away)
+        obs_no_coords.artifact_ref = {
+            "status": "SUCCESS",
+            "gps": {"lat": 22.5702, "lng": 88.3602},
+        }
+        await session.commit()
+
+        report_3 = await gate.evaluate_candidate_eligibility(
+            [cand_k, cand_d],
+            execution_id=exec_id,
+            owner_id=owner_id,
+        )
+
+        # Kolkata is now verified via established location match (<= 1.0 km)
+        eligible_pids = {s.place_id for s in report_3.eligible_stops}
+        assert cand_k.place_id in eligible_pids
+        # Digha (140 km away) remains unverified
+        assert cand_d.place_id not in eligible_pids
+        assert cand_d.place_id in {r.place_id for r in report_3.editorial_recommendations}
+
+        # 4. A claim explicitly linked to another place ID must never verify Digha
+        claim_other_place = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=exec_id,
+            place_id=cand_k.place_id,  # Linked to Kolkata's place ID, not Digha
+            subject_id=shared_name,
+            category=ClaimCategory.ATTRACTION.value,
+            typed_value={"verified_name": shared_name},
+            verification=VerificationStatus.VERIFIED.value,
+            availability="AVAILABLE",
+            freshness=FreshnessStatus.FRESH.value,
+            valid_from=now - timedelta(days=30),
+            valid_until=now + timedelta(days=60),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(claim_other_place)
+        await session.flush()
+
+        link_other = ClaimEvidenceModel(
+            claim_id=claim_other_place.id,
+            observation_id=obs_no_coords.id,
+            support_type="SUPPORTS",
+            locator="article p",
+            created_at=now,
+        )
+        session.add(link_other)
+        await session.commit()
+
+        report_4 = await gate.evaluate_candidate_eligibility(
+            [cand_d],
+            execution_id=exec_id,
+            owner_id=owner_id,
+        )
+        assert len(report_4.eligible_stops) == 0
+        assert len(report_4.editorial_recommendations) == 1

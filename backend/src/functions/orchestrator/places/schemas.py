@@ -11,7 +11,7 @@ from typing import Any
 from geoalchemy2.elements import WKBElement, WKTElement
 from geoalchemy2.shape import to_shape
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from shapely.geometry import Point  # type: ignore[import-untyped]
+from shapely.geometry import Point
 
 from contracts.candidate import CoordinatePoint as _BaseCoordinatePoint
 

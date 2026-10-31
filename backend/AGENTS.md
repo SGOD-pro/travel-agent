@@ -133,7 +133,7 @@ uv run alembic upgrade head
 - Unverified candidate places are retained solely as editorial recommendations cards with uncertainty EDITORIAL_DISCOVERY and never enter the route optimizer solver schedule.
 - Contradicted candidate places refuted by negative observations or conflicting claims are excluded entirely from both route solver stops and recommendation cards.
 - Places with verified existence but unknown operating hours receive assumed daytime visiting windows (09:00 to 18:00) explicitly labeled in state and schedule as HOURS_ASSUMED, never presented as verified hours.
-- Evidence eligibility verifies place identity: claims linked to a place id strictly match only that place id, while name only claims require coordinate distance within 1.0 kilometer before attaching.
+- Evidence eligibility verifies place identity: claims linked to a place id strictly match only that place id, while name only claims require valid established coordinate distance within 1.0 kilometer, with missing, malformed, or non finite coordinates rejected.
 - Candidate evaluation validates caller ownership, cancellation status, and execution deadlines before persisting candidates, and uses runner provided session factories across transaction boundaries.
 
 ## Gotchas

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import time
+from typing import Any
 
 import pytest
 
@@ -448,9 +449,10 @@ class TestDeterministicEvidenceEligibilityGate:
     async def test_scenario_e_stale_hours_claim_falls_back_to_hours_assumed(self) -> None:
         gate = DeterministicEvidenceEligibilityGate(session=None)
         exec_id = uuid.uuid4()
+        cand_id = uuid.uuid4()
 
         candidate = RegisteredCandidate(
-            place_id=uuid.uuid4(),
+            place_id=cand_id,
             primary_name="Science City",
             category="science",
             point=CoordinatePoint(lat=22.5400, lng=88.3950),
@@ -460,9 +462,14 @@ class TestDeterministicEvidenceEligibilityGate:
         fixture_obs = [
             {
                 "execution_id": str(exec_id),
+                "place_id": str(cand_id),
                 "excerpt_text": "Science City Kolkata is a prominent science museum",
                 "canonical_url": "https://sciencecitykolkata.org",
                 "support_type": EvidenceSupportType.SUPPORTS.value,
+                "artifact_ref": {
+                    "status": "SUCCESS",
+                    "gps": {"lat": 22.5400, "lng": 88.3950},
+                },
             }
         ]
 
@@ -470,6 +477,7 @@ class TestDeterministicEvidenceEligibilityGate:
         fixture_claims = [
             {
                 "execution_id": str(exec_id),
+                "place_id": str(cand_id),
                 "subject_id": "Science City",
                 "category": ClaimCategory.ATTRACTION.value,
                 "verification": VerificationStatus.VERIFIED.value,
@@ -483,6 +491,7 @@ class TestDeterministicEvidenceEligibilityGate:
             },
             {
                 "execution_id": str(exec_id),
+                "place_id": str(cand_id),
                 "subject_id": "Science City",
                 "category": ClaimCategory.HOURS.value,
                 "verification": VerificationStatus.VERIFIED.value,
@@ -1299,3 +1308,238 @@ class TestSlice3CorrectionRegressions:
         assert dest_rec["hours_status"] == CandidateHoursStatus.USER_SUPPLIED_UNVERIFIED.value
         assert dest_rec["is_hours_assumed"] is True
         assert dest_rec["existence_status"] == CandidateExistenceStatus.UNVERIFIED.value
+
+    @pytest.mark.asyncio
+    async def test_finding_evidence_identity_two_same_named_candidates_and_name_only_claim_without_location(
+        self,
+    ) -> None:
+        """Verifies that a name-only claim with no location cannot verify either of two same-named candidates."""
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand_kolkata = RegisteredCandidate(
+            place_id=uuid.uuid4(),
+            primary_name="Shiva Temple",
+            category="temple",
+            point=CoordinatePoint(lat=22.5700, lng=88.3600),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+        cand_digha = RegisteredCandidate(
+            place_id=uuid.uuid4(),
+            primary_name="Shiva Temple",
+            category="temple",
+            point=CoordinatePoint(lat=21.6300, lng=87.5100),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        obs_no_location = {
+            "execution_id": str(exec_id),
+            "canonical_url": "https://temple.org/shiva",
+            "excerpt_text": "Ancient Shiva Temple attracts devotees across the state.",
+            "support_type": EvidenceSupportType.SUPPORTS.value,
+            "extraction_method": "SCRAPLING_HTTP",
+            "artifact_ref": {"status": "SUCCESS"},  # No gps, location, or coordinates
+        }
+        name_only_claim = {
+            "execution_id": str(exec_id),
+            "place_id": None,  # Name-only claim
+            "subject_id": "Shiva Temple",
+            "category": ClaimCategory.ATTRACTION.value,
+            "verification": VerificationStatus.VERIFIED.value,
+            "freshness": FreshnessStatus.FRESH.value,
+            "evidence_links": [
+                {
+                    "support_type": EvidenceSupportType.SUPPORTS.value,
+                    "observation": obs_no_location,
+                }
+            ],
+        }
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[cand_kolkata, cand_digha],
+            execution_id=exec_id,
+            fixture_observations=[obs_no_location],
+            fixture_claims=[name_only_claim],
+        )
+
+        # Neither candidate may be verified by a name-only claim lacking location
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 2
+        for cand in report.editorial_recommendations:
+            assert cand.existence_status == CandidateExistenceStatus.UNVERIFIED
+            assert cand.is_hours_assumed is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "bad_gps",
+        [
+            None,
+            {},
+            {"lat": "invalid", "lng": "invalid"},
+            {"lat": True, "lng": 88.3600},
+            {"lat": float("nan"), "lng": 88.3600},
+            {"lat": float("inf"), "lng": 88.3600},
+            {"lat": 95.0, "lng": 88.3600},  # Out of bounds lat
+            {"lat": 22.5700, "lng": 190.0},  # Out of bounds lng
+            {"lat": -95.0, "lng": 88.3600},
+            {"lat": 22.5700, "lng": -195.0},
+        ],
+    )
+    async def test_finding_evidence_identity_missing_malformed_non_finite_coordinates_rejected(
+        self, bad_gps: Any
+    ) -> None:
+        """Verifies that missing, malformed, non-finite, or out-of-bounds coordinates cannot establish match."""
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand = RegisteredCandidate(
+            place_id=uuid.uuid4(),
+            primary_name="Belur Math",
+            category="temple",
+            point=CoordinatePoint(lat=22.6322, lng=88.3557),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        obs = {
+            "execution_id": str(exec_id),
+            "canonical_url": "https://belurmath.org",
+            "excerpt_text": "Belur Math is the headquarters of Ramakrishna Math and Ramakrishna Mission.",
+            "support_type": EvidenceSupportType.SUPPORTS.value,
+            "extraction_method": "SCRAPLING_HTTP",
+            "artifact_ref": (
+                {"status": "SUCCESS", "gps": bad_gps}
+                if bad_gps is not None
+                else {"status": "SUCCESS"}
+            ),
+        }
+        claim = {
+            "execution_id": str(exec_id),
+            "place_id": None,
+            "subject_id": "Belur Math",
+            "category": ClaimCategory.ATTRACTION.value,
+            "verification": VerificationStatus.VERIFIED.value,
+            "freshness": FreshnessStatus.FRESH.value,
+            "evidence_links": [{"support_type": "SUPPORTS", "observation": obs}],
+        }
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[cand],
+            execution_id=exec_id,
+            fixture_observations=[obs],
+            fixture_claims=[claim],
+        )
+
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 1
+        assert (
+            report.editorial_recommendations[0].existence_status
+            == CandidateExistenceStatus.UNVERIFIED
+        )
+
+    @pytest.mark.asyncio
+    async def test_finding_evidence_identity_valid_name_only_claim_with_established_nearby_location_matches(
+        self,
+    ) -> None:
+        """Verifies that a valid name-only claim with an established nearby location (<= 1.0 km) verifies candidate."""
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand = RegisteredCandidate(
+            place_id=uuid.uuid4(),
+            primary_name="Dakshineswar Kali Temple",
+            category="temple",
+            point=CoordinatePoint(lat=22.6530, lng=88.3575),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        # Evidence observation has coordinates ~30 meters away from candidate
+        obs = {
+            "execution_id": str(exec_id),
+            "canonical_url": "https://dakshineswarkalitemple.org",
+            "excerpt_text": "Dakshineswar Kali Temple is a Hindu navaratna temple by the Hooghly River.",
+            "support_type": EvidenceSupportType.SUPPORTS.value,
+            "extraction_method": "SCRAPLING_HTTP",
+            "artifact_ref": {
+                "status": "SUCCESS",
+                "gps": {"lat": 22.6532, "lng": 88.3577},
+            },
+        }
+        claim = {
+            "execution_id": str(exec_id),
+            "place_id": None,  # Name-only claim
+            "subject_id": "Dakshineswar Kali Temple",
+            "category": ClaimCategory.ATTRACTION.value,
+            "verification": VerificationStatus.VERIFIED.value,
+            "freshness": FreshnessStatus.FRESH.value,
+            "evidence_links": [{"support_type": "SUPPORTS", "observation": obs}],
+        }
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[cand],
+            execution_id=exec_id,
+            fixture_observations=[obs],
+            fixture_claims=[claim],
+        )
+
+        assert len(report.eligible_stops) == 1
+        assert len(report.editorial_recommendations) == 0
+        stop = report.eligible_stops[0]
+        assert stop.primary_name == "Dakshineswar Kali Temple"
+        assert stop.existence_status == CandidateExistenceStatus.VERIFIED
+        assert stop.hours_status == CandidateHoursStatus.HOURS_ASSUMED
+        assert stop.is_hours_assumed is True
+        assert stop.window_start == time(9, 0)
+        assert stop.window_end == time(18, 0)
+
+    @pytest.mark.asyncio
+    async def test_finding_evidence_identity_claim_linked_to_another_place_id_rejected(
+        self,
+    ) -> None:
+        """Verifies that a claim explicitly linked to place ID A cannot verify candidate place ID B."""
+        gate = DeterministicEvidenceEligibilityGate(session=None)
+        exec_id = uuid.uuid4()
+        cand_a_id = uuid.uuid4()
+        cand_b_id = uuid.uuid4()
+
+        cand_a = RegisteredCandidate(
+            place_id=cand_a_id,
+            primary_name="Kali Temple",
+            category="temple",
+            point=CoordinatePoint(lat=22.6530, lng=88.3575),
+            existence_status=CandidateExistenceStatus.UNVERIFIED,
+        )
+
+        # Claim carries place_id=cand_b_id (linked to place B)
+        obs = {
+            "execution_id": str(exec_id),
+            "place_id": str(cand_b_id),
+            "canonical_url": "https://kalitemple-b.org",
+            "excerpt_text": "Kali Temple B details.",
+            "support_type": EvidenceSupportType.SUPPORTS.value,
+            "extraction_method": "SCRAPLING_HTTP",
+            "artifact_ref": {
+                "status": "SUCCESS",
+                "gps": {"lat": 22.6530, "lng": 88.3575},  # Even if coordinates match!
+            },
+        }
+        claim_b = {
+            "execution_id": str(exec_id),
+            "place_id": str(cand_b_id),  # Belongs to place B
+            "subject_id": "Kali Temple",
+            "category": ClaimCategory.ATTRACTION.value,
+            "verification": VerificationStatus.VERIFIED.value,
+            "freshness": FreshnessStatus.FRESH.value,
+            "evidence_links": [{"support_type": "SUPPORTS", "observation": obs}],
+        }
+
+        report = await gate.evaluate_candidate_eligibility(
+            candidates=[cand_a],
+            execution_id=exec_id,
+            fixture_observations=[obs],
+            fixture_claims=[claim_b],
+        )
+
+        # Candidate A must NOT borrow Place B's claim
+        assert len(report.eligible_stops) == 0
+        assert len(report.editorial_recommendations) == 1
+        assert (
+            report.editorial_recommendations[0].existence_status
+            == CandidateExistenceStatus.UNVERIFIED
+        )

@@ -36,7 +36,10 @@ from functions.orchestrator.evidence.schemas import (
     FreshnessStatus,
     VerificationStatus,
 )
-from functions.orchestrator.places.corridor import haversine_distance_km
+from functions.orchestrator.places.corridor import (
+    haversine_distance_km,
+    validate_coordinates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,9 +210,54 @@ class DeterministicEvidenceEligibilityGate:
 
     @staticmethod
     def _extract_coordinates_from_data(data: Any) -> tuple[float, float] | None:
-        """Extracts latitude and longitude from dictionary or object if present."""
-        if not data or not isinstance(data, dict):
+        """Extracts latitude and longitude from dictionary, object, or sequence if present.
+
+        Rejects missing, malformed, non-finite, or out-of-bounds coordinates cleanly.
+        """
+        if data is None:
             return None
+
+        # Sequence of coordinates [lat, lng] or GeoJSON [lng, lat]
+        if isinstance(data, (list, tuple)) and len(data) >= 2:
+            try:
+                if isinstance(data[0], bool) or isinstance(data[1], bool):
+                    return None
+                c0 = float(data[0])
+                c1 = float(data[1])
+                valid_lat_first, _ = validate_coordinates(c0, c1)
+                if valid_lat_first:
+                    return c0, c1
+                valid_lng_first, _ = validate_coordinates(c1, c0)
+                if valid_lng_first:
+                    return c1, c0
+            except (ValueError, TypeError):
+                return None
+            return None
+
+        if not isinstance(data, dict):
+            # Check object attributes
+            lat_attr = getattr(data, "lat", None)
+            if lat_attr is None:
+                lat_attr = getattr(data, "latitude", None)
+            lng_attr = getattr(data, "lng", None)
+            if lng_attr is None:
+                lng_attr = getattr(data, "longitude", None)
+            if lng_attr is None:
+                lng_attr = getattr(data, "lon", None)
+            if lat_attr is not None and lng_attr is not None:
+                try:
+                    if isinstance(lat_attr, bool) or isinstance(lng_attr, bool):
+                        return None
+                    f_lat = float(lat_attr)
+                    f_lng = float(lng_attr)
+                    valid, _ = validate_coordinates(f_lat, f_lng)
+                    if valid:
+                        return f_lat, f_lng
+                except (ValueError, TypeError):
+                    pass
+            return None
+
+        # Direct dictionary lat/lng keys
         lat = data.get("lat") if data.get("lat") is not None else data.get("latitude")
         lng = (
             data.get("lng")
@@ -218,18 +266,42 @@ class DeterministicEvidenceEligibilityGate:
         )
         if lat is not None and lng is not None:
             try:
-                return float(lat), float(lng)
+                if isinstance(lat, bool) or isinstance(lng, bool):
+                    return None
+                f_lat = float(lat)
+                f_lng = float(lng)
+                valid, _ = validate_coordinates(f_lat, f_lng)
+                if valid:
+                    return f_lat, f_lng
             except (ValueError, TypeError):
                 pass
-        coords = data.get("coordinates")
-        if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+
+        # Sub-dictionaries: gps, location, geo, point
+        for key in ("gps", "location", "geo", "point"):
+            nested = data.get(key)
+            if nested is not None:
+                coords = DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(nested)
+                if coords is not None:
+                    return coords
+
+        # GeoJSON / coordinates sequence in dict
+        coords_seq = data.get("coordinates")
+        if isinstance(coords_seq, (list, tuple)) and len(coords_seq) >= 2:
             try:
-                return float(coords[1]), float(coords[0])
+                if isinstance(coords_seq[0], bool) or isinstance(coords_seq[1], bool):
+                    return None
+                c0 = float(coords_seq[0])
+                c1 = float(coords_seq[1])
+                # GeoJSON standard: [longitude, latitude]
+                valid_geojson, _ = validate_coordinates(c1, c0)
+                if valid_geojson:
+                    return c1, c0
+                valid_lat_first, _ = validate_coordinates(c0, c1)
+                if valid_lat_first:
+                    return c0, c1
             except (ValueError, TypeError):
                 pass
-        gps = data.get("gps")
-        if isinstance(gps, dict):
-            return DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(gps)
+
         return None
 
     def _claim_matches_candidate_location(
@@ -237,17 +309,49 @@ class DeterministicEvidenceEligibilityGate:
         claim: Any,
         candidate: RegisteredCandidate,
     ) -> bool:
-        """Determines whether a name-only claim has an established identity/location match to candidate."""
+        """Determines whether a claim has an established identity/location match to candidate.
+
+        Enforces:
+        1. If the claim is explicitly linked to another place ID, it must never match this candidate.
+        2. Direct canonical place ID match is preserved if both carry the same place ID.
+        3. For name-only claims (or claims without place ID), requires an established location match within 1.0 km.
+        4. Missing, malformed, non-finite, or out-of-bounds coordinates must not establish that match.
+        """
+        # Direct canonical place ID matching and cross-place isolation
+        claim_pid = getattr(claim, "place_id", None) or (
+            claim.get("place_id") if isinstance(claim, dict) else None
+        )
+        if claim_pid is not None:
+            if candidate.place_id is not None and str(claim_pid) == str(candidate.place_id):
+                return True
+            # Explicitly linked to another place ID (or candidate has no place_id)
+            return False
+
+        # Name-only claim (claim_pid is None): requires candidate to have valid coordinates
+        if candidate.point is None:
+            return False
+
+        valid_cand, _ = validate_coordinates(candidate.point.lat, candidate.point.lng)
+        if not valid_cand:
+            return False
+
+        # Extract target coordinates from claim or its linked evidence
+        target_coords: tuple[float, float] | None = None
+
+        # 1. Geographic scope on claim
         geo = getattr(claim, "geographic_scope", None) or (
             claim.get("geographic_scope") if isinstance(claim, dict) else None
         )
-        geo_coords = self._extract_coordinates_from_data(geo)
-        typed_val = getattr(claim, "typed_value", None) or (
-            claim.get("typed_value") if isinstance(claim, dict) else None
-        )
-        typed_coords = self._extract_coordinates_from_data(typed_val)
-        target_coords = geo_coords or typed_coords
+        target_coords = self._extract_coordinates_from_data(geo)
 
+        # 2. Typed value on claim
+        if target_coords is None:
+            typed_val = getattr(claim, "typed_value", None) or (
+                claim.get("typed_value") if isinstance(claim, dict) else None
+            )
+            target_coords = self._extract_coordinates_from_data(typed_val)
+
+        # 3. Linked evidence observations
         if target_coords is None:
             links = getattr(claim, "evidence_links", None) or (
                 claim.get("evidence_links") if isinstance(claim, dict) else None
@@ -261,20 +365,28 @@ class DeterministicEvidenceEligibilityGate:
                         obs.get("artifact_ref") if isinstance(obs, dict) else None
                     )
                     obs_coords = self._extract_coordinates_from_data(art_ref)
+                    if obs_coords is None:
+                        obs_geo = getattr(obs, "geographic_scope", None) or (
+                            obs.get("geographic_scope") if isinstance(obs, dict) else None
+                        )
+                        obs_coords = self._extract_coordinates_from_data(obs_geo)
+                    if obs_coords is None:
+                        obs_coords = self._extract_coordinates_from_data(obs)
                     if obs_coords is not None:
                         target_coords = obs_coords
                         break
 
-        if target_coords is not None and candidate.point is not None:
-            dist = haversine_distance_km(
-                candidate.point.lat,
-                candidate.point.lng,
-                target_coords[0],
-                target_coords[1],
-            )
-            return dist <= 1.0
+        # Missing, malformed, non-finite, or out-of-bounds coordinates must not establish a match
+        if target_coords is None:
+            return False
 
-        return target_coords is None
+        dist = haversine_distance_km(
+            candidate.point.lat,
+            candidate.point.lng,
+            target_coords[0],
+            target_coords[1],
+        )
+        return dist <= 1.0
 
     async def _retrieve_evidence_for_candidate(
         self,
@@ -394,6 +506,13 @@ class DeterministicEvidenceEligibilityGate:
                     obs.get("artifact_ref") if isinstance(obs, dict) else None
                 )
                 obs_coords = self._extract_coordinates_from_data(art_ref)
+                if obs_coords is None:
+                    obs_geo = getattr(obs, "geographic_scope", None) or (
+                        obs.get("geographic_scope") if isinstance(obs, dict) else None
+                    )
+                    obs_coords = self._extract_coordinates_from_data(obs_geo)
+                if obs_coords is None:
+                    obs_coords = self._extract_coordinates_from_data(obs)
                 if obs_coords is not None and candidate.point is not None:
                     dist = haversine_distance_km(
                         candidate.point.lat,
