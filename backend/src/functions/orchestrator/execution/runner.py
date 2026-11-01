@@ -638,7 +638,11 @@ class GraphRunnerService:
                             # Deduplicate tasks already created
                             continue
 
-                        task_id = uuid.uuid4()
+                        task_id = (
+                            uuid.UUID(str(task_spec["task_id"]))
+                            if task_spec.get("task_id")
+                            else uuid.uuid4()
+                        )
                         task_deadline = execution.deadline_at or (
                             now + timedelta(seconds=int(task_spec.get("deadline_seconds", 3600)))
                         )

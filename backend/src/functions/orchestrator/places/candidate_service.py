@@ -25,6 +25,7 @@ from contracts.candidate import (
 from contracts.llm import PlaceProposal
 from functions.orchestrator.places.corridor import (
     DEFAULT_MAX_CORRIDOR_DISTANCE_KM,
+    haversine_distance_km,
     validate_candidate_corridor,
 )
 from functions.orchestrator.places.repository import CanonicalPlacesRepository
@@ -108,16 +109,36 @@ class CandidateRegistrationService:
             # Places with the same name far apart remain distinct;
             # Replay of the same candidate within 100m resolves to the existing record.
             existing_place = None
-            nearby = await self._repo.find_candidates_by_proximity(
-                point,
-                max_distance_meters=100.0,
-            )
-            for candidate_model, _ in nearby:
-                cand_names = [candidate_model.primary_name] + list(candidate_model.names or [])
-                sim = max(compute_name_similarity(proposal.name, cn) for cn in cand_names)
-                if sim >= 0.8:
-                    existing_place = candidate_model
-                    break
+
+            # First, check if a candidate with the exact or matching name exists nearby (within 100m)
+            name_candidates = await self._repo.search_by_name(proposal.name, limit=20)
+            for nc in name_candidates:
+                try:
+                    nc_pt = CoordinatePoint.from_geo(nc.point)
+                    dist_m = (
+                        haversine_distance_km(point.lat, point.lng, nc_pt.lat, nc_pt.lng) * 1000.0
+                    )
+                    if dist_m <= 100.0:
+                        cand_names = [nc.primary_name] + list(nc.names or [])
+                        sim = max(compute_name_similarity(proposal.name, cn) for cn in cand_names)
+                        if sim >= 0.8:
+                            existing_place = nc
+                            break
+                except Exception:
+                    pass
+
+            if existing_place is None:
+                nearby = await self._repo.find_candidates_by_proximity(
+                    point,
+                    max_distance_meters=100.0,
+                    limit=100,
+                )
+                for candidate_model, _ in nearby:
+                    cand_names = [candidate_model.primary_name] + list(candidate_model.names or [])
+                    sim = max(compute_name_similarity(proposal.name, cn) for cn in cand_names)
+                    if sim >= 0.8:
+                        existing_place = candidate_model
+                        break
 
             if existing_place is not None:
                 resolved_place_id = existing_place.id

@@ -37,7 +37,11 @@ from functions.orchestrator.evidence.schemas import (
     VerificationStatus,
 )
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
-from functions.orchestrator.execution.models import ExecutionModel, TaskModel
+from functions.orchestrator.execution.models import ExecutionModel, OutboxEventModel, TaskModel
+from functions.orchestrator.execution.reconciliation import (
+    CompletionReconciliationService,
+    TaskCompletionEvent,
+)
 from functions.orchestrator.execution.runner import (
     ExecutionResumeEvent,
     ExecutionStartEvent,
@@ -52,6 +56,8 @@ from functions.orchestrator.places.candidate_service import (
 )
 from functions.orchestrator.places.models import CanonicalPlaceModel
 from functions.orchestrator.places.schemas import CoordinatePoint
+from functions.route_optimizer.fixtures import MockValhallaClient
+from functions.route_optimizer.service import RouteOptimizerWorkerService
 
 
 async def _create_test_execution_and_trip(session: Any) -> tuple[uuid.UUID, uuid.UUID]:
@@ -918,6 +924,71 @@ async def test_graph_runner_trip_planner_candidate_lifecycle_on_postgresql(
         action="resume_graph",
     )
     resume_result = await runner.handle_execution_resume(event=resume_event)
+    # In Slice 4, after evidence collection is resumed, the graph advances to dispatch the route optimizer task (WAITING_TASKS)
+    if resume_result.status == "WAITING_TASKS":
+        async with session_factory() as opt_session:
+            opt_task_stmt = select(TaskModel).where(
+                TaskModel.execution_id == exec_id,
+                TaskModel.worker == "OPTIMIZER",
+            )
+            opt_task_row = (await opt_session.execute(opt_task_stmt)).scalar_one()
+
+            outbox_stmt = select(OutboxEventModel).where(
+                OutboxEventModel.execution_id == exec_id,
+                OutboxEventModel.task_id == opt_task_row.id,
+                OutboxEventModel.kind == "TASK_DISPATCH",
+            )
+            dispatch_outbox = (await opt_session.execute(outbox_stmt)).scalar_one()
+            dispatch_payload = dispatch_outbox.payload_ref or dispatch_outbox.payload
+
+        async with session_factory() as worker_session:
+            worker_service = RouteOptimizerWorkerService(
+                session=worker_session,
+                valhalla_client=MockValhallaClient(),
+            )
+            persisted_route_id, worker_output = await worker_service.execute_task(dispatch_payload)
+            await worker_session.commit()
+
+        async with session_factory() as opt_session:
+            opt_task_updated = (
+                await opt_session.execute(select(TaskModel).where(TaskModel.id == opt_task_row.id))
+            ).scalar_one()
+
+        reconciler = CompletionReconciliationService(
+            session_factory,
+            workflow_graphs={"TRAVEL": compiled_graph},
+        )
+        completion_event = TaskCompletionEvent(
+            event_id=uuid.uuid4(),
+            task_id=opt_task_updated.id,
+            execution_id=exec_id,
+            attempt=opt_task_updated.attempt,
+            event_type="TASK_COMPLETED",
+            result_id=opt_task_updated.result_id,
+            output=worker_output.model_dump(mode="json"),
+        )
+        await reconciler.reconcile_task_event(event=completion_event)
+
+        async with session_factory() as opt_session:
+            resume_stmt2 = (
+                select(OutboxEventModel)
+                .where(
+                    OutboxEventModel.execution_id == exec_id,
+                    OutboxEventModel.kind == "EXECUTION_RESUME",
+                )
+                .order_by(OutboxEventModel.created_at.desc())
+            )
+            resume_outbox2 = (await opt_session.execute(resume_stmt2)).scalars().first()
+
+        resume_event2 = ExecutionResumeEvent(
+            execution_id=exec_id,
+            event_id=resume_outbox2.id if resume_outbox2 else uuid.uuid4(),
+            triggered_by_task_id=opt_task_row.id,
+            context_version=1,
+            action="resume_graph",
+        )
+        resume_result = await runner.handle_execution_resume(event=resume_event2)
+        resume_event = resume_event2
     assert resume_result.status == "SUCCEEDED"
 
     # Phase 5: Inspect persisted state in a fresh database session

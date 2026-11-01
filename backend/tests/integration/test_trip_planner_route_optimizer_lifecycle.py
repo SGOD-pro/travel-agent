@@ -724,6 +724,24 @@ async def test_trip_planner_route_optimizer_infeasible_route_outcome(
         ).scalar_one()
 
     infeasible_route_id = uuid.uuid4()
+    now_ts = datetime.now(UTC)
+    async with session_factory() as session:
+        infeasible_route = RouteModel(
+            id=infeasible_route_id,
+            owner_id=owner_id,
+            execution_id=execution_id,
+            trip_id=trip_id,
+            route_version=1,
+            status="INFEASIBLE",
+            solver_status="INFEASIBLE",
+            objective="FASTEST",
+            departure_at=now_ts,
+            created_at=now_ts,
+            updated_at=now_ts,
+        )
+        session.add(infeasible_route)
+        await session.commit()
+
     infeasible_output = RouteOptimizerWorkerOutput(
         status=RouteStatus.INFEASIBLE,
         route_id=infeasible_route_id,
@@ -791,3 +809,240 @@ async def test_trip_planner_route_optimizer_infeasible_route_outcome(
     assert state_values.get("route_id") == str(infeasible_route_id)
     assert state_values.get("routing_status") == "INFEASIBLE"
     assert "MANDATORY_STOP_WINDOW_BREACH" in state_values.get("route_diagnostics", [])[0]
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_route_optimizer_mixed_task_outputs_on_live_postgres(
+    session_factory: Any,
+) -> None:
+    """Verifies that earlier browser/evidence failures are ignored and optimizer output is consumed on live PostgreSQL."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        await session.commit()
+
+    checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
+    trip_graph = compile_trip_planning_workflow(checkpointer=checkpointer)
+
+    runner = GraphRunnerService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph},
+    )
+
+    initial_payload = _build_test_initial_state(owner_id, trip_id, execution_id)
+    # Pre-populate task_outputs with an earlier browser failure
+    browser_task_id = str(uuid.uuid4())
+    initial_payload["task_outputs"] = {
+        browser_task_id: {
+            "worker": "BROWSER",
+            "action": "scrape",
+            "status": "FAILED",
+            "error": "Scrape timed out on destination review portal",
+        }
+    }
+
+    start_event = ExecutionStartEvent(
+        execution_id=execution_id,
+        workflow="TRAVEL",
+        context_version=1,
+        payload=initial_payload,
+    )
+    await runner.handle_execution_start(event=start_event)
+
+    async with session_factory() as session:
+        task_row = (
+            await session.execute(select(TaskModel).where(TaskModel.execution_id == execution_id))
+        ).scalar_one()
+
+        outbox_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == execution_id,
+            OutboxEventModel.kind == "TASK_DISPATCH",
+        )
+        dispatch_outbox = (await session.execute(outbox_stmt)).scalar_one()
+        dispatch_payload = dispatch_outbox.payload_ref or dispatch_outbox.payload
+
+    mock_valhalla = MockValhallaClient()
+    async with session_factory() as session:
+        worker_service = RouteOptimizerWorkerService(
+            session=session,
+            valhalla_client=mock_valhalla,
+        )
+        persisted_route_id, worker_output = await worker_service.execute_task(dispatch_payload)
+        await session.commit()
+
+    async with session_factory() as session:
+        task_updated = (
+            await session.execute(select(TaskModel).where(TaskModel.id == task_row.id))
+        ).scalar_one()
+
+    reconciler = CompletionReconciliationService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph},
+    )
+    completion_event = TaskCompletionEvent(
+        event_id=uuid.uuid4(),
+        task_id=task_updated.id,
+        execution_id=execution_id,
+        attempt=task_updated.attempt,
+        event_type="TASK_COMPLETED",
+        result_id=task_updated.result_id,
+        output=worker_output.model_dump(mode="json"),
+    )
+    await reconciler.reconcile_task_event(event=completion_event)
+
+    async with session_factory() as session:
+        resume_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == execution_id,
+            OutboxEventModel.kind == "EXECUTION_RESUME",
+        )
+        resume_outbox = (await session.execute(resume_stmt)).scalar_one()
+
+    resume_event = ExecutionResumeEvent(
+        execution_id=execution_id,
+        event_id=resume_outbox.id,
+        triggered_by_task_id=task_row.id,
+        context_version=1,
+    )
+    resume_res = await runner.handle_execution_resume(event=resume_event)
+    assert resume_res.status == "SUCCEEDED"
+
+    checkpoint_state = await checkpointer.aget({"configurable": {"thread_id": str(execution_id)}})
+    assert checkpoint_state is not None
+    state_values = checkpoint_state.get("channel_values", {})
+    # Binding check: optimizer output was bound and consumed despite prior browser failure
+    assert state_values.get("route_id") == str(persisted_route_id)
+    assert state_values.get("routing_status") == "FEASIBLE"
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_route_optimizer_production_fail_closed_on_tenant_mismatch(
+    session_factory: Any,
+) -> None:
+    """Verifies that if worker output references a route owned by another tenant, graph fails closed on live PostgreSQL."""
+    owner_id = uuid.uuid4()
+    other_owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        # Create route owned by different tenant
+        now_ts = datetime.now(UTC)
+        foreign_route_id = uuid.uuid4()
+        foreign_route = RouteModel(
+            id=foreign_route_id,
+            owner_id=other_owner_id,
+            execution_id=execution_id,
+            trip_id=trip_id,
+            route_version=1,
+            status="FEASIBLE",
+            solver_status="FEASIBLE",
+            objective="FASTEST",
+            departure_at=now_ts,
+            created_at=now_ts,
+            updated_at=now_ts,
+        )
+        session.add(foreign_route)
+        await session.commit()
+
+    checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
+    trip_graph = compile_trip_planning_workflow(checkpointer=checkpointer)
+
+    runner = GraphRunnerService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph},
+    )
+
+    initial_payload = _build_test_initial_state(owner_id, trip_id, execution_id)
+    start_event = ExecutionStartEvent(
+        execution_id=execution_id,
+        workflow="TRAVEL",
+        context_version=1,
+        payload=initial_payload,
+    )
+    await runner.handle_execution_start(event=start_event)
+
+    async with session_factory() as session:
+        task_row = (
+            await session.execute(select(TaskModel).where(TaskModel.execution_id == execution_id))
+        ).scalar_one()
+
+    # Worker output points to foreign route
+    foreign_output = RouteOptimizerWorkerOutput(
+        status=RouteStatus.FEASIBLE,
+        route_id=foreign_route_id,
+        route_version=1,
+        total_distance_m=100000,
+        total_travel_seconds=7200,
+        stops_count=2,
+        legs_count=1,
+        diagnostics=["Route solved"],
+    )
+
+    async with session_factory() as session:
+        fencing = WorkerFencingService(session)
+        claim = await fencing.claim_task(
+            message={
+                "task_id": task_row.id,
+                "execution_id": execution_id,
+                "attempt": task_row.attempt,
+            },
+            worker="OPTIMIZER",
+            action="solve",
+        )
+        result_id = await fencing.complete_task(
+            execution_id=execution_id,
+            task_id=task_row.id,
+            lease_token=claim.lease_token,
+            output=foreign_output.model_dump(mode="json"),
+        )
+        await session.commit()
+
+    reconciler = CompletionReconciliationService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph},
+    )
+    completion_event = TaskCompletionEvent(
+        event_id=uuid.uuid4(),
+        task_id=task_row.id,
+        execution_id=execution_id,
+        attempt=claim.attempt,
+        event_type="TASK_COMPLETED",
+        result_id=result_id,
+        output=foreign_output.model_dump(mode="json"),
+    )
+    await reconciler.reconcile_task_event(event=completion_event)
+
+    async with session_factory() as session:
+        resume_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == execution_id,
+            OutboxEventModel.kind == "EXECUTION_RESUME",
+        )
+        resume_outbox = (await session.execute(resume_stmt)).scalar_one()
+
+    resume_event = ExecutionResumeEvent(
+        execution_id=execution_id,
+        event_id=resume_outbox.id,
+        triggered_by_task_id=task_row.id,
+        context_version=1,
+    )
+    resume_res = await runner.handle_execution_resume(event=resume_event)
+    assert resume_res.status == "SUCCEEDED"
+
+    checkpoint_state = await checkpointer.aget({"configurable": {"thread_id": str(execution_id)}})
+    assert checkpoint_state is not None
+    state_values = checkpoint_state.get("channel_values", {})
+    # Invariant: Tenant isolation rejected foreign route -> fail closed!
+    assert state_values.get("route_id") is None
+    assert state_values.get("routing_status") == "ROUTING_UNAVAILABLE"
+    assert any(
+        "tenant isolation" in d.lower() or "not found" in d.lower()
+        for d in state_values.get("route_diagnostics", [])
+    )

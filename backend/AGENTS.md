@@ -139,6 +139,9 @@ uv run alembic upgrade head
 - TripPlannerGraph dispatches route optimization tasks to worker OPTIMIZER with action solve, halts at interrupt boundary AWAIT_ROUTE_RESULTS, clears pending_tasks on resumption to prevent duplicate dispatch, and links route_id and diagnostics without bundling OR Tools into the orchestrator Lambda.
 - Trip planner routing provider outages enforce specification 0005 fail closed routing without straight line guesswork, setting route_id to None, routing_status to ROUTING_UNAVAILABLE, and preserving stops without road polylines.
 - Overconstrained stop windows produce routing_status INFEASIBLE and preserve dropped stop diagnostics without failing parent execution.
+- Route result consumption strictly binds to the dispatched optimizer task identifier (optimizer_task_id), ignoring prior browser or evidence task errors.
+- Production route result consumption fails closed without guessing if session factory is missing, owner is missing, route lookup fails, or execution and trip identifiers mismatch.
+- Trip departure and stop opening windows resolve in the trip intended timezone (TripBrief.timezone, defaulting to Asia/Kolkata) before consistent UTC conversion, handling midnight date boundary crossings and multi day visit offsets.
 
 ## Gotchas
 
