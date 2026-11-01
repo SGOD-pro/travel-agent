@@ -140,8 +140,9 @@ uv run alembic upgrade head
 - Trip planner routing provider outages enforce specification 0005 fail closed routing without straight line guesswork, setting route_id to None, routing_status to ROUTING_UNAVAILABLE, and preserving stops without road polylines.
 - Overconstrained stop windows produce routing_status INFEASIBLE and preserve dropped stop diagnostics without failing parent execution.
 - Route result consumption strictly binds to the dispatched optimizer task identifier (optimizer_task_id), ignoring prior browser or evidence task errors.
-- Production route result consumption fails closed without guessing if session factory is missing, owner is missing, route lookup fails, or execution and trip identifiers mismatch.
-- Trip departure and stop opening windows resolve in the trip intended timezone (TripBrief.timezone, defaulting to Asia/Kolkata) before consistent UTC conversion, handling midnight date boundary crossings and multi day visit offsets.
+- When optimizer task output is absent from checkpoint state, result recovery loads from WorkerResultModel using task result_id, validates parent execution and tenant ownership, and propagates worker failure status.
+- Production route result consumption fails closed without guessing if session factory is missing, owner is missing, route lookup fails, or execution and trip identifiers are missing or mismatch.
+- Trip departure and stop opening windows resolve in the trip intended timezone (TripBrief.timezone, defaulting to Asia/Kolkata) before consistent UTC conversion, rejecting invalid timezone overrides with ValueError, handling midnight date boundary crossings and multi day visit offsets.
 
 ## Gotchas
 

@@ -41,6 +41,7 @@ from functions.orchestrator.execution.models import (
     ExecutionModel,
     OutboxEventModel,
     TaskModel,
+    WorkerResultModel,
 )
 from functions.orchestrator.execution.reconciliation import (
     CompletionReconciliationService,
@@ -52,7 +53,9 @@ from functions.orchestrator.execution.runner import (
     GraphRunnerService,
 )
 from functions.orchestrator.graphs.trip_planner.graph import (
+    TripPlanningState,
     compile_trip_planning_workflow,
+    consume_route_result_node,
 )
 from functions.orchestrator.routing.geojson import assemble_route_map_geojson
 from functions.orchestrator.routing.models import RouteModel
@@ -1044,5 +1047,212 @@ async def test_trip_planner_route_optimizer_production_fail_closed_on_tenant_mis
     assert state_values.get("routing_status") == "ROUTING_UNAVAILABLE"
     assert any(
         "tenant isolation" in d.lower() or "not found" in d.lower()
+        for d in state_values.get("route_diagnostics", [])
+    )
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_route_optimizer_recovers_task_output_from_postgres_when_absent_from_checkpoint(
+    session_factory: Any,
+) -> None:
+    """Proves genuine PostgreSQL database recovery when task output is absent from checkpoint state.
+
+    Recovers through TaskModel and WorkerResultModel, enforces execution and tenant boundaries,
+    validates the persisted RouteModel in PostgreSQL, and links route_id successfully.
+    """
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        await session.commit()
+
+    checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
+    trip_graph = compile_trip_planning_workflow(checkpointer=checkpointer)
+
+    runner = GraphRunnerService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph},
+    )
+
+    initial_payload = _build_test_initial_state(owner_id, trip_id, execution_id)
+
+    # 1. Start execution -> dispatches optimizer task to outbox
+    start_event = ExecutionStartEvent(
+        execution_id=execution_id,
+        workflow="TRAVEL",
+        context_version=1,
+        payload=initial_payload,
+    )
+    start_res = await runner.handle_execution_start(event=start_event)
+    assert start_res.status == "WAITING_TASKS"
+
+    # 2. Extract dispatched task payload and execute worker under lease fencing
+    async with session_factory() as session:
+        task_stmt = select(TaskModel).where(TaskModel.execution_id == execution_id)
+        task_row = (await session.execute(task_stmt)).scalar_one()
+
+        outbox_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == execution_id,
+            OutboxEventModel.task_id == task_row.id,
+            OutboxEventModel.kind == "TASK_DISPATCH",
+        )
+        dispatch_outbox = (await session.execute(outbox_stmt)).scalar_one()
+        dispatch_payload = dispatch_outbox.payload_ref or dispatch_outbox.payload
+
+    mock_valhalla = MockValhallaClient()
+    async with session_factory() as session:
+        worker_service = RouteOptimizerWorkerService(
+            session=session,
+            valhalla_client=mock_valhalla,
+        )
+        persisted_route_id, worker_output = await worker_service.execute_task(dispatch_payload)
+        await session.commit()
+
+    # Verify task completed and result_id populated on WorkerResultModel
+    async with session_factory() as session:
+        t_updated = (
+            await session.execute(select(TaskModel).where(TaskModel.id == task_row.id))
+        ).scalar_one()
+        assert t_updated.status == "COMPLETED"
+        assert t_updated.result_id is not None
+
+        w_res = (
+            await session.execute(
+                select(WorkerResultModel).where(WorkerResultModel.id == t_updated.result_id)
+            )
+        ).scalar_one()
+        assert w_res.status == "SUCCESS"
+        assert w_res.output_ref is not None
+
+    # 3. Invoke consume_route_result_node with EMPTY task_outputs (absent from checkpoint)
+    recovery_state: TripPlanningState = {
+        "execution_id": str(execution_id),
+        "owner_id": str(owner_id),
+        "trip_id": str(trip_id),
+        "optimizer_task_id": str(task_row.id),
+        "task_outputs": {},  # Bound output is absent from checkpoint state!
+        "brief": initial_payload["brief"],
+        "eligible_stops": [],
+        "_session_factory": session_factory,
+        "_offline_fixture_mode": False,
+    }
+
+    consume_res = await consume_route_result_node(recovery_state)
+    # Proves database recovery via WorkerResultModel succeeded on live PostgreSQL!
+    assert consume_res["route_id"] == str(persisted_route_id)
+    assert consume_res["route_status"] == "FEASIBLE"
+    assert consume_res["routing_status"] == "FEASIBLE"
+    assert len(consume_res["optimized_schedule"]["stops"]) >= 2
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_route_optimizer_production_fail_closed_on_missing_route_associations(
+    session_factory: Any,
+) -> None:
+    """Proves production fails closed when persisted route lacks execution_id or trip_id."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        await session.commit()
+
+    checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
+    trip_graph = compile_trip_planning_workflow(checkpointer=checkpointer)
+
+    runner = GraphRunnerService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph},
+    )
+
+    initial_payload = _build_test_initial_state(owner_id, trip_id, execution_id)
+    start_event = ExecutionStartEvent(
+        execution_id=execution_id,
+        workflow="TRAVEL",
+        context_version=1,
+        payload=initial_payload,
+    )
+    start_res = await runner.handle_execution_start(event=start_event)
+    assert start_res.status == "WAITING_TASKS"
+
+    async with session_factory() as session:
+        task_stmt = select(TaskModel).where(TaskModel.execution_id == execution_id)
+        task_row = (await session.execute(task_stmt)).scalar_one()
+
+        outbox_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == execution_id,
+            OutboxEventModel.task_id == task_row.id,
+            OutboxEventModel.kind == "TASK_DISPATCH",
+        )
+        dispatch_outbox = (await session.execute(outbox_stmt)).scalar_one()
+        dispatch_payload = dispatch_outbox.payload_ref or dispatch_outbox.payload
+
+    mock_valhalla = MockValhallaClient()
+    async with session_factory() as session:
+        worker_service = RouteOptimizerWorkerService(
+            session=session,
+            valhalla_client=mock_valhalla,
+        )
+        persisted_route_id, worker_output = await worker_service.execute_task(dispatch_payload)
+        # Intentionally remove execution_id from persisted route in PostgreSQL to simulate broken lineage
+        await session.execute(
+            update(RouteModel)
+            .where(RouteModel.id == persisted_route_id)
+            .values(execution_id=None)
+        )
+        await session.commit()
+
+    # Reconcile task completion
+    async with session_factory() as session:
+        task_updated = (
+            await session.execute(select(TaskModel).where(TaskModel.id == task_row.id))
+        ).scalar_one()
+
+    reconciler = CompletionReconciliationService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph},
+    )
+    completion_event = TaskCompletionEvent(
+        event_id=uuid.uuid4(),
+        task_id=task_updated.id,
+        execution_id=execution_id,
+        attempt=task_updated.attempt,
+        event_type="TASK_COMPLETED",
+        result_id=task_updated.result_id,
+        output=worker_output.model_dump(mode="json"),
+    )
+    await reconciler.reconcile_task_event(event=completion_event)
+
+    async with session_factory() as session:
+        resume_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == execution_id,
+            OutboxEventModel.kind == "EXECUTION_RESUME",
+        )
+        resume_outbox = (await session.execute(resume_stmt)).scalar_one()
+
+    resume_event = ExecutionResumeEvent(
+        execution_id=execution_id,
+        event_id=resume_outbox.id,
+        triggered_by_task_id=task_row.id,
+        context_version=1,
+    )
+    resume_res = await runner.handle_execution_resume(event=resume_event)
+    assert resume_res.status == "SUCCEEDED"
+
+    checkpoint_state = await checkpointer.aget({"configurable": {"thread_id": str(execution_id)}})
+    assert checkpoint_state is not None
+    state_values = checkpoint_state.get("channel_values", {})
+    # Invariant: Route missing execution_id -> fail closed!
+    assert state_values.get("route_id") is None
+    assert state_values.get("routing_status") == "ROUTING_UNAVAILABLE"
+    assert any(
+        "execution id is missing" in d.lower() or "does not match" in d.lower()
         for d in state_values.get("route_diagnostics", [])
     )

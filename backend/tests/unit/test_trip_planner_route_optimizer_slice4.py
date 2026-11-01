@@ -31,6 +31,7 @@ from functions.orchestrator.graphs.trip_planner.graph import (
     await_route_results_node,
     consume_route_result_node,
     dispatch_route_optimizer_node,
+    resolve_trip_timezone,
 )
 
 
@@ -467,6 +468,62 @@ class TestTripPlannerRouteOptimizerDispatch:
         # Day 2 is on 2026-11-02: 10:00 IST -> 04:30 UTC next day
         assert day2_stop.window_start == datetime(2026, 11, 2, 4, 30, tzinfo=UTC)
         assert day2_stop.window_start > day1_stop.window_start
+
+    def test_resolve_trip_timezone_valid_state_override(self) -> None:
+        """Valid timezone override in state resolves to corresponding ZoneInfo."""
+        import zoneinfo
+
+        state: TripPlanningState = {
+            "timezone": "America/New_York",
+        }
+        tz = resolve_trip_timezone(brief=None, state=state)
+        assert tz == zoneinfo.ZoneInfo("America/New_York")
+
+    def test_resolve_trip_timezone_rejects_invalid_state_override(self) -> None:
+        """Invalid timezone override in state must raise ValueError without silent conversion."""
+        state: TripPlanningState = {
+            "timezone": "Mars/Olympus_Mons",
+        }
+        with pytest.raises(ValueError, match="Invalid IANA timezone string"):
+            resolve_trip_timezone(brief=None, state=state)
+
+    def test_resolve_trip_timezone_rejects_invalid_brief_override(self) -> None:
+        """Invalid timezone string in brief dict must raise ValueError."""
+        brief = {
+            "timezone": "Invalid/Timezone",
+        }
+        with pytest.raises(ValueError, match="Invalid IANA timezone string"):
+            resolve_trip_timezone(brief=brief, state=None)
+
+    def test_dispatch_rejects_invalid_timezone_override(self) -> None:
+        """dispatch_route_optimizer_node rejects state with invalid timezone override."""
+        exec_id = uuid.uuid4()
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "timezone": "Invalid/Timezone",
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 1,
+                        "confidence": 1.0,
+                    }
+                ],
+                "start_date": "2026-11-01",
+                "end_date": "2026-11-02",
+                "travelers": 1,
+                "rooms": 1,
+                "budget": {"amount": "10000.00", "currency": "INR"},
+            },
+            "eligible_stops": [],
+        }
+        with pytest.raises(ValueError, match="Invalid IANA timezone string"):
+            dispatch_route_optimizer_node(state)
 
 
 class TestTripPlannerAwaitRouteResults:
@@ -956,3 +1013,483 @@ class TestTripPlannerConsumeRouteResult:
         assert res["routing_status"] == "INFEASIBLE"
         assert "MANDATORY_STOP_WINDOW_BREACH" in res["route_diagnostics"][0]
         assert res["optimized_schedule"]["stops"] == []
+
+    @pytest.mark.asyncio
+    async def test_consume_fails_closed_when_route_execution_id_is_null(self) -> None:
+        """In production mode, route lacking an execution_id must fail closed."""
+        route_id = uuid.uuid4()
+        opt_task_id = str(uuid.uuid4())
+        owner_id = uuid.uuid4()
+        exec_id = uuid.uuid4()
+        trip_id = uuid.uuid4()
+
+        worker_output = RouteOptimizerWorkerOutput(
+            status=RouteStatus.FEASIBLE,
+            route_id=route_id,
+            route_version=1,
+            total_distance_m=150000,
+            total_travel_seconds=10800,
+            stops_count=2,
+            legs_count=1,
+            diagnostics=["Found route"],
+        )
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__.return_value = mock_session
+        mock_factory.return_value.__aexit__.return_value = None
+
+        mock_route = MagicMock()
+        mock_route.owner_id = owner_id
+        mock_route.execution_id = None
+        mock_route.trip_id = trip_id
+        mock_route.status = "FEASIBLE"
+
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "owner_id": str(owner_id),
+            "trip_id": str(trip_id),
+            "_offline_fixture_mode": False,
+            "_session_factory": mock_factory,
+            "optimizer_task_id": opt_task_id,
+            "task_outputs": {
+                opt_task_id: worker_output.model_dump(mode="json"),
+            },
+        }
+
+        with patch(
+            "functions.orchestrator.graphs.trip_planner.graph.RouteRepository"
+        ) as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.get_route_by_id = AsyncMock(return_value=mock_route)
+            mock_repo_cls.return_value = mock_repo
+
+            res = await consume_route_result_node(state)
+
+        assert res["route_id"] is None
+        assert res["route_status"] == "ROUTING_UNAVAILABLE"
+        assert "Persisted route execution ID is missing" in res["route_diagnostics"][0]
+
+    @pytest.mark.asyncio
+    async def test_consume_fails_closed_when_route_trip_id_is_null(self) -> None:
+        """In production mode, route lacking a trip_id must fail closed."""
+        route_id = uuid.uuid4()
+        opt_task_id = str(uuid.uuid4())
+        owner_id = uuid.uuid4()
+        exec_id = uuid.uuid4()
+        trip_id = uuid.uuid4()
+
+        worker_output = RouteOptimizerWorkerOutput(
+            status=RouteStatus.FEASIBLE,
+            route_id=route_id,
+            route_version=1,
+            total_distance_m=150000,
+            total_travel_seconds=10800,
+            stops_count=2,
+            legs_count=1,
+            diagnostics=["Found route"],
+        )
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__.return_value = mock_session
+        mock_factory.return_value.__aexit__.return_value = None
+
+        mock_route = MagicMock()
+        mock_route.owner_id = owner_id
+        mock_route.execution_id = exec_id
+        mock_route.trip_id = None
+        mock_route.status = "FEASIBLE"
+
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "owner_id": str(owner_id),
+            "trip_id": str(trip_id),
+            "_offline_fixture_mode": False,
+            "_session_factory": mock_factory,
+            "optimizer_task_id": opt_task_id,
+            "task_outputs": {
+                opt_task_id: worker_output.model_dump(mode="json"),
+            },
+        }
+
+        with patch(
+            "functions.orchestrator.graphs.trip_planner.graph.RouteRepository"
+        ) as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.get_route_by_id = AsyncMock(return_value=mock_route)
+            mock_repo_cls.return_value = mock_repo
+
+            res = await consume_route_result_node(state)
+
+        assert res["route_id"] is None
+        assert res["route_status"] == "ROUTING_UNAVAILABLE"
+        assert "Persisted route trip ID is missing" in res["route_diagnostics"][0]
+
+    @pytest.mark.asyncio
+    async def test_consume_fails_closed_when_route_trip_id_mismatched(self) -> None:
+        """In production mode, route with mismatched trip_id must fail closed."""
+        route_id = uuid.uuid4()
+        opt_task_id = str(uuid.uuid4())
+        owner_id = uuid.uuid4()
+        exec_id = uuid.uuid4()
+        trip_id = uuid.uuid4()
+        other_trip_id = uuid.uuid4()
+
+        worker_output = RouteOptimizerWorkerOutput(
+            status=RouteStatus.FEASIBLE,
+            route_id=route_id,
+            route_version=1,
+            total_distance_m=150000,
+            total_travel_seconds=10800,
+            stops_count=2,
+            legs_count=1,
+            diagnostics=["Found route"],
+        )
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__.return_value = mock_session
+        mock_factory.return_value.__aexit__.return_value = None
+
+        mock_route = MagicMock()
+        mock_route.owner_id = owner_id
+        mock_route.execution_id = exec_id
+        mock_route.trip_id = other_trip_id
+        mock_route.status = "FEASIBLE"
+
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "owner_id": str(owner_id),
+            "trip_id": str(trip_id),
+            "_offline_fixture_mode": False,
+            "_session_factory": mock_factory,
+            "optimizer_task_id": opt_task_id,
+            "task_outputs": {
+                opt_task_id: worker_output.model_dump(mode="json"),
+            },
+        }
+
+        with patch(
+            "functions.orchestrator.graphs.trip_planner.graph.RouteRepository"
+        ) as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.get_route_by_id = AsyncMock(return_value=mock_route)
+            mock_repo_cls.return_value = mock_repo
+
+            res = await consume_route_result_node(state)
+
+        assert res["route_id"] is None
+        assert res["route_status"] == "ROUTING_UNAVAILABLE"
+        assert "does not match current trip" in res["route_diagnostics"][0]
+
+    @pytest.mark.asyncio
+    async def test_consume_fails_closed_when_both_execution_and_trip_missing_from_state(
+        self,
+    ) -> None:
+        """In production mode, missing both execution_id and trip_id in state fails closed."""
+        route_id = uuid.uuid4()
+        opt_task_id = str(uuid.uuid4())
+        owner_id = uuid.uuid4()
+
+        worker_output = RouteOptimizerWorkerOutput(
+            status=RouteStatus.FEASIBLE,
+            route_id=route_id,
+            route_version=1,
+            total_distance_m=150000,
+            total_travel_seconds=10800,
+            stops_count=2,
+            legs_count=1,
+            diagnostics=["Found route"],
+        )
+
+        mock_session = AsyncMock()
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__.return_value = mock_session
+        mock_factory.return_value.__aexit__.return_value = None
+
+        mock_route = MagicMock()
+        mock_route.owner_id = owner_id
+        mock_route.execution_id = uuid.uuid4()
+        mock_route.trip_id = uuid.uuid4()
+        mock_route.status = "FEASIBLE"
+
+        state: TripPlanningState = {
+            "owner_id": str(owner_id),
+            "_offline_fixture_mode": False,
+            "_session_factory": mock_factory,
+            "optimizer_task_id": opt_task_id,
+            "task_outputs": {
+                opt_task_id: worker_output.model_dump(mode="json"),
+            },
+        }
+
+        with patch(
+            "functions.orchestrator.graphs.trip_planner.graph.RouteRepository"
+        ) as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.get_route_by_id = AsyncMock(return_value=mock_route)
+            mock_repo_cls.return_value = mock_repo
+
+            res = await consume_route_result_node(state)
+
+        assert res["route_id"] is None
+        assert res["route_status"] == "ROUTING_UNAVAILABLE"
+        assert (
+            "Execution ID and Trip ID missing from state" in res["route_diagnostics"][0]
+        )
+
+    @pytest.mark.asyncio
+    async def test_consume_recovers_task_output_from_worker_result_model(self) -> None:
+        """When bound task output is absent from checkpoint state, it recovers via WorkerResultModel."""
+        route_id = uuid.uuid4()
+        opt_task_uuid = uuid.uuid4()
+        opt_task_id = str(opt_task_uuid)
+        owner_id = uuid.uuid4()
+        exec_id = uuid.uuid4()
+        trip_id = uuid.uuid4()
+        result_id = uuid.uuid4()
+
+        worker_output = RouteOptimizerWorkerOutput(
+            status=RouteStatus.FEASIBLE,
+            route_id=route_id,
+            route_version=1,
+            trip_id=trip_id,
+            execution_id=exec_id,
+            total_distance_m=150000,
+            total_travel_seconds=10800,
+            stops_count=2,
+            legs_count=1,
+            diagnostics=["Optimal route found"],
+        )
+
+        mock_task = MagicMock()
+        mock_task.id = opt_task_uuid
+        mock_task.execution_id = exec_id
+        mock_task.status = "COMPLETED"
+        mock_task.attempt = 1
+        mock_task.result_id = result_id
+
+        mock_worker_result = MagicMock()
+        mock_worker_result.id = result_id
+        mock_worker_result.task_id = opt_task_uuid
+        mock_worker_result.execution_id = exec_id
+        mock_worker_result.attempt = 1
+        mock_worker_result.status = "SUCCESS"
+        mock_worker_result.output_ref = worker_output.model_dump(mode="json")
+        mock_worker_result.error = None
+
+        mock_stop1 = MagicMock()
+        mock_stop1.id = uuid.uuid4()
+        mock_stop1.name = "Origin"
+        mock_stop1.planned_arrival_at = datetime(2026, 11, 1, 3, 30, tzinfo=UTC)
+        mock_stop1.planned_departure_at = datetime(2026, 11, 1, 3, 30, tzinfo=UTC)
+        mock_stop1.dwell_seconds = 0
+        mock_stop1.stop_order = 0
+        mock_stop1.latitude = 22.5726
+        mock_stop1.longitude = 88.3639
+        mock_stop1.window_start = None
+        mock_stop1.window_end = None
+
+        mock_stop2 = MagicMock()
+        mock_stop2.id = uuid.uuid4()
+        mock_stop2.name = "Digha"
+        mock_stop2.planned_arrival_at = datetime(2026, 11, 1, 7, 30, tzinfo=UTC)
+        mock_stop2.planned_departure_at = datetime(2026, 11, 1, 9, 30, tzinfo=UTC)
+        mock_stop2.dwell_seconds = 7200
+        mock_stop2.stop_order = 1
+        mock_stop2.latitude = 21.6266
+        mock_stop2.longitude = 87.5074
+        mock_stop2.window_start = None
+        mock_stop2.window_end = None
+
+        mock_route = MagicMock()
+        mock_route.owner_id = owner_id
+        mock_route.execution_id = exec_id
+        mock_route.trip_id = trip_id
+        mock_route.status = "FEASIBLE"
+        mock_route.stops = [mock_stop1, mock_stop2]
+        mock_route.legs = []
+
+        # Return TaskModel on first query, ExecutionModel owner on second, WorkerResultModel on third
+        mock_exec_result1 = MagicMock()
+        mock_exec_result1.scalar_one_or_none.return_value = mock_task
+        mock_exec_result2 = MagicMock()
+        mock_exec_result2.scalar_one_or_none.return_value = owner_id
+        mock_exec_result3 = MagicMock()
+        mock_exec_result3.scalar_one_or_none.return_value = mock_worker_result
+
+        mock_session = AsyncMock()
+        mock_session.execute.side_effect = [
+            mock_exec_result1,
+            mock_exec_result2,
+            mock_exec_result3,
+        ]
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__.return_value = mock_session
+        mock_factory.return_value.__aexit__.return_value = None
+
+        # Checkpoint state has empty task_outputs (absent from checkpoint)
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "owner_id": str(owner_id),
+            "trip_id": str(trip_id),
+            "_offline_fixture_mode": False,
+            "_session_factory": mock_factory,
+            "optimizer_task_id": opt_task_id,
+            "task_outputs": {},
+            "eligible_stops": [],
+        }
+
+        with patch(
+            "functions.orchestrator.graphs.trip_planner.graph.RouteRepository"
+        ) as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.get_route_by_id = AsyncMock(return_value=mock_route)
+            mock_repo_cls.return_value = mock_repo
+
+            res = await consume_route_result_node(state)
+
+        assert res["route_id"] == str(route_id)
+        assert res["route_status"] == "FEASIBLE"
+        assert res["routing_status"] == "FEASIBLE"
+
+    @pytest.mark.asyncio
+    async def test_consume_rejects_db_recovery_on_execution_mismatch(self) -> None:
+        """When TaskModel.execution_id does not match state execution_id, recovery fails closed."""
+        opt_task_uuid = uuid.uuid4()
+        opt_task_id = str(opt_task_uuid)
+        owner_id = uuid.uuid4()
+        exec_id = uuid.uuid4()
+        other_exec_id = uuid.uuid4()
+        trip_id = uuid.uuid4()
+
+        mock_task = MagicMock()
+        mock_task.id = opt_task_uuid
+        mock_task.execution_id = other_exec_id  # Mismatched execution boundary!
+        mock_task.status = "COMPLETED"
+
+        mock_exec_result = MagicMock()
+        mock_exec_result.scalar_one_or_none.return_value = mock_task
+
+        mock_session = AsyncMock()
+        mock_session.execute.return_value = mock_exec_result
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__.return_value = mock_session
+        mock_factory.return_value.__aexit__.return_value = None
+
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "owner_id": str(owner_id),
+            "trip_id": str(trip_id),
+            "_offline_fixture_mode": False,
+            "_session_factory": mock_factory,
+            "optimizer_task_id": opt_task_id,
+            "task_outputs": {},
+        }
+
+        res = await consume_route_result_node(state)
+        assert res["route_id"] is None
+        assert res["route_status"] == "ROUTING_UNAVAILABLE"
+
+    @pytest.mark.asyncio
+    async def test_consume_rejects_db_recovery_on_tenant_mismatch(self) -> None:
+        """When parent ExecutionModel.owner_id does not match state owner_id, recovery fails closed."""
+        opt_task_uuid = uuid.uuid4()
+        opt_task_id = str(opt_task_uuid)
+        owner_id = uuid.uuid4()
+        other_owner_id = uuid.uuid4()
+        exec_id = uuid.uuid4()
+        trip_id = uuid.uuid4()
+
+        mock_task = MagicMock()
+        mock_task.id = opt_task_uuid
+        mock_task.execution_id = exec_id
+        mock_task.status = "COMPLETED"
+
+        mock_exec_result1 = MagicMock()
+        mock_exec_result1.scalar_one_or_none.return_value = mock_task
+        mock_exec_result2 = MagicMock()
+        mock_exec_result2.scalar_one_or_none.return_value = other_owner_id  # Foreign tenant!
+
+        mock_session = AsyncMock()
+        mock_session.execute.side_effect = [mock_exec_result1, mock_exec_result2]
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__.return_value = mock_session
+        mock_factory.return_value.__aexit__.return_value = None
+
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "owner_id": str(owner_id),
+            "trip_id": str(trip_id),
+            "_offline_fixture_mode": False,
+            "_session_factory": mock_factory,
+            "optimizer_task_id": opt_task_id,
+            "task_outputs": {},
+        }
+
+        res = await consume_route_result_node(state)
+        assert res["route_id"] is None
+        assert res["route_status"] == "ROUTING_UNAVAILABLE"
+
+    @pytest.mark.asyncio
+    async def test_consume_recovers_failed_worker_result_from_db(self) -> None:
+        """When worker failed in DB, recovered output reflects failure and fails closed."""
+        opt_task_uuid = uuid.uuid4()
+        opt_task_id = str(opt_task_uuid)
+        owner_id = uuid.uuid4()
+        exec_id = uuid.uuid4()
+        trip_id = uuid.uuid4()
+        result_id = uuid.uuid4()
+
+        mock_task = MagicMock()
+        mock_task.id = opt_task_uuid
+        mock_task.execution_id = exec_id
+        mock_task.status = "COMPLETED"
+        mock_task.attempt = 1
+        mock_task.result_id = result_id
+
+        mock_worker_result = MagicMock()
+        mock_worker_result.id = result_id
+        mock_worker_result.task_id = opt_task_uuid
+        mock_worker_result.execution_id = exec_id
+        mock_worker_result.attempt = 1
+        mock_worker_result.status = "FAILED"
+        mock_worker_result.output_ref = None
+        mock_worker_result.error = {"reason": "valhalla_outage"}
+
+        mock_exec_result1 = MagicMock()
+        mock_exec_result1.scalar_one_or_none.return_value = mock_task
+        mock_exec_result2 = MagicMock()
+        mock_exec_result2.scalar_one_or_none.return_value = owner_id
+        mock_exec_result3 = MagicMock()
+        mock_exec_result3.scalar_one_or_none.return_value = mock_worker_result
+
+        mock_session = AsyncMock()
+        mock_session.execute.side_effect = [
+            mock_exec_result1,
+            mock_exec_result2,
+            mock_exec_result3,
+        ]
+
+        mock_factory = MagicMock()
+        mock_factory.return_value.__aenter__.return_value = mock_session
+        mock_factory.return_value.__aexit__.return_value = None
+
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "owner_id": str(owner_id),
+            "trip_id": str(trip_id),
+            "_offline_fixture_mode": False,
+            "_session_factory": mock_factory,
+            "optimizer_task_id": opt_task_id,
+            "task_outputs": {},
+        }
+
+        res = await consume_route_result_node(state)
+        assert res["route_id"] is None
+        assert res["route_status"] == "ROUTING_UNAVAILABLE"
+        assert "Road routing engine unavailable" in res["route_diagnostics"][0]

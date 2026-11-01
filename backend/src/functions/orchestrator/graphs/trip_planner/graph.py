@@ -402,22 +402,35 @@ def resolve_trip_timezone(
     brief: TripBrief | dict[str, Any] | None,
     state: TripPlanningState | None = None,
 ) -> zoneinfo.ZoneInfo:
-    """Resolves trip timezone from state or brief contract without inventing a timezone."""
-    tz_str: str | None = None
-    if state and state.get("timezone"):
-        tz_str = str(state["timezone"])
-    elif isinstance(brief, TripBrief):
-        tz_str = brief.timezone
+    """Resolves trip timezone from state or brief contract without inventing a timezone.
+
+    Validates timezone overrides according to the contract, raising ValueError on invalid values.
+    """
+    tz_val: Any = None
+    if state and state.get("timezone") is not None:
+        tz_val = state["timezone"]
+        if not isinstance(tz_val, str) or not tz_val.strip():
+            tz_val = None
+        else:
+            tz_str = tz_val.strip()
+            try:
+                return zoneinfo.ZoneInfo(tz_str)
+            except Exception as exc:
+                raise ValueError(f"Invalid IANA timezone string: '{tz_str}'") from exc
+
+    if isinstance(brief, TripBrief):
+        tz_val = brief.timezone
     elif isinstance(brief, dict):
-        tz_str = brief.get("timezone")
+        tz_val = brief.get("timezone")
 
-    if not tz_str or not str(tz_str).strip():
-        tz_str = "Asia/Kolkata"
-
-    try:
-        return zoneinfo.ZoneInfo(str(tz_str).strip())
-    except Exception:
+    if tz_val is None or not str(tz_val).strip():
         return zoneinfo.ZoneInfo("Asia/Kolkata")
+
+    tz_str = str(tz_val).strip()
+    try:
+        return zoneinfo.ZoneInfo(tz_str)
+    except Exception as exc:
+        raise ValueError(f"Invalid IANA timezone string: '{tz_str}'") from exc
 
 
 def _parse_window_time(w_val: Any) -> time | None:
@@ -770,13 +783,90 @@ async def consume_route_result_node(
     elif target_task_id and session_factory is not None and not is_offline_fixture:
         try:
             target_uuid = uuid.UUID(str(target_task_id))
+            expected_exec_uuid = (
+                uuid.UUID(str(state["execution_id"]))
+                if state.get("execution_id")
+                else None
+            )
+            expected_owner_uuid = (
+                uuid.UUID(str(state["owner_id"]))
+                if state.get("owner_id")
+                else None
+            )
             async with session_factory() as session:
-                from functions.orchestrator.models import TaskModel
+                from functions.orchestrator.execution.models import (
+                    ExecutionModel,
+                    TaskModel,
+                    WorkerResultModel,
+                )
 
                 t_stmt = select(TaskModel).where(TaskModel.id == target_uuid)
                 task_row = (await session.execute(t_stmt)).scalar_one_or_none()
-                if task_row and task_row.output_payload:
-                    worker_output_dict = task_row.output_payload
+
+                if task_row is not None:
+                    # Validate execution boundary
+                    if (
+                        expected_exec_uuid is not None
+                        and task_row.execution_id != expected_exec_uuid
+                    ):
+                        logger.warning(
+                            "Task %s execution %s does not match expected %s",
+                            target_uuid,
+                            task_row.execution_id,
+                            expected_exec_uuid,
+                        )
+                        task_row = None
+
+                if task_row is not None and expected_owner_uuid is not None:
+                    # Validate tenant boundary via parent execution
+                    exec_stmt = select(ExecutionModel.owner_id).where(
+                        ExecutionModel.id == task_row.execution_id
+                    )
+                    exec_owner = (await session.execute(exec_stmt)).scalar_one_or_none()
+                    if exec_owner is not None and exec_owner != expected_owner_uuid:
+                        logger.warning(
+                            "Task %s execution owner %s does not match expected owner %s",
+                            target_uuid,
+                            exec_owner,
+                            expected_owner_uuid,
+                        )
+                        task_row = None
+
+                if task_row is not None and task_row.status == "COMPLETED":
+                    res_stmt = None
+                    if task_row.result_id is not None:
+                        res_stmt = select(WorkerResultModel).where(
+                            WorkerResultModel.id == task_row.result_id
+                        )
+                    else:
+                        res_stmt = (
+                            select(WorkerResultModel)
+                            .where(
+                                WorkerResultModel.task_id == target_uuid,
+                                WorkerResultModel.execution_id == task_row.execution_id,
+                                WorkerResultModel.attempt == task_row.attempt,
+                            )
+                            .order_by(WorkerResultModel.finished_at.desc())
+                        )
+                    worker_res = (await session.execute(res_stmt)).scalar_one_or_none()
+                    if (
+                        worker_res is not None
+                        and worker_res.execution_id == task_row.execution_id
+                        and worker_res.task_id == target_uuid
+                        and worker_res.attempt == task_row.attempt
+                    ):
+                        if worker_res.status in ("SUCCESS", "COMPLETED"):
+                            worker_output_dict = worker_res.output_ref
+                        elif worker_res.status in ("FAILED", "ERROR") or worker_res.error:
+                            worker_output_dict = {
+                                "status": "FAILED",
+                                "error": worker_res.error or "optimizer_task_failed",
+                            }
+                elif task_row is not None and task_row.status in ("FAILED", "CANCELLED"):
+                    worker_output_dict = {
+                        "status": task_row.status,
+                        "error": f"optimizer_task_{task_row.status.lower()}",
+                    }
         except Exception as e:
             logger.warning(
                 "Error fetching task output from database for task %s: %s", target_task_id, e
@@ -1105,13 +1195,32 @@ async def consume_route_result_node(
             "optimized_schedule": empty_schedule.model_dump(mode="json"),
         }
 
-    if (
-        expected_exec_id is not None
-        and route_model.execution_id is not None
-        and route_model.execution_id != expected_exec_id
+    if not expected_exec_id and not expected_trip_id:
+        logger.error(
+            "Production mode requires execution_id or trip_id in state to validate route association"
+        )
+        empty_schedule = OptimizedSchedule(
+            stops=[],
+            legs=[],
+            total_travel_minutes=0,
+            is_optimal=False,
+        )
+        return {
+            "current_step": "route_result_consumed",
+            "route_id": None,
+            "route_status": "ROUTING_UNAVAILABLE",
+            "routing_status": "ROUTING_UNAVAILABLE",
+            "route_diagnostics": [
+                "Execution ID and Trip ID missing from state; cannot establish route association"
+            ],
+            "optimized_schedule": empty_schedule.model_dump(mode="json"),
+        }
+
+    if expected_exec_id is not None and (
+        route_model.execution_id is None or route_model.execution_id != expected_exec_id
     ):
         logger.error(
-            "Execution mismatch: route execution %s does not match expected %s",
+            "Execution mismatch or missing: route execution %s does not match expected %s",
             route_model.execution_id,
             expected_exec_id,
         )
@@ -1121,24 +1230,25 @@ async def consume_route_result_node(
             total_travel_minutes=0,
             is_optimal=False,
         )
+        diag = (
+            f"Persisted route execution ID is missing; expected {expected_exec_id}"
+            if route_model.execution_id is None
+            else f"Persisted route execution {route_model.execution_id} does not match current execution {expected_exec_id}"
+        )
         return {
             "current_step": "route_result_consumed",
             "route_id": None,
             "route_status": "ROUTING_UNAVAILABLE",
             "routing_status": "ROUTING_UNAVAILABLE",
-            "route_diagnostics": [
-                f"Persisted route execution {route_model.execution_id} does not match current execution {expected_exec_id}"
-            ],
+            "route_diagnostics": [diag],
             "optimized_schedule": empty_schedule.model_dump(mode="json"),
         }
 
-    if (
-        expected_trip_id is not None
-        and route_model.trip_id is not None
-        and route_model.trip_id != expected_trip_id
+    if expected_trip_id is not None and (
+        route_model.trip_id is None or route_model.trip_id != expected_trip_id
     ):
         logger.error(
-            "Trip mismatch: route trip %s does not match expected %s",
+            "Trip mismatch or missing: route trip %s does not match expected %s",
             route_model.trip_id,
             expected_trip_id,
         )
@@ -1148,14 +1258,17 @@ async def consume_route_result_node(
             total_travel_minutes=0,
             is_optimal=False,
         )
+        diag = (
+            f"Persisted route trip ID is missing; expected {expected_trip_id}"
+            if route_model.trip_id is None
+            else f"Persisted route trip {route_model.trip_id} does not match current trip {expected_trip_id}"
+        )
         return {
             "current_step": "route_result_consumed",
             "route_id": None,
             "route_status": "ROUTING_UNAVAILABLE",
             "routing_status": "ROUTING_UNAVAILABLE",
-            "route_diagnostics": [
-                f"Persisted route trip {route_model.trip_id} does not match current trip {expected_trip_id}"
-            ],
+            "route_diagnostics": [diag],
             "optimized_schedule": empty_schedule.model_dump(mode="json"),
         }
 
@@ -1229,10 +1342,15 @@ async def consume_route_result_node(
         else:
             is_assumed, h_status = True, "HOURS_ASSUMED"
 
-        if hasattr(s.location, "geom_type") or hasattr(s.location, "data"):
+        from geoalchemy2.elements import WKBElement, WKTElement
+
+        if isinstance(s.location, (WKBElement, WKTElement)):
             pt = to_shape(s.location)
             lat_val = float(pt.y)
             lng_val = float(pt.x)
+        elif hasattr(s.location, "y") and hasattr(s.location, "x"):
+            lat_val = float(s.location.y)
+            lng_val = float(s.location.x)
         elif hasattr(s.location, "latitude"):
             lat_val = float(s.location.latitude)
             lng_val = float(s.location.longitude)
