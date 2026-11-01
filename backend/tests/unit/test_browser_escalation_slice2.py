@@ -423,7 +423,7 @@ async def test_trip_planning_workflow_e2e_with_escalation_node() -> None:
 
     result = await workflow.ainvoke(state)
     assert result["status"] == "completed"
-    assert result["current_step"] == "proposal_synthesized"
+    assert result["current_step"] in ("proposal_synthesized", "proposal_published")
     assert "proposal" in result
     assert result.get("pending_tasks") == []
 

@@ -124,6 +124,8 @@ class Trip(BaseModel):
     owner_id: uuid.UUID
     current_version: int = Field(default=0, ge=0)
     state: TripState = Field(default=TripState.DRAFT)
+    current_route_id: uuid.UUID | None = Field(default=None)
+    itinerary_json: dict[str, Any] | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

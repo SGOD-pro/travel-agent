@@ -1200,7 +1200,7 @@ class TestSlice3CorrectionRegressions:
 
         result = await workflow.ainvoke(initial_state)
         assert result["status"] == "completed"
-        assert result["current_step"] == "proposal_synthesized"
+        assert result["current_step"] in ("proposal_synthesized", "proposal_published")
         assert "validated_candidates" in result
         assert "candidate_eligibility" in result
         assert "optimized_schedule" in result

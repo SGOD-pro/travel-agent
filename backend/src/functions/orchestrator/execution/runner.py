@@ -723,7 +723,7 @@ class GraphRunnerService:
                 # Case B: Graph reached completion with no remaining nodes
                 if not has_next_nodes:
                     terminal_status = state_values.get("status", "SUCCEEDED")
-                    if terminal_status not in ("SUCCEEDED", "PARTIAL", "FAILED"):
+                    if terminal_status not in ("SUCCEEDED", "PARTIAL", "FAILED", "SUPERSEDED"):
                         terminal_status = "SUCCEEDED"
 
                     execution.status = terminal_status

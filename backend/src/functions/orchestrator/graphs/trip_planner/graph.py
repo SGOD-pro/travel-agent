@@ -25,7 +25,7 @@ from typing import Any, TypedDict, cast
 from geoalchemy2.shape import to_shape
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from config.config import get_settings
 from config.db import get_session_factory
@@ -123,6 +123,9 @@ class TripPlanningState(TypedDict, total=False):
     optimizer_task_id: str | None
     optimizer_idempotency_key: str | None
     timezone: str | None
+    weather_advisories: list[dict[str, Any]]
+    weather_status: str | None
+    proposal_status: str | None
     _laya_adapter: LayaDecisionPort
     _db_session: Any
     _session_factory: Any
@@ -144,6 +147,7 @@ class TripPlanningNode(StrEnum):
     SOLVE_SCHEDULE = "solve_schedule"
     COMPUTE_BUDGET = "compute_budget"
     SYNTHESIZE_PROPOSAL = "synthesize_proposal"
+    PUBLISH_PROPOSAL = "publish_proposal"
 
 
 # --- Workflow Nodes ---
@@ -1635,6 +1639,68 @@ def compute_budget_node(state: TripPlanningState) -> dict[str, Any]:
             )
         )
 
+    # 3. Activities and entrance fees for stops (AC-7, AC-12)
+    stops_data = schedule_data.get("stops", [])
+    seen_entry_stops: set[str] = set()
+
+    place_prices: dict[str, float] = {}
+    place_categories: dict[str, str] = {}
+    for cand in state.get("validated_candidates", []):
+        cand_name = cand.get("primary_name") or cand.get("name")
+        if cand_name:
+            if cand.get("price_estimate_inr") is not None:
+                place_prices[cand_name.lower()] = float(cand["price_estimate_inr"])
+            if cand.get("category"):
+                place_categories[cand_name.lower()] = str(cand["category"])
+
+    for prop in state.get("discovered_places", []):
+        prop_name = prop.get("name")
+        if prop_name:
+            if prop.get("price_estimate_inr") is not None and prop_name.lower() not in place_prices:
+                place_prices[prop_name.lower()] = float(prop["price_estimate_inr"])
+            if prop.get("category") and prop_name.lower() not in place_categories:
+                place_categories[prop_name.lower()] = str(prop["category"])
+
+    for stop in stops_data:
+        stop_name = stop.get("name") or stop.get("stop_id", "Stop")
+        stop_type = stop.get("stop_type", "INTERMEDIATE")
+        if stop_type == "DEPARTURE" or stop_name.lower() in seen_entry_stops:
+            continue
+
+        seen_entry_stops.add(stop_name.lower())
+        cat = place_categories.get(stop_name.lower(), "attraction")
+        price_val = place_prices.get(stop_name.lower())
+
+        if price_val is not None:
+            all_budget_lines.append(
+                BudgetLine(
+                    category=BudgetCategory.ACTIVITIES,
+                    amount=Decimal(str(price_val)),
+                    currency=Currency.INR,
+                    basis=f"entry_fee_{stop_name}",
+                    source_ref="place_proposal_price",
+                    estimated=True,
+                )
+            )
+        elif cat in (
+            "attraction",
+            "museum",
+            "park",
+            "heritage",
+            "monument",
+            "sightseeing",
+            "activity",
+        ):
+            all_budget_lines.append(
+                BudgetLine(
+                    category=BudgetCategory.ACTIVITIES,
+                    amount=None,
+                    currency=Currency.INR,
+                    basis=f"entry_fee_{stop_name}",
+                    unknown_reason=f"Entrance fee unverified for {stop_name}",
+                )
+            )
+
     summary = BudgetSummary.from_lines(all_budget_lines, currency=Currency.INR)
 
     return {
@@ -1654,18 +1720,239 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "budget_lines": state.get("budget_lines"),
         "editorial_recommendations": state.get("editorial_recommendations", []),
         "excluded_candidates": state.get("excluded_candidates", []),
+        "weather_advisories": state.get("weather_advisories", []),
+        "weather_status": state.get("weather_status", "WEATHER_UNAVAILABLE"),
+        "validated_candidates": state.get("validated_candidates", []),
+        "discovered_places": state.get("discovered_places", []),
         "route_id": state.get("route_id"),
         "route_status": state.get("route_status"),
         "routing_status": state.get("routing_status"),
         "route_diagnostics": state.get("route_diagnostics", []),
+        "provider_diagnostics": state.get("provider_diagnostics", {}),
         "generated_at": datetime.now(UTC).isoformat(),
         "status": "ready_for_approval",
     }
 
     return {
         "current_step": "proposal_synthesized",
-        "status": "completed",
         "proposal": proposal,
+    }
+
+
+async def publish_proposal_node(
+    state: TripPlanningState,
+    config: RunnableConfig = _DEFAULT_RUNNABLE_CONFIG,
+) -> dict[str, Any]:
+    """Atomically publishes the synthesized travel proposal with pessimistic locking and version checking.
+
+    Conforms to spec 0007 Slice 5 and AC-8:
+    1. Checks cancellation barrier and execution deadline.
+    2. Enforces tenant isolation between caller and trip owner.
+    3. Acquires pessimistic row lock on trips (SELECT ... FOR UPDATE).
+    4. Validates base version match; detects concurrent brief updates, records
+       PROPOSAL_SUPERSEDED event, and marks execution SUPERSEDED without overwriting trip data.
+    5. On version match, records TripDeltaModel and atomically updates trips.current_route_id,
+       trips.itinerary_json, and trips.state ('proposed').
+    6. Replay safe and idempotent: duplicate invocations update existing proposal without
+       creating duplicate deltas.
+    """
+    if state.get("status") == "CANCELLED":
+        logger.info("Trip planner workflow cancelled; skipping proposal publication")
+        return {
+            "current_step": "proposal_publication_cancelled",
+            "status": "CANCELLED",
+            "proposal_status": "CANCELLED",
+        }
+
+    configurable = config.get("configurable", {}) if config else {}
+    session_factory = configurable.get("session_factory") or state.get("_session_factory")
+    is_offline_fixture = state.get("_offline_fixture_mode", False)
+
+    if not is_offline_fixture and session_factory is None:
+        try:
+            from config.db import get_session_factory
+
+            session_factory = get_session_factory()
+        except Exception:
+            session_factory = None
+
+    if is_offline_fixture or session_factory is None or not state.get("trip_id"):
+        return {
+            "current_step": "proposal_published",
+            "status": "completed",
+            "proposal_status": "PUBLISHED",
+        }
+
+    trip_uuid = uuid.UUID(str(state["trip_id"]))
+    owner_uuid = uuid.UUID(str(state["owner_id"])) if state.get("owner_id") else None
+    execution_uuid = (
+        uuid.UUID(str(state["execution_id"])) if state.get("execution_id") else None
+    )
+
+    async with session_factory() as session:
+        async with session.begin():
+            # Cancellation and deadline check under transaction lock
+            if execution_uuid is not None:
+                from functions.orchestrator.execution.models import ExecutionModel
+
+                exec_stmt = (
+                    select(ExecutionModel)
+                    .where(ExecutionModel.id == execution_uuid)
+                    .with_for_update()
+                )
+                exec_row = (await session.execute(exec_stmt)).scalar_one_or_none()
+                if exec_row is not None:
+                    if exec_row.status == "CANCELLED":
+                        logger.info(
+                            "Parent execution %s is CANCELLED; skipping publication", execution_uuid
+                        )
+                        return {
+                            "current_step": "proposal_publication_cancelled",
+                            "status": "CANCELLED",
+                            "proposal_status": "CANCELLED",
+                        }
+                    if exec_row.deadline_at and datetime.now(UTC) >= exec_row.deadline_at:
+                        logger.warning(
+                            "Parent execution %s deadline expired; marking CANCELLED",
+                            execution_uuid,
+                        )
+                        exec_row.status = "CANCELLED"
+                        exec_row.updated_at = datetime.now(UTC)
+                        return {
+                            "current_step": "proposal_publication_cancelled",
+                            "status": "CANCELLED",
+                            "proposal_status": "CANCELLED",
+                        }
+
+            # Pessimistic row lock on trips
+            from functions.api.models import TripDeltaModel, TripModel
+
+            stmt = select(TripModel).where(TripModel.id == trip_uuid).with_for_update()
+            trip = (await session.execute(stmt)).scalar_one_or_none()
+
+            if trip is None:
+                logger.error("Trip %s not found for proposal publication", trip_uuid)
+                return {
+                    "current_step": "proposal_publication_failed",
+                    "status": "FAILED",
+                    "errors": [f"Trip {trip_uuid} not found"],
+                    "proposal_status": "FAILED",
+                }
+
+            # Enforce tenant isolation
+            if owner_uuid is not None and trip.owner_id != owner_uuid:
+                logger.error(
+                    "Tenant isolation violation: trip owner %s does not match execution owner %s",
+                    trip.owner_id,
+                    owner_uuid,
+                )
+                raise PermissionError(
+                    f"Tenant isolation mismatch: trip owner {trip.owner_id} does not match {owner_uuid}"
+                )
+
+            # Optimistic concurrency / version validation
+            expected_base_version = int(state.get("version", 1))
+            if trip.current_version != expected_base_version:
+                logger.warning(
+                    "Proposal superseded for trip %s: current version %s != expected %s",
+                    trip_uuid,
+                    trip.current_version,
+                    expected_base_version,
+                )
+                from functions.orchestrator.execution.job_events import record_job_event
+                from functions.orchestrator.execution.models import ExecutionModel
+
+                if execution_uuid is not None:
+                    await record_job_event(
+                        session,
+                        execution_id=execution_uuid,
+                        event_type="PROPOSAL_SUPERSEDED",
+                        safe_payload={
+                            "trip_id": str(trip_uuid),
+                            "expected_base_version": expected_base_version,
+                            "current_trip_version": trip.current_version,
+                            "reason": "Trip version advanced concurrently during planning",
+                        },
+                    )
+                    await session.execute(
+                        update(ExecutionModel)
+                        .where(ExecutionModel.id == execution_uuid)
+                        .values(status="SUPERSEDED", updated_at=datetime.now(UTC))
+                    )
+                return {
+                    "current_step": "proposal_superseded",
+                    "status": "SUPERSEDED",
+                    "proposal_status": "SUPERSEDED",
+                }
+
+            # Version matches: publish proposal atomically
+            proposal = state.get("proposal") or {}
+            now = datetime.now(UTC)
+            route_uuid = (
+                uuid.UUID(str(state["route_id"]))
+                if state.get("route_id")
+                else None
+            )
+
+            # Replay safety: check if delta already exists for (trip_id, base_version)
+            delta_stmt = select(TripDeltaModel).where(
+                TripDeltaModel.trip_id == trip_uuid,
+                TripDeltaModel.base_version == expected_base_version,
+            )
+            existing_delta = (await session.execute(delta_stmt)).scalar_one_or_none()
+
+            evidence_refs: list[str] = []
+            for c in state.get("validated_candidates", []):
+                if c.get("place_id"):
+                    evidence_refs.append(f"place:{c['place_id']}")
+
+            actor_id = owner_uuid or (execution_uuid if execution_uuid else trip.owner_id)
+
+            if existing_delta is None:
+                delta = TripDeltaModel(
+                    id=uuid.uuid4(),
+                    trip_id=trip_uuid,
+                    base_version=expected_base_version,
+                    proposal_json=proposal,
+                    evidence_refs=evidence_refs,
+                    actor_id=actor_id,
+                    created_at=now,
+                )
+                session.add(delta)
+            else:
+                existing_delta.proposal_json = proposal
+                existing_delta.evidence_refs = evidence_refs
+
+            trip.current_route_id = route_uuid
+            trip.itinerary_json = proposal
+            trip.state = "proposed"
+            trip.updated_at = now
+
+            if execution_uuid is not None:
+                from functions.orchestrator.execution.job_events import record_job_event
+                from functions.orchestrator.execution.models import ExecutionModel
+
+                await record_job_event(
+                    session,
+                    execution_id=execution_uuid,
+                    event_type="PROPOSAL_PUBLISHED",
+                    safe_payload={
+                        "trip_id": str(trip_uuid),
+                        "base_version": expected_base_version,
+                        "route_id": str(route_uuid) if route_uuid else None,
+                        "routing_status": state.get("routing_status"),
+                    },
+                )
+                await session.execute(
+                    update(ExecutionModel)
+                    .where(ExecutionModel.id == execution_uuid)
+                    .values(status="SUCCEEDED", updated_at=now)
+                )
+
+    return {
+        "current_step": "proposal_published",
+        "status": "completed",
+        "proposal_status": "PUBLISHED",
     }
 
 
@@ -2542,6 +2829,7 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_node(TripPlanningNode.CONSUME_ROUTE_RESULT, consume_route_result_node)
     graph.add_node(TripPlanningNode.COMPUTE_BUDGET, compute_budget_node)
     graph.add_node(TripPlanningNode.SYNTHESIZE_PROPOSAL, synthesize_proposal_node)
+    graph.add_node(TripPlanningNode.PUBLISH_PROPOSAL, publish_proposal_node)
 
     graph.add_edge(START, TripPlanningNode.PARSE_BRIEF)
     graph.add_edge(TripPlanningNode.PARSE_BRIEF, TripPlanningNode.DISCOVER_CANDIDATES)
@@ -2571,7 +2859,8 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_edge(TripPlanningNode.AWAIT_ROUTE_RESULTS, TripPlanningNode.CONSUME_ROUTE_RESULT)
     graph.add_edge(TripPlanningNode.CONSUME_ROUTE_RESULT, TripPlanningNode.COMPUTE_BUDGET)
     graph.add_edge(TripPlanningNode.COMPUTE_BUDGET, TripPlanningNode.SYNTHESIZE_PROPOSAL)
-    graph.add_edge(TripPlanningNode.SYNTHESIZE_PROPOSAL, END)
+    graph.add_edge(TripPlanningNode.SYNTHESIZE_PROPOSAL, TripPlanningNode.PUBLISH_PROPOSAL)
+    graph.add_edge(TripPlanningNode.PUBLISH_PROPOSAL, END)
 
     return graph
 

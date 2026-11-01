@@ -143,6 +143,13 @@ uv run alembic upgrade head
 - When optimizer task output is absent from checkpoint state, result recovery loads from WorkerResultModel using task result_id, validates parent execution and tenant ownership, and propagates worker failure status.
 - Production route result consumption fails closed without guessing if session factory is missing, owner is missing, route lookup fails, or execution and trip identifiers are missing or mismatch.
 - Trip departure and stop opening windows resolve in the trip intended timezone (TripBrief.timezone, defaulting to Asia/Kolkata) before consistent UTC conversion, rejecting invalid timezone overrides with ValueError, handling midnight date boundary crossings and multi day visit offsets.
+- Proposal publication enforces pessimistic row locking with SELECT FOR UPDATE on trips to prevent concurrent write races between background planning executions and user updates.
+- Proposal publication validates base version match (trips current_version equals state version); concurrent brief modifications record a PROPOSAL_SUPERSEDED event, transition execution status to SUPERSEDED, and protect trips from stale proposal overwrite.
+- Budget computation calculates estimated road fuel and tolls for scheduled legs, estimated accommodation from destination stay days and benchmark hotel rates, quoted entrance fees from priced candidates, and explicit unknown budget lines without zero coercion for unpriced attractions.
+- When routing is unavailable, budget computation preserves accommodation and entrance fees while omitting road fuel and tolls without fabricating road travel.
+- Proposal publication atomically updates trips (current_route_id, itinerary_json, state proposed), creates or updates TripDeltaModel, records PROPOSAL_PUBLISHED timeline job event, and sets execution status to SUCCEEDED.
+- Tenant isolation verifies caller owner matches trip owner under transaction row lock, raising PermissionError on cross tenant access.
+- Replay safety and duplicate delivery idempotency update existing proposal deltas for trip and base version without duplicate TripDeltaModel insertions.
 
 ## Gotchas
 
