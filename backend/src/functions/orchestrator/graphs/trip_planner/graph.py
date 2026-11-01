@@ -21,6 +21,7 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any, TypedDict, cast
 
+from geoalchemy2.shape import to_shape
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy import select
@@ -45,11 +46,27 @@ from contracts.decision import (
 )
 from contracts.llm import PlaceProposal
 from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
-from contracts.routing import RoadBudgetCalculator, RoadSegment, VehicleFuelProfile
+from contracts.routing import (
+    Point,
+    RoadBudgetCalculator,
+    RoadSegment,
+    RouteObjective,
+    RouteOptimizerWorkerOutput,
+    RouteRequest,
+    RouteStatus,
+    RouteStopInput,
+    StopType,
+    VehicleFuelProfile,
+)
 from contracts.trips import TransportMode, TripBrief
 from functions.decision_router.client import RemoteLayaDecisionAdapter
 from functions.evidence_collector.models import SourceObservationModel
-from functions.optimizer.solver import ItineraryScheduler
+from functions.optimizer.solver import (
+    ItineraryScheduler,
+    OptimizedSchedule,
+    ScheduledLeg,
+    ScheduledStop,
+)
 from functions.orchestrator.decision.policy import LayaPolicyValidator
 from functions.orchestrator.decision.repository import (
     LayaDecisionRepository,
@@ -62,6 +79,8 @@ from functions.orchestrator.places.candidate_service import (
     CandidateRegistrationService,
 )
 from functions.orchestrator.places.schemas import CoordinatePoint
+from functions.orchestrator.routing.models import RouteModel
+from functions.orchestrator.routing.repository import RouteRepository
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +115,10 @@ class TripPlanningState(TypedDict, total=False):
     static_search_completed: bool
     required_evidence_satisfied: bool
     remaining_search_budget: int
+    route_id: str | None
+    route_status: str | None
+    routing_status: str | None
+    route_diagnostics: list[str]
     _laya_adapter: LayaDecisionPort
     _db_session: Any
     _session_factory: Any
@@ -111,6 +134,9 @@ class TripPlanningNode(StrEnum):
     AWAIT_EVIDENCE_RESULTS = "await_evidence_results"
     ESCALATE_DYNAMIC_EVIDENCE = "escalate_dynamic_evidence"
     EVALUATE_CANDIDATES = "evaluate_candidates"
+    DISPATCH_ROUTE_OPTIMIZER = "dispatch_route_optimizer"
+    AWAIT_ROUTE_RESULTS = "await_route_results"
+    CONSUME_ROUTE_RESULT = "consume_route_result"
     SOLVE_SCHEDULE = "solve_schedule"
     COMPUTE_BUDGET = "compute_budget"
     SYNTHESIZE_PROPOSAL = "synthesize_proposal"
@@ -368,6 +394,608 @@ async def evaluate_candidates_node(
     }
 
 
+def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
+    """Formulates RouteRequest and emits pending task specification for route optimizer worker.
+
+    Conforms to spec 0007 AC-3, AC-4, AC-9:
+    1. Only verified places enter RouteRequest.stops (unverified candidate proposals and unverified
+       brief destinations are strictly excluded from the solver stops and preserved in editorial recommendations).
+    2. Contradicted places are excluded entirely.
+    3. Verified places with unknown opening hours enter with assumed daytime window (09:00 to 18:00)
+       explicitly labeled with hours_status=HOURS_ASSUMED.
+    4. Verified places with verified opening hours enter with exact window timestamps on departure date.
+    5. Emits task specification for worker OPTIMIZER with action solve, idempotency_key, and deadline.
+    """
+    brief = TripBrief.model_validate(state["brief"])
+    brief_names = {d.name.strip().lower() for d in brief.destinations}
+
+    excluded_candidates = state.get("excluded_candidates", [])
+    excluded_names = {
+        str(c.get("primary_name") if isinstance(c, dict) else getattr(c, "primary_name", "") or "")
+        .strip()
+        .lower()
+        for c in excluded_candidates
+        if c is not None
+    }
+
+    eligible_stops_data = state.get("eligible_stops")
+    eligible_by_name: dict[str, dict[str, Any]] = {}
+    if eligible_stops_data is not None:
+        for s in eligible_stops_data:
+            s_name = (
+                str(
+                    s.get("primary_name")
+                    if isinstance(s, dict)
+                    else getattr(s, "primary_name", "") or ""
+                )
+                .strip()
+                .lower()
+            )
+            if s_name:
+                eligible_by_name[s_name] = s if isinstance(s, dict) else s.model_dump(mode="json")
+
+    route_stops: list[RouteStopInput] = []
+    editorial_recs = list(state.get("editorial_recommendations", []))
+
+    dep_date = brief.start_date
+    dep_time = time(9, 0)
+    departure_dt = datetime.combine(dep_date, dep_time, tzinfo=UTC)
+
+    # 1. Origin stop
+    route_stops.append(
+        RouteStopInput(
+            name=brief.origin_name,
+            location=Point(
+                latitude=float(brief.origin_lat),
+                longitude=float(brief.origin_lng),
+            ),
+            stop_type=StopType.ORIGIN,
+            is_must_visit=True,
+            dwell_seconds=0,
+        )
+    )
+
+    def _parse_window_time(w_val: Any) -> time | None:
+        if isinstance(w_val, time):
+            return w_val
+        if isinstance(w_val, datetime):
+            return w_val.time()
+        if isinstance(w_val, str) and w_val.strip():
+            parts = w_val.strip().split(":")
+            if len(parts) >= 2:
+                try:
+                    return time(int(parts[0]), int(parts[1]))
+                except Exception:
+                    pass
+        return None
+
+    # 2. Brief destinations
+    for d in brief.destinations:
+        d_name_norm = d.name.strip().lower()
+        if d_name_norm in excluded_names:
+            logger.warning(
+                "Brief destination %s contradicted by evidence; excluded from solver schedule",
+                d.name,
+            )
+            continue
+
+        if d_name_norm in eligible_by_name:
+            verified_stop = eligible_by_name[d_name_norm]
+            is_assumed = bool(
+                verified_stop.get("is_hours_assumed", False)
+                or verified_stop.get("hours_status") == "HOURS_ASSUMED"
+            )
+            t_start = _parse_window_time(verified_stop.get("window_start")) or (
+                time(9, 0) if is_assumed else None
+            )
+            t_end = _parse_window_time(verified_stop.get("window_end")) or (
+                time(18, 0) if is_assumed else None
+            )
+
+            dt_w_start = (
+                datetime.combine(dep_date, t_start, tzinfo=UTC) if t_start is not None else None
+            )
+            dt_w_end = datetime.combine(dep_date, t_end, tzinfo=UTC) if t_end is not None else None
+
+            p_id = verified_stop.get("place_id")
+            route_stops.append(
+                RouteStopInput(
+                    place_id=uuid.UUID(str(p_id)) if p_id else None,
+                    name=d.name,
+                    location=Point(latitude=float(d.latitude), longitude=float(d.longitude)),
+                    stop_type=StopType.DESTINATION,
+                    is_must_visit=True,
+                    dwell_seconds=d.stay_days * 180 * 60,
+                    window_start=dt_w_start,
+                    window_end=dt_w_end,
+                )
+            )
+        else:
+            logger.info(
+                "Brief destination %s lacks verified existence evidence; retained in editorial recommendations",
+                d.name,
+            )
+            editorial_recs.append(
+                {
+                    "primary_name": d.name,
+                    "category": "destination",
+                    "point": {"lat": float(d.latitude), "lng": float(d.longitude)},
+                    "uncertainty": "EDITORIAL_DISCOVERY",
+                    "is_candidate": True,
+                    "existence_status": CandidateExistenceStatus.UNVERIFIED.value,
+                    "hours_status": CandidateHoursStatus.USER_SUPPLIED_UNVERIFIED.value,
+                    "is_hours_assumed": True,
+                    "diagnostics": {
+                        "rejection_reason": "User supplied brief destination lacks verified existence evidence; excluded from solver schedule"
+                    },
+                }
+            )
+
+    # 3. Discovered candidates with verified existence
+    if eligible_stops_data is not None:
+        for s in eligible_stops_data:
+            s_name = (
+                str(
+                    s.get("primary_name")
+                    if isinstance(s, dict)
+                    else getattr(s, "primary_name", "") or ""
+                )
+                .strip()
+                .lower()
+            )
+            if s_name in brief_names or s_name in excluded_names:
+                continue
+            exist_st = s.get("existence_status")
+            if exist_st and exist_st not in (
+                CandidateExistenceStatus.VERIFIED,
+                CandidateExistenceStatus.VERIFIED.value,
+            ):
+                continue
+            pt = s.get("point", {})
+            raw_lat = pt.get("lat") if isinstance(pt, dict) else getattr(pt, "lat", 0.0)
+            raw_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", 0.0)
+            lat_val = float(raw_lat) if raw_lat is not None else 0.0
+            lng_val = float(raw_lng) if raw_lng is not None else 0.0
+            is_assumed = bool(
+                s.get("is_hours_assumed", False) or s.get("hours_status") == "HOURS_ASSUMED"
+            )
+            t_start = _parse_window_time(s.get("window_start")) or (
+                time(9, 0) if is_assumed else None
+            )
+            t_end = _parse_window_time(s.get("window_end")) or (time(18, 0) if is_assumed else None)
+            dt_w_start = (
+                datetime.combine(dep_date, t_start, tzinfo=UTC) if t_start is not None else None
+            )
+            dt_w_end = datetime.combine(dep_date, t_end, tzinfo=UTC) if t_end is not None else None
+
+            p_id = s.get("place_id")
+            route_stops.append(
+                RouteStopInput(
+                    place_id=uuid.UUID(str(p_id)) if p_id else None,
+                    name=s["primary_name"],
+                    location=Point(latitude=lat_val, longitude=lng_val),
+                    stop_type=StopType.DESTINATION,
+                    is_must_visit=True,
+                    dwell_seconds=s.get("suggested_stay_minutes", 60) * 60,
+                    window_start=dt_w_start,
+                    window_end=dt_w_end,
+                )
+            )
+    else:
+        discovered = state.get("discovered_places", [])
+        for p in discovered:
+            p_name = p.get("name", "")
+            if p_name.strip().lower() not in brief_names:
+                editorial_recs.append(
+                    {
+                        "primary_name": p_name,
+                        "uncertainty": "EDITORIAL_DISCOVERY",
+                        "is_candidate": True,
+                        "diagnostics": {
+                            "rejection_reason": "Eligibility gate output missing; unverified proposal excluded from solver schedule"
+                        },
+                    }
+                )
+
+    owner_id_raw = state.get("owner_id")
+    trip_id_raw = state.get("trip_id")
+    execution_id_raw = state.get("execution_id")
+
+    preferred_mode = brief.preferred_modes[0] if brief.preferred_modes else TransportMode.CAR_PETROL
+
+    route_req = RouteRequest(
+        owner_id=uuid.UUID(str(owner_id_raw)) if owner_id_raw else None,
+        trip_id=uuid.UUID(str(trip_id_raw)) if trip_id_raw else None,
+        execution_id=uuid.UUID(str(execution_id_raw)) if execution_id_raw else None,
+        departure_at=departure_dt,
+        stops=route_stops,
+        objective=RouteObjective.FASTEST,
+        is_round_trip=False,
+        time_limit_seconds=10,
+        transport_mode=preferred_mode,
+    )
+
+    exec_uuid_str = str(execution_id_raw or uuid.uuid4())
+    task_spec = {
+        "worker": "OPTIMIZER",
+        "action": "solve",
+        "payload": route_req.model_dump(mode="json"),
+        "idempotency_key": f"{exec_uuid_str}:optimizer:solve",
+        "deadline_seconds": 3600,
+        "max_attempts": 3,
+    }
+
+    return {
+        "current_step": "route_optimizer_dispatched",
+        "status": "RUNNING",
+        "pending_tasks": [task_spec],
+        "editorial_recommendations": editorial_recs,
+    }
+
+
+def await_route_results_node(state: TripPlanningState) -> dict[str, Any]:
+    """Interrupt boundary node.
+
+    Halts execution before this node on start. When resumed after optimizer worker task completion,
+    this node clears pending_tasks to ensure no duplicate tasks are dispatched on replay.
+    """
+    return {
+        "pending_tasks": [],
+        "current_step": "awaiting_route_results",
+    }
+
+
+async def consume_route_result_node(
+    state: TripPlanningState,
+    config: RunnableConfig = _DEFAULT_RUNNABLE_CONFIG,
+) -> dict[str, Any]:
+    """Consumes RouteOptimizerWorkerOutput and constructs the scheduled itinerary.
+
+    Conforms to spec 0007 AC-4, AC-5, AC-9:
+    1. Extracts RouteOptimizerWorkerOutput from state['task_outputs'].
+    2. If routing provider was unavailable or failed (Valhalla outage), adheres to 0005 fail closed policy:
+       sets route_id=None, routing_status="ROUTING_UNAVAILABLE", and records diagnostic notice
+       without generating guessed straight-line matrices or road polylines.
+    3. If route is INFEASIBLE, sets route_id=persisted_route_id, routing_status="INFEASIBLE",
+       and preserves dropped stops diagnostics without failing parent execution.
+    4. If route is FEASIBLE or PARTIAL, loads persisted RouteModel under tenant isolation fencing,
+       maps stops and legs into OptimizedSchedule for downstream budgeting, and links route_id.
+    """
+    task_outputs = state.get("task_outputs", {})
+    worker_output_dict: dict[str, Any] | None = None
+
+    for _task_id, out_val in task_outputs.items():
+        if isinstance(out_val, dict):
+            if (
+                "route_id" in out_val
+                or out_val.get("worker") == "OPTIMIZER"
+                or "stops_count" in out_val
+                or "routing_status" in out_val
+            ):
+                worker_output_dict = out_val
+                break
+            if out_val.get("status") in ("FAILED", "CANCELLED") or "error" in out_val:
+                worker_output_dict = out_val
+                break
+
+    if worker_output_dict is None:
+        if state.get("_offline_fixture_mode"):
+            brief_val = TripBrief.model_validate(state["brief"])
+            eligible_stops_val = state.get("eligible_stops", [])
+            places_list: list[dict[str, Any]] = []
+            brief_dest_names = {d.name.strip().lower() for d in brief_val.destinations}
+            for d in brief_val.destinations:
+                d_norm = d.name.strip().lower()
+                for es in eligible_stops_val:
+                    if (es.get("primary_name") or "").strip().lower() == d_norm:
+                        is_ass = bool(
+                            es.get("is_hours_assumed", False)
+                            or es.get("hours_status") == "HOURS_ASSUMED"
+                        )
+                        places_list.append(
+                            {
+                                "name": d.name,
+                                "lat": float(d.latitude),
+                                "lng": float(d.longitude),
+                                "confidence": float(d.confidence),
+                                "stay_minutes": d.stay_days * 180,
+                                "is_hours_assumed": is_ass,
+                                "hours_status": es.get(
+                                    "hours_status", "HOURS_ASSUMED" if is_ass else "VERIFIED_HOURS"
+                                ),
+                                "window_start": es.get("window_start")
+                                or (time(9, 0) if is_ass else None),
+                                "window_end": es.get("window_end")
+                                or (time(18, 0) if is_ass else None),
+                            }
+                        )
+                        break
+            for es in eligible_stops_val:
+                es_name = es.get("primary_name", "")
+                if es_name.strip().lower() not in brief_dest_names:
+                    exist_st = es.get("existence_status")
+                    if exist_st in (
+                        CandidateExistenceStatus.VERIFIED,
+                        CandidateExistenceStatus.VERIFIED.value,
+                    ):
+                        pt = es.get("point", {})
+                        lat_val = float(pt.get("lat") or 0.0)
+                        lng_val = float(pt.get("lng") or 0.0)
+                        is_ass = bool(
+                            es.get("is_hours_assumed", False)
+                            or es.get("hours_status") == "HOURS_ASSUMED"
+                        )
+                        places_list.append(
+                            {
+                                "name": es_name,
+                                "lat": lat_val,
+                                "lng": lng_val,
+                                "confidence": 1.0,
+                                "stay_minutes": es.get("suggested_stay_minutes", 60),
+                                "is_hours_assumed": is_ass,
+                                "hours_status": es.get(
+                                    "hours_status", "HOURS_ASSUMED" if is_ass else "VERIFIED_HOURS"
+                                ),
+                                "window_start": es.get("window_start")
+                                or (time(9, 0) if is_ass else None),
+                                "window_end": es.get("window_end")
+                                or (time(18, 0) if is_ass else None),
+                            }
+                        )
+            start_dt = datetime.combine(brief_val.start_date, time(9, 0), tzinfo=UTC)
+            schedule = ItineraryScheduler.solve_schedule(
+                origin_name=brief_val.origin_name,
+                origin_lat=brief_val.origin_lat,
+                origin_lng=brief_val.origin_lng,
+                stops=places_list,
+                start_datetime=start_dt,
+            )
+            return {
+                "current_step": "route_result_consumed",
+                "route_id": str(uuid.uuid4()),
+                "route_status": "FEASIBLE",
+                "routing_status": "FEASIBLE",
+                "route_diagnostics": [],
+                "optimized_schedule": schedule.model_dump(mode="json"),
+            }
+
+        logger.warning("No optimizer output found in task_outputs; treating as routing unavailable")
+        empty_schedule = OptimizedSchedule(
+            stops=[],
+            legs=[],
+            total_travel_minutes=0,
+            is_optimal=False,
+        )
+        return {
+            "current_step": "route_result_consumed",
+            "route_id": None,
+            "route_status": "ROUTING_UNAVAILABLE",
+            "routing_status": "ROUTING_UNAVAILABLE",
+            "route_diagnostics": [
+                "Road routing engine unavailable; stops preserved without driving schedule or route polyline"
+            ],
+            "optimized_schedule": empty_schedule.model_dump(mode="json"),
+        }
+
+    is_failed_worker = (
+        worker_output_dict.get("status") == "FAILED"
+        or worker_output_dict.get("routing_status") == "ROUTING_UNAVAILABLE"
+        or "error" in worker_output_dict
+    )
+    if is_failed_worker and "route_id" not in worker_output_dict:
+        logger.warning(
+            "Optimizer worker reported failure or outage: %s",
+            worker_output_dict.get("error") or worker_output_dict.get("status"),
+        )
+        empty_schedule = OptimizedSchedule(
+            stops=[],
+            legs=[],
+            total_travel_minutes=0,
+            is_optimal=False,
+        )
+        return {
+            "current_step": "route_result_consumed",
+            "route_id": None,
+            "route_status": "ROUTING_UNAVAILABLE",
+            "routing_status": "ROUTING_UNAVAILABLE",
+            "route_diagnostics": [
+                "Road routing engine unavailable; stops preserved without driving schedule or route polyline"
+            ],
+            "optimized_schedule": empty_schedule.model_dump(mode="json"),
+        }
+
+    try:
+        worker_output = RouteOptimizerWorkerOutput.model_validate(worker_output_dict)
+    except Exception as exc:
+        logger.warning(
+            "Malformed RouteOptimizerWorkerOutput (%s); falling back to unavailable", exc
+        )
+        empty_schedule = OptimizedSchedule(
+            stops=[],
+            legs=[],
+            total_travel_minutes=0,
+            is_optimal=False,
+        )
+        return {
+            "current_step": "route_result_consumed",
+            "route_id": None,
+            "route_status": "ROUTING_UNAVAILABLE",
+            "routing_status": "ROUTING_UNAVAILABLE",
+            "route_diagnostics": [f"Invalid optimizer worker output: {exc}"],
+            "optimized_schedule": empty_schedule.model_dump(mode="json"),
+        }
+
+    route_id = worker_output.route_id
+    route_status_str = str(
+        worker_output.status.value
+        if hasattr(worker_output.status, "value")
+        else worker_output.status
+    )
+    route_diags = list(worker_output.diagnostics)
+
+    if worker_output.status == RouteStatus.INFEASIBLE:
+        empty_schedule = OptimizedSchedule(
+            stops=[],
+            legs=[],
+            total_travel_minutes=0,
+            is_optimal=False,
+        )
+        return {
+            "current_step": "route_result_consumed",
+            "route_id": str(route_id),
+            "route_status": "INFEASIBLE",
+            "routing_status": "INFEASIBLE",
+            "route_diagnostics": route_diags or ["Route overconstrained; impossible stop windows"],
+            "optimized_schedule": empty_schedule.model_dump(mode="json"),
+        }
+
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    session_factory = configurable.get("session_factory") or state.get("_session_factory")
+    is_offline_fixture = bool(state.get("_offline_fixture_mode", False))
+
+    route_model: RouteModel | None = None
+    if session_factory is not None and not is_offline_fixture:
+        async with session_factory() as session:
+            owner_id_raw = state.get("owner_id")
+            if owner_id_raw:
+                owner_id = uuid.UUID(str(owner_id_raw))
+                route_repo = RouteRepository(session)
+                route_model = await route_repo.get_route_by_id(route_id, owner_id=owner_id)
+
+    sched_stops: list[ScheduledStop] = []
+    sched_legs: list[ScheduledLeg] = []
+    total_travel_mins: int = worker_output.total_travel_seconds // 60
+    is_optimal = route_status_str in ("FEASIBLE", "PARTIAL")
+
+    if route_model is not None:
+        eligible_stops = state.get("eligible_stops", [])
+        stop_hours_map: dict[str, tuple[bool, str]] = {}
+        for es in eligible_stops:
+            es_name = (
+                str(
+                    es.get("primary_name")
+                    if isinstance(es, dict)
+                    else getattr(es, "primary_name", "") or ""
+                )
+                .strip()
+                .lower()
+            )
+            is_assumed = bool(
+                es.get("is_hours_assumed", False) or es.get("hours_status") == "HOURS_ASSUMED"
+            )
+            h_status = str(
+                es.get("hours_status", "HOURS_ASSUMED" if is_assumed else "VERIFIED_HOURS")
+            )
+            stop_hours_map[es_name] = (is_assumed, h_status)
+
+        for s in route_model.stops:
+            s_name_norm = s.name.strip().lower()
+            is_origin = s.stop_order == 0 or s.stop_type == StopType.ORIGIN
+            if is_origin:
+                is_assumed, h_status = False, "ORIGIN"
+            elif s_name_norm in stop_hours_map:
+                is_assumed, h_status = stop_hours_map[s_name_norm]
+            else:
+                is_assumed, h_status = True, "HOURS_ASSUMED"
+
+            if hasattr(s.location, "geom_type") or hasattr(s.location, "data"):
+                pt = to_shape(s.location)
+                lat_val = float(pt.y)
+                lng_val = float(pt.x)
+            elif hasattr(s.location, "latitude"):
+                lat_val = float(s.location.latitude)
+                lng_val = float(s.location.longitude)
+            else:
+                lat_val = 0.0
+                lng_val = 0.0
+
+            sched_stops.append(
+                ScheduledStop(
+                    position=s.stop_order,
+                    name=s.name,
+                    latitude=lat_val,
+                    longitude=lng_val,
+                    arrival_time=s.planned_arrival_at or datetime.now(UTC),
+                    departure_time=s.planned_departure_at or datetime.now(UTC),
+                    stay_duration_minutes=s.dwell_seconds // 60,
+                    window_start=s.window_start,
+                    window_end=s.window_end,
+                    is_hours_assumed=is_assumed,
+                    hours_status=h_status,
+                )
+            )
+
+        stops_by_id = {s.id: s.name for s in route_model.stops}
+        for leg in route_model.legs:
+            from_name = stops_by_id.get(leg.from_stop_id, "Origin")
+            to_name = stops_by_id.get(leg.to_stop_id, "Destination")
+            sched_legs.append(
+                ScheduledLeg(
+                    from_stop=from_name,
+                    to_stop=to_name,
+                    duration_minutes=leg.travel_seconds // 60,
+                    distance_km=round(leg.distance_m / 1000.0, 3),
+                )
+            )
+    else:
+        # Offline fixture or direct fallback without database
+        brief_data = state.get("brief", {})
+        origin_name = brief_data.get("origin_name", "Origin")
+        origin_lat = float(brief_data.get("origin_lat", 0.0))
+        origin_lng = float(brief_data.get("origin_lng", 0.0))
+        sched_stops.append(
+            ScheduledStop(
+                position=0,
+                name=origin_name,
+                latitude=origin_lat,
+                longitude=origin_lng,
+                arrival_time=datetime.now(UTC),
+                departure_time=datetime.now(UTC),
+                stay_duration_minutes=0,
+                is_hours_assumed=False,
+                hours_status="ORIGIN",
+            )
+        )
+        for idx, es in enumerate(state.get("eligible_stops", [])):
+            pt = es.get("point", {})
+            e_lat = float(pt.get("lat") or 0.0)
+            e_lng = float(pt.get("lng") or 0.0)
+            is_assumed = bool(
+                es.get("is_hours_assumed", False) or es.get("hours_status") == "HOURS_ASSUMED"
+            )
+            sched_stops.append(
+                ScheduledStop(
+                    position=idx + 1,
+                    name=es.get("primary_name", f"Stop {idx + 1}"),
+                    latitude=e_lat,
+                    longitude=e_lng,
+                    arrival_time=datetime.now(UTC),
+                    departure_time=datetime.now(UTC),
+                    stay_duration_minutes=es.get("suggested_stay_minutes", 60),
+                    is_hours_assumed=is_assumed,
+                    hours_status=es.get(
+                        "hours_status", "HOURS_ASSUMED" if is_assumed else "VERIFIED_HOURS"
+                    ),
+                )
+            )
+
+    schedule = OptimizedSchedule(
+        stops=sched_stops,
+        legs=sched_legs,
+        total_travel_minutes=total_travel_mins,
+        is_optimal=is_optimal,
+    )
+
+    return {
+        "current_step": "route_result_consumed",
+        "route_id": str(route_id),
+        "route_status": route_status_str,
+        "routing_status": route_status_str,
+        "route_diagnostics": route_diags,
+        "optimized_schedule": schedule.model_dump(mode="json"),
+    }
+
+
 def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
     """Applies OR Tools scheduling solver to generate optimal sequence and timestamps.
 
@@ -609,6 +1237,10 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "budget_lines": state.get("budget_lines"),
         "editorial_recommendations": state.get("editorial_recommendations", []),
         "excluded_candidates": state.get("excluded_candidates", []),
+        "route_id": state.get("route_id"),
+        "route_status": state.get("route_status"),
+        "routing_status": state.get("routing_status"),
+        "route_diagnostics": state.get("route_diagnostics", []),
         "generated_at": datetime.now(UTC).isoformat(),
         "status": "ready_for_approval",
     }
@@ -1488,7 +2120,9 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_node(TripPlanningNode.AWAIT_EVIDENCE_RESULTS, await_evidence_results_node)
     graph.add_node(TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE, escalate_dynamic_evidence_node)
     graph.add_node(TripPlanningNode.EVALUATE_CANDIDATES, evaluate_candidates_node)
-    graph.add_node(TripPlanningNode.SOLVE_SCHEDULE, solve_schedule_node)
+    graph.add_node(TripPlanningNode.DISPATCH_ROUTE_OPTIMIZER, dispatch_route_optimizer_node)
+    graph.add_node(TripPlanningNode.AWAIT_ROUTE_RESULTS, await_route_results_node)
+    graph.add_node(TripPlanningNode.CONSUME_ROUTE_RESULT, consume_route_result_node)
     graph.add_node(TripPlanningNode.COMPUTE_BUDGET, compute_budget_node)
     graph.add_node(TripPlanningNode.SYNTHESIZE_PROPOSAL, synthesize_proposal_node)
 
@@ -1515,19 +2149,32 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_edge(
         TripPlanningNode.AWAIT_EVIDENCE_RESULTS, TripPlanningNode.ROUTE_EVIDENCE_DECISION
     )
-    graph.add_edge(TripPlanningNode.EVALUATE_CANDIDATES, TripPlanningNode.SOLVE_SCHEDULE)
-    graph.add_edge(TripPlanningNode.SOLVE_SCHEDULE, TripPlanningNode.COMPUTE_BUDGET)
+    graph.add_edge(TripPlanningNode.EVALUATE_CANDIDATES, TripPlanningNode.DISPATCH_ROUTE_OPTIMIZER)
+    graph.add_edge(TripPlanningNode.DISPATCH_ROUTE_OPTIMIZER, TripPlanningNode.AWAIT_ROUTE_RESULTS)
+    graph.add_edge(TripPlanningNode.AWAIT_ROUTE_RESULTS, TripPlanningNode.CONSUME_ROUTE_RESULT)
+    graph.add_edge(TripPlanningNode.CONSUME_ROUTE_RESULT, TripPlanningNode.COMPUTE_BUDGET)
     graph.add_edge(TripPlanningNode.COMPUTE_BUDGET, TripPlanningNode.SYNTHESIZE_PROPOSAL)
     graph.add_edge(TripPlanningNode.SYNTHESIZE_PROPOSAL, END)
 
     return graph
 
 
-def compile_trip_planning_workflow(checkpointer: Any | None = None) -> Any:
+def compile_trip_planning_workflow(
+    checkpointer: Any | None = None,
+    interrupt_before: list[str] | None = None,
+) -> Any:
     """Compiles the trip planning StateGraph with the required yield/interrupt boundaries."""
+    if interrupt_before is None:
+        if checkpointer is not None:
+            interrupt_before = [
+                TripPlanningNode.AWAIT_EVIDENCE_RESULTS,
+                TripPlanningNode.AWAIT_ROUTE_RESULTS,
+            ]
+        else:
+            interrupt_before = [TripPlanningNode.AWAIT_EVIDENCE_RESULTS]
     return build_trip_planning_graph().compile(
         checkpointer=checkpointer,
-        interrupt_before=[TripPlanningNode.AWAIT_EVIDENCE_RESULTS],
+        interrupt_before=interrupt_before,
     )
 
 

@@ -147,6 +147,16 @@ class GraphRunnerService:
             g = compile_route_optimizer_workflow(checkpointer=checkpointer)
             self._workflow_graphs[workflow] = g
             return g
+        if workflow in ("TRAVEL", "TRIP_PLANNER", "TRIP_PLANNER_GRAPH", "PLANNING"):
+            from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
+            from functions.orchestrator.graphs.trip_planner import (
+                compile_trip_planning_workflow,
+            )
+
+            checkpointer = TransactionBoundCheckpointer(session_factory=self._session_factory)
+            g = compile_trip_planning_workflow(checkpointer=checkpointer)
+            self._workflow_graphs[workflow] = g
+            return g
         return self._default_graph
 
     async def handle_execution_start(
@@ -260,7 +270,9 @@ class GraphRunnerService:
 
         active_graph = self._resolve_graph(workflow_name, explicit_graph=graph)
         if active_graph is None:
-            raise GraphRunnerError(f"No graph configured for workflow '{workflow_name}' and no default graph configured")
+            raise GraphRunnerError(
+                f"No graph configured for workflow '{workflow_name}' and no default graph configured"
+            )
 
         # Phase 2: Execute LangGraph start outside database transaction
         config = {
@@ -279,7 +291,11 @@ class GraphRunnerService:
         }
 
         checkpointer = getattr(active_graph, "checkpointer", None)
-        if checkpointer and hasattr(checkpointer, "session_factory") and checkpointer.session_factory is None:
+        if (
+            checkpointer
+            and hasattr(checkpointer, "session_factory")
+            and checkpointer.session_factory is None
+        ):
             checkpointer.session_factory = self._session_factory
         if checkpointer and hasattr(checkpointer, "discard"):
             checkpointer.discard(str(execution_id))
@@ -431,7 +447,9 @@ class GraphRunnerService:
 
         active_graph = self._resolve_graph(workflow_name, explicit_graph=graph)
         if active_graph is None:
-            raise GraphRunnerError(f"No graph configured for workflow '{workflow_name}' and no default graph configured")
+            raise GraphRunnerError(
+                f"No graph configured for workflow '{workflow_name}' and no default graph configured"
+            )
 
         # Phase 2: Execute LangGraph continuation outside database transaction
         config = {
@@ -441,7 +459,11 @@ class GraphRunnerService:
             }
         }
         checkpointer = getattr(active_graph, "checkpointer", None)
-        if checkpointer and hasattr(checkpointer, "session_factory") and checkpointer.session_factory is None:
+        if (
+            checkpointer
+            and hasattr(checkpointer, "session_factory")
+            and checkpointer.session_factory is None
+        ):
             checkpointer.session_factory = self._session_factory
         if checkpointer and hasattr(checkpointer, "discard"):
             checkpointer.discard(str(execution_id))

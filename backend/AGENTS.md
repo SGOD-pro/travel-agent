@@ -31,6 +31,7 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/route_optimizer/packaging.py` | Standalone Lambda packaging under 250 MB unpacked (0.28 MB lightweight, ~211 MB dependency inclusive), asset auditing, and clean isolated runtime verification |
 | `src/functions/api/routes/optimization.py` | Asynchronous route optimization, job discovery by-job, map GeoJSON, route retrieval, and replanning endpoints |
 | `src/functions/orchestrator/graphs/route_optimizer/` | RouteOptimizerGraph LangGraph state machine, solver task emission, and route finalization |
+| `src/functions/orchestrator/graphs/trip_planner/` | TripPlannerGraph LangGraph state machine coordinating place research, candidate validation, weather advisory, and route optimizer task dispatch and resumption |
 | `src/functions/orchestrator/routing/` | Route persistence repository, single child replan constraint, PostGIS spatial models, and RFC 7946 GeoJSON map assembler |
 | `src/acceptance_database.py` | Dedicated acceptance database URL validation, normalization, and isolated session factory |
 | `src/acceptance_server.py` | Local acceptance server and worker orchestration with injected MockValhallaClient for browser testing |
@@ -135,6 +136,9 @@ uv run alembic upgrade head
 - Places with verified existence but unknown operating hours receive assumed daytime visiting windows (09:00 to 18:00) explicitly labeled in state and schedule as HOURS_ASSUMED, never presented as verified hours.
 - Evidence eligibility verifies place identity: claims linked to a place id strictly match only that place id, while name only claims require valid established coordinate distance within 1.0 kilometer, with missing, malformed, or non finite coordinates rejected.
 - Candidate evaluation validates caller ownership, cancellation status, and execution deadlines before persisting candidates, and uses runner provided session factories across transaction boundaries.
+- TripPlannerGraph dispatches route optimization tasks to worker OPTIMIZER with action solve, halts at interrupt boundary AWAIT_ROUTE_RESULTS, clears pending_tasks on resumption to prevent duplicate dispatch, and links route_id and diagnostics without bundling OR Tools into the orchestrator Lambda.
+- Trip planner routing provider outages enforce specification 0005 fail closed routing without straight line guesswork, setting route_id to None, routing_status to ROUTING_UNAVAILABLE, and preserving stops without road polylines.
+- Overconstrained stop windows produce routing_status INFEASIBLE and preserve dropped stop diagnostics without failing parent execution.
 
 ## Gotchas
 

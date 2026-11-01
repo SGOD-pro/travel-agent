@@ -153,6 +153,16 @@ class CompletionReconciliationService:
             g = compile_route_optimizer_workflow(checkpointer=checkpointer)
             self._workflow_graphs[workflow] = g
             return g
+        if workflow in ("TRAVEL", "TRIP_PLANNER", "TRIP_PLANNER_GRAPH", "PLANNING"):
+            from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
+            from functions.orchestrator.graphs.trip_planner import (
+                compile_trip_planning_workflow,
+            )
+
+            checkpointer = TransactionBoundCheckpointer(session_factory=self._session_factory)
+            g = compile_trip_planning_workflow(checkpointer=checkpointer)
+            self._workflow_graphs[workflow] = g
+            return g
         return self._default_graph
 
     async def reconcile_task_event(
@@ -274,7 +284,11 @@ class CompletionReconciliationService:
                 # Phase 3: Barrier Checks
                 # Cancellation Barrier: do not resume or update graph for cancelled execution
                 if execution.status == "CANCELLED" or execution.cancelled_at is not None:
-                    if active_graph is not None and hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
+                    if (
+                        active_graph is not None
+                        and hasattr(active_graph, "checkpointer")
+                        and hasattr(active_graph.checkpointer, "discard")
+                    ):
                         active_graph.checkpointer.discard(str(execution_id))
                     await session.execute(
                         text(
@@ -293,7 +307,11 @@ class CompletionReconciliationService:
 
                 # Deadline Barrier
                 if execution.deadline_at and execution.deadline_at <= now:
-                    if active_graph is not None and hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
+                    if (
+                        active_graph is not None
+                        and hasattr(active_graph, "checkpointer")
+                        and hasattr(active_graph.checkpointer, "discard")
+                    ):
                         active_graph.checkpointer.discard(str(execution_id))
                     if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"):
                         execution.status = "FAILED"
@@ -454,7 +472,8 @@ class CompletionReconciliationService:
                         merged_outputs = {**existing_outputs, str(task_id): task_output}
                         node_target = (
                             "worker_node"
-                            if hasattr(active_graph, "nodes") and "worker_node" in active_graph.nodes
+                            if hasattr(active_graph, "nodes")
+                            and "worker_node" in active_graph.nodes
                             else None
                         )
                         await active_graph.aupdate_state(
@@ -465,7 +484,9 @@ class CompletionReconciliationService:
                             },
                             as_node=node_target,
                         )
-                        if hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "flush"):
+                        if hasattr(active_graph, "checkpointer") and hasattr(
+                            active_graph.checkpointer, "flush"
+                        ):
                             await active_graph.checkpointer.flush(session, str(execution_id))
                         checkpoint_updated = True
 
