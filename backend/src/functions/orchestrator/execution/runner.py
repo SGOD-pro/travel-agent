@@ -124,7 +124,7 @@ class GraphRunnerService:
         for g in [default_graph, *self._workflow_graphs.values()]:
             if (
                 g is not None
-                and hasattr(g, "checkpointer")
+                and getattr(g, "checkpointer", None) is not None
                 and getattr(g.checkpointer, "session_factory", None) is None
             ):
                 g.checkpointer.session_factory = session_factory
@@ -228,7 +228,7 @@ class GraphRunnerService:
                     )
 
                 # Duplicate / Replay check
-                if execution.status in ("WAITING_TASKS", "SUCCEEDED", "PARTIAL", "FAILED"):
+                if execution.status in ("WAITING_TASKS", "SUCCEEDED", "PARTIAL", "FAILED", "SUPERSEDED"):
                     # Check if tasks already exist for this execution
                     task_stmt = select(TaskModel).where(TaskModel.execution_id == execution_id)
                     existing_tasks = (await session.execute(task_stmt)).scalars().all()
@@ -274,11 +274,23 @@ class GraphRunnerService:
                 f"No graph configured for workflow '{workflow_name}' and no default graph configured"
             )
 
+        checkpointer = getattr(active_graph, "checkpointer", None)
+        if (
+            checkpointer
+            and hasattr(checkpointer, "session_factory")
+            and checkpointer.session_factory is None
+        ):
+            checkpointer.session_factory = self._session_factory
+        if checkpointer and hasattr(checkpointer, "discard"):
+            checkpointer.discard(str(execution_id))
+
         # Phase 2: Execute LangGraph start outside database transaction
         config = {
             "configurable": {
                 "thread_id": str(execution_id),
                 "session_factory": self._session_factory,
+                "runner_lease": runner_lease,
+                "checkpointer": checkpointer,
             }
         }
         initial_state = {
@@ -289,16 +301,6 @@ class GraphRunnerService:
             "execution_id": str(execution_id),
             **(event_obj.payload or {}),
         }
-
-        checkpointer = getattr(active_graph, "checkpointer", None)
-        if (
-            checkpointer
-            and hasattr(checkpointer, "session_factory")
-            and checkpointer.session_factory is None
-        ):
-            checkpointer.session_factory = self._session_factory
-        if checkpointer and hasattr(checkpointer, "discard"):
-            checkpointer.discard(str(execution_id))
 
         try:
             # Check if thread state already exists in checkpointer
@@ -392,7 +394,7 @@ class GraphRunnerService:
                     )
 
                 # Terminal barrier: already finished
-                if execution.status in ("SUCCEEDED", "PARTIAL", "FAILED"):
+                if execution.status in ("SUCCEEDED", "PARTIAL", "FAILED", "SUPERSEDED"):
                     return GraphRunnerResult(
                         execution_id=execution_id,
                         status=execution.status,
@@ -451,13 +453,6 @@ class GraphRunnerService:
                 f"No graph configured for workflow '{workflow_name}' and no default graph configured"
             )
 
-        # Phase 2: Execute LangGraph continuation outside database transaction
-        config = {
-            "configurable": {
-                "thread_id": str(execution_id),
-                "session_factory": self._session_factory,
-            }
-        }
         checkpointer = getattr(active_graph, "checkpointer", None)
         if (
             checkpointer
@@ -467,6 +462,16 @@ class GraphRunnerService:
             checkpointer.session_factory = self._session_factory
         if checkpointer and hasattr(checkpointer, "discard"):
             checkpointer.discard(str(execution_id))
+
+        # Phase 2: Execute LangGraph continuation outside database transaction
+        config = {
+            "configurable": {
+                "thread_id": str(execution_id),
+                "session_factory": self._session_factory,
+                "runner_lease": runner_lease,
+                "checkpointer": checkpointer,
+            }
+        }
 
         try:
             post_state = await active_graph.aget_state(config=config)

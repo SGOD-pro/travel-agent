@@ -313,7 +313,7 @@ class CompletionReconciliationService:
                         and hasattr(active_graph.checkpointer, "discard")
                     ):
                         active_graph.checkpointer.discard(str(execution_id))
-                    if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"):
+                    if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED", "SUPERSEDED"):
                         execution.status = "FAILED"
                         execution.lease_token = None
                         execution.lease_expiry = None
@@ -370,7 +370,7 @@ class CompletionReconciliationService:
                     )
 
                 # Ineligible parent execution
-                if execution.status in ("SUCCEEDED", "FAILED", "PARTIAL"):
+                if execution.status in ("SUCCEEDED", "FAILED", "PARTIAL", "SUPERSEDED"):
                     await session.execute(
                         text(
                             "UPDATE completion_receipts SET applied_at = :now WHERE event_id = :event_id AND applied_at IS NULL"

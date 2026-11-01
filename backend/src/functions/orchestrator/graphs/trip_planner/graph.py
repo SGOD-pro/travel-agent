@@ -25,7 +25,7 @@ from typing import Any, TypedDict, cast
 from geoalchemy2.shape import to_shape
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from config.config import get_settings
 from config.db import get_session_factory
@@ -1601,8 +1601,19 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
     }
 
 
-def compute_budget_node(state: TripPlanningState) -> dict[str, Any]:
-    """Calculates fuel and road transit budget using exact domain math."""
+async def compute_budget_node(
+    state: TripPlanningState,
+    config: RunnableConfig = _DEFAULT_RUNNABLE_CONFIG,
+) -> dict[str, Any]:
+    """Calculates fuel, accommodation, and entrance fee budget using exact domain math.
+
+    Conforms to AC-7:
+    - Fuel costs labeled as ESTIMATED based on vehicle profiles.
+    - Accommodation labeled as ESTIMATED based on stay duration benchmarks.
+    - Verified entrance fees labeled as QUOTED (estimated=False) backed by evidence.
+    - Unverified fees, missing fees, or unquoted tolls labeled as explicit UNKNOWN entries
+      with documented reasons and provenance where available, never defaulting to zero.
+    """
     brief = TripBrief.model_validate(state["brief"])
     schedule_data = state.get("optimized_schedule", {})
     legs_data = schedule_data.get("legs", [])
@@ -1643,23 +1654,110 @@ def compute_budget_node(state: TripPlanningState) -> dict[str, Any]:
     stops_data = schedule_data.get("stops", [])
     seen_entry_stops: set[str] = set()
 
-    place_prices: dict[str, float] = {}
+    # Track candidate metadata, provenance, and categories
     place_categories: dict[str, str] = {}
-    for cand in state.get("validated_candidates", []):
-        cand_name = cand.get("primary_name") or cand.get("name")
-        if cand_name:
-            if cand.get("price_estimate_inr") is not None:
-                place_prices[cand_name.lower()] = float(cand["price_estimate_inr"])
-            if cand.get("category"):
-                place_categories[cand_name.lower()] = str(cand["category"])
+    place_provenance: dict[str, str] = {}
+    verified_fees: dict[str, tuple[float, str]] = {}
 
-    for prop in state.get("discovered_places", []):
-        prop_name = prop.get("name")
-        if prop_name:
-            if prop.get("price_estimate_inr") is not None and prop_name.lower() not in place_prices:
-                place_prices[prop_name.lower()] = float(prop["price_estimate_inr"])
-            if prop.get("category") and prop_name.lower() not in place_categories:
-                place_categories[prop_name.lower()] = str(prop["category"])
+    for cand in state.get("validated_candidates", []):
+        cand_name = (cand.get("primary_name") or cand.get("name") or "").strip().lower()
+        place_id = str(cand["place_id"]) if cand.get("place_id") else None
+        if cand_name:
+            if cand.get("category"):
+                place_categories[cand_name] = str(cand["category"]).lower()
+            prov = cand.get("provenance")
+            if isinstance(prov, dict) and prov.get("source"):
+                place_provenance[cand_name] = str(prov["source"])
+            elif place_id:
+                place_provenance[cand_name] = f"place:{place_id}"
+            if place_id:
+                place_provenance[place_id] = place_provenance.get(cand_name, f"place:{place_id}")
+                if cand.get("category"):
+                    place_categories[place_id] = str(cand["category"]).lower()
+
+            # Direct evidence-supported verified fee in candidate
+            if cand.get("verified_price_inr") is not None:
+                v_fee = float(cand["verified_price_inr"])
+                v_source = str(
+                    cand.get("fee_evidence_ref")
+                    or cand.get("provenance", {}).get("source")
+                    or f"place:{place_id}"
+                )
+                verified_fees[cand_name] = (v_fee, v_source)
+                if place_id:
+                    verified_fees[place_id] = (v_fee, v_source)
+
+    # Inspect in-memory / fixture claims in state['task_outputs']
+    raw_claims: list[dict[str, Any]] = []
+    task_outputs = state.get("task_outputs", {})
+    if isinstance(task_outputs, dict):
+        if "claims" in task_outputs and isinstance(task_outputs["claims"], list):
+            raw_claims.extend(task_outputs["claims"])
+        for val in task_outputs.values():
+            if isinstance(val, dict) and "claims" in val and isinstance(val["claims"], list):
+                raw_claims.extend(val["claims"])
+
+    for cl in raw_claims:
+        cat = str(cl.get("category", "")).upper()
+        if cat in ("FEES", "PRICE", "TICKET", "ENTRANCE"):
+            ver = str(cl.get("verification", "")).upper()
+            if ver == "VERIFIED":
+                ev_refs = (
+                    cl.get("evidence_ids")
+                    or cl.get("evidence_refs")
+                    or cl.get("observations")
+                    or []
+                )
+                if ev_refs or cl.get("evidence_count", 0) > 0:
+                    tv = cl.get("typed_value") or {}
+                    price_val = tv.get("price") or tv.get("amount") or tv.get("price_inr")
+                    if price_val is not None:
+                        fee_amount = float(price_val)
+                        fee_source = (
+                            str(ev_refs[0])
+                            if isinstance(ev_refs, list) and ev_refs
+                            else f"claim:{cl.get('id', 'verified')}"
+                        )
+                        cl_subj = str(cl.get("subject_id", "")).strip().lower()
+                        cl_pid = str(cl.get("place_id")) if cl.get("place_id") else None
+                        if cl_subj:
+                            verified_fees[cl_subj] = (fee_amount, fee_source)
+                        if cl_pid:
+                            verified_fees[cl_pid] = (fee_amount, fee_source)
+
+    # Inspect database for verified fee claims if session_factory is available and not offline fixture
+    configurable = config.get("configurable", {}) if config else {}
+    session_factory = configurable.get("session_factory") or state.get("_session_factory")
+    is_offline_fixture = bool(state.get("_offline_fixture_mode", False))
+
+    if session_factory is not None and not is_offline_fixture:
+        try:
+            from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
+
+            async with session_factory() as session:
+                claims_stmt = (
+                    select(ClaimModel, ClaimEvidenceModel.observation_id)
+                    .join(ClaimEvidenceModel, ClaimEvidenceModel.claim_id == ClaimModel.id)
+                    .where(
+                        ClaimModel.category.in_(["FEES", "PRICE", "TICKET", "ENTRANCE"]),
+                        ClaimModel.verification == "VERIFIED",
+                    )
+                )
+                claims_rows = (await session.execute(claims_stmt)).all()
+                for claim_row, obs_id in claims_rows:
+                    tv = claim_row.typed_value or {}
+                    price_val = tv.get("price") or tv.get("amount") or tv.get("price_inr")
+                    if price_val is not None:
+                        fee_amount = float(price_val)
+                        fee_source = f"obs:{obs_id}"
+                        cl_subj = claim_row.subject_id.strip().lower()
+                        cl_pid = str(claim_row.place_id) if claim_row.place_id else None
+                        if cl_subj:
+                            verified_fees[cl_subj] = (fee_amount, fee_source)
+                        if cl_pid:
+                            verified_fees[cl_pid] = (fee_amount, fee_source)
+        except Exception as exc:
+            logger.warning("Could not query database for verified fee claims: %s", exc)
 
     for stop in stops_data:
         stop_name = stop.get("name") or stop.get("stop_id", "Stop")
@@ -1668,38 +1766,52 @@ def compute_budget_node(state: TripPlanningState) -> dict[str, Any]:
             continue
 
         seen_entry_stops.add(stop_name.lower())
-        cat = place_categories.get(stop_name.lower(), "attraction")
-        price_val = place_prices.get(stop_name.lower())
+        stop_key = stop_name.lower()
+        stop_place_id = str(stop.get("place_id")) if stop.get("place_id") else None
 
-        if price_val is not None:
+        verified_entry = verified_fees.get(stop_key) or (
+            verified_fees.get(stop_place_id) if stop_place_id else None
+        )
+
+        if verified_entry is not None:
+            price_val, source_ref = verified_entry
             all_budget_lines.append(
                 BudgetLine(
                     category=BudgetCategory.ACTIVITIES,
                     amount=Decimal(str(price_val)),
                     currency=Currency.INR,
                     basis=f"entry_fee_{stop_name}",
-                    source_ref="place_proposal_price",
-                    estimated=True,
+                    source_ref=source_ref,
+                    estimated=False,  # AC-7: verified entrance fees are QUOTED!
                 )
             )
-        elif cat in (
-            "attraction",
-            "museum",
-            "park",
-            "heritage",
-            "monument",
-            "sightseeing",
-            "activity",
-        ):
-            all_budget_lines.append(
-                BudgetLine(
-                    category=BudgetCategory.ACTIVITIES,
-                    amount=None,
-                    currency=Currency.INR,
-                    basis=f"entry_fee_{stop_name}",
-                    unknown_reason=f"Entrance fee unverified for {stop_name}",
+        else:
+            cat_val = place_categories.get(stop_key)
+            if not cat_val and stop_place_id:
+                cat_val = place_categories.get(stop_place_id)
+            cat = cat_val or "attraction"
+            if cat in (
+                "attraction",
+                "museum",
+                "park",
+                "heritage",
+                "monument",
+                "sightseeing",
+                "activity",
+            ) or stop_key in place_categories:
+                prov_ref = place_provenance.get(stop_key) or (
+                    place_provenance.get(stop_place_id) if stop_place_id else f"stop:{stop_name}"
                 )
-            )
+                all_budget_lines.append(
+                    BudgetLine(
+                        category=BudgetCategory.ACTIVITIES,
+                        amount=None,  # AC-7: unquoted fees are explicit UNKNOWN entries
+                        currency=Currency.INR,
+                        basis=f"entry_fee_{stop_name}",
+                        unknown_reason=f"Entrance fee unverified for {stop_name}",
+                        source_ref=prov_ref,
+                    )
+                )
 
     summary = BudgetSummary.from_lines(all_budget_lines, currency=Currency.INR)
 
@@ -1747,13 +1859,15 @@ async def publish_proposal_node(
 
     Conforms to spec 0007 Slice 5 and AC-8:
     1. Checks cancellation barrier and execution deadline.
-    2. Enforces tenant isolation between caller and trip owner.
-    3. Acquires pessimistic row lock on trips (SELECT ... FOR UPDATE).
-    4. Validates base version match; detects concurrent brief updates, records
+    2. Enforces tenant isolation between caller, execution owner, and trip owner.
+    3. Verifies locked execution exists, belongs to caller and trip, and is eligible to publish.
+    4. Fences publication using active runner lease. Stale or expired runner cannot write trip, delta, or events.
+    5. Acquires pessimistic row lock on trips (SELECT ... FOR UPDATE).
+    6. Validates base version match; detects concurrent brief updates, records
        PROPOSAL_SUPERSEDED event, and marks execution SUPERSEDED without overwriting trip data.
-    5. On version match, records TripDeltaModel and atomically updates trips.current_route_id,
+    7. On version match, records TripDeltaModel and atomically updates trips.current_route_id,
        trips.itinerary_json, and trips.state ('proposed').
-    6. Replay safe and idempotent: duplicate invocations update existing proposal without
+    8. Replay safe and idempotent: duplicate invocations update existing proposal without
        creating duplicate deltas.
     """
     if state.get("status") == "CANCELLED":
@@ -1766,9 +1880,13 @@ async def publish_proposal_node(
 
     configurable = config.get("configurable", {}) if config else {}
     session_factory = configurable.get("session_factory") or state.get("_session_factory")
-    is_offline_fixture = state.get("_offline_fixture_mode", False)
+    is_offline_fixture = bool(state.get("_offline_fixture_mode", False))
 
-    if not is_offline_fixture and session_factory is None:
+    if (
+        not is_offline_fixture
+        and session_factory is None
+        and "session_factory" not in configurable
+    ):
         try:
             from config.db import get_session_factory
 
@@ -1776,55 +1894,202 @@ async def publish_proposal_node(
         except Exception:
             session_factory = None
 
-    if is_offline_fixture or session_factory is None or not state.get("trip_id"):
+    if is_offline_fixture:
         return {
             "current_step": "proposal_published",
             "status": "completed",
             "proposal_status": "PUBLISHED",
         }
 
-    trip_uuid = uuid.UUID(str(state["trip_id"]))
-    owner_uuid = uuid.UUID(str(state["owner_id"])) if state.get("owner_id") else None
-    execution_uuid = (
-        uuid.UUID(str(state["execution_id"])) if state.get("execution_id") else None
-    )
+    # Production mode: fail closed if session_factory, trip_id, owner_id, or execution identity is missing
+    trip_id_raw = state.get("trip_id")
+    owner_id_raw = state.get("owner_id")
+    execution_id_raw = state.get("execution_id")
+
+    if (
+        session_factory is None
+        or not trip_id_raw
+        or not owner_id_raw
+        or not execution_id_raw
+    ):
+        logger.error(
+            "Production proposal publication failed closed: missing required persistence identity "
+            "(session_factory=%s, trip_id=%s, owner_id=%s, execution_id=%s)",
+            session_factory is not None,
+            bool(trip_id_raw),
+            bool(owner_id_raw),
+            bool(execution_id_raw),
+        )
+        return {
+            "current_step": "proposal_publication_failed",
+            "status": "FAILED",
+            "proposal_status": "FAILED",
+            "errors": [
+                "Production proposal publication requires session_factory, trip_id, owner_id, and execution_id"
+            ],
+        }
+
+    try:
+        trip_uuid = uuid.UUID(str(trip_id_raw))
+        owner_uuid = uuid.UUID(str(owner_id_raw))
+        execution_uuid = uuid.UUID(str(execution_id_raw))
+    except (ValueError, TypeError) as exc:
+        logger.error("Invalid UUID identity in proposal publication: %s", exc)
+        return {
+            "current_step": "proposal_publication_failed",
+            "status": "FAILED",
+            "proposal_status": "FAILED",
+            "errors": [f"Invalid UUID identity in proposal publication: {exc}"],
+        }
+
+    now = datetime.now(UTC)
 
     async with session_factory() as session:
         async with session.begin():
-            # Cancellation and deadline check under transaction lock
-            if execution_uuid is not None:
-                from functions.orchestrator.execution.models import ExecutionModel
+            # 1. Lock and verify execution under transaction
+            from functions.orchestrator.execution.models import ExecutionModel
 
-                exec_stmt = (
-                    select(ExecutionModel)
-                    .where(ExecutionModel.id == execution_uuid)
-                    .with_for_update()
+            exec_stmt = (
+                select(ExecutionModel)
+                .where(ExecutionModel.id == execution_uuid)
+                .with_for_update()
+            )
+            exec_row = (await session.execute(exec_stmt)).scalar_one_or_none()
+
+            if exec_row is None:
+                logger.error("Execution %s not found for proposal publication", execution_uuid)
+                return {
+                    "current_step": "proposal_publication_failed",
+                    "status": "FAILED",
+                    "proposal_status": "FAILED",
+                    "errors": [f"Execution {execution_uuid} not found"],
+                }
+
+            # Tenant isolation on execution
+            if exec_row.owner_id != owner_uuid:
+                logger.error(
+                    "Tenant isolation violation: execution %s belongs to owner %s, caller is %s",
+                    execution_uuid,
+                    exec_row.owner_id,
+                    owner_uuid,
                 )
-                exec_row = (await session.execute(exec_stmt)).scalar_one_or_none()
-                if exec_row is not None:
-                    if exec_row.status == "CANCELLED":
-                        logger.info(
-                            "Parent execution %s is CANCELLED; skipping publication", execution_uuid
-                        )
-                        return {
-                            "current_step": "proposal_publication_cancelled",
-                            "status": "CANCELLED",
-                            "proposal_status": "CANCELLED",
-                        }
-                    if exec_row.deadline_at and datetime.now(UTC) >= exec_row.deadline_at:
-                        logger.warning(
-                            "Parent execution %s deadline expired; marking CANCELLED",
-                            execution_uuid,
-                        )
-                        exec_row.status = "CANCELLED"
-                        exec_row.updated_at = datetime.now(UTC)
-                        return {
-                            "current_step": "proposal_publication_cancelled",
-                            "status": "CANCELLED",
-                            "proposal_status": "CANCELLED",
-                        }
+                raise PermissionError(
+                    f"Tenant isolation mismatch: execution owner {exec_row.owner_id} does not match {owner_uuid}"
+                )
 
-            # Pessimistic row lock on trips
+            # Execution trip binding verification
+            if exec_row.trip_id is None or exec_row.trip_id != trip_uuid:
+                logger.error(
+                    "Cross-trip execution mismatch: execution %s belongs to trip %s, target trip is %s",
+                    execution_uuid,
+                    exec_row.trip_id,
+                    trip_uuid,
+                )
+                raise ValueError(
+                    f"Cross-trip execution mismatch: execution trip {exec_row.trip_id} does not match {trip_uuid}"
+                )
+
+            # Execution eligibility: cancellation barriers
+            if exec_row.status == "CANCELLED" or exec_row.cancelled_at is not None:
+                logger.info(
+                    "Parent execution %s is cancelled (status=%s, cancelled_at=%s); skipping publication",
+                    execution_uuid,
+                    exec_row.status,
+                    exec_row.cancelled_at,
+                )
+                return {
+                    "current_step": "proposal_publication_cancelled",
+                    "status": "CANCELLED",
+                    "proposal_status": "CANCELLED",
+                }
+
+            # Execution deadline barrier
+            if exec_row.deadline_at and now >= exec_row.deadline_at:
+                logger.warning(
+                    "Parent execution %s deadline expired at %s (now=%s); marking CANCELLED",
+                    execution_uuid,
+                    exec_row.deadline_at,
+                    now,
+                )
+                exec_row.status = "CANCELLED"
+                exec_row.updated_at = now
+                return {
+                    "current_step": "proposal_publication_cancelled",
+                    "status": "CANCELLED",
+                    "proposal_status": "CANCELLED",
+                }
+
+            # Execution already superseded or terminal
+            if exec_row.status == "SUPERSEDED":
+                logger.info("Parent execution %s is SUPERSEDED; skipping publication", execution_uuid)
+                return {
+                    "current_step": "proposal_superseded",
+                    "status": "SUPERSEDED",
+                    "proposal_status": "SUPERSEDED",
+                }
+
+            if exec_row.status in ("FAILED", "SUCCEEDED", "PARTIAL"):
+                logger.info(
+                    "Parent execution %s is already terminal (status=%s); skipping publication",
+                    execution_uuid,
+                    exec_row.status,
+                )
+                return {
+                    "current_step": "proposal_publication_ineligible",
+                    "status": exec_row.status,
+                    "proposal_status": exec_row.status,
+                }
+
+            # 2. Runner lease fencing
+            runner_lease = configurable.get("runner_lease") or state.get("runner_lease")
+            runner_lease_uuid: uuid.UUID | None = None
+            if runner_lease is not None:
+                try:
+                    runner_lease_uuid = uuid.UUID(str(runner_lease))
+                except (ValueError, TypeError):
+                    runner_lease_uuid = None
+
+            if exec_row.lease_token is not None:
+                if runner_lease_uuid is None or exec_row.lease_token != runner_lease_uuid:
+                    logger.warning(
+                        "Publication lease check failed for execution %s: current lease %s != runner lease %s",
+                        execution_uuid,
+                        exec_row.lease_token,
+                        runner_lease_uuid,
+                    )
+                    return {
+                        "current_step": "proposal_publication_lost_lease",
+                        "status": "FAILED",
+                        "proposal_status": "FAILED",
+                        "errors": ["Runner lease expired or held by another runner"],
+                    }
+                if exec_row.lease_expiry is not None and now >= exec_row.lease_expiry:
+                    logger.warning(
+                        "Publication lease expired for execution %s: expiry %s <= now %s",
+                        execution_uuid,
+                        exec_row.lease_expiry,
+                        now,
+                    )
+                    return {
+                        "current_step": "proposal_publication_lost_lease",
+                        "status": "FAILED",
+                        "proposal_status": "FAILED",
+                        "errors": ["Runner lease expired before publication"],
+                    }
+            elif runner_lease_uuid is not None:
+                logger.warning(
+                    "Publication lease check failed for execution %s: execution has no lease but runner has %s",
+                    execution_uuid,
+                    runner_lease_uuid,
+                )
+                return {
+                    "current_step": "proposal_publication_lost_lease",
+                    "status": "FAILED",
+                    "proposal_status": "FAILED",
+                    "errors": ["Execution lease has been cleared or stolen"],
+                }
+
+            # 3. Pessimistic row lock on trips
             from functions.api.models import TripDeltaModel, TripModel
 
             stmt = select(TripModel).where(TripModel.id == trip_uuid).with_for_update()
@@ -1839,8 +2104,8 @@ async def publish_proposal_node(
                     "proposal_status": "FAILED",
                 }
 
-            # Enforce tenant isolation
-            if owner_uuid is not None and trip.owner_id != owner_uuid:
+            # Enforce tenant isolation on trip
+            if trip.owner_id != owner_uuid:
                 logger.error(
                     "Tenant isolation violation: trip owner %s does not match execution owner %s",
                     trip.owner_id,
@@ -1860,34 +2125,29 @@ async def publish_proposal_node(
                     expected_base_version,
                 )
                 from functions.orchestrator.execution.job_events import record_job_event
-                from functions.orchestrator.execution.models import ExecutionModel
 
-                if execution_uuid is not None:
-                    await record_job_event(
-                        session,
-                        execution_id=execution_uuid,
-                        event_type="PROPOSAL_SUPERSEDED",
-                        safe_payload={
-                            "trip_id": str(trip_uuid),
-                            "expected_base_version": expected_base_version,
-                            "current_trip_version": trip.current_version,
-                            "reason": "Trip version advanced concurrently during planning",
-                        },
-                    )
-                    await session.execute(
-                        update(ExecutionModel)
-                        .where(ExecutionModel.id == execution_uuid)
-                        .values(status="SUPERSEDED", updated_at=datetime.now(UTC))
-                    )
+                await record_job_event(
+                    session,
+                    execution_id=execution_uuid,
+                    event_type="PROPOSAL_SUPERSEDED",
+                    safe_payload={
+                        "trip_id": str(trip_uuid),
+                        "expected_base_version": expected_base_version,
+                        "current_trip_version": trip.current_version,
+                        "reason": "Trip version advanced concurrently during planning",
+                    },
+                )
+                exec_row.status = "SUPERSEDED"
+                exec_row.updated_at = now
+
                 return {
                     "current_step": "proposal_superseded",
                     "status": "SUPERSEDED",
                     "proposal_status": "SUPERSEDED",
                 }
 
-            # Version matches: publish proposal atomically
+            # 4. Version matches: publish proposal atomically
             proposal = state.get("proposal") or {}
-            now = datetime.now(UTC)
             route_uuid = (
                 uuid.UUID(str(state["route_id"]))
                 if state.get("route_id")
@@ -1906,7 +2166,7 @@ async def publish_proposal_node(
                 if c.get("place_id"):
                     evidence_refs.append(f"place:{c['place_id']}")
 
-            actor_id = owner_uuid or (execution_uuid if execution_uuid else trip.owner_id)
+            actor_id = owner_uuid
 
             if existing_delta is None:
                 delta = TripDeltaModel(
@@ -1928,26 +2188,23 @@ async def publish_proposal_node(
             trip.state = "proposed"
             trip.updated_at = now
 
-            if execution_uuid is not None:
-                from functions.orchestrator.execution.job_events import record_job_event
-                from functions.orchestrator.execution.models import ExecutionModel
+            from functions.orchestrator.execution.job_events import record_job_event
 
-                await record_job_event(
-                    session,
-                    execution_id=execution_uuid,
-                    event_type="PROPOSAL_PUBLISHED",
-                    safe_payload={
-                        "trip_id": str(trip_uuid),
-                        "base_version": expected_base_version,
-                        "route_id": str(route_uuid) if route_uuid else None,
-                        "routing_status": state.get("routing_status"),
-                    },
-                )
-                await session.execute(
-                    update(ExecutionModel)
-                    .where(ExecutionModel.id == execution_uuid)
-                    .values(status="SUCCEEDED", updated_at=now)
-                )
+            await record_job_event(
+                session,
+                execution_id=execution_uuid,
+                event_type="PROPOSAL_PUBLISHED",
+                safe_payload={
+                    "trip_id": str(trip_uuid),
+                    "base_version": expected_base_version,
+                    "route_id": str(route_uuid) if route_uuid else None,
+                    "routing_status": state.get("routing_status"),
+                },
+            )
+
+            checkpointer = configurable.get("checkpointer")
+            if checkpointer and hasattr(checkpointer, "flush"):
+                await checkpointer.flush(session, str(execution_uuid))
 
     return {
         "current_step": "proposal_published",

@@ -143,11 +143,15 @@ uv run alembic upgrade head
 - When optimizer task output is absent from checkpoint state, result recovery loads from WorkerResultModel using task result_id, validates parent execution and tenant ownership, and propagates worker failure status.
 - Production route result consumption fails closed without guessing if session factory is missing, owner is missing, route lookup fails, or execution and trip identifiers are missing or mismatch.
 - Trip departure and stop opening windows resolve in the trip intended timezone (TripBrief.timezone, defaulting to Asia/Kolkata) before consistent UTC conversion, rejecting invalid timezone overrides with ValueError, handling midnight date boundary crossings and multi day visit offsets.
-- Proposal publication enforces pessimistic row locking with SELECT FOR UPDATE on trips to prevent concurrent write races between background planning executions and user updates.
+- Proposal publication enforces pessimistic row locking with SELECT FOR UPDATE on trips and executions to prevent concurrent write races between background planning executions and user updates.
+- Proposal publication fails closed in production when session factory, trip ID, owner ID, or execution identity is missing or invalid.
+- Proposal publication verifies execution ownership against caller owner ID under lock, raising PermissionError on cross tenant access, and verifies execution trip association, raising ValueError on mismatch.
+- Proposal publication fences writes using current runner lease token and expiry timestamp, halting stale or expired runners immediately without mutating trips, deltas, or events.
 - Proposal publication validates base version match (trips current_version equals state version); concurrent brief modifications record a PROPOSAL_SUPERSEDED event, transition execution status to SUPERSEDED, and protect trips from stale proposal overwrite.
-- Budget computation calculates estimated road fuel and tolls for scheduled legs, estimated accommodation from destination stay days and benchmark hotel rates, quoted entrance fees from priced candidates, and explicit unknown budget lines without zero coercion for unpriced attractions.
-- When routing is unavailable, budget computation preserves accommodation and entrance fees while omitting road fuel and tolls without fabricating road travel.
-- Proposal publication atomically updates trips (current_route_id, itinerary_json, state proposed), creates or updates TripDeltaModel, records PROPOSAL_PUBLISHED timeline job event, and sets execution status to SUCCEEDED.
+- SUPERSEDED status is treated as terminal across runner start, resume, and completion reconciliation, preventing duplicate delivery from restarting superseded executions or overwriting newer proposals.
+- Budget computation calculates estimated road fuel and tolls for scheduled legs, estimated accommodation from destination stay days and benchmark hotel rates, quoted entrance fees strictly backed by evidence supported verified claims in ClaimEvidenceModel and ClaimModel, and explicit unknown budget lines with provenance without zero coercion for unverified proposal prices and unpriced attractions.
+- When routing is unavailable, budget computation preserves accommodation and verified entrance fees while omitting road fuel and tolls without fabricating road travel.
+- Proposal publication atomically updates trips (current_route_id, itinerary_json, state proposed), creates or updates TripDeltaModel, records PROPOSAL_PUBLISHED timeline job event, and defers execution completion to GraphRunnerService outbox transaction alongside checkpoint flush to prevent unrecoverable false success.
 - Tenant isolation verifies caller owner matches trip owner under transaction row lock, raising PermissionError on cross tenant access.
 - Replay safety and duplicate delivery idempotency update existing proposal deltas for trip and base version without duplicate TripDeltaModel insertions.
 

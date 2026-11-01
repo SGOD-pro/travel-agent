@@ -18,6 +18,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -122,6 +123,8 @@ def _make_sample_state() -> TripPlanningState:
                 "primary_name": "Digha Beach",
                 "category": "attraction",
                 "price_estimate_inr": 50.0,
+                "verified_price_inr": 50.0,
+                "fee_evidence_ref": "obs:ticket_digha_beach",
                 "is_candidate": False,
             },
         ],
@@ -169,10 +172,11 @@ def test_build_trip_planning_graph_includes_publish_proposal_node() -> None:
     assert workflow is not None
 
 
-def test_compute_budget_calculates_estimated_fuel_and_accommodation() -> None:
+@pytest.mark.asyncio
+async def test_compute_budget_calculates_estimated_fuel_and_accommodation() -> None:
     """Verifies fuel math is labeled ESTIMATED and accommodation is computed from stay days."""
     state = _make_sample_state()
-    res = compute_budget_node(state)
+    res = await compute_budget_node(state)
 
     assert res["current_step"] == "budget_computed"
     lines = res["budget_lines"]
@@ -202,10 +206,11 @@ def test_compute_budget_calculates_estimated_fuel_and_accommodation() -> None:
     assert Decimal(str(summary["known_total"]["amount"])) > Decimal("0")
 
 
-def test_compute_budget_handles_quoted_and_unpriced_attractions() -> None:
-    """Verifies that priced attractions generate numeric lines and unpriced ones produce UNKNOWN lines."""
+@pytest.mark.asyncio
+async def test_compute_budget_handles_quoted_and_unpriced_attractions() -> None:
+    """Verifies that verified attractions generate quoted lines and unpriced ones produce UNKNOWN lines."""
     state = _make_sample_state()
-    res = compute_budget_node(state)
+    res = await compute_budget_node(state)
     lines = res["budget_lines"]
 
     activity_lines = [line for line in lines if line["category"] == BudgetCategory.ACTIVITIES.value]
@@ -213,21 +218,55 @@ def test_compute_budget_handles_quoted_and_unpriced_attractions() -> None:
 
     priced = [line for line in activity_lines if line["basis"] == "entry_fee_Digha Beach"][0]
     assert priced["amount"] == "50.0"
-    assert priced["estimated"] is True
+    assert priced["estimated"] is False  # QUOTED under AC-7
+    assert priced["source_ref"] == "obs:ticket_digha_beach"
 
     unpriced = [line for line in activity_lines if line["basis"] == "entry_fee_Marine Aquarium"][0]
     assert unpriced["amount"] is None
     assert "Entrance fee unverified" in unpriced["unknown_reason"]
 
 
-def test_compute_budget_when_routing_unavailable_preserves_accommodation_without_fuel() -> None:
+@pytest.mark.asyncio
+async def test_compute_budget_unverified_proposal_prices_remain_unknown() -> None:
+    """Verifies under AC-7 that unverified place proposal prices never become quoted or estimated."""
+    state = _make_sample_state()
+    state["validated_candidates"] = [
+        {
+            "place_id": str(uuid.uuid4()),
+            "primary_name": "Digha Beach",
+            "category": "attraction",
+            "price_estimate_inr": 100.0,
+            "verified_price_inr": None,
+            "is_candidate": False,
+        }
+    ]
+    state["optimized_schedule"]["stops"] = [
+        {
+            "stop_id": "stop_2",
+            "name": "Digha Beach",
+            "stop_type": "DESTINATION",
+            "arrival_time": "2026-11-03T15:00:00+05:30",
+            "departure_time": "2026-11-03T18:00:00+05:30",
+            "dwell_minutes": 180,
+        }
+    ]
+    res = await compute_budget_node(state)
+    activity_lines = [line for line in res["budget_lines"] if line["category"] == BudgetCategory.ACTIVITIES.value]
+    assert len(activity_lines) == 1
+    line = activity_lines[0]
+    assert line["amount"] is None
+    assert "Entrance fee unverified" in line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_when_routing_unavailable_preserves_accommodation_without_fuel() -> None:
     """Verifies fail-closed routing does not fabricate road segments or fuel expenses."""
     state = _make_sample_state()
     state["route_id"] = None
     state["routing_status"] = "ROUTING_UNAVAILABLE"
     state["optimized_schedule"] = {"stops": [], "legs": []}
 
-    res = compute_budget_node(state)
+    res = await compute_budget_node(state)
     lines = res["budget_lines"]
 
     fuel_lines = [line for line in lines if line["category"] == BudgetCategory.TRANSPORT.value]
@@ -240,10 +279,11 @@ def test_compute_budget_when_routing_unavailable_preserves_accommodation_without
     assert hotel_lines[0]["amount"] == "3500.00"
 
 
-def test_synthesize_proposal_assembles_complete_contract() -> None:
+@pytest.mark.asyncio
+async def test_synthesize_proposal_assembles_complete_contract() -> None:
     """Verifies synthesize_proposal_node compiles schedule, budget, weather, and diagnostics."""
     state = _make_sample_state()
-    budget_res = compute_budget_node(state)
+    budget_res = await compute_budget_node(state)
     state["budget_lines"] = budget_res["budget_lines"]
     state["budget_summary"] = budget_res["budget_summary"]
 
@@ -299,8 +339,14 @@ async def test_publish_proposal_enforces_tenant_isolation_on_mismatch() -> None:
     mock_trip.current_version = 1
 
     mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
@@ -332,8 +378,14 @@ async def test_publish_proposal_version_conflict_records_superseded() -> None:
     mock_trip.current_version = 2  # Advanced concurrently!
 
     mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
@@ -348,7 +400,6 @@ async def test_publish_proposal_version_conflict_records_superseded() -> None:
         mock_result_exec,
         mock_result_trip,
         mock_result_seq,
-        MagicMock(),  # update ExecutionModel
     ]
 
     res = await publish_proposal_node(
@@ -359,6 +410,7 @@ async def test_publish_proposal_version_conflict_records_superseded() -> None:
     assert res["current_step"] == "proposal_superseded"
     assert res["status"] == "SUPERSEDED"
     assert res["proposal_status"] == "SUPERSEDED"
+    assert mock_exec_row.status == "SUPERSEDED"
 
 
 @pytest.mark.asyncio
@@ -370,8 +422,14 @@ async def test_publish_proposal_deadline_expired_halts() -> None:
     mock_session, mock_factory = _make_mock_session()
 
     mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = datetime.now(UTC) - timedelta(minutes=5)  # Expired
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
@@ -399,8 +457,14 @@ async def test_publish_proposal_publishes_to_trips_and_deltas_when_version_match
     mock_session, mock_factory = _make_mock_session()
 
     mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
 
     mock_trip = MagicMock()
     mock_trip.id = uuid.UUID(state["trip_id"])
@@ -427,7 +491,6 @@ async def test_publish_proposal_publishes_to_trips_and_deltas_when_version_match
         mock_result_trip,
         mock_result_delta,
         mock_result_seq,
-        MagicMock(),  # update ExecutionModel
     ]
 
     res = await publish_proposal_node(
@@ -456,8 +519,14 @@ async def test_publish_proposal_replay_idempotency_updates_existing_delta() -> N
     mock_session, mock_factory = _make_mock_session()
 
     mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
 
     mock_trip = MagicMock()
     mock_trip.id = uuid.UUID(state["trip_id"])
@@ -484,7 +553,6 @@ async def test_publish_proposal_replay_idempotency_updates_existing_delta() -> N
         mock_result_trip,
         mock_result_delta,
         mock_result_seq,
-        MagicMock(),  # update ExecutionModel
     ]
 
     res = await publish_proposal_node(
@@ -514,8 +582,14 @@ async def test_publish_proposal_fails_closed_when_trip_not_found() -> None:
     mock_session, mock_factory = _make_mock_session()
 
     mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
@@ -534,3 +608,220 @@ async def test_publish_proposal_fails_closed_when_trip_not_found() -> None:
     assert res["status"] == "FAILED"
     assert res["proposal_status"] == "FAILED"
     assert "Trip" in res["errors"][0]
+
+
+@pytest.mark.asyncio
+async def test_publish_proposal_production_missing_identity_fails_closed() -> None:
+    """Verifies Finding 1: production publication fails closed if session_factory, trip_id, owner_id, or execution_id is missing."""
+    state = _make_sample_state()
+    state["_offline_fixture_mode"] = False
+    state["proposal"] = {"status": "ready_for_approval"}
+
+    # Missing session_factory
+    res = await publish_proposal_node(state, config={"configurable": {"session_factory": None}})
+    assert res["current_step"] == "proposal_publication_failed"
+    assert res["status"] == "FAILED"
+    assert res["proposal_status"] == "FAILED"
+
+    # Missing trip_id
+    state_no_trip = dict(state)
+    state_no_trip["trip_id"] = None
+    res2 = await publish_proposal_node(
+        cast(TripPlanningState, state_no_trip),
+        config={"configurable": {"session_factory": MagicMock()}},
+    )
+    assert res2["status"] == "FAILED"
+
+    # Missing owner_id
+    state_no_owner = dict(state)
+    state_no_owner["owner_id"] = None
+    res3 = await publish_proposal_node(
+        cast(TripPlanningState, state_no_owner),
+        config={"configurable": {"session_factory": MagicMock()}},
+    )
+    assert res3["status"] == "FAILED"
+
+    # Missing execution_id
+    state_no_exec = dict(state)
+    state_no_exec["execution_id"] = None
+    res4 = await publish_proposal_node(
+        cast(TripPlanningState, state_no_exec),
+        config={"configurable": {"session_factory": MagicMock()}},
+    )
+    assert res4["status"] == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_publish_proposal_cross_owner_execution_mismatch_raises_permission_error() -> None:
+    """Verifies Finding 2: execution belonging to a different owner raises PermissionError under lock."""
+    state = _make_sample_state()
+    state["proposal"] = {"status": "ready_for_approval"}
+
+    mock_session, mock_factory = _make_mock_session()
+
+    mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.uuid4()  # Cross-owner mismatch!
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
+    mock_exec_row.status = "RUNNING"
+    mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
+
+    mock_result_exec = MagicMock()
+    mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
+    mock_session.execute.side_effect = [mock_result_exec]
+
+    with pytest.raises(PermissionError, match="Tenant isolation mismatch"):
+        await publish_proposal_node(
+            state,
+            config={"configurable": {"session_factory": mock_factory}},
+        )
+
+
+@pytest.mark.asyncio
+async def test_publish_proposal_cross_trip_execution_mismatch_raises_value_error() -> None:
+    """Verifies Finding 2: execution bound to a different trip raises ValueError under lock."""
+    state = _make_sample_state()
+    state["proposal"] = {"status": "ready_for_approval"}
+
+    mock_session, mock_factory = _make_mock_session()
+
+    mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.uuid4()  # Cross-trip mismatch!
+    mock_exec_row.status = "RUNNING"
+    mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
+
+    mock_result_exec = MagicMock()
+    mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
+    mock_session.execute.side_effect = [mock_result_exec]
+
+    with pytest.raises(ValueError, match="Cross-trip execution mismatch"):
+        await publish_proposal_node(
+            state,
+            config={"configurable": {"session_factory": mock_factory}},
+        )
+
+
+@pytest.mark.asyncio
+async def test_publish_proposal_cancelled_at_halts_publication() -> None:
+    """Verifies Finding 2: cancelled_at timestamp halts publication under transaction lock."""
+    state = _make_sample_state()
+    state["proposal"] = {"status": "ready_for_approval"}
+
+    mock_session, mock_factory = _make_mock_session()
+
+    mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
+    mock_exec_row.status = "RUNNING"
+    mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = datetime.now(UTC)  # Cancelled via timestamp
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
+
+    mock_result_exec = MagicMock()
+    mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
+    mock_session.execute.side_effect = [mock_result_exec]
+
+    res = await publish_proposal_node(
+        state,
+        config={"configurable": {"session_factory": mock_factory}},
+    )
+    assert res["current_step"] == "proposal_publication_cancelled"
+    assert res["status"] == "CANCELLED"
+    assert res["proposal_status"] == "CANCELLED"
+
+
+@pytest.mark.asyncio
+async def test_publish_proposal_lost_or_expired_runner_lease_rejected() -> None:
+    """Verifies Finding 3: lost or expired runner lease halts publication without writing trip or delta."""
+    state = _make_sample_state()
+    state["proposal"] = {"status": "ready_for_approval"}
+
+    mock_session, mock_factory = _make_mock_session()
+
+    held_lease = uuid.uuid4()
+    mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
+    mock_exec_row.status = "RUNNING"
+    mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = held_lease
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
+
+    mock_result_exec = MagicMock()
+    mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
+    mock_session.execute.side_effect = [mock_result_exec]
+
+    # Another runner tries to publish with different lease token
+    stale_runner_lease = uuid.uuid4()
+    res = await publish_proposal_node(
+        state,
+        config={
+            "configurable": {
+                "session_factory": mock_factory,
+                "runner_lease": stale_runner_lease,
+            }
+        },
+    )
+    assert res["current_step"] == "proposal_publication_lost_lease"
+    assert res["status"] == "FAILED"
+    assert res["proposal_status"] == "FAILED"
+
+    # Expired runner lease rejected
+    mock_exec_row.lease_expiry = datetime.now(UTC) - timedelta(seconds=1)
+    mock_session.execute.side_effect = [mock_result_exec]
+    res_expired = await publish_proposal_node(
+        state,
+        config={
+            "configurable": {
+                "session_factory": mock_factory,
+                "runner_lease": held_lease,
+            }
+        },
+    )
+    assert res_expired["current_step"] == "proposal_publication_lost_lease"
+    assert res_expired["status"] == "FAILED"
+    assert res_expired["proposal_status"] == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_publish_proposal_terminal_execution_ineligible() -> None:
+    """Verifies Finding 2: already terminal execution (e.g. SUCCEEDED) rejects re-publication."""
+    state = _make_sample_state()
+    state["proposal"] = {"status": "ready_for_approval"}
+
+    mock_session, mock_factory = _make_mock_session()
+
+    mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
+    mock_exec_row.status = "SUCCEEDED"
+    mock_exec_row.deadline_at = None
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = None
+    mock_exec_row.lease_expiry = None
+
+    mock_result_exec = MagicMock()
+    mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
+    mock_session.execute.side_effect = [mock_result_exec]
+
+    res = await publish_proposal_node(
+        state,
+        config={"configurable": {"session_factory": mock_factory}},
+    )
+    assert res["current_step"] == "proposal_publication_ineligible"
+    assert res["status"] == "SUCCEEDED"
+    assert res["proposal_status"] == "SUCCEEDED"
+
