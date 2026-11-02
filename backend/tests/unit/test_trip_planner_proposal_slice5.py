@@ -39,6 +39,7 @@ def _make_sample_state() -> TripPlanningState:
     trip_id = str(uuid.uuid4())
     owner_id = str(uuid.uuid4())
     execution_id = str(uuid.uuid4())
+    digha_place_id = str(uuid.uuid4())
     return {
         "trip_id": trip_id,
         "owner_id": owner_id,
@@ -87,6 +88,9 @@ def _make_sample_state() -> TripPlanningState:
                 {
                     "stop_id": "stop_2",
                     "name": "Digha Beach",
+                    "place_id": digha_place_id,
+                    "lat": 21.6266,
+                    "lng": 87.5074,
                     "stop_type": "DESTINATION",
                     "arrival_time": "2026-11-03T15:00:00+05:30",
                     "departure_time": "2026-11-03T18:00:00+05:30",
@@ -119,11 +123,12 @@ def _make_sample_state() -> TripPlanningState:
                 "is_candidate": False,
             },
             {
-                "place_id": str(uuid.uuid4()),
+                "place_id": digha_place_id,
                 "primary_name": "Digha Beach",
                 "category": "attraction",
+                "lat": 21.6266,
+                "lng": 87.5074,
                 "price_estimate_inr": 50.0,
-                "verified_price_inr": 50.0,
                 "fee_evidence_ref": "obs:ticket_digha_beach",
                 "is_candidate": False,
             },
@@ -144,6 +149,24 @@ def _make_sample_state() -> TripPlanningState:
         "routing_status": "FEASIBLE",
         "route_diagnostics": [],
         "status": "RUNNING",
+        "runner_lease": str(uuid.uuid4()),
+        "task_outputs": {
+            "claims": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "place_id": digha_place_id,
+                    "subject_id": "Digha Beach",
+                    "category": "FEES",
+                    "verification": "VERIFIED",
+                    "availability": "AVAILABLE",
+                    "freshness": "FRESH",
+                    "typed_value": {"price": 50.0, "amount": 50.0, "currency": "INR"},
+                    "geographic_scope": {"lat": 21.6266, "lng": 87.5074},
+                    "evidence_refs": ["obs:ticket_digha_beach"],
+                    "support_type": "SUPPORTS",
+                }
+            ]
+        },
     }
 
 
@@ -345,8 +368,8 @@ async def test_publish_proposal_enforces_tenant_isolation_on_mismatch() -> None:
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
@@ -384,8 +407,8 @@ async def test_publish_proposal_version_conflict_records_superseded() -> None:
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
@@ -428,13 +451,21 @@ async def test_publish_proposal_deadline_expired_halts() -> None:
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = datetime.now(UTC) - timedelta(minutes=5)  # Expired
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
+
+    mock_trip = MagicMock()
+    mock_trip.id = uuid.UUID(state["trip_id"])
+    mock_trip.owner_id = uuid.UUID(state["owner_id"])
+    mock_trip.current_version = 1
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
 
-    mock_session.execute.side_effect = [mock_result_exec]
+    mock_result_trip = MagicMock()
+    mock_result_trip.scalar_one_or_none.return_value = mock_trip
+
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
 
     res = await publish_proposal_node(
         state,
@@ -463,8 +494,8 @@ async def test_publish_proposal_publishes_to_trips_and_deltas_when_version_match
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
 
     mock_trip = MagicMock()
     mock_trip.id = uuid.UUID(state["trip_id"])
@@ -525,8 +556,8 @@ async def test_publish_proposal_replay_idempotency_updates_existing_delta() -> N
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
 
     mock_trip = MagicMock()
     mock_trip.id = uuid.UUID(state["trip_id"])
@@ -588,8 +619,8 @@ async def test_publish_proposal_fails_closed_when_trip_not_found() -> None:
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
@@ -666,12 +697,21 @@ async def test_publish_proposal_cross_owner_execution_mismatch_raises_permission
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
+
+    mock_trip = MagicMock()
+    mock_trip.id = uuid.UUID(state["trip_id"])
+    mock_trip.owner_id = uuid.UUID(state["owner_id"])
+    mock_trip.current_version = 1
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
-    mock_session.execute.side_effect = [mock_result_exec]
+
+    mock_result_trip = MagicMock()
+    mock_result_trip.scalar_one_or_none.return_value = mock_trip
+
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
 
     with pytest.raises(PermissionError, match="Tenant isolation mismatch"):
         await publish_proposal_node(
@@ -695,12 +735,21 @@ async def test_publish_proposal_cross_trip_execution_mismatch_raises_value_error
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
+
+    mock_trip = MagicMock()
+    mock_trip.id = uuid.UUID(state["trip_id"])
+    mock_trip.owner_id = uuid.UUID(state["owner_id"])
+    mock_trip.current_version = 1
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
-    mock_session.execute.side_effect = [mock_result_exec]
+
+    mock_result_trip = MagicMock()
+    mock_result_trip.scalar_one_or_none.return_value = mock_trip
+
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
 
     with pytest.raises(ValueError, match="Cross-trip execution mismatch"):
         await publish_proposal_node(
@@ -724,12 +773,21 @@ async def test_publish_proposal_cancelled_at_halts_publication() -> None:
     mock_exec_row.status = "RUNNING"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = datetime.now(UTC)  # Cancelled via timestamp
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
+
+    mock_trip = MagicMock()
+    mock_trip.id = uuid.UUID(state["trip_id"])
+    mock_trip.owner_id = uuid.UUID(state["owner_id"])
+    mock_trip.current_version = 1
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
-    mock_session.execute.side_effect = [mock_result_exec]
+
+    mock_result_trip = MagicMock()
+    mock_result_trip.scalar_one_or_none.return_value = mock_trip
+
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
 
     res = await publish_proposal_node(
         state,
@@ -742,7 +800,7 @@ async def test_publish_proposal_cancelled_at_halts_publication() -> None:
 
 @pytest.mark.asyncio
 async def test_publish_proposal_lost_or_expired_runner_lease_rejected() -> None:
-    """Verifies Finding 3: lost or expired runner lease halts publication without writing trip or delta."""
+    """Verifies Finding 1 & 3: lost, missing, or expired runner lease halts publication without writing trip or delta."""
     state = _make_sample_state()
     state["proposal"] = {"status": "ready_for_approval"}
 
@@ -759,13 +817,31 @@ async def test_publish_proposal_lost_or_expired_runner_lease_rejected() -> None:
     mock_exec_row.lease_token = held_lease
     mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
 
+    mock_trip = MagicMock()
+    mock_trip.id = uuid.UUID(state["trip_id"])
+    mock_trip.owner_id = uuid.UUID(state["owner_id"])
+    mock_trip.current_version = 1
+
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
-    mock_session.execute.side_effect = [mock_result_exec]
 
-    # Another runner tries to publish with different lease token
+    mock_result_trip = MagicMock()
+    mock_result_trip.scalar_one_or_none.return_value = mock_trip
+
+    # 1. Missing runner_lease in config/state
+    state_no_lease = dict(state)
+    state_no_lease.pop("runner_lease", None)
+    res_no_lease = await publish_proposal_node(
+        cast(TripPlanningState, state_no_lease),
+        config={"configurable": {"session_factory": mock_factory}},
+    )
+    assert res_no_lease["current_step"] == "proposal_publication_lost_lease"
+    assert res_no_lease["status"] == "FAILED"
+
+    # 2. Another runner tries to publish with different lease token
     stale_runner_lease = uuid.uuid4()
-    res = await publish_proposal_node(
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
+    res_stale = await publish_proposal_node(
         state,
         config={
             "configurable": {
@@ -774,13 +850,13 @@ async def test_publish_proposal_lost_or_expired_runner_lease_rejected() -> None:
             }
         },
     )
-    assert res["current_step"] == "proposal_publication_lost_lease"
-    assert res["status"] == "FAILED"
-    assert res["proposal_status"] == "FAILED"
+    assert res_stale["current_step"] == "proposal_publication_lost_lease"
+    assert res_stale["status"] == "FAILED"
+    assert res_stale["proposal_status"] == "FAILED"
 
-    # Expired runner lease rejected
+    # 3. Expired runner lease rejected after lock acquisition
     mock_exec_row.lease_expiry = datetime.now(UTC) - timedelta(seconds=1)
-    mock_session.execute.side_effect = [mock_result_exec]
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
     res_expired = await publish_proposal_node(
         state,
         config={
@@ -793,6 +869,21 @@ async def test_publish_proposal_lost_or_expired_runner_lease_rejected() -> None:
     assert res_expired["current_step"] == "proposal_publication_lost_lease"
     assert res_expired["status"] == "FAILED"
     assert res_expired["proposal_status"] == "FAILED"
+
+    # 4. Missing lease_token on execution row in DB
+    mock_exec_row.lease_token = None
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
+    res_no_token = await publish_proposal_node(
+        state,
+        config={
+            "configurable": {
+                "session_factory": mock_factory,
+                "runner_lease": held_lease,
+            }
+        },
+    )
+    assert res_no_token["current_step"] == "proposal_publication_lost_lease"
+    assert res_no_token["status"] == "FAILED"
 
 
 @pytest.mark.asyncio
@@ -810,12 +901,21 @@ async def test_publish_proposal_terminal_execution_ineligible() -> None:
     mock_exec_row.status = "SUCCEEDED"
     mock_exec_row.deadline_at = None
     mock_exec_row.cancelled_at = None
-    mock_exec_row.lease_token = None
-    mock_exec_row.lease_expiry = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) + timedelta(minutes=10)
+
+    mock_trip = MagicMock()
+    mock_trip.id = uuid.UUID(state["trip_id"])
+    mock_trip.owner_id = uuid.UUID(state["owner_id"])
+    mock_trip.current_version = 1
 
     mock_result_exec = MagicMock()
     mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
-    mock_session.execute.side_effect = [mock_result_exec]
+
+    mock_result_trip = MagicMock()
+    mock_result_trip.scalar_one_or_none.return_value = mock_trip
+
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
 
     res = await publish_proposal_node(
         state,
@@ -824,4 +924,147 @@ async def test_publish_proposal_terminal_execution_ineligible() -> None:
     assert res["current_step"] == "proposal_publication_ineligible"
     assert res["status"] == "SUCCEEDED"
     assert res["proposal_status"] == "SUCCEEDED"
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_cross_execution_claim_rejected() -> None:
+    """Verifies Finding 2: a fee claim belonging to a different execution is rejected and remains UNKNOWN."""
+    state = _make_sample_state()
+    # Claim execution_id does not match state execution_id
+    foreign_execution_id = str(uuid.uuid4())
+    state["task_outputs"] = {
+        "claims": [
+            {
+                "id": str(uuid.uuid4()),
+                "execution_id": foreign_execution_id,
+                "subject_id": "Digha Beach",
+                "category": "FEES",
+                "verification": "VERIFIED",
+                "availability": "AVAILABLE",
+                "freshness": "FRESH",
+                "typed_value": {"price": 50.0, "amount": 50.0, "currency": "INR"},
+                "evidence_refs": ["obs:ticket_digha_beach"],
+                "support_type": "SUPPORTS",
+            }
+        ]
+    }
+    res = await compute_budget_node(state)
+    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
+    assert digha_line["amount"] is None
+    assert "Entrance fee unverified" in digha_line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_unrelated_place_claim_rejected() -> None:
+    """Verifies Finding 2: a fee claim linked to a different place ID does not verify this place."""
+    state = _make_sample_state()
+    unrelated_place_id = str(uuid.uuid4())
+    state["task_outputs"] = {
+        "claims": [
+            {
+                "id": str(uuid.uuid4()),
+                "place_id": unrelated_place_id,  # Different place ID
+                "subject_id": "Digha Beach",
+                "category": "FEES",
+                "verification": "VERIFIED",
+                "availability": "AVAILABLE",
+                "freshness": "FRESH",
+                "typed_value": {"price": 50.0, "amount": 50.0, "currency": "INR"},
+                "evidence_refs": ["obs:ticket_digha_beach"],
+                "support_type": "SUPPORTS",
+            }
+        ]
+    }
+    res = await compute_budget_node(state)
+    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
+    assert digha_line["amount"] is None
+    assert "Entrance fee unverified" in digha_line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_refuted_or_stale_claim_rejected() -> None:
+    """Verifies Finding 2: a fee claim with REFUTES support or STALE freshness is rejected."""
+    state = _make_sample_state()
+    digha_place_id = state["optimized_schedule"]["stops"][2]["place_id"]
+
+    # 1. Refuted evidence
+    state["task_outputs"] = {
+        "claims": [
+            {
+                "id": str(uuid.uuid4()),
+                "place_id": digha_place_id,
+                "subject_id": "Digha Beach",
+                "category": "FEES",
+                "verification": "VERIFIED",
+                "availability": "AVAILABLE",
+                "freshness": "FRESH",
+                "typed_value": {"price": 50.0, "amount": 50.0, "currency": "INR"},
+                "evidence_refs": ["obs:ticket_digha_beach"],
+                "support_type": "REFUTES",  # Refuted!
+            }
+        ]
+    }
+    res_refuted = await compute_budget_node(state)
+    activity_lines = [item for item in res_refuted["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
+    assert digha_line["amount"] is None
+    assert "Entrance fee unverified" in digha_line["unknown_reason"]
+
+    # 2. Stale evidence
+    state["task_outputs"] = {
+        "claims": [
+            {
+                "id": str(uuid.uuid4()),
+                "place_id": digha_place_id,
+                "subject_id": "Digha Beach",
+                "category": "FEES",
+                "verification": "VERIFIED",
+                "availability": "AVAILABLE",
+                "freshness": "STALE",  # Stale!
+                "typed_value": {"price": 50.0, "amount": 50.0, "currency": "INR"},
+                "evidence_refs": ["obs:ticket_digha_beach"],
+                "support_type": "SUPPORTS",
+            }
+        ]
+    }
+    res_stale = await compute_budget_node(state)
+    activity_lines = [item for item in res_stale["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
+    assert digha_line["amount"] is None
+    assert "Entrance fee unverified" in digha_line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_candidate_verified_price_alone_not_proof() -> None:
+    """Verifies Finding 2: candidate verified_price_inr field alone is not treated as proof."""
+    state = _make_sample_state()
+    # Empty claims in task outputs
+    state["task_outputs"] = {"claims": []}
+    # Candidate still has verified_price_inr
+    state["validated_candidates"][1]["verified_price_inr"] = 50.0
+
+    res = await compute_budget_node(state)
+    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
+    assert digha_line["amount"] is None
+    assert "Entrance fee unverified" in digha_line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_publish_proposal_missing_runner_lease_fails_closed() -> None:
+    """Verifies Finding 1: missing runner lease in configurable and state fails closed."""
+    state = _make_sample_state()
+    state.pop("runner_lease", None)
+    mock_session, mock_factory = _make_mock_session()
+
+    res = await publish_proposal_node(
+        state,
+        config={"configurable": {"session_factory": mock_factory}},
+    )
+    assert res["current_step"] == "proposal_publication_lost_lease"
+    assert res["status"] == "FAILED"
+    assert res["proposal_status"] == "FAILED"
+    assert "runner lease" in res["errors"][0]
 

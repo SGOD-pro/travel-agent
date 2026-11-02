@@ -1658,8 +1658,9 @@ async def compute_budget_node(
     place_categories: dict[str, str] = {}
     place_provenance: dict[str, str] = {}
     verified_fees: dict[str, tuple[float, str]] = {}
+    cand_coords: dict[str, tuple[float, float]] = {}
 
-    for cand in state.get("validated_candidates", []):
+    for cand in state.get("validated_candidates", []) + state.get("discovered_places", []):
         cand_name = (cand.get("primary_name") or cand.get("name") or "").strip().lower()
         place_id = str(cand["place_id"]) if cand.get("place_id") else None
         if cand_name:
@@ -1675,17 +1676,55 @@ async def compute_budget_node(
                 if cand.get("category"):
                     place_categories[place_id] = str(cand["category"]).lower()
 
-            # Direct evidence-supported verified fee in candidate
-            if cand.get("verified_price_inr") is not None:
-                v_fee = float(cand["verified_price_inr"])
-                v_source = str(
-                    cand.get("fee_evidence_ref")
-                    or cand.get("provenance", {}).get("source")
-                    or f"place:{place_id}"
-                )
-                verified_fees[cand_name] = (v_fee, v_source)
-                if place_id:
-                    verified_fees[place_id] = (v_fee, v_source)
+        coords: tuple[float, float] | None = None
+        if "lat" in cand and "lng" in cand and cand["lat"] is not None and cand["lng"] is not None:
+            try:
+                coords = (float(cand["lat"]), float(cand["lng"]))
+            except (ValueError, TypeError):
+                coords = None
+        elif "point" in cand and isinstance(cand["point"], dict):
+            pt = cand["point"]
+            if pt.get("lat") is not None and pt.get("lng") is not None:
+                try:
+                    coords = (float(pt["lat"]), float(pt["lng"]))
+                except (ValueError, TypeError):
+                    coords = None
+        if cand_name and coords:
+            cand_coords[cand_name] = coords
+        if place_id and coords:
+            cand_coords[place_id] = coords
+
+    # Helper function to match claim to stop using place ID and spatial distance
+    def _match_fee_claim_to_stop(
+        claim_pid: str | None,
+        claim_subj: str,
+        claim_coordinates: tuple[float, float] | None,
+        target_pid: str | None,
+        target_name: str,
+        target_coordinates: tuple[float, float] | None,
+    ) -> bool:
+        # Place ID match
+        if claim_pid is not None:
+            if target_pid is not None and str(claim_pid) == str(target_pid):
+                return True
+            return False
+        # Name-only match
+        if claim_subj.strip().lower() != target_name.strip().lower():
+            return False
+        # Name-only claim requires established location match within 1.0 km
+        if not claim_coordinates or not target_coordinates:
+            return False
+        from functions.orchestrator.places.corridor import haversine_distance_km
+        dist = haversine_distance_km(
+            target_coordinates[0],
+            target_coordinates[1],
+            claim_coordinates[0],
+            claim_coordinates[1],
+        )
+        return dist <= 1.0
+
+    execution_id_raw = state.get("execution_id")
+    execution_uuid = uuid.UUID(str(execution_id_raw)) if execution_id_raw else None
 
     # Inspect in-memory / fixture claims in state['task_outputs']
     raw_claims: list[dict[str, Any]] = []
@@ -1698,17 +1737,32 @@ async def compute_budget_node(
                 raw_claims.extend(val["claims"])
 
     for cl in raw_claims:
+        cl_exec = cl.get("execution_id")
+        if cl_exec and execution_id_raw and str(cl_exec) != str(execution_id_raw):
+            continue
+
         cat = str(cl.get("category", "")).upper()
         if cat in ("FEES", "PRICE", "TICKET", "ENTRANCE"):
             ver = str(cl.get("verification", "")).upper()
-            if ver == "VERIFIED":
+            avail = str(cl.get("availability", "AVAILABLE")).upper()
+            if ver == "VERIFIED" and avail != "UNAVAILABLE":
+                support = str(cl.get("support_type", "SUPPORTS")).upper()
+                if support == "REFUTES":
+                    continue
+                freshness = str(cl.get("freshness", "FRESH")).upper()
+                if freshness == "STALE":
+                    continue
+                valid_until = cl.get("valid_until")
+                if valid_until and isinstance(valid_until, datetime) and valid_until < datetime.now(UTC):
+                    continue
+
                 ev_refs = (
                     cl.get("evidence_ids")
                     or cl.get("evidence_refs")
                     or cl.get("observations")
                     or []
                 )
-                if ev_refs or cl.get("evidence_count", 0) > 0:
+                if ev_refs or cl.get("evidence_count", 0) > 0 or cl.get("evidence_links"):
                     tv = cl.get("typed_value") or {}
                     price_val = tv.get("price") or tv.get("amount") or tv.get("price_inr")
                     if price_val is not None:
@@ -1720,42 +1774,122 @@ async def compute_budget_node(
                         )
                         cl_subj = str(cl.get("subject_id", "")).strip().lower()
                         cl_pid = str(cl.get("place_id")) if cl.get("place_id") else None
-                        if cl_subj:
-                            verified_fees[cl_subj] = (fee_amount, fee_source)
-                        if cl_pid:
-                            verified_fees[cl_pid] = (fee_amount, fee_source)
+
+                        from functions.orchestrator.evidence.eligibility import (
+                            DeterministicEvidenceEligibilityGate,
+                        )
+
+                        cl_coords = (
+                            DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
+                                cl.get("geographic_scope")
+                            )
+                            or DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
+                                cl.get("typed_value")
+                            )
+                        )
+
+                        for stop in stops_data:
+                            s_name = (stop.get("name") or stop.get("stop_id", "")).strip().lower()
+                            s_pid = str(stop.get("place_id")) if stop.get("place_id") else None
+                            if not s_pid:
+                                for cand in state.get("validated_candidates", []):
+                                    if (cand.get("primary_name") or cand.get("name") or "").strip().lower() == s_name:
+                                        if cand.get("place_id"):
+                                            s_pid = str(cand["place_id"])
+                                            break
+                            s_coords = (
+                                (float(stop["lat"]), float(stop["lng"]))
+                                if stop.get("lat") and stop.get("lng")
+                                else cand_coords.get(s_name) or (cand_coords.get(s_pid) if s_pid else None)
+                            )
+
+                            if _match_fee_claim_to_stop(cl_pid, cl_subj, cl_coords, s_pid, s_name, s_coords):
+                                verified_fees[s_name] = (fee_amount, fee_source)
+                                if s_pid:
+                                    verified_fees[s_pid] = (fee_amount, fee_source)
 
     # Inspect database for verified fee claims if session_factory is available and not offline fixture
     configurable = config.get("configurable", {}) if config else {}
     session_factory = configurable.get("session_factory") or state.get("_session_factory")
     is_offline_fixture = bool(state.get("_offline_fixture_mode", False))
 
-    if session_factory is not None and not is_offline_fixture:
+    if session_factory is not None and not is_offline_fixture and execution_uuid is not None:
         try:
+            from functions.evidence_collector.models import SourceObservationModel
+            from functions.orchestrator.evidence.eligibility import (
+                DeterministicEvidenceEligibilityGate,
+            )
             from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
+            from functions.orchestrator.evidence.policy import ClaimVerificationPolicy
+            from functions.orchestrator.evidence.schemas import FreshnessStatus
+
+            policy = ClaimVerificationPolicy()
+            now = datetime.now(UTC)
 
             async with session_factory() as session:
                 claims_stmt = (
-                    select(ClaimModel, ClaimEvidenceModel.observation_id)
+                    select(ClaimModel, ClaimEvidenceModel, SourceObservationModel)
                     .join(ClaimEvidenceModel, ClaimEvidenceModel.claim_id == ClaimModel.id)
+                    .join(
+                        SourceObservationModel,
+                        SourceObservationModel.id == ClaimEvidenceModel.observation_id,
+                    )
                     .where(
+                        ClaimModel.execution_id == execution_uuid,
                         ClaimModel.category.in_(["FEES", "PRICE", "TICKET", "ENTRANCE"]),
                         ClaimModel.verification == "VERIFIED",
+                        ClaimModel.availability == "AVAILABLE",
+                        ClaimEvidenceModel.support_type == "SUPPORTS",
                     )
                 )
                 claims_rows = (await session.execute(claims_stmt)).all()
-                for claim_row, obs_id in claims_rows:
+                for claim_row, _ev_row, obs_row in claims_rows:
+                    # Validate freshness per policy
+                    freshness = policy.evaluate_freshness(
+                        claim_row, published_at=obs_row.published_at, as_of=now
+                    )
+                    if freshness == FreshnessStatus.STALE:
+                        continue
+
+                    # Extract coordinates for name-only matching
+                    claim_coords = (
+                        DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
+                            claim_row.geographic_scope
+                        )
+                        or DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
+                            obs_row.artifact_ref
+                        )
+                    )
+
                     tv = claim_row.typed_value or {}
                     price_val = tv.get("price") or tv.get("amount") or tv.get("price_inr")
-                    if price_val is not None:
-                        fee_amount = float(price_val)
-                        fee_source = f"obs:{obs_id}"
-                        cl_subj = claim_row.subject_id.strip().lower()
-                        cl_pid = str(claim_row.place_id) if claim_row.place_id else None
-                        if cl_subj:
-                            verified_fees[cl_subj] = (fee_amount, fee_source)
-                        if cl_pid:
-                            verified_fees[cl_pid] = (fee_amount, fee_source)
+                    if price_val is None:
+                        continue
+
+                    fee_amount = float(price_val)
+                    fee_source = f"obs:{obs_row.id}"
+                    cl_subj = claim_row.subject_id.strip().lower()
+                    cl_pid = str(claim_row.place_id) if claim_row.place_id else None
+
+                    for stop in stops_data:
+                        s_name = (stop.get("name") or stop.get("stop_id", "")).strip().lower()
+                        s_pid = str(stop.get("place_id")) if stop.get("place_id") else None
+                        if not s_pid:
+                            for cand in state.get("validated_candidates", []):
+                                if (cand.get("primary_name") or cand.get("name") or "").strip().lower() == s_name:
+                                    if cand.get("place_id"):
+                                        s_pid = str(cand["place_id"])
+                                        break
+                        s_coords = (
+                            (float(stop["lat"]), float(stop["lng"]))
+                            if stop.get("lat") and stop.get("lng")
+                            else cand_coords.get(s_name) or (cand_coords.get(s_pid) if s_pid else None)
+                        )
+
+                        if _match_fee_claim_to_stop(cl_pid, cl_subj, claim_coords, s_pid, s_name, s_coords):
+                            verified_fees[s_name] = (fee_amount, fee_source)
+                            if s_pid:
+                                verified_fees[s_pid] = (fee_amount, fee_source)
         except Exception as exc:
             logger.warning("Could not query database for verified fee claims: %s", exc)
 
@@ -1901,10 +2035,11 @@ async def publish_proposal_node(
             "proposal_status": "PUBLISHED",
         }
 
-    # Production mode: fail closed if session_factory, trip_id, owner_id, or execution identity is missing
+    # Production mode: fail closed if session_factory, trip_id, owner_id, execution identity, or runner_lease is missing
     trip_id_raw = state.get("trip_id")
     owner_id_raw = state.get("owner_id")
     execution_id_raw = state.get("execution_id")
+    runner_lease_raw = configurable.get("runner_lease") or state.get("runner_lease")
 
     if (
         session_factory is None
@@ -1929,10 +2064,23 @@ async def publish_proposal_node(
             ],
         }
 
+    if not runner_lease_raw:
+        logger.error(
+            "Production proposal publication failed closed: missing runner lease for execution %s",
+            execution_id_raw,
+        )
+        return {
+            "current_step": "proposal_publication_lost_lease",
+            "status": "FAILED",
+            "proposal_status": "FAILED",
+            "errors": ["Production proposal publication requires a valid runner lease"],
+        }
+
     try:
         trip_uuid = uuid.UUID(str(trip_id_raw))
         owner_uuid = uuid.UUID(str(owner_id_raw))
         execution_uuid = uuid.UUID(str(execution_id_raw))
+        runner_lease_uuid = uuid.UUID(str(runner_lease_raw))
     except (ValueError, TypeError) as exc:
         logger.error("Invalid UUID identity in proposal publication: %s", exc)
         return {
@@ -1942,11 +2090,10 @@ async def publish_proposal_node(
             "errors": [f"Invalid UUID identity in proposal publication: {exc}"],
         }
 
-    now = datetime.now(UTC)
-
     async with session_factory() as session:
         async with session.begin():
             # 1. Lock and verify execution under transaction
+            from functions.api.models import TripDeltaModel, TripModel
             from functions.orchestrator.execution.models import ExecutionModel
 
             exec_stmt = (
@@ -1965,7 +2112,27 @@ async def publish_proposal_node(
                     "errors": [f"Execution {execution_uuid} not found"],
                 }
 
-            # Tenant isolation on execution
+            # 2. Lock and verify trip under transaction
+            trip_stmt = (
+                select(TripModel)
+                .where(TripModel.id == trip_uuid)
+                .with_for_update()
+            )
+            trip = (await session.execute(trip_stmt)).scalar_one_or_none()
+
+            if trip is None:
+                logger.error("Trip %s not found for proposal publication", trip_uuid)
+                return {
+                    "current_step": "proposal_publication_failed",
+                    "status": "FAILED",
+                    "errors": [f"Trip {trip_uuid} not found"],
+                    "proposal_status": "FAILED",
+                }
+
+            # 3. Post-lock evaluation: evaluate lease expiry and execution deadline AFTER acquiring all locks
+            now = datetime.now(UTC)
+
+            # Tenant isolation on execution and trip
             if exec_row.owner_id != owner_uuid:
                 logger.error(
                     "Tenant isolation violation: execution %s belongs to owner %s, caller is %s",
@@ -1975,6 +2142,16 @@ async def publish_proposal_node(
                 )
                 raise PermissionError(
                     f"Tenant isolation mismatch: execution owner {exec_row.owner_id} does not match {owner_uuid}"
+                )
+
+            if trip.owner_id != owner_uuid:
+                logger.error(
+                    "Tenant isolation violation: trip owner %s does not match execution owner %s",
+                    trip.owner_id,
+                    owner_uuid,
+                )
+                raise PermissionError(
+                    f"Tenant isolation mismatch: trip owner {trip.owner_id} does not match {owner_uuid}"
                 )
 
             # Execution trip binding verification
@@ -2003,7 +2180,7 @@ async def publish_proposal_node(
                     "proposal_status": "CANCELLED",
                 }
 
-            # Execution deadline barrier
+            # Execution deadline barrier (evaluated after acquiring both execution and trip locks)
             if exec_row.deadline_at and now >= exec_row.deadline_at:
                 logger.warning(
                     "Parent execution %s deadline expired at %s (now=%s); marking CANCELLED",
@@ -2040,80 +2217,58 @@ async def publish_proposal_node(
                     "proposal_status": exec_row.status,
                 }
 
-            # 2. Runner lease fencing
-            runner_lease = configurable.get("runner_lease") or state.get("runner_lease")
-            runner_lease_uuid: uuid.UUID | None = None
-            if runner_lease is not None:
-                try:
-                    runner_lease_uuid = uuid.UUID(str(runner_lease))
-                except (ValueError, TypeError):
-                    runner_lease_uuid = None
-
-            if exec_row.lease_token is not None:
-                if runner_lease_uuid is None or exec_row.lease_token != runner_lease_uuid:
-                    logger.warning(
-                        "Publication lease check failed for execution %s: current lease %s != runner lease %s",
-                        execution_uuid,
-                        exec_row.lease_token,
-                        runner_lease_uuid,
-                    )
-                    return {
-                        "current_step": "proposal_publication_lost_lease",
-                        "status": "FAILED",
-                        "proposal_status": "FAILED",
-                        "errors": ["Runner lease expired or held by another runner"],
-                    }
-                if exec_row.lease_expiry is not None and now >= exec_row.lease_expiry:
-                    logger.warning(
-                        "Publication lease expired for execution %s: expiry %s <= now %s",
-                        execution_uuid,
-                        exec_row.lease_expiry,
-                        now,
-                    )
-                    return {
-                        "current_step": "proposal_publication_lost_lease",
-                        "status": "FAILED",
-                        "proposal_status": "FAILED",
-                        "errors": ["Runner lease expired before publication"],
-                    }
-            elif runner_lease_uuid is not None:
+            # Runner lease fencing (evaluated after acquiring all locks including trip lock)
+            if exec_row.lease_token is None:
                 logger.warning(
-                    "Publication lease check failed for execution %s: execution has no lease but runner has %s",
+                    "Publication lease check failed for execution %s: execution has no lease token in database",
                     execution_uuid,
+                )
+                return {
+                    "current_step": "proposal_publication_lost_lease",
+                    "status": "FAILED",
+                    "proposal_status": "FAILED",
+                    "errors": ["Execution has no active runner lease token"],
+                }
+
+            if exec_row.lease_token != runner_lease_uuid:
+                logger.warning(
+                    "Publication lease check failed for execution %s: current lease %s != runner lease %s",
+                    execution_uuid,
+                    exec_row.lease_token,
                     runner_lease_uuid,
                 )
                 return {
                     "current_step": "proposal_publication_lost_lease",
                     "status": "FAILED",
                     "proposal_status": "FAILED",
-                    "errors": ["Execution lease has been cleared or stolen"],
+                    "errors": ["Runner lease expired or held by another runner"],
                 }
 
-            # 3. Pessimistic row lock on trips
-            from functions.api.models import TripDeltaModel, TripModel
-
-            stmt = select(TripModel).where(TripModel.id == trip_uuid).with_for_update()
-            trip = (await session.execute(stmt)).scalar_one_or_none()
-
-            if trip is None:
-                logger.error("Trip %s not found for proposal publication", trip_uuid)
+            if exec_row.lease_expiry is None:
+                logger.warning(
+                    "Publication lease check failed for execution %s: execution has no lease expiry in database",
+                    execution_uuid,
+                )
                 return {
-                    "current_step": "proposal_publication_failed",
+                    "current_step": "proposal_publication_lost_lease",
                     "status": "FAILED",
-                    "errors": [f"Trip {trip_uuid} not found"],
                     "proposal_status": "FAILED",
+                    "errors": ["Execution has no runner lease expiry timestamp"],
                 }
 
-            # Enforce tenant isolation on trip
-            if trip.owner_id != owner_uuid:
-                logger.error(
-                    "Tenant isolation violation: trip owner %s does not match execution owner %s",
-                    trip.owner_id,
-                    owner_uuid,
+            if now >= exec_row.lease_expiry:
+                logger.warning(
+                    "Publication lease expired for execution %s: expiry %s <= now %s (evaluated after lock wait)",
+                    execution_uuid,
+                    exec_row.lease_expiry,
+                    now,
                 )
-                raise PermissionError(
-                    f"Tenant isolation mismatch: trip owner {trip.owner_id} does not match {owner_uuid}"
-                )
+                return {
+                    "current_step": "proposal_publication_lost_lease",
+                    "status": "FAILED",
+                    "proposal_status": "FAILED",
+                    "errors": ["Runner lease expired before or during lock acquisition"],
+                }
 
             # Optimistic concurrency / version validation
             expected_base_version = int(state.get("version", 1))

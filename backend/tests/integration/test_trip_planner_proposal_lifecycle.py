@@ -147,6 +147,32 @@ async def _seed_test_execution_and_trip(
     await session.flush()
 
 
+def _seed_canonical_place(
+    session: Any,
+    place_id: uuid.UUID,
+    primary_name: str,
+    lat: float = 21.6266,
+    lng: float = 87.5074,
+    locality: str = "West Bengal",
+) -> None:
+    from geoalchemy2.elements import WKTElement
+
+    from functions.orchestrator.places.models import CanonicalPlaceModel
+
+    place = CanonicalPlaceModel(
+        id=place_id,
+        primary_name=primary_name,
+        locality=locality,
+        point=WKTElement(f"POINT({lng} {lat})", srid=4326),
+        names=[primary_name],
+        access_points=[],
+        provider_ids={},
+        access_status="PUBLIC",
+        is_candidate=False,
+    )
+    session.add(place)
+
+
 def _build_test_initial_state(
     owner_id: uuid.UUID,
     trip_id: uuid.UUID,
@@ -669,10 +695,20 @@ async def test_trip_planner_proposal_tenant_isolation_rejected(
     foreign_owner_id = uuid.uuid4()
     trip_id = uuid.uuid4()
     execution_id = uuid.uuid4()
+    held_lease = uuid.uuid4()
 
     async with session_factory() as session:
         await _seed_test_execution_and_trip(
             session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        await session.execute(
+            update(ExecutionModel)
+            .where(ExecutionModel.id == execution_id)
+            .values(
+                status="RUNNING",
+                lease_token=held_lease,
+                lease_expiry=datetime.now(UTC) + timedelta(minutes=10),
+            )
         )
         await session.commit()
 
@@ -682,7 +718,12 @@ async def test_trip_planner_proposal_tenant_isolation_rejected(
     with pytest.raises(PermissionError, match="Tenant isolation mismatch"):
         await publish_proposal_node(
             cast(TripPlanningState, sample_state),
-            config={"configurable": {"session_factory": session_factory}},
+            config={
+                "configurable": {
+                    "session_factory": session_factory,
+                    "runner_lease": held_lease,
+                }
+            },
         )
 
     # Trip remains untouched
@@ -702,10 +743,20 @@ async def test_trip_planner_proposal_replay_duplicate_delivery_idempotent(
     owner_id = uuid.uuid4()
     trip_id = uuid.uuid4()
     execution_id = uuid.uuid4()
+    held_lease = uuid.uuid4()
 
     async with session_factory() as session:
         await _seed_test_execution_and_trip(
             session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        await session.execute(
+            update(ExecutionModel)
+            .where(ExecutionModel.id == execution_id)
+            .values(
+                status="RUNNING",
+                lease_token=held_lease,
+                lease_expiry=datetime.now(UTC) + timedelta(minutes=10),
+            )
         )
         await session.commit()
 
@@ -715,7 +766,12 @@ async def test_trip_planner_proposal_replay_duplicate_delivery_idempotent(
     # First publication
     res1 = await publish_proposal_node(
         cast(TripPlanningState, sample_state),
-        config={"configurable": {"session_factory": session_factory}},
+        config={
+            "configurable": {
+                "session_factory": session_factory,
+                "runner_lease": held_lease,
+            }
+        },
     )
     assert res1["proposal_status"] == "PUBLISHED"
 
@@ -723,7 +779,12 @@ async def test_trip_planner_proposal_replay_duplicate_delivery_idempotent(
     sample_state["proposal"] = {"schedule": {"stops": ["updated"]}, "version": 1}
     res2 = await publish_proposal_node(
         cast(TripPlanningState, sample_state),
-        config={"configurable": {"session_factory": session_factory}},
+        config={
+            "configurable": {
+                "session_factory": session_factory,
+                "runner_lease": held_lease,
+            }
+        },
     )
     assert res2["proposal_status"] == "PUBLISHED"
 
@@ -1013,7 +1074,187 @@ async def test_trip_planner_proposal_superseded_replay_rejected_on_postgres(
 async def test_trip_planner_proposal_crash_retry_reconciliation_on_postgres(
     session_factory: Any,
 ) -> None:
-    """Verifies Finding 3: crash between publication and runner completion does not leave unrecoverable false success."""
+    """Verifies Finding 3: real crash recovery with GraphRunnerService and TransactionBoundCheckpointer."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        await session.commit()
+
+    checkpointer1 = TransactionBoundCheckpointer(session_factory=session_factory)
+    trip_graph1 = compile_trip_planning_workflow(checkpointer=checkpointer1)
+    runner1 = GraphRunnerService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph1},
+    )
+
+    initial_payload = _build_test_initial_state(owner_id, trip_id, execution_id)
+    start_event = ExecutionStartEvent(
+        execution_id=execution_id,
+        workflow="TRAVEL",
+        context_version=1,
+        payload=initial_payload,
+    )
+    start_res = await runner1.handle_execution_start(event=start_event)
+    assert start_res.status == "WAITING_TASKS"
+
+    async with session_factory() as session:
+        task_row = (
+            await session.execute(select(TaskModel).where(TaskModel.execution_id == execution_id))
+        ).scalar_one()
+        dispatch_outbox = (
+            await session.execute(
+                select(OutboxEventModel).where(
+                    OutboxEventModel.execution_id == execution_id,
+                    OutboxEventModel.kind == "TASK_DISPATCH",
+                )
+            )
+        ).scalar_one()
+        dispatch_payload = dispatch_outbox.payload_ref or dispatch_outbox.payload
+
+    mock_valhalla = MockValhallaClient()
+    async with session_factory() as session:
+        worker_service = RouteOptimizerWorkerService(
+            session=session,
+            valhalla_client=mock_valhalla,
+        )
+        persisted_route_id, worker_output = await worker_service.execute_task(dispatch_payload)
+        await session.commit()
+
+    async with session_factory() as session:
+        task_updated = (
+            await session.execute(select(TaskModel).where(TaskModel.id == task_row.id))
+        ).scalar_one()
+
+    reconciler = CompletionReconciliationService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph1},
+    )
+    completion_event = TaskCompletionEvent(
+        event_id=uuid.uuid4(),
+        task_id=task_updated.id,
+        execution_id=execution_id,
+        attempt=task_updated.attempt,
+        event_type="TASK_COMPLETED",
+        result_id=task_updated.result_id,
+        output=worker_output.model_dump(mode="json"),
+    )
+    reconcile_res = await reconciler.reconcile_task_event(event=completion_event)
+    assert reconcile_res.status == "APPLIED"
+
+    async with session_factory() as session:
+        resume_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == execution_id,
+            OutboxEventModel.kind == "EXECUTION_RESUME",
+        )
+        resume_outbox = (await session.execute(resume_stmt)).scalar_one()
+
+    resume_event = ExecutionResumeEvent(
+        execution_id=execution_id,
+        event_id=resume_outbox.id,
+        triggered_by_task_id=task_row.id,
+        context_version=1,
+    )
+
+    # Intercept runner1._apply_graph_outcome to simulate crash right after publication
+    async def simulated_crash_apply(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("Simulated crash right before runner outcome completion")
+
+    runner1._apply_graph_outcome = simulated_crash_apply  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="Simulated crash right before runner outcome completion"):
+        await runner1.handle_execution_resume(event=resume_event)
+
+    # In PostgreSQL: publication succeeded in node, but runner1 crashed before committing completion
+    async with session_factory() as session:
+        trip_after_crash = (
+            await session.execute(select(TripModel).where(TripModel.id == trip_id))
+        ).scalar_one()
+        assert trip_after_crash.state == "proposed"
+        assert trip_after_crash.current_route_id == persisted_route_id
+
+        exec_after_crash = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
+        ).scalar_one()
+        assert exec_after_crash.status == "RUNNING"
+
+        # Simulate runner1 lease expiration
+        await session.execute(
+            update(ExecutionModel)
+            .where(ExecutionModel.id == execution_id)
+            .values(lease_expiry=datetime.now(UTC) - timedelta(seconds=5))
+        )
+        await session.commit()
+
+    # Restart with fresh checkpointer and fresh runner
+    checkpointer2 = TransactionBoundCheckpointer(session_factory=session_factory)
+    trip_graph2 = compile_trip_planning_workflow(checkpointer=checkpointer2)
+    runner2 = GraphRunnerService(
+        session_factory,
+        workflow_graphs={"TRAVEL": trip_graph2},
+    )
+
+    retry_res = await runner2.handle_execution_resume(event=resume_event)
+    assert retry_res.status == "SUCCEEDED"
+
+    # Verify persisted checkpoint, trip, delta, events and terminal status
+    async with session_factory() as session:
+        trip_final = (
+            await session.execute(select(TripModel).where(TripModel.id == trip_id))
+        ).scalar_one()
+        assert trip_final.state == "proposed"
+        assert trip_final.current_route_id == persisted_route_id
+        assert trip_final.itinerary_json is not None
+
+        deltas = (
+            await session.execute(
+                select(TripDeltaModel).where(
+                    TripDeltaModel.trip_id == trip_id,
+                    TripDeltaModel.base_version == 1,
+                )
+            )
+        ).scalars().all()
+        assert len(deltas) == 1
+        assert deltas[0].proposal_json is not None
+
+        exec_final = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
+        ).scalar_one()
+        assert exec_final.status == "SUCCEEDED"
+        assert exec_final.lease_token is None
+        assert exec_final.lease_expiry is None
+        assert exec_final.checkpoint_id is not None
+
+        checkpoint_tuple = await checkpointer2.aget_tuple(
+            {"configurable": {"thread_id": str(execution_id)}}
+        )
+        assert checkpoint_tuple is not None
+        assert checkpoint_tuple.checkpoint["id"] == exec_final.checkpoint_id
+
+        published_stmt = select(JobEventModel).where(
+            JobEventModel.execution_id == execution_id,
+            JobEventModel.event_type == "PROPOSAL_PUBLISHED",
+        )
+        published_events = (await session.execute(published_stmt)).scalars().all()
+        assert len(published_events) >= 1
+
+        outbox_stmt = select(OutboxEventModel).where(
+            OutboxEventModel.execution_id == execution_id,
+            OutboxEventModel.kind == "EXECUTION_SUCCEEDED",
+        )
+        outbox_event = (await session.execute(outbox_stmt)).scalar_one_or_none()
+        assert outbox_event is not None
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_proposal_missing_leases_on_postgres(
+    session_factory: Any,
+) -> None:
+    """Verifies that missing runner lease token or expiry fails closed in production without writing trip or delta."""
     owner_id = uuid.uuid4()
     trip_id = uuid.uuid4()
     execution_id = uuid.uuid4()
@@ -1023,22 +1264,21 @@ async def test_trip_planner_proposal_crash_retry_reconciliation_on_postgres(
         await _seed_test_execution_and_trip(
             session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
         )
-        await session.execute(
-            update(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .values(
-                status="RUNNING",
-                lease_token=runner_lease,
-                lease_expiry=datetime.now(UTC) + timedelta(minutes=10),
-            )
-        )
         await session.commit()
 
     sample_state = _build_test_initial_state(owner_id, trip_id, execution_id)
-    sample_state["proposal"] = {"schedule": {"stops": ["Kolkata", "Digha"]}, "version": 1}
+    sample_state["proposal"] = {"schedule": {"stops": ["test"]}, "version": 1}
 
-    # Publication succeeds in node
-    pub_res = await publish_proposal_node(
+    # Case 1: missing runner lease in configurable and state
+    res1 = await publish_proposal_node(
+        cast(TripPlanningState, sample_state),
+        config={"configurable": {"session_factory": session_factory}},
+    )
+    assert res1["status"] == "FAILED"
+    assert res1["current_step"] == "proposal_publication_lost_lease"
+
+    # Case 2: runner lease in config, but execution has lease_token NULL in database
+    res2 = await publish_proposal_node(
         cast(TripPlanningState, sample_state),
         config={
             "configurable": {
@@ -1047,78 +1287,436 @@ async def test_trip_planner_proposal_crash_retry_reconciliation_on_postgres(
             }
         },
     )
-    assert pub_res["status"] == "completed"
-    assert pub_res["proposal_status"] == "PUBLISHED"
+    assert res2["status"] == "FAILED"
+    assert res2["current_step"] == "proposal_publication_lost_lease"
 
-    # Execution is still RUNNING (not prematurely marked SUCCEEDED before checkpoint flush and outbox emission)
-    async with session_factory() as session:
-        exec_during = (
-            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
-        ).scalar_one()
-        assert exec_during.status == "RUNNING"
-
-        # Now simulate runner crash and lease expiration
-        await session.execute(
-            update(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .values(lease_expiry=datetime.now(UTC) - timedelta(seconds=5))
-        )
-        await session.commit()
-
-    # Recovery runner executes outcome reconciliation under a new runner lease
-    recovery_lease = uuid.uuid4()
+    # Case 3: execution has matching lease_token but lease_expiry is NULL in database
     async with session_factory() as session:
         await session.execute(
             update(ExecutionModel)
             .where(ExecutionModel.id == execution_id)
             .values(
-                lease_token=recovery_lease,
-                lease_expiry=datetime.now(UTC) + timedelta(minutes=10),
+                status="RUNNING",
+                lease_token=runner_lease,
+                lease_expiry=None,
             )
         )
         await session.commit()
 
-    checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
-    trip_graph = compile_trip_planning_workflow(checkpointer=checkpointer)
-    runner = GraphRunnerService(
-        session_factory,
-        workflow_graphs={"TRAVEL": trip_graph},
+    res3 = await publish_proposal_node(
+        cast(TripPlanningState, sample_state),
+        config={
+            "configurable": {
+                "session_factory": session_factory,
+                "runner_lease": runner_lease,
+            }
+        },
     )
+    assert res3["status"] == "FAILED"
+    assert res3["current_step"] == "proposal_publication_lost_lease"
 
-    from unittest.mock import MagicMock
-
-    mock_post_state = MagicMock()
-    mock_post_state.values = {
-        "status": "SUCCEEDED",
-        "trip_id": str(trip_id),
-        "execution_id": str(execution_id),
-    }
-    mock_post_state.config = {"configurable": {"checkpoint_id": "chk-final-123"}}
-    mock_post_state.next = ()
-
-    outcome_res = await runner._apply_graph_outcome(
-        execution_id=execution_id,
-        runner_lease=recovery_lease,
-        post_state=mock_post_state,
-        checkpointer=checkpointer,
-    )
-    assert outcome_res.status == "SUCCEEDED"
-
-    # In PostgreSQL: execution is now SUCCEEDED, lease is cleared, outbox event is emitted
+    # Trip and deltas in PostgreSQL must remain untouched
     async with session_factory() as session:
-        exec_final = (
-            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
+        trip_after = (
+            await session.execute(select(TripModel).where(TripModel.id == trip_id))
         ).scalar_one()
-        assert exec_final.status == "SUCCEEDED"
-        assert exec_final.lease_token is None
-        assert exec_final.lease_expiry is None
+        assert trip_after.state == "draft"
+        assert trip_after.current_route_id is None
+        assert trip_after.itinerary_json is None
 
-        outbox_stmt = select(OutboxEventModel).where(
-            OutboxEventModel.execution_id == execution_id,
-            OutboxEventModel.kind == "EXECUTION_SUCCEEDED",
+        delta_count = (
+            await session.execute(
+                select(sa.func.count(TripDeltaModel.id)).where(TripDeltaModel.trip_id == trip_id)
+            )
+        ).scalar()
+        assert delta_count == 0
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_proposal_lock_wait_lease_expiry_on_postgres(
+    session_factory: Any,
+) -> None:
+    """Verifies that runner lease expiring before or during lock acquisition fails closed."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+    runner_lease = uuid.uuid4()
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
         )
-        outbox_event = (await session.execute(outbox_stmt)).scalar_one_or_none()
-        assert outbox_event is not None
+        # Seed execution with lease that expired 1 second ago
+        await session.execute(
+            update(ExecutionModel)
+            .where(ExecutionModel.id == execution_id)
+            .values(
+                status="RUNNING",
+                lease_token=runner_lease,
+                lease_expiry=datetime.now(UTC) - timedelta(seconds=1),
+            )
+        )
+        await session.commit()
+
+    sample_state = _build_test_initial_state(owner_id, trip_id, execution_id)
+    sample_state["proposal"] = {"schedule": {"stops": ["test"]}, "version": 1}
+
+    res = await publish_proposal_node(
+        cast(TripPlanningState, sample_state),
+        config={
+            "configurable": {
+                "session_factory": session_factory,
+                "runner_lease": runner_lease,
+            }
+        },
+    )
+    assert res["status"] == "FAILED"
+    assert res["current_step"] == "proposal_publication_lost_lease"
+    assert any("expired" in err.lower() for err in res.get("errors", []))
+
+    async with session_factory() as session:
+        trip_after = (
+            await session.execute(select(TripModel).where(TripModel.id == trip_id))
+        ).scalar_one()
+        assert trip_after.state == "draft"
+        assert trip_after.current_route_id is None
+        assert trip_after.itinerary_json is None
+
+        delta_count = (
+            await session.execute(
+                select(sa.func.count(TripDeltaModel.id)).where(TripDeltaModel.trip_id == trip_id)
+            )
+        ).scalar()
+        assert delta_count == 0
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_budget_cross_execution_and_unrelated_place_fees_on_postgres(
+    session_factory: Any,
+) -> None:
+    """Verifies that cross-execution fee claims and unrelated-place fee claims are rejected, remaining UNKNOWN."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+    foreign_execution_id = uuid.uuid4()
+    place_digha_id = uuid.uuid4()
+    place_unrelated_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        _seed_canonical_place(session, place_digha_id, "Digha Beach", 21.6266, 87.5074)
+        _seed_canonical_place(session, place_unrelated_id, "Unrelated Museum", 21.6300, 87.5100)
+
+        # Seed foreign execution for foreign_execution_id to satisfy foreign key
+        foreign_owner_id = uuid.uuid4()
+        foreign_execution = ExecutionModel(
+            id=foreign_execution_id,
+            owner_id=foreign_owner_id,
+            trip_id=trip_id,
+            workflow="TRAVEL",
+            status="RUNNING",
+            context_version=1,
+            deadline_at=now + timedelta(hours=2),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(foreign_execution)
+        await session.flush()
+
+        # 1. Foreign execution claim: valid fee claim but belongs to foreign_execution_id
+        obs_foreign = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=foreign_execution_id,
+            source_url="https://tourism.wb.gov.in/foreign-fee",
+            canonical_url="https://tourism.wb.gov.in/foreign-fee",
+            publisher="tourism.wb.gov.in",
+            content_hash=f"hash_{uuid.uuid4().hex}",
+            retrieved_at=now,
+            published_at=now - timedelta(days=1),
+            excerpt_text="Foreign entrance fee 100 INR",
+            excerpt_locator="p",
+            extraction_method="SCRAPLING_HTTP",
+            created_at=now,
+        )
+        session.add(obs_foreign)
+        await session.flush()
+
+        claim_foreign = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=foreign_execution_id,
+            subject_id="Digha Beach",
+            place_id=place_digha_id,
+            category="FEES",
+            typed_value={"price": 100.0, "amount": 100.0, "currency": "INR"},
+            verification="VERIFIED",
+            availability="AVAILABLE",
+            freshness="FRESH",
+            policy_version="1.0",
+        )
+        session.add(claim_foreign)
+        await session.flush()
+
+        link_foreign = ClaimEvidenceModel(
+            claim_id=claim_foreign.id,
+            observation_id=obs_foreign.id,
+            support_type="SUPPORTS",
+        )
+        session.add(link_foreign)
+
+        # 2. Unrelated place claim: belongs to current execution, but linked to place_unrelated_id
+        obs_unrelated = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=execution_id,
+            source_url="https://tourism.wb.gov.in/unrelated-fee",
+            canonical_url="https://tourism.wb.gov.in/unrelated-fee",
+            publisher="tourism.wb.gov.in",
+            content_hash=f"hash_{uuid.uuid4().hex}",
+            retrieved_at=now,
+            published_at=now - timedelta(days=1),
+            excerpt_text="Unrelated place fee 200 INR",
+            excerpt_locator="p",
+            extraction_method="SCRAPLING_HTTP",
+            created_at=now,
+        )
+        session.add(obs_unrelated)
+        await session.flush()
+
+        claim_unrelated = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=execution_id,
+            subject_id="Unrelated Museum",
+            place_id=place_unrelated_id,
+            category="FEES",
+            typed_value={"price": 200.0, "amount": 200.0, "currency": "INR"},
+            verification="VERIFIED",
+            availability="AVAILABLE",
+            freshness="FRESH",
+            policy_version="1.0",
+        )
+        session.add(claim_unrelated)
+        await session.flush()
+
+        link_unrelated = ClaimEvidenceModel(
+            claim_id=claim_unrelated.id,
+            observation_id=obs_unrelated.id,
+            support_type="SUPPORTS",
+        )
+        session.add(link_unrelated)
+        await session.commit()
+
+    sample_state = _build_test_initial_state(owner_id, trip_id, execution_id)
+    sample_state["validated_candidates"] = [
+        {
+            "place_id": str(place_digha_id),
+            "primary_name": "Digha Beach",
+            "category": "attraction",
+            "is_candidate": False,
+        }
+    ]
+    sample_state["optimized_schedule"] = {
+        "stops": [
+            {
+                "stop_id": "stop_1",
+                "name": "Digha Beach",
+                "place_id": str(place_digha_id),
+                "stop_type": "DESTINATION",
+            }
+        ],
+        "legs": [],
+    }
+
+    budget_res = await compute_budget_node(
+        cast(TripPlanningState, sample_state),
+        config={"configurable": {"session_factory": session_factory}},
+    )
+    activity_lines = [
+        line
+        for line in budget_res["budget_lines"]
+        if line["category"] == BudgetCategory.ACTIVITIES.value
+    ]
+    assert len(activity_lines) == 1
+    fee_line = activity_lines[0]
+    assert fee_line["amount"] is None
+    assert "Entrance fee unverified" in fee_line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_budget_unsupported_or_stale_evidence_fees_on_postgres(
+    session_factory: Any,
+) -> None:
+    """Verifies that refuted evidence, stale observations (> 90 days), and candidate estimates without claim are UNKNOWN."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+    place_digha_id = uuid.uuid4()
+    place_park_id = uuid.uuid4()
+    place_fort_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        _seed_canonical_place(session, place_digha_id, "Digha Beach", 21.6266, 87.5074)
+        _seed_canonical_place(session, place_park_id, "Nature Park", 21.6300, 87.5100)
+        _seed_canonical_place(session, place_fort_id, "Historic Fort", 21.6350, 87.5150)
+        await session.flush()
+
+        # 1. Refuted evidence: ClaimEvidenceModel has support_type == "REFUTES"
+        obs_refuted = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=execution_id,
+            source_url="https://tourism.wb.gov.in/refuted-fee",
+            canonical_url="https://tourism.wb.gov.in/refuted-fee",
+            publisher="tourism.wb.gov.in",
+            content_hash=f"hash_{uuid.uuid4().hex}",
+            retrieved_at=now,
+            published_at=now - timedelta(days=1),
+            excerpt_text="Park fee refuted",
+            excerpt_locator="p",
+            extraction_method="SCRAPLING_HTTP",
+            created_at=now,
+        )
+        session.add(obs_refuted)
+        await session.flush()
+
+        claim_refuted = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=execution_id,
+            subject_id="Nature Park",
+            place_id=place_park_id,
+            category="FEES",
+            typed_value={"price": 30.0, "amount": 30.0, "currency": "INR"},
+            verification="VERIFIED",
+            availability="AVAILABLE",
+            freshness="FRESH",
+            policy_version="1.0",
+        )
+        session.add(claim_refuted)
+        await session.flush()
+
+        link_refuted = ClaimEvidenceModel(
+            claim_id=claim_refuted.id,
+            observation_id=obs_refuted.id,
+            support_type="REFUTES",
+        )
+        session.add(link_refuted)
+
+        # 2. Stale evidence: observation retrieved_at is 100 days ago (> 90 days limit)
+        obs_stale = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=execution_id,
+            source_url="https://tourism.wb.gov.in/stale-fee",
+            canonical_url="https://tourism.wb.gov.in/stale-fee",
+            publisher="tourism.wb.gov.in",
+            content_hash=f"hash_{uuid.uuid4().hex}",
+            retrieved_at=now - timedelta(days=100),
+            published_at=now - timedelta(days=120),
+            excerpt_text="Historic Fort fee 50 INR",
+            excerpt_locator="p",
+            extraction_method="SCRAPLING_HTTP",
+            created_at=now - timedelta(days=100),
+        )
+        session.add(obs_stale)
+        await session.flush()
+
+        claim_stale = ClaimModel(
+            id=uuid.uuid4(),
+            execution_id=execution_id,
+            subject_id="Historic Fort",
+            place_id=place_fort_id,
+            category="FEES",
+            typed_value={"price": 50.0, "amount": 50.0, "currency": "INR"},
+            verification="VERIFIED",
+            availability="AVAILABLE",
+            freshness="STALE",
+            policy_version="1.0",
+        )
+        session.add(claim_stale)
+        await session.flush()
+
+        link_stale = ClaimEvidenceModel(
+            claim_id=claim_stale.id,
+            observation_id=obs_stale.id,
+            support_type="SUPPORTS",
+        )
+        session.add(link_stale)
+        await session.commit()
+
+    sample_state = _build_test_initial_state(owner_id, trip_id, execution_id)
+    sample_state["validated_candidates"] = [
+        {
+            "place_id": str(place_digha_id),
+            "primary_name": "Digha Beach",
+            "category": "attraction",
+            "price_estimate_inr": 60.0,
+            "verified_price_inr": 60.0,
+            "is_candidate": False,
+        },
+        {
+            "place_id": str(place_park_id),
+            "primary_name": "Nature Park",
+            "category": "attraction",
+            "price_estimate_inr": 30.0,
+            "is_candidate": False,
+        },
+        {
+            "place_id": str(place_fort_id),
+            "primary_name": "Historic Fort",
+            "category": "attraction",
+            "price_estimate_inr": 50.0,
+            "is_candidate": False,
+        },
+    ]
+    sample_state["optimized_schedule"] = {
+        "stops": [
+            {
+                "stop_id": "stop_1",
+                "name": "Digha Beach",
+                "place_id": str(place_digha_id),
+                "stop_type": "INTERMEDIATE",
+            },
+            {
+                "stop_id": "stop_2",
+                "name": "Nature Park",
+                "place_id": str(place_park_id),
+                "stop_type": "INTERMEDIATE",
+            },
+            {
+                "stop_id": "stop_3",
+                "name": "Historic Fort",
+                "place_id": str(place_fort_id),
+                "stop_type": "DESTINATION",
+            },
+        ],
+        "legs": [],
+    }
+
+    budget_res = await compute_budget_node(
+        cast(TripPlanningState, sample_state),
+        config={"configurable": {"session_factory": session_factory}},
+    )
+    activity_lines = [
+        line
+        for line in budget_res["budget_lines"]
+        if line["category"] == BudgetCategory.ACTIVITIES.value
+    ]
+    assert len(activity_lines) == 3
+
+    digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
+    assert digha_line["amount"] is None
+    assert "Entrance fee unverified" in digha_line["unknown_reason"]
+
+    park_line = [item for item in activity_lines if item["basis"] == "entry_fee_Nature Park"][0]
+    assert park_line["amount"] is None
+    assert "Entrance fee unverified" in park_line["unknown_reason"]
+
+    fort_line = [item for item in activity_lines if item["basis"] == "entry_fee_Historic Fort"][0]
+    assert fort_line["amount"] is None
+    assert "Entrance fee unverified" in fort_line["unknown_reason"]
 
 
 @pytest.mark.asyncio
@@ -1136,6 +1734,9 @@ async def test_trip_planner_budget_ac7_verified_versus_unverified_fees_on_postgr
         await _seed_test_execution_and_trip(
             session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
         )
+        _seed_canonical_place(session, place_digha_id, "Digha Beach", 21.6266, 87.5074)
+        _seed_canonical_place(session, place_aquarium_id, "Marine Aquarium", 21.6300, 87.5100)
+        await session.flush()
 
         # Seed verified observation and claim for Digha Beach entrance fee (50 INR)
         now = datetime.now(UTC)
@@ -1160,7 +1761,7 @@ async def test_trip_planner_budget_ac7_verified_versus_unverified_fees_on_postgr
             id=uuid.uuid4(),
             execution_id=execution_id,
             subject_id="Digha Beach",
-            place_id=None,
+            place_id=place_digha_id,
             category="FEES",
             typed_value={"price": 50.0, "amount": 50.0, "currency": "INR"},
             verification="VERIFIED",
