@@ -43,6 +43,7 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/orchestrator/places/candidate_service.py` | Place proposal registration, PostGIS persistence, deduplication, and replay idempotency |
 | `src/functions/orchestrator/places/corridor.py` | Geodesic corridor boundary calculation and coordinate bounds validation |
 | `src/functions/orchestrator/evidence/eligibility.py` | Deterministic evidence eligibility gate, assumed hours labeling, and contradiction exclusion |
+| `src/functions/api/routes/trips.py` | Trip creation, brief updates, job acceptance, owner authorized itinerary proposal with GeoJSON map, and corridor weather endpoints |
 
 ## Commands
 
