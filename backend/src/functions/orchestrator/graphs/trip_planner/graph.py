@@ -1723,70 +1723,160 @@ async def compute_budget_node(
         )
         return dist <= 1.0
 
+    configurable = config.get("configurable", {}) if config else {}
+    session_factory = configurable.get("session_factory") or state.get("_session_factory")
+    is_offline_fixture = bool(
+        state.get("_offline_fixture_mode", False)
+        or configurable.get("offline_fixture_mode", False)
+    )
+
     execution_id_raw = state.get("execution_id")
     execution_uuid = uuid.UUID(str(execution_id_raw)) if execution_id_raw else None
 
-    # Inspect in-memory / fixture claims in state['task_outputs']
-    raw_claims: list[dict[str, Any]] = []
-    task_outputs = state.get("task_outputs", {})
-    if isinstance(task_outputs, dict):
-        if "claims" in task_outputs and isinstance(task_outputs["claims"], list):
-            raw_claims.extend(task_outputs["claims"])
-        for val in task_outputs.values():
-            if isinstance(val, dict) and "claims" in val and isinstance(val["claims"], list):
-                raw_claims.extend(val["claims"])
+    if is_offline_fixture:
+        # Offline fixture mode: inspect claims in state['task_outputs']
+        raw_claims: list[dict[str, Any]] = []
+        task_outputs = state.get("task_outputs", {})
+        if isinstance(task_outputs, dict):
+            if "claims" in task_outputs and isinstance(task_outputs["claims"], list):
+                raw_claims.extend(task_outputs["claims"])
+            for val in task_outputs.values():
+                if isinstance(val, dict) and "claims" in val and isinstance(val["claims"], list):
+                    raw_claims.extend(val["claims"])
 
-    for cl in raw_claims:
-        cl_exec = cl.get("execution_id")
-        if cl_exec and execution_id_raw and str(cl_exec) != str(execution_id_raw):
-            continue
+        for cl in raw_claims:
+            cl_exec = cl.get("execution_id")
+            if cl_exec and execution_id_raw and str(cl_exec) != str(execution_id_raw):
+                continue
 
-        cat = str(cl.get("category", "")).upper()
-        if cat in ("FEES", "PRICE", "TICKET", "ENTRANCE"):
-            ver = str(cl.get("verification", "")).upper()
-            avail = str(cl.get("availability", "AVAILABLE")).upper()
-            if ver == "VERIFIED" and avail != "UNAVAILABLE":
-                support = str(cl.get("support_type", "SUPPORTS")).upper()
-                if support == "REFUTES":
-                    continue
-                freshness = str(cl.get("freshness", "FRESH")).upper()
-                if freshness == "STALE":
-                    continue
-                valid_until = cl.get("valid_until")
-                if valid_until and isinstance(valid_until, datetime) and valid_until < datetime.now(UTC):
-                    continue
+            cat = str(cl.get("category", "")).upper()
+            if cat in ("FEES", "PRICE", "TICKET", "ENTRANCE"):
+                ver = str(cl.get("verification", "")).upper()
+                avail = str(cl.get("availability", "AVAILABLE")).upper()
+                if ver == "VERIFIED" and avail != "UNAVAILABLE":
+                    support = str(cl.get("support_type", "SUPPORTS")).upper()
+                    if support == "REFUTES":
+                        continue
+                    freshness = str(cl.get("freshness", "FRESH")).upper()
+                    if freshness == "STALE":
+                        continue
+                    valid_until = cl.get("valid_until")
+                    if valid_until and isinstance(valid_until, datetime) and valid_until < datetime.now(UTC):
+                        continue
 
-                ev_refs = (
-                    cl.get("evidence_ids")
-                    or cl.get("evidence_refs")
-                    or cl.get("observations")
-                    or []
+                    ev_refs = (
+                        cl.get("evidence_ids")
+                        or cl.get("evidence_refs")
+                        or cl.get("observations")
+                        or []
+                    )
+                    if ev_refs or cl.get("evidence_count", 0) > 0 or cl.get("evidence_links"):
+                        tv = cl.get("typed_value") or {}
+                        price_val = tv.get("price") or tv.get("amount") or tv.get("price_inr")
+                        if price_val is not None:
+                            fee_amount = float(price_val)
+                            fee_source = (
+                                str(ev_refs[0])
+                                if isinstance(ev_refs, list) and ev_refs
+                                else f"claim:{cl.get('id', 'verified')}"
+                            )
+                            cl_subj = str(cl.get("subject_id", "")).strip().lower()
+                            cl_pid = str(cl.get("place_id")) if cl.get("place_id") else None
+
+                            from functions.orchestrator.evidence.eligibility import (
+                                DeterministicEvidenceEligibilityGate,
+                            )
+
+                            cl_coords = (
+                                DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
+                                    cl.get("geographic_scope")
+                                )
+                                or DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
+                                    cl.get("typed_value")
+                                )
+                            )
+
+                            for stop in stops_data:
+                                s_name = (stop.get("name") or stop.get("stop_id", "")).strip().lower()
+                                s_pid = str(stop.get("place_id")) if stop.get("place_id") else None
+                                if not s_pid:
+                                    for cand in state.get("validated_candidates", []):
+                                        if (cand.get("primary_name") or cand.get("name") or "").strip().lower() == s_name:
+                                            if cand.get("place_id"):
+                                                s_pid = str(cand["place_id"])
+                                                break
+                                s_coords = (
+                                    (float(stop["lat"]), float(stop["lng"]))
+                                    if stop.get("lat") and stop.get("lng")
+                                    else cand_coords.get(s_name) or (cand_coords.get(s_pid) if s_pid else None)
+                                )
+
+                                if _match_fee_claim_to_stop(cl_pid, cl_subj, cl_coords, s_pid, s_name, s_coords):
+                                    verified_fees[s_name] = (fee_amount, fee_source)
+                                    if s_pid:
+                                        verified_fees[s_pid] = (fee_amount, fee_source)
+
+    else:
+        # Production mode: query database for verified fee claims under authorized evidence policy
+        # Raw claims in task_outputs or candidate fields are untrusted and must NOT be accepted
+        if session_factory is not None and execution_uuid is not None:
+            try:
+                from functions.evidence_collector.models import SourceObservationModel
+                from functions.orchestrator.evidence.eligibility import (
+                    DeterministicEvidenceEligibilityGate,
                 )
-                if ev_refs or cl.get("evidence_count", 0) > 0 or cl.get("evidence_links"):
-                    tv = cl.get("typed_value") or {}
-                    price_val = tv.get("price") or tv.get("amount") or tv.get("price_inr")
-                    if price_val is not None:
-                        fee_amount = float(price_val)
-                        fee_source = (
-                            str(ev_refs[0])
-                            if isinstance(ev_refs, list) and ev_refs
-                            else f"claim:{cl.get('id', 'verified')}"
-                        )
-                        cl_subj = str(cl.get("subject_id", "")).strip().lower()
-                        cl_pid = str(cl.get("place_id")) if cl.get("place_id") else None
+                from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
+                from functions.orchestrator.evidence.policy import ClaimVerificationPolicy
+                from functions.orchestrator.evidence.schemas import FreshnessStatus
 
-                        from functions.orchestrator.evidence.eligibility import (
-                            DeterministicEvidenceEligibilityGate,
-                        )
+                policy = ClaimVerificationPolicy()
+                now = datetime.now(UTC)
 
-                        cl_coords = (
+                async with session_factory() as session:
+                    claims_stmt = (
+                        select(ClaimModel, ClaimEvidenceModel, SourceObservationModel)
+                        .join(ClaimEvidenceModel, ClaimEvidenceModel.claim_id == ClaimModel.id)
+                        .join(
+                            SourceObservationModel,
+                            SourceObservationModel.id == ClaimEvidenceModel.observation_id,
+                        )
+                        .where(
+                            ClaimModel.execution_id == execution_uuid,
+                            SourceObservationModel.execution_id == execution_uuid,
+                            ClaimModel.category.in_(["FEES", "PRICE", "TICKET", "ENTRANCE"]),
+                            ClaimModel.verification == "VERIFIED",
+                            ClaimModel.availability == "AVAILABLE",
+                            ClaimEvidenceModel.support_type == "SUPPORTS",
+                        )
+                    )
+                    claims_rows = (await session.execute(claims_stmt)).all()
+                    for claim_row, _ev_row, obs_row in claims_rows:
+                        # Validate freshness per policy
+                        freshness = policy.evaluate_freshness(
+                            claim_row, published_at=obs_row.published_at, as_of=now
+                        )
+                        if freshness == FreshnessStatus.STALE:
+                            continue
+
+                        # Extract coordinates for name-only matching
+                        claim_coords = (
                             DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
-                                cl.get("geographic_scope")
+                                claim_row.geographic_scope
                             )
                             or DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
-                                cl.get("typed_value")
+                                obs_row.artifact_ref
                             )
                         )
+
+                        tv = claim_row.typed_value or {}
+                        price_val = tv.get("price") or tv.get("amount") or tv.get("price_inr")
+                        if price_val is None:
+                            continue
+
+                        fee_amount = float(price_val)
+                        fee_source = f"obs:{obs_row.id}"
+                        cl_subj = claim_row.subject_id.strip().lower()
+                        cl_pid = str(claim_row.place_id) if claim_row.place_id else None
 
                         for stop in stops_data:
                             s_name = (stop.get("name") or stop.get("stop_id", "")).strip().lower()
@@ -1803,95 +1893,16 @@ async def compute_budget_node(
                                 else cand_coords.get(s_name) or (cand_coords.get(s_pid) if s_pid else None)
                             )
 
-                            if _match_fee_claim_to_stop(cl_pid, cl_subj, cl_coords, s_pid, s_name, s_coords):
+                            if _match_fee_claim_to_stop(cl_pid, cl_subj, claim_coords, s_pid, s_name, s_coords):
                                 verified_fees[s_name] = (fee_amount, fee_source)
                                 if s_pid:
                                     verified_fees[s_pid] = (fee_amount, fee_source)
-
-    # Inspect database for verified fee claims if session_factory is available and not offline fixture
-    configurable = config.get("configurable", {}) if config else {}
-    session_factory = configurable.get("session_factory") or state.get("_session_factory")
-    is_offline_fixture = bool(state.get("_offline_fixture_mode", False))
-
-    if session_factory is not None and not is_offline_fixture and execution_uuid is not None:
-        try:
-            from functions.evidence_collector.models import SourceObservationModel
-            from functions.orchestrator.evidence.eligibility import (
-                DeterministicEvidenceEligibilityGate,
+            except Exception as exc:
+                logger.warning("Could not query database for verified fee claims: %s", exc)
+        else:
+            logger.info(
+                "Production fee calculation: session_factory or execution_id missing, fees remain UNKNOWN"
             )
-            from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
-            from functions.orchestrator.evidence.policy import ClaimVerificationPolicy
-            from functions.orchestrator.evidence.schemas import FreshnessStatus
-
-            policy = ClaimVerificationPolicy()
-            now = datetime.now(UTC)
-
-            async with session_factory() as session:
-                claims_stmt = (
-                    select(ClaimModel, ClaimEvidenceModel, SourceObservationModel)
-                    .join(ClaimEvidenceModel, ClaimEvidenceModel.claim_id == ClaimModel.id)
-                    .join(
-                        SourceObservationModel,
-                        SourceObservationModel.id == ClaimEvidenceModel.observation_id,
-                    )
-                    .where(
-                        ClaimModel.execution_id == execution_uuid,
-                        ClaimModel.category.in_(["FEES", "PRICE", "TICKET", "ENTRANCE"]),
-                        ClaimModel.verification == "VERIFIED",
-                        ClaimModel.availability == "AVAILABLE",
-                        ClaimEvidenceModel.support_type == "SUPPORTS",
-                    )
-                )
-                claims_rows = (await session.execute(claims_stmt)).all()
-                for claim_row, _ev_row, obs_row in claims_rows:
-                    # Validate freshness per policy
-                    freshness = policy.evaluate_freshness(
-                        claim_row, published_at=obs_row.published_at, as_of=now
-                    )
-                    if freshness == FreshnessStatus.STALE:
-                        continue
-
-                    # Extract coordinates for name-only matching
-                    claim_coords = (
-                        DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
-                            claim_row.geographic_scope
-                        )
-                        or DeterministicEvidenceEligibilityGate._extract_coordinates_from_data(
-                            obs_row.artifact_ref
-                        )
-                    )
-
-                    tv = claim_row.typed_value or {}
-                    price_val = tv.get("price") or tv.get("amount") or tv.get("price_inr")
-                    if price_val is None:
-                        continue
-
-                    fee_amount = float(price_val)
-                    fee_source = f"obs:{obs_row.id}"
-                    cl_subj = claim_row.subject_id.strip().lower()
-                    cl_pid = str(claim_row.place_id) if claim_row.place_id else None
-
-                    for stop in stops_data:
-                        s_name = (stop.get("name") or stop.get("stop_id", "")).strip().lower()
-                        s_pid = str(stop.get("place_id")) if stop.get("place_id") else None
-                        if not s_pid:
-                            for cand in state.get("validated_candidates", []):
-                                if (cand.get("primary_name") or cand.get("name") or "").strip().lower() == s_name:
-                                    if cand.get("place_id"):
-                                        s_pid = str(cand["place_id"])
-                                        break
-                        s_coords = (
-                            (float(stop["lat"]), float(stop["lng"]))
-                            if stop.get("lat") and stop.get("lng")
-                            else cand_coords.get(s_name) or (cand_coords.get(s_pid) if s_pid else None)
-                        )
-
-                        if _match_fee_claim_to_stop(cl_pid, cl_subj, claim_coords, s_pid, s_name, s_coords):
-                            verified_fees[s_name] = (fee_amount, fee_source)
-                            if s_pid:
-                                verified_fees[s_pid] = (fee_amount, fee_source)
-        except Exception as exc:
-            logger.warning("Could not query database for verified fee claims: %s", exc)
 
     for stop in stops_data:
         stop_name = stop.get("name") or stop.get("stop_id", "Stop")
@@ -2166,58 +2177,7 @@ async def publish_proposal_node(
                     f"Cross-trip execution mismatch: execution trip {exec_row.trip_id} does not match {trip_uuid}"
                 )
 
-            # Execution eligibility: cancellation barriers
-            if exec_row.status == "CANCELLED" or exec_row.cancelled_at is not None:
-                logger.info(
-                    "Parent execution %s is cancelled (status=%s, cancelled_at=%s); skipping publication",
-                    execution_uuid,
-                    exec_row.status,
-                    exec_row.cancelled_at,
-                )
-                return {
-                    "current_step": "proposal_publication_cancelled",
-                    "status": "CANCELLED",
-                    "proposal_status": "CANCELLED",
-                }
-
-            # Execution deadline barrier (evaluated after acquiring both execution and trip locks)
-            if exec_row.deadline_at and now >= exec_row.deadline_at:
-                logger.warning(
-                    "Parent execution %s deadline expired at %s (now=%s); marking CANCELLED",
-                    execution_uuid,
-                    exec_row.deadline_at,
-                    now,
-                )
-                exec_row.status = "CANCELLED"
-                exec_row.updated_at = now
-                return {
-                    "current_step": "proposal_publication_cancelled",
-                    "status": "CANCELLED",
-                    "proposal_status": "CANCELLED",
-                }
-
-            # Execution already superseded or terminal
-            if exec_row.status == "SUPERSEDED":
-                logger.info("Parent execution %s is SUPERSEDED; skipping publication", execution_uuid)
-                return {
-                    "current_step": "proposal_superseded",
-                    "status": "SUPERSEDED",
-                    "proposal_status": "SUPERSEDED",
-                }
-
-            if exec_row.status in ("FAILED", "SUCCEEDED", "PARTIAL"):
-                logger.info(
-                    "Parent execution %s is already terminal (status=%s); skipping publication",
-                    execution_uuid,
-                    exec_row.status,
-                )
-                return {
-                    "current_step": "proposal_publication_ineligible",
-                    "status": exec_row.status,
-                    "proposal_status": exec_row.status,
-                }
-
-            # Runner lease fencing (evaluated after acquiring all locks including trip lock)
+            # Runner lease fencing (evaluated before any execution state mutation)
             if exec_row.lease_token is None:
                 logger.warning(
                     "Publication lease check failed for execution %s: execution has no lease token in database",
@@ -2268,6 +2228,57 @@ async def publish_proposal_node(
                     "status": "FAILED",
                     "proposal_status": "FAILED",
                     "errors": ["Runner lease expired before or during lock acquisition"],
+                }
+
+            # Execution eligibility: cancellation barriers
+            if exec_row.status == "CANCELLED" or exec_row.cancelled_at is not None:
+                logger.info(
+                    "Parent execution %s is cancelled (status=%s, cancelled_at=%s); skipping publication",
+                    execution_uuid,
+                    exec_row.status,
+                    exec_row.cancelled_at,
+                )
+                return {
+                    "current_step": "proposal_publication_cancelled",
+                    "status": "CANCELLED",
+                    "proposal_status": "CANCELLED",
+                }
+
+            # Execution deadline barrier (only valid runner holding unexpired lease may cancel execution on deadline)
+            if exec_row.deadline_at and now >= exec_row.deadline_at:
+                logger.warning(
+                    "Parent execution %s deadline expired at %s (now=%s); marking CANCELLED",
+                    execution_uuid,
+                    exec_row.deadline_at,
+                    now,
+                )
+                exec_row.status = "CANCELLED"
+                exec_row.updated_at = now
+                return {
+                    "current_step": "proposal_publication_cancelled",
+                    "status": "CANCELLED",
+                    "proposal_status": "CANCELLED",
+                }
+
+            # Execution already superseded or terminal
+            if exec_row.status == "SUPERSEDED":
+                logger.info("Parent execution %s is SUPERSEDED; skipping publication", execution_uuid)
+                return {
+                    "current_step": "proposal_superseded",
+                    "status": "SUPERSEDED",
+                    "proposal_status": "SUPERSEDED",
+                }
+
+            if exec_row.status in ("FAILED", "SUCCEEDED", "PARTIAL"):
+                logger.info(
+                    "Parent execution %s is already terminal (status=%s); skipping publication",
+                    execution_uuid,
+                    exec_row.status,
+                )
+                return {
+                    "current_step": "proposal_publication_ineligible",
+                    "status": exec_row.status,
+                    "proposal_status": exec_row.status,
                 }
 
             # Optimistic concurrency / version validation
@@ -2343,19 +2354,29 @@ async def publish_proposal_node(
             trip.state = "proposed"
             trip.updated_at = now
 
-            from functions.orchestrator.execution.job_events import record_job_event
+            # Publication event idempotency check: do not record duplicate publication events on retry or replay
+            from functions.orchestrator.execution.models import JobEventModel
 
-            await record_job_event(
-                session,
-                execution_id=execution_uuid,
-                event_type="PROPOSAL_PUBLISHED",
-                safe_payload={
-                    "trip_id": str(trip_uuid),
-                    "base_version": expected_base_version,
-                    "route_id": str(route_uuid) if route_uuid else None,
-                    "routing_status": state.get("routing_status"),
-                },
+            pub_event_stmt = select(JobEventModel.id).where(
+                JobEventModel.execution_id == execution_uuid,
+                JobEventModel.event_type == "PROPOSAL_PUBLISHED",
             )
+            has_pub_event = (await session.execute(pub_event_stmt)).first() is not None
+
+            if not has_pub_event:
+                from functions.orchestrator.execution.job_events import record_job_event
+
+                await record_job_event(
+                    session,
+                    execution_id=execution_uuid,
+                    event_type="PROPOSAL_PUBLISHED",
+                    safe_payload={
+                        "trip_id": str(trip_uuid),
+                        "base_version": expected_base_version,
+                        "route_id": str(route_uuid) if route_uuid else None,
+                        "routing_status": state.get("routing_status"),
+                    },
+                )
 
             checkpointer = configurable.get("checkpointer")
             if checkpointer and hasattr(checkpointer, "flush"):

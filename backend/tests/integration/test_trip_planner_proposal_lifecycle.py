@@ -1240,7 +1240,7 @@ async def test_trip_planner_proposal_crash_retry_reconciliation_on_postgres(
             JobEventModel.event_type == "PROPOSAL_PUBLISHED",
         )
         published_events = (await session.execute(published_stmt)).scalars().all()
-        assert len(published_events) >= 1
+        assert len(published_events) == 1
 
         outbox_stmt = select(OutboxEventModel).where(
             OutboxEventModel.execution_id == execution_id,
@@ -1838,3 +1838,126 @@ async def test_trip_planner_budget_ac7_verified_versus_unverified_fees_on_postgr
     assert unknown_line["amount"] is None
     assert "Entrance fee unverified" in unknown_line["unknown_reason"]
     assert "osm:node/12345" in unknown_line["source_ref"]
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_proposal_stale_runner_after_deadline_on_postgres(
+    session_factory: Any,
+) -> None:
+    """Verifies Finding 2: stale runner cannot cancel or alter execution even after execution deadline."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+    stale_runner_lease = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        await session.execute(
+            update(ExecutionModel)
+            .where(ExecutionModel.id == execution_id)
+            .values(
+                status="RUNNING",
+                deadline_at=now - timedelta(minutes=5),
+                lease_token=stale_runner_lease,
+                lease_expiry=now - timedelta(seconds=10),
+            )
+        )
+        await session.commit()
+
+    sample_state = _build_test_initial_state(owner_id, trip_id, execution_id)
+    sample_state["proposal"] = {"schedule": {"stops": ["test"]}, "version": 1}
+
+    res = await publish_proposal_node(
+        cast(TripPlanningState, sample_state),
+        config={
+            "configurable": {
+                "session_factory": session_factory,
+                "runner_lease": stale_runner_lease,
+            }
+        },
+    )
+    assert res["status"] == "FAILED"
+    assert res["current_step"] == "proposal_publication_lost_lease"
+
+    async with session_factory() as session:
+        exec_after = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
+        ).scalar_one()
+        # Stale runner must NOT have mutated execution status to CANCELLED
+        assert exec_after.status == "RUNNING"
+
+
+@pytest.mark.asyncio
+async def test_trip_planner_budget_production_rejects_raw_claims_with_fabricated_evidence_on_postgres(
+    session_factory: Any,
+) -> None:
+    """Verifies Finding 1: production fee calculation rejects raw task output claims with fabricated evidence on PostgreSQL."""
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+    place_digha_id = uuid.uuid4()
+
+    async with session_factory() as session:
+        await _seed_test_execution_and_trip(
+            session, owner_id=owner_id, trip_id=trip_id, execution_id=execution_id
+        )
+        _seed_canonical_place(session, place_digha_id, "Digha Beach", 21.6266, 87.5074)
+        await session.commit()
+
+    sample_state = _build_test_initial_state(owner_id, trip_id, execution_id)
+    sample_state["_offline_fixture_mode"] = False
+    sample_state["task_outputs"] = {
+        "claims": [
+            {
+                "id": str(uuid.uuid4()),
+                "execution_id": str(execution_id),
+                "place_id": str(place_digha_id),
+                "subject_id": "Digha Beach",
+                "category": "FEES",
+                "verification": "VERIFIED",
+                "availability": "AVAILABLE",
+                "freshness": "FRESH",
+                "typed_value": {"price": 250.0, "amount": 250.0, "currency": "INR"},
+                "evidence_refs": ["fabricated_evidence_12345"],
+                "support_type": "SUPPORTS",
+            }
+        ]
+    }
+    sample_state["validated_candidates"] = [
+        {
+            "place_id": str(place_digha_id),
+            "primary_name": "Digha Beach",
+            "category": "attraction",
+            "price_estimate_inr": 250.0,
+            "verified_price_inr": 250.0,
+            "is_candidate": False,
+        }
+    ]
+    sample_state["optimized_schedule"] = {
+        "stops": [
+            {
+                "stop_id": "stop_1",
+                "name": "Digha Beach",
+                "place_id": str(place_digha_id),
+                "stop_type": "DESTINATION",
+            }
+        ],
+        "legs": [],
+    }
+
+    budget_res = await compute_budget_node(
+        cast(TripPlanningState, sample_state),
+        config={"configurable": {"session_factory": session_factory}},
+    )
+    activity_lines = [
+        line
+        for line in budget_res["budget_lines"]
+        if line["category"] == BudgetCategory.ACTIVITIES.value
+    ]
+    assert len(activity_lines) == 1
+    digha_line = activity_lines[0]
+    assert digha_line["amount"] is None
+    assert "Entrance fee unverified" in digha_line["unknown_reason"]

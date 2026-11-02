@@ -233,6 +233,7 @@ async def test_compute_budget_calculates_estimated_fuel_and_accommodation() -> N
 async def test_compute_budget_handles_quoted_and_unpriced_attractions() -> None:
     """Verifies that verified attractions generate quoted lines and unpriced ones produce UNKNOWN lines."""
     state = _make_sample_state()
+    state["_offline_fixture_mode"] = True
     res = await compute_budget_node(state)
     lines = res["budget_lines"]
 
@@ -514,6 +515,9 @@ async def test_publish_proposal_publishes_to_trips_and_deltas_when_version_match
     mock_result_delta = MagicMock()
     mock_result_delta.scalar_one_or_none.return_value = None  # No existing delta
 
+    mock_result_pub_check = MagicMock()
+    mock_result_pub_check.first.return_value = None  # No prior publication event
+
     mock_result_seq = MagicMock()
     mock_result_seq.scalar.return_value = 1
 
@@ -521,6 +525,7 @@ async def test_publish_proposal_publishes_to_trips_and_deltas_when_version_match
         mock_result_exec,
         mock_result_trip,
         mock_result_delta,
+        mock_result_pub_check,
         mock_result_seq,
     ]
 
@@ -576,14 +581,14 @@ async def test_publish_proposal_replay_idempotency_updates_existing_delta() -> N
     mock_result_delta = MagicMock()
     mock_result_delta.scalar_one_or_none.return_value = mock_existing_delta  # Existing delta!
 
-    mock_result_seq = MagicMock()
-    mock_result_seq.scalar.return_value = 2
+    mock_result_pub_check = MagicMock()
+    mock_result_pub_check.first.return_value = (uuid.uuid4(),)  # Existing publication event!
 
     mock_session.execute.side_effect = [
         mock_result_exec,
         mock_result_trip,
         mock_result_delta,
-        mock_result_seq,
+        mock_result_pub_check,
     ]
 
     res = await publish_proposal_node(
@@ -596,9 +601,16 @@ async def test_publish_proposal_replay_idempotency_updates_existing_delta() -> N
     assert mock_existing_delta.proposal_json == state["proposal"]
     # session.add should NOT be called for TripDeltaModel since it already exists
     from functions.api.models import TripDeltaModel
+    from functions.orchestrator.execution.models import JobEventModel
 
     assert not any(
         isinstance(arg, TripDeltaModel)
+        for call in mock_session.add.call_args_list
+        for arg in call.args
+    )
+    # session.add should NOT be called for JobEventModel either on idempotent replay
+    assert not any(
+        isinstance(arg, JobEventModel)
         for call in mock_session.add.call_args_list
         for arg in call.args
     )
@@ -930,6 +942,7 @@ async def test_publish_proposal_terminal_execution_ineligible() -> None:
 async def test_compute_budget_cross_execution_claim_rejected() -> None:
     """Verifies Finding 2: a fee claim belonging to a different execution is rejected and remains UNKNOWN."""
     state = _make_sample_state()
+    state["_offline_fixture_mode"] = True
     # Claim execution_id does not match state execution_id
     foreign_execution_id = str(uuid.uuid4())
     state["task_outputs"] = {
@@ -959,6 +972,7 @@ async def test_compute_budget_cross_execution_claim_rejected() -> None:
 async def test_compute_budget_unrelated_place_claim_rejected() -> None:
     """Verifies Finding 2: a fee claim linked to a different place ID does not verify this place."""
     state = _make_sample_state()
+    state["_offline_fixture_mode"] = True
     unrelated_place_id = str(uuid.uuid4())
     state["task_outputs"] = {
         "claims": [
@@ -987,6 +1001,7 @@ async def test_compute_budget_unrelated_place_claim_rejected() -> None:
 async def test_compute_budget_refuted_or_stale_claim_rejected() -> None:
     """Verifies Finding 2: a fee claim with REFUTES support or STALE freshness is rejected."""
     state = _make_sample_state()
+    state["_offline_fixture_mode"] = True
     digha_place_id = state["optimized_schedule"]["stops"][2]["place_id"]
 
     # 1. Refuted evidence
@@ -1040,6 +1055,7 @@ async def test_compute_budget_refuted_or_stale_claim_rejected() -> None:
 async def test_compute_budget_candidate_verified_price_alone_not_proof() -> None:
     """Verifies Finding 2: candidate verified_price_inr field alone is not treated as proof."""
     state = _make_sample_state()
+    state["_offline_fixture_mode"] = True
     # Empty claims in task outputs
     state["task_outputs"] = {"claims": []}
     # Candidate still has verified_price_inr
@@ -1050,6 +1066,91 @@ async def test_compute_budget_candidate_verified_price_alone_not_proof() -> None
     digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
     assert digha_line["amount"] is None
     assert "Entrance fee unverified" in digha_line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_production_rejects_raw_claim_with_fabricated_evidence() -> None:
+    """Verifies Finding 1: production fee calculation does not trust raw task output claims with fabricated evidence."""
+    state = _make_sample_state()
+    state["_offline_fixture_mode"] = False
+    state["task_outputs"] = {
+        "claims": [
+            {
+                "id": str(uuid.uuid4()),
+                "place_id": state["optimized_schedule"]["stops"][2]["place_id"],
+                "subject_id": "Digha Beach",
+                "category": "FEES",
+                "verification": "VERIFIED",
+                "availability": "AVAILABLE",
+                "freshness": "FRESH",
+                "typed_value": {"price": 999.0, "amount": 999.0, "currency": "INR"},
+                "evidence_refs": ["fabricated_evidence_ref_999"],
+                "support_type": "SUPPORTS",
+            }
+        ]
+    }
+    res = await compute_budget_node(state)
+    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
+    assert digha_line["amount"] is None
+    assert "Entrance fee unverified" in digha_line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_production_missing_execution_id() -> None:
+    """Verifies Finding 1: production fee calculation leaves fees UNKNOWN when execution ID is missing."""
+    state = _make_sample_state()
+    state["_offline_fixture_mode"] = False
+    state["execution_id"] = None
+
+    res = await compute_budget_node(state)
+    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    for line in activity_lines:
+        assert line["amount"] is None
+        assert "Entrance fee unverified" in line["unknown_reason"]
+
+
+@pytest.mark.asyncio
+async def test_publish_proposal_stale_runner_after_deadline_does_not_mutate_status() -> None:
+    """Verifies Finding 2: a stale runner whose lease expired cannot mutate execution status even after deadline."""
+    state = _make_sample_state()
+    state["proposal"] = {"status": "ready_for_approval"}
+
+    mock_session, mock_factory = _make_mock_session()
+
+    mock_exec_row = MagicMock()
+    mock_exec_row.id = uuid.UUID(state["execution_id"])
+    mock_exec_row.owner_id = uuid.UUID(state["owner_id"])
+    mock_exec_row.trip_id = uuid.UUID(state["trip_id"])
+    mock_exec_row.status = "RUNNING"
+    mock_exec_row.deadline_at = datetime.now(UTC) - timedelta(minutes=5)
+    mock_exec_row.cancelled_at = None
+    mock_exec_row.lease_token = uuid.UUID(state["runner_lease"])
+    mock_exec_row.lease_expiry = datetime.now(UTC) - timedelta(minutes=1)  # Stale lease!
+
+    mock_trip = MagicMock()
+    mock_trip.id = uuid.UUID(state["trip_id"])
+    mock_trip.owner_id = uuid.UUID(state["owner_id"])
+    mock_trip.current_version = 1
+
+    mock_result_exec = MagicMock()
+    mock_result_exec.scalar_one_or_none.return_value = mock_exec_row
+
+    mock_result_trip = MagicMock()
+    mock_result_trip.scalar_one_or_none.return_value = mock_trip
+
+    mock_session.execute.side_effect = [mock_result_exec, mock_result_trip]
+
+    res = await publish_proposal_node(
+        state,
+        config={"configurable": {"session_factory": mock_factory}},
+    )
+
+    assert res["current_step"] == "proposal_publication_lost_lease"
+    assert res["status"] == "FAILED"
+    assert res["proposal_status"] == "FAILED"
+    # Execution status must NOT be mutated to CANCELLED by a stale runner
+    assert mock_exec_row.status == "RUNNING"
 
 
 @pytest.mark.asyncio
