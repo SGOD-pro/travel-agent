@@ -1,0 +1,14 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "travel-agent-media-extractor-dev"
+resolve_s3 = true
+s3_prefix = "travel-agent-media-extractor-dev"
+profile = "travel-agent-dev"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Environment=\"staging\""
+image_repositories = []
+
+[default.global.parameters]
+region = "ap-south-1"

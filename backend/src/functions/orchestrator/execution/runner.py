@@ -128,6 +128,11 @@ class GraphRunnerService:
         self._max_steps = max_steps
         self._max_runtime_seconds = max_runtime_seconds
 
+    @property
+    def checkpointer(self) -> Any | None:
+        """Return the configured default graph checkpointer for workflow variants."""
+        return getattr(self._default_graph, "checkpointer", None)
+
     async def handle_execution_start(
         self,
         *,

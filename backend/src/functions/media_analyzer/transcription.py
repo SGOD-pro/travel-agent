@@ -54,13 +54,13 @@ class AsrClient:
     ) -> str:
         """Starts an asynchronous transcription job and returns the job ID."""
         j_id = job_name or f"transcribe-{uuid.uuid4().hex[:12]}"
-        
+
         # In mock mode, store simulated job
         self._jobs[j_id] = {
             "status": "COMPLETED",
             "media_uri": media_uri,
             "language_code": language_code,
-            "transcript": mock_transcript or "Welcome to Abbey Falls Madikeri Coorg Karnataka",
+            "transcript": mock_transcript or "",
         }
         return j_id
 
@@ -88,7 +88,7 @@ class AsrClient:
         transcript = job.get("transcript", "")
         words = transcript.split()
         segments: list[AsrSegment] = []
-        
+
         # Generate word-level timing
         t = 0.5
         for word in words:
@@ -109,7 +109,7 @@ class AsrClient:
             full_transcript=transcript,
             segments=segments,
             primary_language=job.get("language_code", "en-IN"),
-            overall_confidence=0.95,
+            overall_confidence=0.95 if segments else 0.0,
         )
 
     def parse_transcribe_payload(self, payload: dict[str, Any], job_id: str) -> AsrObservation:

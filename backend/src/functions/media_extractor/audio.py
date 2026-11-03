@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import io
 import wave
-from pathlib import Path
 
 from contracts.media import ExtractedAudio
 

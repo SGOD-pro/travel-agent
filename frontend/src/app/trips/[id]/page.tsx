@@ -163,7 +163,7 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
     <div className="min-h-screen bg-[#0D1915] text-[#F7F7F2] flex flex-col font-sans">
       <Navbar />
 
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-28">
+      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-28 print:py-6">
         {/* Top Header Card */}
         <div className="bg-[#15271F] border border-[#233E32] rounded-3xl p-6 sm:p-8 shadow-2xl mb-8">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">

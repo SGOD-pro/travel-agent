@@ -15,6 +15,7 @@ from config.db import get_session_factory
 from contracts.artifacts import Artifact, ArtifactStatus
 from contracts.jobs import Job, JobStatus
 from functions.api.repository import SqlAlchemyUnitOfWork, UnitOfWorkPort
+from middleware.auth import AuthenticatedUser, get_current_user
 
 router = APIRouter(prefix="/api/v1", tags=["exports"])
 
@@ -65,11 +66,12 @@ async def request_trip_export(
     trip_id: uuid.UUID,
     request: ExportTripRequest,
     uow: UowDep,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> ExportJobResponse:
     """Enqueues an asynchronous export job and returns pending artifact tracking tokens."""
     async with uow:
         trip = await uow.trips.get_by_id(trip_id)
-        if not trip:
+        if not trip or trip.owner_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Trip {trip_id} not found",
@@ -124,11 +126,18 @@ async def request_trip_export(
 async def get_artifact(
     artifact_id: uuid.UUID,
     uow: UowDep,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> ArtifactResponse:
     """Fetches status and metadata of an exported artifact."""
     async with uow:
         artifact = await uow.artifacts.get_by_id(artifact_id)
         if not artifact:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Artifact {artifact_id} not found",
+            )
+        trip = await uow.trips.get_by_id(artifact.trip_id)
+        if not trip or trip.owner_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Artifact {artifact_id} not found",
@@ -150,11 +159,18 @@ async def get_artifact(
 async def download_artifact(
     artifact_id: uuid.UUID,
     uow: UowDep,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> FileResponse:
     """Downloads the generated artifact file."""
     async with uow:
         artifact = await uow.artifacts.get_by_id(artifact_id)
         if not artifact:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Artifact {artifact_id} not found",
+            )
+        trip = await uow.trips.get_by_id(artifact.trip_id)
+        if not trip or trip.owner_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Artifact {artifact_id} not found",
@@ -178,4 +194,3 @@ async def download_artifact(
         media_type=artifact.content_type,
         filename=f"SWENA_Itinerary_Trip_{artifact.trip_id}_v{artifact.trip_version}.pdf",
     )
-

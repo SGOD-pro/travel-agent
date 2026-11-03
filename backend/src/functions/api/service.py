@@ -5,14 +5,349 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from io import BytesIO
-from typing import Any
+from typing import Any, TypedDict
 
+from fastapi import HTTPException, status
+from langgraph.graph import END, START, StateGraph
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from contracts.media import VerifiedPlace
 from contracts.trips import TripBrief
+from functions.api.models import TripModel, TripVersionModel
+from functions.api.schemas import Product
+
+
+class CompositionState(TypedDict, total=False):
+    status: str
+    request: dict[str, Any]
+    product_outputs: dict[str, Any]
+
+
+def validate_composition_request(payload: dict[str, Any]) -> list[Product]:
+    """Validate selected products and required inputs without expanding scope."""
+    try:
+        products = [Product(value) for value in payload.get("products", [])]
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="products may only contain media, travel, and route",
+        ) from exc
+    if not products or len(products) != len(set(products)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="products must contain unique selected products",
+        )
+    expected_order = [p for p in (Product.MEDIA, Product.TRAVEL, Product.ROUTE) if p in products]
+    if products != expected_order:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="products must be ordered media, travel, then route",
+        )
+    if Product.MEDIA in products and not payload.get("media_url"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="media_url is required when media is selected",
+        )
+    if Product.TRAVEL in products and not payload.get("brief"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="an owned trip with a brief is required when travel is selected",
+        )
+    if Product.ROUTE in products and not (payload.get("route_request") or payload.get("brief")):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="route_request or a travel brief is required when route is selected",
+        )
+    return products
+
+
+async def accept_composition_job(
+    *,
+    session: Any,
+    owner_id: uuid.UUID,
+    operation: str,
+    idempotency_key: str,
+    payload: dict[str, Any],
+    trip_id: uuid.UUID | None = None,
+) -> dict[str, Any]:
+    """Persist an owner-scoped API composition request and its outbox event."""
+    products = validate_composition_request(payload)
+    if Product.ROUTE in products and not payload.get("route_request") and payload.get("brief"):
+        payload["route_request"] = _route_request_from_brief(payload["brief"])
+    from functions.api.idempotency import IdempotencyConflictError, IdempotencyRepository
+
+    travel_only = products == [Product.TRAVEL]
+    workflow = "TRAVEL" if travel_only else "API_COMPOSITION"
+    execution_payload = (
+        {
+            "trip_id": payload.get("trip_id", ""),
+            "version": payload.get("version", 1),
+            "brief": payload["brief"],
+        }
+        if travel_only
+        else {"request": payload}
+    )
+    repository = IdempotencyRepository(session)
+    try:
+        response, _, _ = await repository.accept_job(
+            owner_id=owner_id,
+            operation=operation,
+            idempotency_key=idempotency_key,
+            payload=payload,
+            execution_payload=execution_payload,
+            trip_id=trip_id,
+            workflow=workflow,
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    return response
+
+
+async def load_owned_trip_context(
+    session: AsyncSession,
+    trip_id: uuid.UUID,
+    owner_id: uuid.UUID,
+) -> tuple[int, dict[str, Any]]:
+    """Load an owner's current trip brief without disclosing other users' trips."""
+    trip = (
+        await session.execute(select(TripModel).where(TripModel.id == trip_id))
+    ).scalar_one_or_none()
+    if trip is None or trip.owner_id != owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Trip {trip_id} not found",
+        )
+    version = (
+        await session.execute(
+            select(TripVersionModel).where(
+                TripVersionModel.trip_id == trip_id,
+                TripVersionModel.version == trip.current_version,
+            )
+        )
+    ).scalar_one_or_none()
+    if version is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Trip {trip_id} has no valid brief snapshot",
+        )
+    return trip.current_version, version.brief_json
+
+
+def _merge_verified_places(
+    brief: dict[str, Any],
+    product_outputs: dict[str, Any],
+) -> dict[str, Any]:
+    verified = _verified_media_places(product_outputs)
+    if not verified:
+        return brief
+    merged = dict(brief)
+    merged["destinations"] = [
+        {
+            "name": place["primary_name"],
+            "latitude": place["latitude"],
+            "longitude": place["longitude"],
+            "confidence": place.get("confidence", 1.0),
+        }
+        for place in verified
+    ]
+    return merged
+
+
+def _verified_media_places(product_outputs: dict[str, Any]) -> list[dict[str, Any]]:
+    media_result = product_outputs.get("media", {})
+    places = media_result.get("verified_places", []) if isinstance(media_result, dict) else []
+    verified: list[dict[str, Any]] = []
+    for place in places:
+        if isinstance(place, VerifiedPlace):
+            place_data = place.model_dump(mode="json")
+        elif isinstance(place, dict):
+            place_data = place
+        else:
+            continue
+        if place_data.get("verification_status") == "verified":
+            verified.append(place_data)
+    return verified
+
+
+def _route_request_from_brief(brief: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "origin_name": brief["origin_name"],
+        "origin_lat": brief["origin_lat"],
+        "origin_lng": brief["origin_lng"],
+        "destinations": [
+            {
+                "name": stop["name"],
+                "lat": stop["latitude"],
+                "lng": stop["longitude"],
+                "stay_minutes": stop.get("stay_minutes", 180),
+            }
+            for stop in brief["destinations"]
+        ],
+        "start_datetime": f"{brief['start_date']}T09:00:00+00:00",
+    }
+
+
+async def _run_media_product(state: CompositionState) -> dict[str, Any]:
+    from workflows.media_locations.graph import create_media_location_graph
+
+    request = state["request"]
+    media_graph = create_media_location_graph()
+    result = await media_graph.ainvoke(
+        {
+            "url": request["media_url"],
+            "extraction_result": None,
+            "caption_observation": None,
+            "analyzed": None,
+            "verified_places": [],
+            "attempt_count": 0,
+        }
+    )
+    outputs = dict(state.get("product_outputs", {}))
+    outputs[Product.MEDIA.value] = result
+    status_value = "RUNNING" if _verified_media_places(outputs) else "PARTIAL"
+    return {"product_outputs": outputs, "status": status_value}
+
+
+async def _run_travel_product(state: CompositionState) -> dict[str, Any]:
+    from functions.orchestrator.graphs.trip_planner.graph import trip_planning_workflow
+
+    request = state["request"]
+    brief_data = request.get("brief")
+    if not isinstance(brief_data, dict):
+        raise RuntimeError("Trip brief is required for travel planning.")
+    end_node_index = None
+    if Product.MEDIA.value in state.get("product_outputs", {}):
+        verified_places = _verified_media_places(state["product_outputs"])
+        brief_data = _merge_verified_places(brief_data, state["product_outputs"])
+        if verified_places:
+            end_node_index = len(brief_data["destinations"])
+    workflow_state = {
+        "trip_id": request.get("trip_id", ""),
+        "version": request.get("version", 1),
+        "brief": brief_data,
+    }
+    if end_node_index is not None:
+        workflow_state["end_node_index"] = end_node_index
+    result = await trip_planning_workflow.ainvoke(
+        workflow_state
+    )
+    if result.get("status") != "completed":
+        raise RuntimeError("Trip planning workflow did not complete.")
+    outputs = dict(state.get("product_outputs", {}))
+    result["destination_source"] = (
+        "verified_media"
+        if Product.MEDIA.value in outputs and _verified_media_places(outputs)
+        else "trip_brief"
+    )
+    outputs[Product.TRAVEL.value] = result
+    return {"product_outputs": outputs}
+
+
+async def _run_route_product(state: CompositionState) -> dict[str, Any]:
+    from workflows.route_optimizer.graph import create_route_optimizer_graph
+
+    request = state["request"]
+    route_request = request.get("route_request")
+    if not route_request:
+        route_request = _route_request_from_brief(request["brief"])
+    if Product.MEDIA.value in state.get("product_outputs", {}):
+        places = _verified_media_places(state["product_outputs"])
+        if places:
+            verified = [
+                {
+                    "name": place["primary_name"],
+                    "lat": place["latitude"],
+                    "lng": place["longitude"],
+                    "stay_minutes": 180,
+                }
+                for place in places
+            ]
+            route_request = {**route_request, "destinations": verified}
+
+    route_graph = create_route_optimizer_graph()
+    result = await route_graph.ainvoke(
+        {
+            "request": route_request,
+            "coordinates": [],
+            "transit_matrix": None,
+            "distance_matrix": None,
+            "constraints": [],
+            "optimized_route": None,
+            "validation_status": "PENDING",
+            "attempt_count": 0,
+        }
+    )
+    if result.get("validation_status") != "VALID":
+        raise RuntimeError("Route optimizer did not produce a validated route.")
+    outputs = dict(state.get("product_outputs", {}))
+    outputs[Product.ROUTE.value] = result
+    return {"product_outputs": outputs}
+
+
+def build_api_composition_workflow(checkpointer: Any | None = None) -> Any:
+    """Compile a product graph whose branches run only explicitly selected products."""
+    graph = StateGraph(CompositionState)
+    graph.add_node("media", _run_media_product)
+    graph.add_node("travel", _run_travel_product)
+    graph.add_node("route", _run_route_product)
+
+    def selected_products(state: CompositionState) -> list[str]:
+        values = state.get("request", {}).get("products", [])
+        products = [Product(value).value for value in values]
+        if not products:
+            raise ValueError("Composition request has no selected products.")
+        return products
+
+    def first_product(state: CompositionState) -> str:
+        return selected_products(state)[0]
+
+    def next_after_media(state: CompositionState) -> str:
+        products = selected_products(state)
+        if Product.TRAVEL.value in products:
+            return Product.TRAVEL.value
+        if Product.ROUTE.value in products:
+            return Product.ROUTE.value
+        return END
+
+    def next_after_travel(state: CompositionState) -> str:
+        return Product.ROUTE.value if Product.ROUTE.value in selected_products(state) else END
+
+    graph.add_conditional_edges(
+        START,
+        first_product,
+        {
+            Product.MEDIA.value: "media",
+            Product.TRAVEL.value: "travel",
+            Product.ROUTE.value: "route",
+        },
+    )
+    graph.add_conditional_edges(
+        "media",
+        next_after_media,
+        {
+            Product.TRAVEL.value: "travel",
+            Product.ROUTE.value: "route",
+            END: END,
+        },
+    )
+    graph.add_conditional_edges(
+        "travel",
+        next_after_travel,
+        {
+            Product.ROUTE.value: "route",
+            END: END,
+        },
+    )
+    graph.add_edge("route", END)
+    return graph.compile(checkpointer=checkpointer)
 
 
 class PdfExportService:

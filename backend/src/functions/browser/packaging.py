@@ -21,15 +21,29 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any
+
+from functions.lambda_packaging import (
+    LAMBDA_BUILD_IMAGE,
+    LAMBDA_TARGET_FINGERPRINT,
+    install_lambda_requirements,
+    run_lambda_python,
+)
 
 logger = logging.getLogger(__name__)
 
 # Sparticuz Chromium layer v130.0.0 artifact specifications (C2)
 SPARTICUZ_CHROMIUM_VERSION: str = "v130.0.0"
 SPARTICUZ_CHROMIUM_LAYER_FILENAME: str = "chromium-v130.0.0-layer.zip"
+SPARTICUZ_CHROMIUM_LAYER_URL: str = (
+    "https://raw.githubusercontent.com/d-oliveros/white-room/"
+    "71eed86690b34777d7531d090a97109645bbcab5/"
+    "infra/cdk/assets/chromium-v130.0.0-layer.zip"
+)
 SPARTICUZ_CHROMIUM_LAYER_SHA256: str = "c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480"
 SPARTICUZ_CHROMIUM_LAYER_ARCHIVE_BYTES: int = 67_464_242  # 64.34 MB compressed archive
 SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES: int = 67_633_712  # 64.50 MB across 54 extracted files (74 archive entries)
@@ -68,6 +82,74 @@ PERMITTED_CONTRACT_FILES: tuple[str, ...] = (
     "money.py",
     "trips.py",
 )
+
+
+def ensure_sparticuz_layer_artifact(archive_path: Path | None = None) -> Path:
+    """Fetch and verify the pinned Sparticuz layer artifact when it is not present."""
+    backend_dir = Path(__file__).resolve().parents[3]
+    archive_path = archive_path or (
+        backend_dir / "build" / "layers" / SPARTICUZ_CHROMIUM_LAYER_FILENAME
+    )
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not archive_path.exists():
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                dir=archive_path.parent,
+                prefix=f".{archive_path.name}.",
+                delete=False,
+            ) as temp_file:
+                temp_path = Path(temp_file.name)
+                digest = hashlib.sha256()
+                byte_count = 0
+                with urllib.request.urlopen(SPARTICUZ_CHROMIUM_LAYER_URL, timeout=60) as response:
+                    while chunk := response.read(1024 * 1024):
+                        temp_file.write(chunk)
+                        digest.update(chunk)
+                        byte_count += len(chunk)
+
+            if byte_count != SPARTICUZ_CHROMIUM_LAYER_ARCHIVE_BYTES:
+                raise ValueError(
+                    f"Sparticuz layer size mismatch: expected {SPARTICUZ_CHROMIUM_LAYER_ARCHIVE_BYTES}, "
+                    f"got {byte_count}"
+                )
+            if digest.hexdigest() != SPARTICUZ_CHROMIUM_LAYER_SHA256:
+                raise ValueError("Downloaded Sparticuz layer SHA256 does not match the pinned checksum")
+            temp_path.replace(archive_path)
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+
+    actual_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    if actual_hash != SPARTICUZ_CHROMIUM_LAYER_SHA256:
+        raise ValueError(
+            f"Layer hash mismatch: expected {SPARTICUZ_CHROMIUM_LAYER_SHA256}, got {actual_hash}"
+        )
+
+    extracted_dir = archive_path.parent / "extracted"
+    expected_extracted = (
+        extracted_dir.exists()
+        and sum(path.stat().st_size for path in extracted_dir.rglob("*") if path.is_file())
+        == SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES
+    )
+    if not expected_extracted:
+        if extracted_dir.exists():
+            shutil.rmtree(extracted_dir)
+        extracted_dir.mkdir(parents=True)
+        with zipfile.ZipFile(archive_path) as layer_zip:
+            for entry in layer_zip.infolist():
+                target = (extracted_dir / entry.filename).resolve()
+                if not target.is_relative_to(extracted_dir.resolve()):
+                    raise ValueError(f"Unsafe path in Sparticuz layer archive: {entry.filename}")
+                if entry.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with layer_zip.open(entry) as source, target.open("wb") as destination:
+                        shutil.copyfileobj(source, destination)
+
+    return archive_path
 
 
 def resolve_python_runtime_binary() -> str:
@@ -141,7 +223,9 @@ def build_isolated_browser_artifact(
     output_dir = output_dir.resolve()
     zip_path = zip_path.resolve()
 
-    requirements_hash = hashlib.sha256(requirements_path.read_bytes()).hexdigest()
+    requirements_hash = hashlib.sha256(
+        requirements_path.read_bytes() + b"\n" + LAMBDA_TARGET_FINGERPRINT
+    ).hexdigest()
     hash_file = output_dir / ".requirements.hash"
 
     cached_dependencies_valid = (
@@ -161,37 +245,7 @@ def build_isolated_browser_artifact(
         output_dir.mkdir(parents=True, exist_ok=True)
         zip_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 1. Install runtime dependencies via uv pip into target directory
-        cmd = [
-            "uv",
-            "pip",
-            "install",
-            "--python",
-            runtime_python,
-            "--target",
-            str(output_dir),
-            "-r",
-            str(requirements_path),
-            "--link-mode=copy",
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if res.returncode != 0:
-            # Fallback to standard pip if uv pip fails
-            pip_cmd = [
-                runtime_python,
-                "-m",
-                "pip",
-                "install",
-                "--target",
-                str(output_dir),
-                "-r",
-                str(requirements_path),
-            ]
-            sub_res = subprocess.run(pip_cmd, capture_output=True, text=True, check=False)
-            if sub_res.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to install runtime dependencies into {output_dir}: {res.stderr}\n{sub_res.stderr}"
-                )
+        install_lambda_requirements(output_dir, requirements_path, runtime_python)
 
         hash_file.write_text(requirements_hash, encoding="utf-8")
     else:
@@ -307,7 +361,10 @@ def build_isolated_browser_artifact(
                     continue
                 full_path = Path(root) / f
                 rel_path = full_path.relative_to(output_dir)
-                zf.write(full_path, str(rel_path))
+                info = zipfile.ZipInfo(str(rel_path))
+                file_mode = 0o100755 if rel_path.as_posix() == "playwright/driver/node" else 0o100644
+                info.external_attr = file_mode << 16
+                zf.writestr(info, full_path.read_bytes(), compress_type=zipfile.ZIP_DEFLATED)
 
     compressed_bytes = zip_path.stat().st_size
     if compressed_bytes > MAX_FUNCTION_COMPRESSED_BYTES:
@@ -391,14 +448,7 @@ print("OK")
         "BROWSER_MAX_ESCALATION_TASKS": "3",
     }
 
-    res = subprocess.run(
-        [runtime_python, "-S", "-P", "-c", verify_script],
-        cwd=str(artifact_dir.resolve()),
-        env=clean_env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    res = run_lambda_python(verify_script, artifact_dir, clean_env, runtime_python)
     if res.returncode != 0:
         raise RuntimeError(
             f"Browser handler verification failed in clean environment:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"
@@ -421,7 +471,7 @@ def verify_browser_startup_and_render_isolated_environment(
     3. Clearly distinguishes verified local proof from deferred target runtime proof.
     """
     runtime_python = str(python_bin) if python_bin else resolve_python_runtime_binary()
-    resolved_chromium = (
+    resolved_chromium = None if os.name == "nt" else (
         chromium_path
         or shutil.which("chromium")
         or shutil.which("chromium-browser")
@@ -430,7 +480,7 @@ def verify_browser_startup_and_render_isolated_environment(
     )
 
     verify_script = f"""
-import os, sys, asyncio, platform
+import os, sys, asyncio, platform, subprocess
 from pathlib import Path
 
 # Verify Python 3.12 runtime and x86_64 architecture
@@ -449,6 +499,8 @@ driver_dir = Path(playwright.__file__).parent / "driver"
 node_bin = driver_dir / "node"
 assert node_bin.exists(), f"Playwright Node binary missing from isolated artifact: {{node_bin}}"
 assert os.access(node_bin, os.X_OK), f"Playwright Node binary is not executable: {{node_bin}}"
+node_version = subprocess.run([str(node_bin), "--version"], capture_output=True, text=True, check=True)
+print("PLAYWRIGHT_NODE_VERSION:", node_version.stdout.strip())
 
 # Test headless browser launch and live dynamic rendering
 async def test_render():
@@ -486,14 +538,7 @@ print("LOCAL_RENDER_RESULT:", result)
         "PYTHONNOUSERSITE": "1",
     }
 
-    res = subprocess.run(
-        [runtime_python, "-S", "-P", "-c", verify_script],
-        cwd=str(artifact_dir.resolve()),
-        env=clean_env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    res = run_lambda_python(verify_script, artifact_dir, clean_env, runtime_python)
     if res.returncode != 0:
         raise RuntimeError(
             f"Isolated browser startup and rendering verification failed:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"
@@ -532,7 +577,80 @@ def verify_sparticuz_layer_bootstrap(
         if "chromium" in namelist or "opt/chromium" in namelist:
             raise AssertionError("Layer archive unexpectedly contains uncompressed chromium binary at root")
 
-    node_bin = node_binary
+    if os.name == "nt":
+        backend_dir = Path(__file__).resolve().parents[3]
+        artifact_dir = backend_dir / "build" / "browser"
+        linux_node_path = artifact_dir / "playwright" / "driver" / "node"
+        if not linux_node_path.exists():
+            raise RuntimeError(
+                "Linux Playwright Node runtime is missing; build the browser Lambda artifact first"
+            )
+
+        with tempfile.TemporaryDirectory() as layer_dir:
+            with zipfile.ZipFile(archive_path, "r") as zf:
+                zf.extractall(layer_dir)
+            script = """
+import os, subprocess
+node = "/var/task/playwright/driver/node"
+os.chmod(node, 0o755)
+script = (
+    "const chromium = require('@sparticuz/chromium');"
+    "chromium.executablePath().then(path => console.log('BOOTSTRAPPED_PATH:' + path));"
+)
+env = os.environ.copy()
+env["NODE_PATH"] = "/layer/nodejs/node_modules"
+env["AWS_EXECUTION_ENV"] = "AWS_Lambda_nodejs20.x"
+env["LD_LIBRARY_PATH"] = "/tmp/al2023/lib"
+env["FONTCONFIG_PATH"] = "/tmp/fonts"
+result = subprocess.run([node, "-e", script], cwd="/layer/nodejs/node_modules/@sparticuz/chromium", env=env, capture_output=True, text=True)
+if result.returncode:
+    raise RuntimeError(result.stderr)
+chromium = "/tmp/chromium"
+if not os.path.exists(chromium) or not os.access(chromium, os.X_OK):
+    raise RuntimeError("Chromium bootstrap did not produce an executable")
+with open(chromium, "rb") as binary:
+    if binary.read(4) != b"\\x7fELF":
+        raise RuntimeError("Bootstrapped Chromium is not an ELF binary")
+version = subprocess.run([chromium, "--version"], capture_output=True, text=True, env=env, check=True)
+print(version.stdout.strip())
+"""
+            command = [
+                "docker",
+                "run",
+                "--rm",
+                "--platform",
+                "linux/amd64",
+                "--mount",
+                f"type=bind,source={artifact_dir.resolve().as_posix()},target=/var/task",
+                "--mount",
+                f"type=bind,source={Path(layer_dir).resolve().as_posix()},target=/layer",
+                LAMBDA_BUILD_IMAGE,
+                "python",
+                "-c",
+                script,
+            ]
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            if result.returncode:
+                raise RuntimeError(
+                    f"Sparticuz bootstrap failed in Linux container:\n{result.stdout}\n{result.stderr}"
+                )
+            return {
+                "layer_version": SPARTICUZ_CHROMIUM_VERSION,
+                "archive_bytes": archive_path.stat().st_size,
+                "archive_sha256": actual_hash,
+                "bootstrap_status": "VERIFIED",
+                "chromium_version": result.stdout.strip(),
+                "target_runtime_proof": "DEFERRED_TO_CLOUD_ROLLOUT",
+            }
+
+    node_bin: str | Path | None = node_binary
     if node_bin is None:
         try:
             import playwright
@@ -546,8 +664,6 @@ def verify_sparticuz_layer_bootstrap(
         node_bin = shutil.which("node")
     if node_bin is None or not os.access(node_bin, os.X_OK):
         raise RuntimeError("No executable Node binary available to verify Sparticuz layer decompression")
-
-    import tempfile
 
     with tempfile.TemporaryDirectory() as opt_sim_dir:
         with zipfile.ZipFile(archive_path, "r") as zf:
@@ -626,6 +742,7 @@ def verify_sparticuz_layer_bootstrap(
 
 if __name__ == "__main__":
     out_dir, z_path, unpacked_func, comp, comb = build_isolated_browser_artifact()
+    ensure_sparticuz_layer_artifact()
     print(f"Artifact built at: {out_dir}")
     print(f"ZIP package at:    {z_path}")
     print(f"Function unpacked: {unpacked_func / (1024 * 1024):.2f} MB")
@@ -637,4 +754,3 @@ if __name__ == "__main__":
     print(f"Browser render verification: {render_res['local_proof']}")
     layer_res = verify_sparticuz_layer_bootstrap()
     print(f"Layer bootstrap verification: {layer_res['bootstrap_status']}")
-

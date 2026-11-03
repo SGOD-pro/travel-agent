@@ -9,18 +9,21 @@ Validates the full connected execution flow:
 6. Terminal job status and full timeline query via HTTP API (GET /api/v1/jobs/{job_id})
 """
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import asyncio
 import json
 import sys
 import uuid
+from pathlib import Path
 from typing import Any
 
-backend_dir = "/home/swyra/projects/travel-agent/backend"
+backend_dir = str(Path(__file__).resolve().parents[2])
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
-backend_src = "/home/swyra/projects/travel-agent/backend/src"
+backend_src = str(Path(backend_dir) / "src")
 if backend_src not in sys.path:
     sys.path.insert(0, backend_src)
 
@@ -48,11 +51,12 @@ from functions.orchestrator.execution.completion_consumer import (
     process_batch as completion_process_batch,
 )
 from functions.orchestrator.execution.consumer import process_batch as runner_process_batch
+from functions.orchestrator.execution.executor_registry import EXECUTOR_REGISTRY
 from functions.orchestrator.execution.worker_consumer import (
     process_batch as worker_process_batch,
 )
-from functions.orchestrator.execution.executor_registry import EXECUTOR_REGISTRY
 from middleware.auth import AuthenticatedUser, get_current_user
+
 
 # Inject a mock executor for the E2E test graph tasks so that dispatch succeeds
 async def _mock_executor(payload: Any) -> Any:

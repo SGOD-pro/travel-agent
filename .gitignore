@@ -3,7 +3,10 @@
 .pytest_cache
 .ruff_cache
 .vscode
+.vs
 .env
+.env.*
+!.env.example
 node_modules
 .next
 .agents

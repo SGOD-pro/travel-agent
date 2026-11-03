@@ -1,32 +1,48 @@
 """Execution nodes for the Route Optimizer workflow."""
 import logging
 from datetime import datetime
-from .state import RouteState
-from functions.optimizer.routing import get_transit_matrix
+from typing import Any
+
 from functions.optimizer.constraints import apply_time_window_constraints
+from functions.optimizer.routing import get_route_geometry, get_transit_matrix
 from functions.optimizer.solver import ItineraryScheduler
+
+from .state import RouteState
 
 logger = logging.getLogger(__name__)
 
 
-async def geocode_node(state: RouteState) -> dict:
-    coords = [(0.0, 0.0)]
+async def geocode_node(state: RouteState) -> dict[str, Any]:
+    request = state["request"]
+    coords = [(request["origin_lat"], request["origin_lng"])] + [
+        (destination["lat"], destination["lng"])
+        for destination in request["destinations"]
+    ]
+    if request.get("return_to_origin"):
+        coords.append((request["origin_lat"], request["origin_lng"]))
     return {"coordinates": coords}
 
 
-async def routing_matrix_node(state: RouteState) -> dict:
+async def routing_matrix_node(state: RouteState) -> dict[str, Any]:
     coords = state["coordinates"]
-    speed = state["request"].get("average_speed_kmh", 45.0)
-    time_mat, dist_mat = await get_transit_matrix(coords, speed)
+    request = state["request"]
+    speed = request.get("average_speed_kmh", 45.0)
+    time_mat, dist_mat = await get_transit_matrix(
+        coords,
+        speed,
+        route_options=request,
+    )
     return {"transit_matrix": time_mat, "distance_matrix": dist_mat}
 
 
-async def constraint_node(state: RouteState) -> dict:
-    windows = apply_time_window_constraints(state["request"].get("destinations", []), datetime.now())
+async def constraint_node(state: RouteState) -> dict[str, Any]:
+    request = state["request"]
+    start_datetime = datetime.fromisoformat(request["start_datetime"])
+    windows = apply_time_window_constraints(request.get("destinations", []), start_datetime)
     return {"constraints": windows}
 
 
-async def solver_node(state: RouteState) -> dict:
+async def solver_node(state: RouteState) -> dict[str, Any]:
     req = state["request"]
     schedule = ItineraryScheduler.solve_schedule(
         origin_name=req["origin_name"],
@@ -37,12 +53,20 @@ async def solver_node(state: RouteState) -> dict:
         transit_matrix=state["transit_matrix"],
         distance_matrix=state["distance_matrix"],
         time_windows=state["constraints"],
+        return_to_origin=req.get("return_to_origin", False),
     )
     return {"optimized_route": schedule, "attempt_count": state.get("attempt_count", 0) + 1}
 
 
-async def validation_node(state: RouteState) -> dict:
+async def validation_node(state: RouteState) -> dict[str, Any]:
     route = state.get("optimized_route")
     if route and route.is_valid:
-        return {"validation_status": "VALID"}
+        geometry = await get_route_geometry(
+            [(stop.latitude, stop.longitude) for stop in route.stops],
+            route_options=state["request"],
+        )
+        route = route.model_copy(
+            update={"geometry_geojson": geometry, "routing_provider": "google"}
+        )
+        return {"validation_status": "VALID", "optimized_route": route}
     return {"validation_status": "FAILED"}

@@ -1,0 +1,136 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Media extraction and AWS-backed OCR/ASR Lambdas with an x86_64 FFmpeg layer.
+
+Parameters:
+  Environment:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - local
+      - staging
+      - production
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 120
+    MemorySize: 1024
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        ENVIRONMENT: !Ref Environment
+        PATH: /opt/bin:/var/task:/usr/local/bin:/usr/bin:/bin
+
+Resources:
+  FfmpegLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "media-extractor-ffmpeg-${Environment}"
+      Description: Static x86_64 FFmpeg and FFprobe binaries for media extraction.
+      ContentUri: ../../../../build/ffmpeg/ffmpeg-layer
+      CompatibleRuntimes:
+        - python3.12
+      CompatibleArchitectures:
+        - x86_64
+      LicenseInfo: GPL-3.0
+
+  MediaExtractorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "media-extractor-${Environment}"
+      Handler: functions.media_extractor.handler.lambda_handler
+      CodeUri: ../../
+      Description: Extracts bounded media frames and audio using FFmpeg.
+      Layers:
+        - !Ref FfmpegLayer
+
+  MediaAnalysisBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  MediaAnalysisBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref MediaAnalysisBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowTranscribeOutput
+            Effect: Allow
+            Principal:
+              Service: transcribe.amazonaws.com
+            Action:
+              - s3:GetBucketLocation
+            Resource: !GetAtt MediaAnalysisBucket.Arn
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+          - Sid: AllowTranscribeOutputObjects
+            Effect: Allow
+            Principal:
+              Service: transcribe.amazonaws.com
+            Action: s3:PutObject
+            Resource: !Sub "${MediaAnalysisBucket.Arn}/media-analysis/*"
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  MediaAnalyzerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "media-analyzer-${Environment}"
+      Handler: functions.media_analyzer.lambda_handler.lambda_handler
+      CodeUri: ../../
+      Description: Runs AWS Textract OCR and asynchronous AWS Transcribe analysis.
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          MEDIA_ANALYSIS_PROVIDER: aws
+          AWS_MEDIA_BUCKET: !Ref MediaAnalysisBucket
+          MEDIA_TRANSCRIBE_TIMEOUT_SECONDS: 300
+          MEDIA_TRANSCRIBE_POLL_INTERVAL_SECONDS: 2
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - textract:DetectDocumentText
+              Resource: "*"
+            - Effect: Allow
+              Action:
+                - transcribe:StartTranscriptionJob
+                - transcribe:GetTranscriptionJob
+              Resource: !Sub "arn:${AWS::Partition}:transcribe:${AWS::Region}:${AWS::AccountId}:transcription-job/*"
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:DeleteObject
+              Resource: !Sub "${MediaAnalysisBucket.Arn}/media-analysis/*"
+
+Outputs:
+  FfmpegLayerArn:
+    Description: ARN of the FFmpeg Lambda layer.
+    Value: !Ref FfmpegLayer
+  MediaExtractorFunctionArn:
+    Description: ARN of the media extractor Lambda function.
+    Value: !GetAtt MediaExtractorFunction.Arn
+  MediaAnalyzerFunctionArn:
+    Description: ARN of the AWS-backed media analyzer Lambda.
+    Value: !GetAtt MediaAnalyzerFunction.Arn
+  MediaAnalysisBucketName:
+    Description: Private bucket for temporary Transcribe media and output.
+    Value: !Ref MediaAnalysisBucket

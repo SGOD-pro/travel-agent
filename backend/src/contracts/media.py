@@ -53,6 +53,7 @@ class ExtractedFrame(BaseModel):
     is_duplicate: bool = False
     file_path: str | None = None
     s3_key: str | None = None
+    image_bytes: bytes | None = Field(default=None, exclude=True, repr=False)
 
 
 class ExtractedAudio(BaseModel):
@@ -66,6 +67,7 @@ class ExtractedAudio(BaseModel):
     audio_format: str = "wav"
     file_path: str | None = None
     s3_key: str | None = None
+    audio_bytes: bytes | None = Field(default=None, exclude=True, repr=False)
 
 
 class MediaMetadata(BaseModel):
@@ -167,7 +169,7 @@ class AsrObservation(BaseModel):
 class MediaClue(BaseModel):
     """A single piece of evidence extracted from a specific media timestamp."""
     model_config = ConfigDict(frozen=True)
-    
+
     clue_type: Literal["visual", "audio", "text_ocr", "text_asr", "metadata"]
     source_frame_index: int | None = None
     source_timestamp_seconds: float | None = None
@@ -179,7 +181,7 @@ class MediaClue(BaseModel):
 class FusedMediaClues(BaseModel):
     """Corroborated multimodal clues for location identification."""
     model_config = ConfigDict(frozen=True)
-    
+
     clues: list[MediaClue] = Field(default_factory=list)
     signage_texts: list[str] = Field(default_factory=list)
     audio_keywords: list[str] = Field(default_factory=list)
@@ -191,7 +193,7 @@ class FusedMediaClues(BaseModel):
 class UncertaintyFlags(BaseModel):
     """Confidence and quality flags for the analyzed media."""
     model_config = ConfigDict(frozen=True)
-    
+
     asr_low_confidence: bool = False
     ocr_sparse: bool = False
     visual_ambiguous: bool = False
@@ -201,7 +203,7 @@ class UncertaintyFlags(BaseModel):
 class MediaAnalyzed(BaseModel):
     """Complete output of the Media Analyzer (Phase 10)."""
     model_config = ConfigDict(frozen=True)
-    
+
     job_id: str
     status: str = "COMPLETED"
     asr_segments: list[AsrSegment] = Field(default_factory=list)
@@ -227,16 +229,16 @@ class LocationCandidate(BaseModel):
     latitude: float = Field(..., ge=-90.0, le=90.0)
     longitude: float = Field(..., ge=-180.0, le=180.0)
     confidence: float = Field(ge=0.0, le=1.0)
-    
+
     match_type: Literal["visual", "asr_text", "ocr_text", "metadata", "fused"] = "fused"
-    
+
     matched_clues: list[str] = Field(default_factory=list)
-    
+
     evidence: dict[str, Any] = Field(
         default_factory=dict,
         description="Detailed breakdown of scores (e.g. CLIP similarity, ASR text match, geospatial distance)"
     )
-    
+
     explanation: str = Field(description="Transparent reasoning explaining why this place was proposed")
 
 
@@ -266,7 +268,7 @@ class VerifiedPlace(BaseModel):
     candidates_reviewed: list[LocationCandidate] = Field(default_factory=list)
     nearby_experiences: list[NearbyExperiencePreview] = Field(default_factory=list)
     verified_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    
+
     public_media_urls: dict[str, str] = Field(
         default_factory=dict,
         description="Presigned S3 URLs for keyframes/audio clips that corroborate this location"
@@ -300,7 +302,7 @@ class MediaLocationResponse(BaseModel):
 class MediaLocationGraph(BaseModel):
     """API response payload for Media Location resolution (Phase 11)."""
     model_config = ConfigDict(frozen=True)
-    
+
     job_id: str
     analysis_job_id: str
     candidates: list[LocationCandidate] = Field(default_factory=list)

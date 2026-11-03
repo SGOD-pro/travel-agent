@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from contracts.artifacts import Artifact, ArtifactStatus
@@ -81,16 +81,20 @@ class SqlAlchemyArtifactRepository(ArtifactRepositoryPort):
     async def update_status(
         self,
         artifact_id: uuid.UUID,
-        status: str,
-        size_bytes: int | None = None,
-        download_url: str | None = None,
+        status: ArtifactStatus,
+        url: str | None = None,
+        file_size_bytes: int | None = None,
+        error_message: str | None = None,
     ) -> None:
-        values: dict[str, Any] = {"status": status}
-        if size_bytes is not None:
-            values["size_bytes"] = size_bytes
-        if download_url is not None:
-            values["download_url"] = download_url
-
-        await self._session.execute(
-            update(ArtifactModel).where(ArtifactModel.id == artifact_id).values(**values)
-        )
+        model = await self._session.get(ArtifactModel, artifact_id)
+        if model is None:
+            return
+        model.status = status.value
+        if file_size_bytes is not None:
+            model.size_bytes = file_size_bytes
+        if url is not None:
+            model.download_url = url
+        if error_message is not None:
+            metadata = dict(model.meta or {})
+            metadata["error"] = error_message
+            model.meta = metadata

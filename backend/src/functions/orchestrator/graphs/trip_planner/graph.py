@@ -58,6 +58,7 @@ _DEFAULT_RUNNABLE_CONFIG: RunnableConfig = cast(RunnableConfig, {})
 class TripPlanningState(TypedDict, total=False):
     trip_id: str
     version: int
+    end_node_index: int
     brief: dict[str, Any]
     discovered_places: list[dict[str, Any]]
     optimized_schedule: dict[str, Any]
@@ -151,6 +152,7 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
         origin_lng=brief.origin_lng,
         stops=places,
         start_datetime=start_dt,
+        end_node_index=state.get("end_node_index"),
     )
 
     return {

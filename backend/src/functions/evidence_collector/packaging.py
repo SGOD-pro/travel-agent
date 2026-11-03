@@ -20,6 +20,12 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from functions.lambda_packaging import (
+    LAMBDA_TARGET_FINGERPRINT,
+    install_lambda_requirements,
+    run_lambda_python,
+)
+
 logger = logging.getLogger(__name__)
 
 MAX_COMPRESSED_BYTES: int = 50 * 1024 * 1024  # 50 MB
@@ -125,7 +131,9 @@ def build_isolated_collector_artifact(
     output_dir = output_dir.resolve()
     zip_path = zip_path.resolve()
 
-    requirements_hash = hashlib.sha256(requirements_path.read_bytes()).hexdigest()
+    requirements_hash = hashlib.sha256(
+        requirements_path.read_bytes() + b"\n" + LAMBDA_TARGET_FINGERPRINT
+    ).hexdigest()
     hash_file = output_dir / ".requirements.hash"
 
     cached_dependencies_valid = (
@@ -144,37 +152,7 @@ def build_isolated_collector_artifact(
         output_dir.mkdir(parents=True, exist_ok=True)
         zip_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 1. Install runtime dependencies via uv pip into target directory
-        cmd = [
-            "uv",
-            "pip",
-            "install",
-            "--python",
-            runtime_python,
-            "--target",
-            str(output_dir),
-            "-r",
-            str(requirements_path),
-            "--link-mode=copy",
-        ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if res.returncode != 0:
-            # Fallback to standard pip if uv pip fails
-            pip_cmd = [
-                runtime_python,
-                "-m",
-                "pip",
-                "install",
-                "--target",
-                str(output_dir),
-                "-r",
-                str(requirements_path),
-            ]
-            sub_res = subprocess.run(pip_cmd, capture_output=True, text=True, check=False)
-            if sub_res.returncode != 0:
-                raise RuntimeError(
-                    f"Failed to install runtime dependencies into {output_dir}: {res.stderr}\n{sub_res.stderr}"
-                )
+        install_lambda_requirements(output_dir, requirements_path, runtime_python)
 
         hash_file.write_text(requirements_hash, encoding="utf-8")
     else:
@@ -338,14 +316,7 @@ print("OK")
         "MAX_SOURCE_PAYLOAD_BYTES": "5242880",
     }
 
-    res = subprocess.run(
-        [runtime_python, "-S", "-P", "-c", verify_script],
-        cwd=str(artifact_dir.resolve()),
-        env=clean_env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    res = run_lambda_python(verify_script, artifact_dir, clean_env, runtime_python)
     if res.returncode != 0:
         raise RuntimeError(
             f"Handler verification failed in clean environment:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"

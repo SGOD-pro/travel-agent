@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import uuid
 from typing import Any
@@ -53,3 +54,9 @@ async def extract_media_handler(payload: dict[str, Any]) -> dict[str, Any]:
 
     # 5. Dump to JSON-serializable dictionary (includes media_id and correlation_id)
     return result.model_dump(mode="json")
+
+
+def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
+    """AWS Lambda entrypoint for direct media-extraction invocations."""
+    del context
+    return asyncio.run(extract_media_handler(event))

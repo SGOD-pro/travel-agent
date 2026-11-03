@@ -21,7 +21,6 @@ import {
   ChevronRight,
   Route,
   Receipt,
-  CheckCircle2,
   Building2,
   RefreshCw,
   Server,
@@ -33,6 +32,7 @@ import {
 import CorridorMapWrapper from "@/components/map/CorridorMapWrapper";
 import CorridorWeatherAdvisory, { StopWeather } from "@/components/weather/CorridorWeatherAdvisory";
 import VoiceBriefAssistant from "@/components/voice/VoiceBriefAssistant";
+import { useAuth } from "@/components/providers/AuthProvider";
 
 // ============================================================================
 // ALL-INDIA GEODIRECTORY & PRESETS
@@ -250,6 +250,29 @@ interface ScheduledStop {
   stayHours: number;
 }
 
+interface BackendTripPlan {
+  destination_source?: "verified_media" | "trip_brief";
+  schedule?: {
+    stops?: Array<{
+      position: number;
+      name: string;
+      arrival_time: string;
+      departure_time: string;
+    }>;
+    legs?: Array<{
+      from_stop: string;
+      to_stop: string;
+      distance_km: number;
+      duration_minutes: number;
+    }>;
+    total_travel_minutes?: number;
+  };
+  budget_summary?: {
+    known_total?: { amount: number | string; currency: string };
+    is_complete?: boolean;
+  };
+}
+
 function computeDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371;
   const dLat = ((lat2 - lat1) * Math.PI) / 180;
@@ -264,7 +287,22 @@ function computeDistanceKm(lat1: number, lon1: number, lat2: number, lon2: numbe
   return Math.max(20, Math.round(R * c * 1.28));
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character];
+  });
+}
+
 function DashboardContent() {
+  const { user, login } = useAuth();
+  const demoMode = user?.isDemo ?? true;
   const searchParams = useSearchParams();
   const corridorParam = searchParams.get("corridor");
 
@@ -288,6 +326,10 @@ function DashboardContent() {
   const [adults, setAdults] = useState(2);
   const [rooms, setRooms] = useState(1);
   const [mode, setMode] = useState<"car" | "motorcycle">("car");
+  const [includeTravel, setIncludeTravel] = useState(true);
+  const [includeMedia, setIncludeMedia] = useState(false);
+  const [includeRoute, setIncludeRoute] = useState(false);
+  const [mediaUrl, setMediaUrl] = useState("");
 
   // Destination list with guaranteed unique keys
   const [destinations, setDestinations] = useState<DestinationItem[]>([
@@ -301,7 +343,14 @@ function DashboardContent() {
   const [activeTab, setActiveTab] = useState<"itinerary" | "map" | "budget" | "recommendations" | "evidence">("itinerary");
   const [evidenceModalOpen, setEvidenceModalOpen] = useState(false);
   const [apiStatus, setApiStatus] = useState<"offline" | "connected" | "checking">("checking");
-  const [serverTripId, setServerTripId] = useState<string>("urn:swena:trip:pan-india-circuit-2026");
+  const [serverTripId, setServerTripId] = useState<string>("");
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [activeJobStatus, setActiveJobStatus] = useState<string | null>(null);
+  const [jobProgress, setJobProgress] = useState<Record<string, number> | null>(null);
+  const [jobEvents, setJobEvents] = useState<Array<{ event_type: string }>>([]);
+  const [jobError, setJobError] = useState<string | null>(null);
+  const [backendTripPlan, setBackendTripPlan] = useState<BackendTripPlan | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
 
   // Editable vehicle efficiency and fuel price
@@ -319,11 +368,10 @@ function DashboardContent() {
 
   // Check backend health
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 2000);
 
-    fetch(`${apiBase}/health`, { signal: controller.signal })
+    fetch("/api/health", { signal: controller.signal })
       .then((res) => setApiStatus(res.ok ? "connected" : "offline"))
       .catch(() => setApiStatus("offline"))
       .finally(() => clearTimeout(timer));
@@ -345,7 +393,6 @@ function DashboardContent() {
         };
       })
     );
-    setServerTripId(`urn:swena:trip:${circuit.id}-2026`);
   };
 
   const handleOriginChange = (val: string) => {
@@ -435,6 +482,32 @@ function DashboardContent() {
 
   const totalDistanceKm = scheduledLegs.reduce((acc, l) => acc + l.distanceKm, 0);
   const totalTravelMins = scheduledLegs.reduce((acc, l) => acc + l.durationMins, 0);
+  const backendSchedule = backendTripPlan?.schedule;
+  const hasBackendSchedule = Boolean(backendSchedule?.stops?.length);
+  const itineraryStops: ScheduledStop[] = hasBackendSchedule
+    ? (backendSchedule?.stops ?? []).map((stop) => ({
+        position: stop.position,
+        name: stop.name,
+        arrival: new Date(stop.arrival_time).toLocaleString(),
+        departure: new Date(stop.departure_time).toLocaleString(),
+        stayHours: 0,
+      }))
+    : scheduledStops;
+  const itineraryLegs: ScheduledLeg[] = hasBackendSchedule
+    ? (backendSchedule?.legs ?? []).map((leg) => ({
+        from: leg.from_stop,
+        to: leg.to_stop,
+        distanceKm: leg.distance_km,
+        durationMins: leg.duration_minutes,
+      }))
+    : scheduledLegs;
+  const itineraryDistanceKm = hasBackendSchedule
+    ? itineraryLegs.reduce((total, leg) => total + leg.distanceKm, 0)
+    : totalDistanceKm;
+  const itineraryTravelMins = hasBackendSchedule
+    ? backendSchedule?.total_travel_minutes ??
+      itineraryLegs.reduce((total, leg) => total + leg.durationMins, 0)
+    : totalTravelMins;
   const fuelLiters = (totalDistanceKm / mileage).toFixed(1);
   const fuelTotalCost = Math.round(parseFloat(fuelLiters) * fuelPricePerLiter);
   const hotelEstimatedTotal = destinations.reduce((acc, d) => acc + d.stayDays * rooms * 3500, 0);
@@ -518,78 +591,297 @@ function DashboardContent() {
     totalTravelMins / 60
   )} hours with fuel consumption estimated at ${fuelLiters} liters.`;
 
-  const triggerPlanning = async () => {
-    setIsPlanning(true);
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  const isJobActive =
+    activeJobStatus !== null &&
+    !["SUCCEEDED", "FAILED", "CANCELLED", "PARTIAL"].includes(activeJobStatus);
 
-    try {
-      const createRes = await fetch(`${apiBase}/api/v1/trips`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          owner_id: "00000000-0000-0000-0000-000000000001",
-          brief: {
-            origin_name: origin,
-            origin_lat: originLat,
-            origin_lng: originLng,
-            destinations: destinations.map((d) => ({
-              name: d.name,
-              latitude: d.lat,
-              longitude: d.lng,
-              confidence: 1.0,
-              stay_days: d.stayDays,
-            })),
-            start_date: startDate,
-            end_date: endDate,
-            adults,
-            rooms,
-            preferred_modes: [mode === "car" ? "car_petrol" : "motorcycle_petrol"],
-          },
-        }),
-      });
+  useEffect(() => {
+    if (!activeJobId || demoMode) return;
 
-      if (createRes.ok) {
-        const tripData = await createRes.json();
-        setServerTripId(tripData.id);
-        const planRes = await fetch(`${apiBase}/api/v1/trips/${tripData.id}/plan`, { method: "POST" });
-        if (planRes.ok) setApiStatus("connected");
-      } else {
+    let disposed = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    const pollJob = async () => {
+      try {
+        const response = await fetch(`/api/jobs/${activeJobId}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail ?? "Unable to retrieve planning job status.");
+        }
+        if (disposed) return;
+
+        setActiveJobStatus(data.status);
+        setJobProgress(data.progress ?? null);
+        setJobEvents(data.timeline ?? []);
+        setJobError(data.error?.message ?? null);
+        setBackendTripPlan(data.result?.travel_plan ?? null);
+        if (["SUCCEEDED", "FAILED", "CANCELLED", "PARTIAL"].includes(data.status)) {
+          return;
+        }
+        timeout = setTimeout(pollJob, Math.max(2, data.retry_after_seconds ?? 5) * 1000);
+      } catch (error) {
+        if (disposed) return;
+        setApiError(error instanceof Error ? error.message : "Unable to retrieve planning job status.");
         setApiStatus("offline");
       }
-    } catch {
+    };
+
+    void pollJob();
+    return () => {
+      disposed = true;
+      clearTimeout(timeout);
+    };
+  }, [activeJobId, demoMode]);
+
+  const triggerPlanning = async () => {
+    setIsPlanning(true);
+    setApiError(null);
+    setActiveJobId(null);
+    setActiveJobStatus(null);
+    setJobError(null);
+    setBackendTripPlan(null);
+
+    try {
+      const products = [
+        ...(includeMedia ? ["media"] : []),
+        ...(includeTravel ? ["travel"] : []),
+        ...(includeRoute ? ["route"] : []),
+      ];
+      if (products.length === 0) {
+        throw new Error("Select at least one product to run.");
+      }
+
+      if (includeMedia) {
+        let parsedMediaUrl: URL;
+        try {
+          parsedMediaUrl = new URL(mediaUrl);
+          if (!["http:", "https:"].includes(parsedMediaUrl.protocol)) {
+            throw new Error();
+          }
+        } catch {
+          throw new Error("Enter a valid social media URL for media discovery.");
+        }
+      }
+
+      if (demoMode && (includeMedia || includeRoute)) {
+        throw new Error(
+          "Sign in with a verified account to run backend media discovery or route optimization. Demo mode only simulates trip planning."
+        );
+      }
+
+      const routeRequest = {
+        origin_name: origin,
+        origin_lat: originLat,
+        origin_lng: originLng,
+        destinations: destinations.map((destination) => ({
+          name: destination.name,
+          lat: destination.lat,
+          lng: destination.lng,
+          stay_minutes: Math.min(destination.stayDays * 60, 1440),
+        })),
+        start_datetime: `${startDate}T09:00:00+05:30`,
+        average_speed_kmh: mode === "car" ? 45 : 40,
+        vehicle_mileage_kmpl: mileage,
+        fuel_price_per_liter: fuelPricePerLiter,
+      };
+
+      if (demoMode) {
+        const demoId = `local-demo-${crypto.randomUUID()}`;
+        setServerTripId(demoId);
+        setPlannedVersion((version) => version + 1);
+        setActiveJobId(demoId);
+        setActiveJobStatus("SUCCEEDED");
+        setJobProgress({ tasks_completed: products.length, tasks_total: products.length });
+        setJobEvents([{ event_type: "local_demo_simulation_completed" }]);
+        return;
+      }
+
+      let tripId: string | null = null;
+      if (includeTravel) {
+        const createResponse = await fetch("/api/trips", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            brief: {
+              origin_name: origin,
+              origin_lat: originLat,
+              origin_lng: originLng,
+              destinations: destinations.map((destination) => ({
+                name: destination.name,
+                latitude: destination.lat,
+                longitude: destination.lng,
+                confidence: 1.0,
+                stay_days: destination.stayDays,
+              })),
+              start_date: startDate,
+              end_date: endDate,
+              adults,
+              rooms,
+              preferred_modes: [mode === "car" ? "car_petrol" : "motorcycle_petrol"],
+            },
+          }),
+        });
+        const tripData = await createResponse.json();
+        if (!createResponse.ok) {
+          throw new Error(tripData.detail ?? "Unable to save the trip brief.");
+        }
+        tripId = tripData.id;
+        setServerTripId(tripData.id);
+        setPlannedVersion(tripData.current_version);
+      } else {
+        setServerTripId("");
+      }
+
+      const headers = {
+        "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
+      };
+      let jobResponse: Response;
+      if (includeTravel && tripId) {
+        jobResponse = await fetch(`/api/trips/${tripId}/plans`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            products,
+            ...(includeMedia ? { media_url: mediaUrl } : {}),
+          }),
+        });
+      } else if (includeMedia) {
+        jobResponse = await fetch("/api/discovery/media", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            products,
+            media_url: mediaUrl,
+            ...(includeRoute ? { route_request: routeRequest } : {}),
+          }),
+        });
+      } else {
+        jobResponse = await fetch("/api/optimization/routes", {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ products, route_request: routeRequest }),
+        });
+      }
+
+      const jobData = await jobResponse.json();
+      if (!jobResponse.ok) {
+        throw new Error(jobData.detail ?? "Unable to start the selected workflow.");
+      }
+      setActiveJobId(jobData.job_id);
+      setActiveJobStatus(jobData.status);
+      setApiStatus("connected");
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Unable to submit trip planning request.");
       setApiStatus("offline");
     } finally {
       setIsPlanning(false);
-      setPlannedVersion((prev) => prev + 1);
+    }
+  };
+
+  const cancelPlanning = async () => {
+    if (!activeJobId || demoMode) return;
+    setApiError(null);
+    try {
+      const response = await fetch(`/api/jobs/${activeJobId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "Cancelled from the trip planning dashboard" }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail ?? "Unable to cancel planning job.");
+      }
+      setActiveJobStatus(data.status);
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Unable to cancel planning job.");
     }
   };
 
   const handleExportPdf = async () => {
     setIsExporting(true);
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+    setApiError(null);
 
     try {
-      if (serverTripId && serverTripId.includes("-")) {
-        const res = await fetch(`${apiBase}/api/v1/trips/${serverTripId}/exports`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ trip_version: plannedVersion, format: "pdf" }),
+      if (demoMode) {
+        const printWindow = window.open("", "_blank");
+        if (!printWindow) {
+          throw new Error("Allow pop-ups to open the local demo export.");
+        }
+
+        const destinationRows = destinations
+          .map(
+            (destination) =>
+              `<li>${escapeHtml(destination.name)} — ${destination.stayDays} nights</li>`
+          )
+          .join("");
+        printWindow.document.write(`<!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>Local demo trip plan</title>
+              <style>
+                body { font: 16px Arial, sans-serif; color: #17241d; margin: 40px; }
+                .notice { padding: 12px; border: 1px solid #b7791f; background: #fffaf0; }
+                button { padding: 10px 16px; margin: 16px 0; cursor: pointer; }
+                @media print { button { display: none; } body { margin: 0; } }
+              </style>
+            </head>
+            <body>
+              <h1>Trip plan — local demo</h1>
+              <p class="notice">Demo estimate only. This document was generated locally; it is not a backend-generated or verified itinerary.</p>
+              <p><strong>Origin:</strong> ${escapeHtml(origin)}</p>
+              <p><strong>Travel dates:</strong> ${escapeHtml(startDate)} to ${escapeHtml(endDate)}</p>
+              <p><strong>Travel mode:</strong> ${escapeHtml(mode)}</p>
+              <h2>Destinations</h2>
+              <ul>${destinationRows}</ul>
+              <p><strong>Estimated distance:</strong> ${totalDistanceKm} km</p>
+              <p><strong>Estimated driving time:</strong> ${Math.floor(totalTravelMins / 60)}h ${totalTravelMins % 60}m</p>
+              <p><strong>Estimated fuel:</strong> ${fuelLiters} L</p>
+              <button onclick="window.print()">Print / Save as PDF</button>
+            </body>
+          </html>`);
+        printWindow.document.close();
+        return;
+      }
+
+      if (!serverTripId) {
+        throw new Error("Save a trip brief before exporting a PDF.");
+      }
+
+      const response = await fetch(`/api/trips/${serverTripId}/exports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trip_version: plannedVersion, format: "pdf" }),
+      });
+      const exportData = await response.json();
+      if (!response.ok) {
+        throw new Error(exportData.detail ?? "Unable to create the PDF export.");
+      }
+
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const artifactResponse = await fetch(`/api/artifacts/${exportData.artifact_id}`, {
+          cache: "no-store",
         });
-        if (res.ok) {
-          const data = await res.json();
-          window.open(`${apiBase}/api/v1/artifacts/${data.artifact_id}/download`, "_blank");
-          setIsExporting(false);
+        const artifact = await artifactResponse.json();
+        if (!artifactResponse.ok) {
+          throw new Error(artifact.detail ?? "Unable to retrieve PDF export status.");
+        }
+        if (artifact.status === "completed") {
+          window.location.assign(`/api/artifacts/${exportData.artifact_id}/download`);
           return;
         }
+        if (artifact.status === "failed") {
+          throw new Error("The backend could not generate this PDF.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
-    } catch {
-      // local fallback print
-    }
-
-    setTimeout(() => {
+      throw new Error("PDF generation is still processing. Try again shortly.");
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "Unable to export trip PDF.");
+    } finally {
       setIsExporting(false);
-      window.print();
-    }, 600);
+    }
   };
 
   return (
@@ -607,7 +899,17 @@ function DashboardContent() {
         </div>
 
         <div className="flex items-center flex-wrap gap-3">
-          {apiStatus === "connected" ? (
+          {user?.isLocalAuth ? (
+            <div className="glass-panel px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 text-amber-200 border border-amber-500/30">
+              <span className="h-2 w-2 rounded-full bg-amber-300" />
+              <span>Local backend auth bypass</span>
+            </div>
+          ) : demoMode ? (
+            <div className="glass-panel px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 text-amber-200 border border-amber-500/30">
+              <span className="h-2 w-2 rounded-full bg-amber-300" />
+              <span>Local demo — protected actions are simulated</span>
+            </div>
+          ) : apiStatus === "connected" ? (
             <div className="glass-panel px-3 py-1.5 rounded-xl text-xs flex items-center gap-1.5 text-[#B7C9AD] border border-[#B7C9AD]/30">
               <span className="h-2 w-2 rounded-full bg-[#B7C9AD] animate-pulse" />
               <span>FastAPI Backend Active</span>
@@ -629,6 +931,120 @@ function DashboardContent() {
           </div>
         </div>
       </div>
+
+      {apiError && (
+        <div
+          role="alert"
+          className="mb-6 rounded-xl border border-red-500/30 bg-red-950/30 px-4 py-3 text-sm text-red-200"
+        >
+          {apiError}
+        </div>
+      )}
+      {user?.isLocalAuth && (
+        <div
+          role="alert"
+          className="mb-6 rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-sm text-amber-100"
+        >
+          Local auth bypass is enabled. Requests use a shared development identity without
+          credentials; keep this backend private and disable the bypass before any deployment.
+        </div>
+      )}
+      {demoMode && (
+        <div className="mb-6 flex flex-col gap-3 rounded-xl border border-amber-500/30 bg-amber-950/20 px-4 py-3 text-sm text-amber-100 sm:flex-row sm:items-center sm:justify-between">
+          <span>
+            Local demo mode uses simulated planning and a printable estimate only. It does not call
+            protected backend endpoints or perform media discovery, route optimization, or verified exports.
+          </span>
+          <button
+            onClick={login}
+            className="self-start rounded-lg bg-[#B7C9AD] px-3 py-1.5 text-xs font-semibold text-[#102D25] sm:self-auto"
+          >
+            Sign in for backend actions
+          </button>
+        </div>
+      )}
+      {activeJobId && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="mb-6 flex flex-col gap-3 rounded-xl border border-[#B7C9AD]/30 bg-[#15271F] px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="text-sm text-[#F7F7F2]">
+            <span className="font-semibold">Workflow: {activeJobStatus ?? "PENDING"}</span>
+            {jobProgress && (
+              <span className="ml-3 text-xs text-[#A9B8AD]">
+                {jobProgress.tasks_completed ?? 0}/{jobProgress.tasks_total ?? 0} tasks complete
+              </span>
+            )}
+            {jobEvents.length > 0 && (
+              <span className="ml-3 text-xs text-[#A9B8AD]">
+                Latest event: {jobEvents[jobEvents.length - 1].event_type}
+              </span>
+            )}
+            {activeJobStatus === "SUCCEEDED" && (
+              <p className="mt-1 text-xs text-[#A9B8AD]">
+                {demoMode
+                  ? "Local demo simulation finished; no protected backend processing or verification occurred."
+                  : backendTripPlan
+                    ? "The backend-generated itinerary is shown below. Other figures remain local estimates."
+                    : "The backend completed the selected products, but this request did not return a trip itinerary. Select Trip planning to generate one."}
+              </p>
+            )}
+            {backendTripPlan?.schedule && (
+              <section className="mt-3 rounded-lg border border-[#B7C9AD]/20 bg-[#0D1915] p-3">
+                <h3 className="text-sm font-semibold text-[#B7C9AD]">Backend-generated itinerary</h3>
+                <ol className="mt-2 space-y-2 text-xs">
+                  {backendTripPlan.schedule.stops?.map((stop) => (
+                    <li key={`${stop.position}-${stop.name}`}>
+                      <span className="font-semibold">{stop.position + 1}. {stop.name}</span>
+                      <span className="ml-2 text-[#A9B8AD]">
+                        {new Date(stop.arrival_time).toLocaleString()} –{" "}
+                        {new Date(stop.departure_time).toLocaleString()}
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                {backendTripPlan.schedule.legs?.map((leg) => (
+                  <p key={`${leg.from_stop}-${leg.to_stop}`} className="mt-1 text-xs text-[#A9B8AD]">
+                    {leg.from_stop} → {leg.to_stop}: {leg.distance_km.toFixed(1)} km,{" "}
+                    {leg.duration_minutes} min
+                  </p>
+                ))}
+                {backendTripPlan.budget_summary?.known_total && (
+                  <p className="mt-2 text-xs text-[#A9B8AD]">
+                    Known cost estimate: {backendTripPlan.budget_summary.known_total.currency}{" "}
+                    {Number(backendTripPlan.budget_summary.known_total.amount).toLocaleString()}
+                    {backendTripPlan.budget_summary.is_complete === false &&
+                      " (some costs remain unverified)"}
+                  </p>
+                )}
+              </section>
+            )}
+            {activeJobStatus === "FAILED" && (
+              <p role="alert" className="mt-1 text-xs text-red-200">
+                Workflow failed: {jobError ?? "The backend could not complete this request."}
+              </p>
+            )}
+            {activeJobStatus === "PARTIAL" && (
+              <p className="mt-1 text-xs text-amber-200">
+                {backendTripPlan
+                  ? backendTripPlan.destination_source === "verified_media"
+                    ? "This itinerary uses independently verified locations from the linked media and ends at the last returned location."
+                    : "No linked-media locations were independently verified, so this itinerary uses the destinations you entered."
+                  : "Workflow finished with partial results. Check the selected products and media configuration; a complete itinerary may not have been generated."}
+              </p>
+            )}
+          </div>
+          {isJobActive && (
+            <button
+              onClick={cancelPlanning}
+              className="self-start rounded-lg border border-red-400/30 px-3 py-1.5 text-xs font-semibold text-red-200 hover:bg-red-950/40 sm:self-auto"
+            >
+              Cancel workflow
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Pan-India Circuit Presets Ribbon */}
       <div className="mb-8">
@@ -665,6 +1081,60 @@ function DashboardContent() {
             </div>
 
             <div className="space-y-4 text-xs">
+              <fieldset className="space-y-2 rounded-xl border border-[#233e32] bg-[#0D1915] p-3">
+                <legend className="px-1 font-semibold uppercase tracking-wider text-[#A9B8AD]">
+                  Products to run
+                </legend>
+                <label className="flex items-center gap-2 text-[#F7F7F2]">
+                  <input
+                    type="checkbox"
+                    checked={includeTravel}
+                    onChange={(event) => setIncludeTravel(event.target.checked)}
+                  />
+                  <span>Trip planning</span>
+                </label>
+                <label className="flex items-center gap-2 text-[#F7F7F2]">
+                  <input
+                    type="checkbox"
+                    checked={includeMedia}
+                    onChange={(event) => setIncludeMedia(event.target.checked)}
+                  />
+                  <span>Media discovery</span>
+                </label>
+                <label className="flex items-center gap-2 text-[#F7F7F2]">
+                  <input
+                    type="checkbox"
+                    checked={includeRoute}
+                    onChange={(event) => setIncludeRoute(event.target.checked)}
+                  />
+                  <span>Route optimization</span>
+                </label>
+                {includeMedia && (
+                  <>
+                    <input
+                      type="url"
+                      value={mediaUrl}
+                      onChange={(event) => setMediaUrl(event.target.value)}
+                      placeholder="YouTube video or direct media file URL"
+                      aria-label="YouTube video or direct media file URL for media discovery"
+                      className="w-full rounded-lg border border-[#233e32] bg-[#15271F] px-3 py-2 text-[#F7F7F2] placeholder:text-[#A9B8AD]/60"
+                    />
+                    <p className="text-[11px] leading-relaxed text-[#A9B8AD]">
+                      YouTube links use public captions only; direct media files must use a
+                      configured allowed host. Select Trip planning to use this form&apos;s origin.
+                      Verified locations from the link become itinerary stops, ending at the last
+                      returned location. If none are verified, your entered destinations are used.
+                    </p>
+                    {!includeTravel && (
+                      <p className="text-[11px] leading-relaxed text-amber-200">
+                        Media discovery alone does not create an itinerary. Select Trip planning
+                        as well to request a trip plan.
+                      </p>
+                    )}
+                  </>
+                )}
+              </fieldset>
+
               {/* Origin */}
               <div>
                 <label className="block text-[#A9B8AD] mb-1 font-medium uppercase tracking-wider">
@@ -862,18 +1332,28 @@ function DashboardContent() {
               {/* Submit / Re-solve */}
               <button
                 onClick={triggerPlanning}
-                disabled={isPlanning}
+                disabled={
+                  isPlanning ||
+                  (!includeTravel && !includeMedia && !includeRoute) ||
+                  (includeMedia && !mediaUrl.trim())
+                }
                 className="btn-sage w-full py-3 rounded-xl font-bold flex items-center justify-center gap-2 text-sm mt-4 shadow-lg disabled:opacity-60"
               >
                 {isPlanning ? (
                   <>
                     <RefreshCw className="h-4 w-4 animate-spin" />
-                    <span>OR-Tools Solving Constraints...</span>
+                    <span>Submitting workflow...</span>
                   </>
                 ) : (
                   <>
                     <Sparkles className="h-4 w-4" />
-                    <span>Compile & Re-solve Schedule</span>
+                    <span>
+                      {includeTravel
+                        ? "Compile Trip Plan"
+                        : includeMedia
+                          ? "Discover Media Locations"
+                          : "Optimize Route"}
+                    </span>
                   </>
                 )}
               </button>
@@ -972,19 +1452,19 @@ function DashboardContent() {
 
               <div className="grid grid-cols-3 gap-3">
                 <div className="glass-card p-4 rounded-2xl border border-[#233e32]">
-                  <span className="text-[11px] text-[#A9B8AD] block">Total Road Distance</span>
-                  <span className="text-lg font-bold text-[#F7F7F2]">{totalDistanceKm} km</span>
+                  <span className="text-[11px] text-[#A9B8AD] block">Estimated Road Distance</span>
+                  <span className="text-lg font-bold text-[#F7F7F2]">{itineraryDistanceKm.toFixed(1)} km</span>
                 </div>
                 <div className="glass-card p-4 rounded-2xl border border-[#233e32]">
-                  <span className="text-[11px] text-[#A9B8AD] block">Est. Driving Time</span>
+                  <span className="text-[11px] text-[#A9B8AD] block">Estimated Driving Time</span>
                   <span className="text-lg font-bold text-[#F7F7F2]">
-                    {Math.floor(totalTravelMins / 60)}h {totalTravelMins % 60}m
+                    {Math.floor(itineraryTravelMins / 60)}h {itineraryTravelMins % 60}m
                   </span>
                 </div>
                 <div className="glass-card p-4 rounded-2xl border border-[#233e32]">
-                  <span className="text-[11px] text-[#A9B8AD] block">Constraint Solver</span>
+                  <span className="text-[11px] text-[#A9B8AD] block">Schedule Source</span>
                   <span className="text-lg font-bold text-[#B7C9AD] flex items-center gap-1">
-                    <CheckCircle2 className="h-4 w-4" /> Optimal
+                    <Clock className="h-4 w-4" /> {hasBackendSchedule ? "Backend route" : "Local estimate"}
                   </span>
                 </div>
               </div>
@@ -996,7 +1476,12 @@ function DashboardContent() {
                 </h3>
 
                 <div className="relative pl-6 border-l-2 border-[#233e32] space-y-8 ml-3">
-                  {scheduledStops.map((stop, idx) => (
+                  {backendTripPlan?.destination_source === "trip_brief" && activeJobStatus === "PARTIAL" && (
+                    <p className="text-xs text-amber-200">
+                      No linked-media locations were independently verified, so the entered destinations are shown.
+                    </p>
+                  )}
+                  {itineraryStops.map((stop, idx) => (
                     <div key={`stop-timeline-${stop.position}-${idx}`} className="relative">
                       <div className="absolute -left-[31px] top-0.5 h-4 w-4 rounded-full bg-[#15271F] border-2 border-[#B7C9AD]" />
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
@@ -1015,7 +1500,7 @@ function DashboardContent() {
                           <div className="bg-[#0D1915] px-3 py-1.5 rounded-xl border border-[#233e32] text-xs">
                             <span className="text-[#A9B8AD]">Transit Leg: </span>
                             <span className="font-semibold text-[#B7C9AD]">
-                              {scheduledLegs[idx - 1].distanceKm} km ({Math.floor(scheduledLegs[idx - 1].durationMins / 60)}h {scheduledLegs[idx - 1].durationMins % 60}m)
+                              {itineraryLegs[idx - 1]?.distanceKm} km ({Math.floor((itineraryLegs[idx - 1]?.durationMins ?? 0) / 60)}h {(itineraryLegs[idx - 1]?.durationMins ?? 0) % 60}m)
                             </span>
                           </div>
                         )}
@@ -1213,7 +1698,9 @@ function DashboardContent() {
                 ✕ Close
               </button>
             </div>
-            <p className="text-xs text-[#A9B8AD]">Trip Aggregate URN: {serverTripId}</p>
+            <p className="text-xs text-[#A9B8AD]">
+              Trip Aggregate ID: {serverTripId || "Not saved yet"}
+            </p>
             <button onClick={() => setEvidenceModalOpen(false)} className="btn-sage w-full py-2 rounded-xl text-xs font-semibold">
               Done Reviewing
             </button>

@@ -416,9 +416,12 @@ class WorkerFencingService:
                 raise LeaseFencingError(
                     f"Lease renewal rejected for task {task_id}: lease token expired or stolen"
                 )
+            lease_expiry = row["lease_expiry"]
+            if not isinstance(lease_expiry, datetime):
+                raise RuntimeError("Lease renewal returned an invalid expiry timestamp")
 
         await self._session.commit()
-        return row["lease_expiry"]
+        return lease_expiry
 
     async def complete_task(
         self,

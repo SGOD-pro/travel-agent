@@ -8,7 +8,7 @@ import time
 import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from config.db import get_session_factory
@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class WorkerState(str, Enum):
+class WorkerState(StrEnum):
     """Lifecycle state of a supervised worker loop."""
 
     STOPPED = "STOPPED"
@@ -154,14 +154,14 @@ class BackgroundDaemon:
         logger.info("Starting task recovery loop")
         while self._running:
             try:
-                result = await self.recovery_service.recover_stalled_tasks(
-                    relay_token=self.relay_token, max_runtime_seconds=25.0
+                result = await self.recovery_service.run_recovery_loop(
+                    max_runtime_seconds=25.0
                 )
-                if result.total_recovered > 0 or result.total_exhausted > 0:
+                if result.total_retried > 0 or result.total_failed > 0:
                     logger.info(
-                        "Recovery run: %d recovered, %d exhausted",
-                        result.total_recovered,
-                        result.total_exhausted,
+                        "Recovery run: %d retried, %d failed",
+                        result.total_retried,
+                        result.total_failed,
                     )
                 await asyncio.sleep(10.0)
             except Exception as e:

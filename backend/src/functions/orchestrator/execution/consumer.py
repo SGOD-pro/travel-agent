@@ -8,8 +8,12 @@ import logging
 import uuid
 from typing import Any
 
+from sqlalchemy import select
+
 from config.db import get_session_factory
+from functions.api.service import build_api_composition_workflow
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
+from functions.orchestrator.execution.models import ExecutionModel
 from functions.orchestrator.execution.runner import (
     ExecutionResumeEvent,
     ExecutionStartEvent,
@@ -38,29 +42,53 @@ async def process_record(record: dict[str, Any], runner: GraphRunnerService) -> 
         raise ValueError("Missing required fields")
 
     execution_id = uuid.UUID(execution_id_str)
-    event_id = uuid.UUID(body["id"]) if "id" in body else None
+    event_id_value = body.get("event_id") or body.get("id")
+    event_id = uuid.UUID(event_id_value) if event_id_value else None
+    outbox_payload = body.get("payload") or body.get("payload_ref") or {}
 
     if kind == "EXECUTION_START":
-        payload_ref = body.get("payload_ref")
-        # Initialize execution start event
+        workflow = str(outbox_payload.get("workflow", body.get("workflow", "TRAVEL")))
+        input_payload = outbox_payload.get("input", outbox_payload)
+        active_graph = None
+        if workflow == "API_COMPOSITION":
+            checkpointer = runner.checkpointer
+            if checkpointer is None:
+                raise ValueError("Composition workflow requires a configured checkpointer")
+            active_graph = build_api_composition_workflow(checkpointer=checkpointer)
         event_start = ExecutionStartEvent(
             execution_id=execution_id,
             event_id=event_id,
-            workflow=body.get("workflow", "TRAVEL"),
-            context_version=body.get("context_version", 1),
-            payload=payload_ref,
+            workflow=workflow,
+            context_version=int(outbox_payload.get("context_version", body.get("context_version", 1))),
+            payload=input_payload,
         )
-        await runner.handle_execution_start(event=event_start)
+        await runner.handle_execution_start(event=event_start, graph=active_graph)
 
     elif kind == "EXECUTION_RESUME":
         task_id = body.get("task_id")
+        resume_workflow: Any = outbox_payload.get("workflow")
+        if resume_workflow is None:
+            async with get_session_factory()() as session:
+                execution_workflow = (
+                    await session.execute(
+                        select(ExecutionModel.workflow).where(ExecutionModel.id == execution_id)
+                    )
+                ).scalar_one_or_none()
+        else:
+            execution_workflow = resume_workflow
+        active_graph = None
+        if execution_workflow == "API_COMPOSITION":
+            checkpointer = runner.checkpointer
+            if checkpointer is None:
+                raise ValueError("Composition workflow requires a configured checkpointer")
+            active_graph = build_api_composition_workflow(checkpointer=checkpointer)
         event_resume = ExecutionResumeEvent(
             execution_id=execution_id,
             event_id=event_id,
             triggered_by_task_id=uuid.UUID(task_id) if task_id else None,
             context_version=body.get("context_version", 1),
         )
-        await runner.handle_execution_resume(event=event_resume)
+        await runner.handle_execution_resume(event=event_resume, graph=active_graph)
 
     else:
         logger.error(f"Unsupported event kind: {kind}")

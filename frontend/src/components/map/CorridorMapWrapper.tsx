@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import type { MapStop, MapPlace } from "./CorridorMap";
+import type { MapStop, MapPlace, RouteGeometry } from "./CorridorMap";
 
 const CorridorMap = dynamic(() => import("./CorridorMap"), {
   ssr: false,
@@ -16,6 +16,7 @@ const CorridorMap = dynamic(() => import("./CorridorMap"), {
 interface CorridorMapWrapperProps {
   stops: MapStop[];
   places?: MapPlace[];
+  routeGeometry?: RouteGeometry;
   activeStopIndex?: number;
   onSelectPlace?: (place: MapPlace) => void;
 }

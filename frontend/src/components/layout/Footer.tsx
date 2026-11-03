@@ -3,7 +3,7 @@ import { Compass } from "lucide-react";
 
 export function Footer() {
   return (
-    <footer className="border-t border-[#233E32] bg-[#0A1411] text-[#A9B8AD] py-14 px-6 sm:px-8">
+    <footer className="border-t border-[#233E32] bg-[#0A1411] text-[#A9B8AD] py-14 px-6 sm:px-8 print:hidden">
       <div className="mx-auto max-w-7xl">
         <div className="grid grid-cols-1 md:grid-cols-12 gap-10 pb-12 border-b border-[#233E32]/60">
           {/* Brand Col (6 cols) */}

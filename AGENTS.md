@@ -63,3 +63,31 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+<!-- BEGIN AWS Agent Toolkit rules -->
+# AWS Guidance for the new AWS experience
+
+Where this guidance conflicts with the project's own instructions, the project's instructions take precedence.
+
+## Context
+
+- Say "project" instead of "account" — a project contains an AWS account and settings for sharing with other collaborators.
+- Say "team member" instead of "IAM user" — users are invited by email, not created or federated in IAM.
+- Say "AWS Settings" when referring to management tasks at https://settings.aws.com/.
+- The user has a managed IAM experience and may need IAM policies for service-to-service access.
+
+## Constraints
+
+- All Regional resources must be created in the project's assigned Region. Confirm the selected Region in AWS Settings or `~/.aws/config`.
+- Do not create Lambda, API Gateway, or other Regional resources in another Region.
+- Do not use Lambda@Edge or CloudFormation StackSets.
+- Do not attempt cross-Region replication or other cross-Region actions unless explicitly supported and required.
+- Ask whether the user wants successfully created resources cleaned up to reduce cost.
+- Direct users to check spend status in AWS Settings > Billing when cost or access problems arise.
+- For AWS tasks, first consult the current AWS Agent Toolkit skill guidance before acting.
+
+## Help level
+
+- Configured help level: LOW.
+- Follow the user's request directly and flag security risks, but do not ask extra clarifying questions or suggest alternatives unless needed to prevent a security vulnerability.
+<!-- END AWS Agent Toolkit rules -->

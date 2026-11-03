@@ -20,9 +20,9 @@ def mock_create_graph(postgres_checkpointer):
     """Mocks the graph creation to use our test graph."""
     graph = build_test_runner_graph(postgres_checkpointer)
     with patch(
-        "functions.orchestrator.execution.consumer.build_trip_planning_graph"
+        "functions.orchestrator.execution.consumer.compile_trip_planning_workflow"
     ) as mock:
-        mock.return_value.compile.return_value = graph
+        mock.return_value = graph
         yield mock
 
 

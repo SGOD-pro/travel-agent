@@ -9,15 +9,15 @@ Conforms to Phase 10:
 
 from __future__ import annotations
 
-import io
+import asyncio
 import logging
 import re
 import time
 import uuid
-from typing import Any
 
 from PIL import Image
 
+from config.config import get_settings
 from contracts.media import (
     AsrObservation,
     ExtractedAudio,
@@ -29,10 +29,12 @@ from contracts.media import (
     OcrObservation,
     UncertaintyFlags,
 )
+from functions.media_analyzer.graph import (
+    LocationGraphBuilder,  # <-- FIXED: Moved local import down
+)
 from functions.media_analyzer.ocr import OcrEngine, map_ocr_to_clues
 from functions.media_analyzer.scene_filter import select_informative_keyframes
 from functions.media_analyzer.transcription import AsrClient, map_asr_to_clues
-from functions.media_analyzer.graph import LocationGraphBuilder  # <-- FIXED: Moved local import down
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +47,61 @@ LANDMARK_PATTERNS = [
 ]
 
 INDIAN_GEOGRAPHIC_TOKENS = {
-    "delhi", "new delhi", "agra", "jaipur", "jodhpur", "udaipur", "pushkar", "jaisalmer",
-    "bengaluru", "bangalore", "mysuru", "mysore", "coorg", "madikeri", "wayanad", "ooty",
-    "munnar", "kochi", "alleppey", "thekkady", "goa", "alibaug", "ratnagiri", "mumbai",
-    "pune", "varanasi", "kashi", "prayagraj", "allahabad", "ayodhya", "lucknow", "rishikesh",
-    "haridwar", "shimla", "manali", "kasol", "dharamshala", "srinagar", "gulmarg", "pahalgam",
-    "leh", "ladakh", "kolkata", "darjeeling", "gangtok", "shillong", "guwahati", "puri",
-    "hampi", "gokarna", "chennai", "madurai", "mahabalipuram", "pondicherry", "hyderabad",
+    "delhi",
+    "new delhi",
+    "agra",
+    "jaipur",
+    "jodhpur",
+    "udaipur",
+    "pushkar",
+    "jaisalmer",
+    "bengaluru",
+    "bangalore",
+    "mysuru",
+    "mysore",
+    "coorg",
+    "madikeri",
+    "wayanad",
+    "ooty",
+    "munnar",
+    "kochi",
+    "alleppey",
+    "thekkady",
+    "goa",
+    "alibaug",
+    "ratnagiri",
+    "mumbai",
+    "pune",
+    "varanasi",
+    "kashi",
+    "prayagraj",
+    "allahabad",
+    "ayodhya",
+    "lucknow",
+    "rishikesh",
+    "haridwar",
+    "shimla",
+    "manali",
+    "kasol",
+    "dharamshala",
+    "srinagar",
+    "gulmarg",
+    "pahalgam",
+    "leh",
+    "ladakh",
+    "kolkata",
+    "darjeeling",
+    "gangtok",
+    "shillong",
+    "guwahati",
+    "puri",
+    "hampi",
+    "gokarna",
+    "chennai",
+    "madurai",
+    "mahabalipuram",
+    "pondicherry",
+    "hyderabad",
 }
 
 
@@ -63,7 +113,15 @@ class MediaAnalyzerService:
         ocr_engine: OcrEngine | None = None,
         asr_client: AsrClient | None = None,
     ) -> None:
-        self.ocr_engine = ocr_engine or OcrEngine()
+        self._provider = get_settings().MEDIA_ANALYSIS_PROVIDER
+        self._aws_analyzer = None
+        if self._provider == "aws":
+            from functions.media_analyzer.aws import AwsMediaAnalyzer
+
+            self._aws_analyzer = AwsMediaAnalyzer()
+            self.ocr_engine = ocr_engine or self._aws_analyzer
+        else:
+            self.ocr_engine = ocr_engine or OcrEngine()
         self.asr_client = asr_client or AsrClient()
 
     async def analyze_media(
@@ -73,6 +131,7 @@ class MediaAnalyzerService:
         frame_images: dict[int, Image.Image] | None = None,
         audio_bytes: bytes | None = None,
         mock_transcript: str | None = None,
+        caption_observation: AsrObservation | None = None,
         job_id: str | None = None,
     ) -> MediaAnalyzed:
         """Runs scene filtering, OCR, ASR, and fuses clues into a unified MediaAnalyzed contract."""
@@ -92,17 +151,38 @@ class MediaAnalyzerService:
                     img = Image.open(kf.file_path)
                 except Exception as e:
                     logger.debug("Failed loading frame image from %s: %s", kf.file_path, e)
-            if img is None:
-                # Synthetic dummy image for metadata-driven OCR
-                img = Image.new("RGB", (kf.width, kf.height), color=(200, 200, 200))
+            if img is None and kf.image_bytes is not None:
+                try:
+                    import io
 
-            obs = self.ocr_engine.extract_text(img, kf)
+                    img = Image.open(io.BytesIO(kf.image_bytes))
+                except Exception as e:
+                    logger.warning("Failed decoding extracted frame %s: %s", kf.frame_index, e)
+            if img is None:
+                continue
+
+            if self._provider == "aws":
+                obs = await asyncio.to_thread(self.ocr_engine.extract_text, img, kf)
+            else:
+                obs = self.ocr_engine.extract_text(img, kf)
             if obs.detected_texts:
                 ocr_observations.append(obs)
 
         # 3. Run ASR on audio if present
         asr_observation: AsrObservation | None = None
-        if audio is not None or audio_bytes is not None or mock_transcript is not None:
+        if caption_observation is not None:
+            asr_observation = caption_observation
+        elif self._provider == "aws" and (audio is not None or audio_bytes is not None):
+            if self._aws_analyzer is None:
+                raise RuntimeError("AWS media analyzer was not initialized.")
+            actual_audio_bytes = audio_bytes or (audio.audio_bytes if audio else None)
+            if actual_audio_bytes is None:
+                raise RuntimeError("Extracted audio bytes are required for AWS Transcribe.")
+            asr_observation = await self._aws_analyzer.transcribe_audio(
+                actual_audio_bytes,
+                job_id=active_job_id,
+            )
+        elif audio is not None or audio_bytes is not None or mock_transcript is not None:
             job_id = await self.asr_client.start_transcription_job(
                 media_uri="in_memory_audio",
                 mock_transcript=mock_transcript,
@@ -129,15 +209,21 @@ class MediaAnalyzerService:
             uncertainty=uncertainty,
             processing_time_ms=runtime_ms,
             models_used={
-                "ocr": "paddleocr-mock",
-                "asr": "whisper-mock",
+                "ocr": "aws-textract" if self._provider == "aws" else "local-fixture",
+                "asr": (
+                    "youtube-captions"
+                    if caption_observation is not None
+                    else "aws-transcribe"
+                    if self._provider == "aws"
+                    else "local-fixture"
+                ),
             },
         )
 
-    def build_location_graph(self, analyzed: MediaAnalyzed) -> MediaLocationGraph:
+    async def build_location_graph(self, analyzed: MediaAnalyzed) -> MediaLocationGraph:
         """Runs the geospatial fusion engine on the analyzed media clues."""
         builder = LocationGraphBuilder()
-        return builder.build_graph(analyzed)
+        return await builder.build_graph(analyzed)
 
     def _fuse_observations(
         self,
@@ -194,14 +280,10 @@ class MediaAnalyzerService:
         asr_obs: AsrObservation | None,
     ) -> UncertaintyFlags:
         """Evaluates confidence thresholds to flag ambiguous or sparse observations."""
-        flags = UncertaintyFlags()
-        
-        if not ocr_obs:
-            flags.ocr_sparse = True
-        if not asr_obs or not asr_obs.full_transcript:
-            flags.asr_low_confidence = True
-            
-        return flags
+        return UncertaintyFlags(
+            ocr_sparse=not ocr_obs,
+            asr_low_confidence=not asr_obs or not asr_obs.full_transcript,
+        )
 
     def _check_for_landmarks_and_geo(self, text: str, landmarks: list[str]) -> None:
         """Helper to scan text for known geographic tokens and landmark keywords."""

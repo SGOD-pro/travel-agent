@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+from .constraints import apply_time_window_constraints
+from .routing import get_transit_matrix
 from .schemas import RouteRequest, RouteResponse
 from .solver import ItineraryScheduler
-from .routing import get_transit_matrix
-from .constraints import apply_time_window_constraints
 
 logger = logging.getLogger(__name__)
 

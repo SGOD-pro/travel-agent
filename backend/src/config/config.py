@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # Environment
     ENVIRONMENT: Literal["local", "staging", "production"] = "local"
     DEBUG: bool = False
+    LOCAL_AUTH_BYPASS: bool = Field(
+        default=False,
+        description="Allow anonymous requests only for explicitly enabled local development",
+    )
 
     # Database (PostgreSQL + PostGIS)
     DATABASE_URL: str = Field(
@@ -54,6 +58,12 @@ class Settings(BaseSettings):
         default="swena_travel_agent_client",
         description="OAuth 2.1 client ID for audience enforcement",
     )
+    CORS_ALLOWED_ORIGINS: list[str] = Field(
+        default=["http://localhost:3000"],
+        description="Explicit browser origins permitted to call the API",
+    )
+    PUBLIC_RATE_LIMIT_REQUESTS: int = Field(default=120, ge=1)
+    PUBLIC_RATE_LIMIT_WINDOW_SECONDS: int = Field(default=60, ge=1)
 
     # AWS Configuration
     AWS_REGION: str = Field(
@@ -82,6 +92,26 @@ class Settings(BaseSettings):
         default=5242880,
         description="Maximum allowed payload download size in bytes",
     )
+    MEDIA_ALLOWED_HOSTS: list[str] = Field(
+        default_factory=list,
+        description="Exact hostnames permitted for direct media downloads",
+    )
+    MEDIA_DOWNLOAD_TIMEOUT_SECONDS: int = Field(default=20, ge=1, le=120)
+    MEDIA_ANALYSIS_PROVIDER: Literal["mock", "aws"] = "mock"
+    MEDIA_GEOCODER_PROVIDER: Literal["none", "nominatim"] = "none"
+    AWS_MEDIA_BUCKET: str | None = None
+    MEDIA_TRANSCRIBE_TIMEOUT_SECONDS: int = Field(default=300, ge=10, le=1800)
+    MEDIA_TRANSCRIBE_POLL_INTERVAL_SECONDS: float = Field(default=2.0, ge=0.1, le=60.0)
+    GOOGLE_MAPS_API_KEY: str | None = None
+    GOOGLE_MAPS_MATRIX_URL: str = (
+        "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+    )
+    GOOGLE_MAPS_DIRECTIONS_URL: str = (
+        "https://routes.googleapis.com/directions/v2:computeRoutes"
+    )
+    NOMINATIM_BASE_URL: str = "https://nominatim.openstreetmap.org"
+    NOMINATIM_USER_AGENT: str | None = None
+    NOMINATIM_MIN_INTERVAL_SECONDS: float = Field(default=1.0, ge=1.0)
 
     # Browser Escalation Worker
     BROWSER_WORKER_QUEUE_URL: str | None = Field(
@@ -154,6 +184,27 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LAYA_TOTAL_DEADLINE_SECONDS must be greater than or equal to LAYA_REQUEST_TIMEOUT_SECONDS"
             )
+        if self.LOCAL_AUTH_BYPASS and self.ENVIRONMENT != "local":
+            raise ValueError("LOCAL_AUTH_BYPASS is only allowed when ENVIRONMENT=local")
+        if self.ENVIRONMENT == "production":
+            missing: list[str] = []
+            if not self.GOOGLE_MAPS_API_KEY:
+                missing.append("GOOGLE_MAPS_API_KEY")
+            if not self.MEDIA_ALLOWED_HOSTS:
+                missing.append("MEDIA_ALLOWED_HOSTS")
+            if self.MEDIA_ANALYSIS_PROVIDER != "aws":
+                missing.append("MEDIA_ANALYSIS_PROVIDER=aws")
+            if not self.AWS_MEDIA_BUCKET:
+                missing.append("AWS_MEDIA_BUCKET")
+            if self.MEDIA_GEOCODER_PROVIDER != "nominatim":
+                missing.append("MEDIA_GEOCODER_PROVIDER=nominatim")
+            if not self.NOMINATIM_USER_AGENT:
+                missing.append("NOMINATIM_USER_AGENT")
+            if missing:
+                raise ValueError(
+                    "Production provider configuration is incomplete: "
+                    + ", ".join(missing)
+                )
         return self
 
 
@@ -163,4 +214,3 @@ settings = Settings()
 def get_settings() -> Settings:
     """Returns the singleton application settings instance."""
     return settings
-

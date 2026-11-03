@@ -50,7 +50,7 @@ export function Navbar() {
       </a>
 
       <header
-        className={`fixed top-0 left-0 right-0 z-40 h-16 sm:h-20 transition-all duration-300 ${
+        className={`fixed top-0 left-0 right-0 z-40 h-16 sm:h-20 transition-all duration-300 print:hidden ${
           scrolled
             ? "bg-[#0D1915]/95 backdrop-blur-md border-b border-[#233E32]/70 shadow-lg shadow-black/20"
             : "bg-transparent border-b border-transparent"
@@ -101,16 +101,27 @@ export function Navbar() {
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#15271F] border border-[#233E32] text-xs text-[#F7F7F2]">
                   <User className="h-3.5 w-3.5 text-[#B7C9AD]" />
-                  <span className="truncate max-w-[120px] font-medium">{user.name}</span>
+                  <span className="truncate max-w-[120px] font-medium">
+                    {user.name}{user.isDemo ? " · Demo" : ""}
+                  </span>
                 </div>
-                <button
-                  onClick={() => logout()}
-                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#A9B8AD] hover:text-[#F7F7F2] hover:bg-[#15271F] border border-transparent hover:border-[#233E32] transition-colors flex items-center gap-1 cursor-pointer"
-                  title="Sign out"
-                  aria-label="Sign out"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                </button>
+                {user.isDemo ? (
+                  <button
+                    onClick={() => login()}
+                    className="text-xs font-medium text-[#B7C9AD] hover:text-[#C9DBBE]"
+                  >
+                    Sign in
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => logout()}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-[#A9B8AD] hover:text-[#F7F7F2] hover:bg-[#15271F] border border-transparent hover:border-[#233E32] transition-colors flex items-center gap-1 cursor-pointer"
+                    title="Sign out"
+                    aria-label="Sign out"
+                  >
+                    <LogOut className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             ) : (
               <button
@@ -179,17 +190,30 @@ export function Navbar() {
                   {user ? (
                     <div className="space-y-3">
                       <div className="text-xs text-[#A9B8AD]">
-                        Signed in as <span className="text-[#F7F7F2] font-medium">{user.name}</span>
+                        {user.isDemo ? "Demo profile: " : "Signed in as "}
+                        <span className="text-[#F7F7F2] font-medium">{user.name}</span>
                       </div>
-                      <button
-                        onClick={() => {
-                          setMobileMenuOpen(false);
-                          logout();
-                        }}
-                        className="w-full text-left text-xs text-red-400 hover:text-red-300 py-1"
-                      >
-                        Sign out
-                      </button>
+                      {user.isDemo ? (
+                        <button
+                          onClick={() => {
+                            setMobileMenuOpen(false);
+                            login();
+                          }}
+                          className="w-full text-left text-xs text-[#B7C9AD] hover:text-[#C9DBBE] py-1"
+                        >
+                          Sign in with SWYRA
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => {
+                            setMobileMenuOpen(false);
+                            logout();
+                          }}
+                          className="w-full text-left text-xs text-red-400 hover:text-red-300 py-1"
+                        >
+                          Sign out
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <button

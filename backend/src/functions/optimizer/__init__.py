@@ -2,9 +2,9 @@
 
 from functions.optimizer.solver import (
     ItineraryScheduler,
-    OptimizedRoute,      # <-- FIXED: Renamed from OptimizedSchedule
-    ScheduledStop,
+    OptimizedRoute,  # <-- FIXED: Renamed from OptimizedSchedule
     ScheduledLeg,
+    ScheduledStop,
 )
 
 # Optional: Export schemas if they are defined

@@ -38,6 +38,10 @@ class RouteRequest(ApiSchema):
     average_speed_kmh: float = Field(default=45.0, gt=0, le=200)
     vehicle_mileage_kmpl: float = Field(default=15.0, gt=0, le=200)
     fuel_price_per_liter: float = Field(default=102.5, ge=0, le=100_000)
+    return_to_origin: bool = False
+    avoid_tolls: bool = False
+    avoid_highways: bool = False
+    avoid_ferries: bool = False
 
     @field_validator("start_datetime")
     @classmethod

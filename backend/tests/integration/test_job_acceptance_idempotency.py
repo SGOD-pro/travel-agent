@@ -33,7 +33,7 @@ from functions.api.idempotency import (
     IdempotencyRepository,
     compute_request_hash,
 )
-from functions.api.models import ApiIdempotencyModel, TripModel
+from functions.api.models import ApiIdempotencyModel, TripModel, TripVersionModel
 from functions.orchestrator.execution.models import ExecutionModel, OutboxEventModel
 from middleware.auth import AuthenticatedUser, get_current_user
 
@@ -556,6 +556,21 @@ async def test_api_trip_plans_endpoint_idempotency_integration(session_factory) 
     trip_id = uuid.uuid4()
     trip_2_id = uuid.uuid4()
     now = datetime.now(UTC)
+    brief_json = {
+        "origin_name": "Bengaluru",
+        "origin_lat": 12.9716,
+        "origin_lng": 77.5946,
+        "destinations": [
+            {
+                "name": "Mysuru",
+                "latitude": 12.2958,
+                "longitude": 76.6394,
+                "stay_days": 1,
+            }
+        ],
+        "start_date": "2026-11-01",
+        "end_date": "2026-11-02",
+    }
 
     # Insert two trip records into PostgreSQL
     async with session_factory() as session:
@@ -575,7 +590,26 @@ async def test_api_trip_plans_endpoint_idempotency_integration(session_factory) 
             created_at=now,
             updated_at=now,
         )
-        session.add_all([trip, trip_2])
+        session.add_all(
+            [
+                trip,
+                trip_2,
+                TripVersionModel(
+                    trip_id=trip_id,
+                    version=1,
+                    brief_json=brief_json,
+                    command_id=uuid.uuid4(),
+                    schema_version=1,
+                ),
+                TripVersionModel(
+                    trip_id=trip_2_id,
+                    version=1,
+                    brief_json=brief_json,
+                    command_id=uuid.uuid4(),
+                    schema_version=1,
+                ),
+            ]
+        )
         await session.commit()
 
     async def override_get_session():

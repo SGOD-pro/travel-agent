@@ -31,7 +31,7 @@ SWENA is a deterministic, India-first travel planning, comparison, discovery, an
 | **Next.js Frontend & UI** | Next.js 16 (Turbopack), Tailwind v4, SWENA 2.0 Forest Night theme, GSAP 3D corridor cards. | `frontend/e2e/app.spec.ts` (Playwright suite passes). | `VERIFIED_LOCAL` |
 | **Route Protection Proxy** | Next.js 16 `src/proxy.ts` intercepting `/dashboard` routes when session cookie is absent. | `frontend/e2e/app.spec.ts` (Test 2 passes). | `VERIFIED_LOCAL` |
 | **OAuth 2.1 BFF Flow** | Next.js BFF handlers (`/api/auth/*`), PKCE S256, HttpOnly cookies, fail-closed diagnostics. | Handlers implemented; cryptographic JWKS signature validation in progress (`C1-T01`). | `PARTIAL` |
-| **Server Ownership Gate** | Deriving user ID from token; multi-tenant trip isolation. | Endpoints currently accept client `owner_id`; authorization enforcement underway (`C1-T02`). | `PARTIAL` |
+| **Server Ownership Gate** | Deriving user ID from a cryptographically verified token; multi-tenant trip and job isolation. | Backend verifies signed JWT claims and scopes trip/job APIs to the token subject. | `VERIFIED_LOCAL` |
 | **Public Itinerary Sharing** | Dynamic route `/trips/[id]` and mobile QR code generation. | Route currently renders static Coorg fixture; dynamic database projection underway (`C5-T01`). | `DEMO_ONLY` |
 | **Benchmark Suite (50 Cases)**| 50-scenario runner in `backend/src/travel/benchmarks/runner.py`. | Currently runs single synthetic trip loop; scenario-specific invariant assertions underway (`C3-T04`).| `PARTIAL` |
 | **External Live Providers** | Adapters for IRCTC, Mapbox, Google Places, SerpAPI. | All external providers disabled in `docs/PROVIDER-REGISTRY.json` pending live licensing. | `DISABLED_UNVERIFIED` |
@@ -65,6 +65,18 @@ make run-all
 ./start.sh backend    # FastAPI at http://localhost:8000 (Swagger: /docs)
 ./start.sh frontend   # Next.js at http://localhost:3000
 ```
+
+### 3.4 Generating frontend API types
+
+With the backend running on port 8000, generate TypeScript types from its
+OpenAPI schema:
+
+```bash
+cd frontend && npm run generate:api
+```
+
+The same command is used locally and in CI. It writes the generated
+declarations to `frontend/src/lib/generated-api.d.ts`.
 
 ---
 

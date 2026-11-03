@@ -57,15 +57,15 @@ class JobRepositoryPort(ABC):
         pass
 
     @abstractmethod
-    async def claim_next(self, worker_id: str, lease_seconds: int = 60) -> Job | None:
+    async def claim_next(self, worker_id: str, lease_duration_seconds: int = 60) -> Job | None:
         pass
 
     @abstractmethod
-    async def complete(self, job_id: uuid.UUID, worker_id: str, lease_generation: int) -> None:
+    async def complete(self, job_id: uuid.UUID, worker_id: str, lease_generation: int) -> bool:
         pass
 
     @abstractmethod
-    async def fail(self, job_id: uuid.UUID, worker_id: str, error_message: str) -> None:
+    async def fail(self, job_id: uuid.UUID, worker_id: str, error_message: str) -> bool:
         pass
 
     @abstractmethod

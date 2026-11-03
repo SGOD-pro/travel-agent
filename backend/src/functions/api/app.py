@@ -5,14 +5,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config.config import settings
+from functions.api.routes.auth import router as auth_router
 from functions.api.routes.benchmarks import router as benchmarks_router
+from functions.api.routes.discovery import router as discovery_router
 from functions.api.routes.exports import router as exports_router
 from functions.api.routes.health import router as health_router
 from functions.api.routes.jobs import router as jobs_router
+from functions.api.routes.optimization import router as optimization_router
 from functions.api.routes.support import router as support_router
 from functions.api.routes.trips import router as trips_router
 from functions.api.routes.v1.media import router as media_router  # Phase 9/11 Media Location API
-from functions.optimizer.handler import router as optimizer_router    # Phase 10 Route Optimizer API
+from functions.optimizer.handler import router as optimizer_router  # Phase 10 Route Optimizer API
 
 
 def create_app() -> FastAPI:
@@ -26,7 +29,7 @@ def create_app() -> FastAPI:
     # CORS configuration for Next.js frontend
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=settings.CORS_ALLOWED_ORIGINS,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -34,12 +37,15 @@ def create_app() -> FastAPI:
 
     # Register core route handlers
     app.include_router(health_router)
+    app.include_router(auth_router)
     app.include_router(trips_router)
     app.include_router(jobs_router)
     app.include_router(exports_router)
     app.include_router(benchmarks_router)
     app.include_router(support_router)
-    
+    app.include_router(discovery_router)
+    app.include_router(optimization_router)
+
     # Register newly integrated Phase 9/11 & Phase 10 routers
     app.include_router(media_router)
     app.include_router(optimizer_router)

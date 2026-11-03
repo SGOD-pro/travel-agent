@@ -10,15 +10,17 @@ from __future__ import annotations
 import collections
 import logging
 from collections.abc import AsyncIterator, Sequence
-from typing import Any
+from typing import Any, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import (
     BaseCheckpointSaver,
+    ChannelVersions,
     Checkpoint,
     CheckpointMetadata,
     CheckpointTuple,
-    SerializerProtocol,
 )
+from langgraph.checkpoint.serde.base import SerializerProtocol
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from sqlalchemy import LargeBinary, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 logger = logging.getLogger(__name__)
 
 
-class TransactionBoundCheckpointer(BaseCheckpointSaver):
+class TransactionBoundCheckpointer(BaseCheckpointSaver[Any]):
     """LangGraph checkpointer that buffers writes and flushes atomically.
 
     Inherits from BaseCheckpointSaver to implement the LangGraph checkpoint API.
@@ -62,6 +64,23 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
         """Called before use. Handled by schema migrations, no-op here."""
         pass
 
+    def _parent_config(
+        self, thread_id: str, checkpoint_ns: str, checkpoint_id: str
+    ) -> RunnableConfig | None:
+        for item in reversed(self._pending_flushes.get(thread_id, [])):
+            if item["type"] == "checkpoint" and item["checkpoint_id"] == checkpoint_id:
+                parent_id = item["parent_checkpoint_id"]
+                if isinstance(parent_id, str):
+                    return {
+                        "configurable": {
+                            "thread_id": thread_id,
+                            "checkpoint_ns": checkpoint_ns,
+                            "checkpoint_id": parent_id,
+                        }
+                    }
+                return None
+        return None
+
     def discard(self, thread_id: str) -> None:
         """Discards all buffered uncommitted checkpoints and pending writes for thread_id."""
         self._checkpoints.pop(thread_id, None)
@@ -71,7 +90,7 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
 
     async def aget_tuple(
         self,
-        config: Any,
+        config: RunnableConfig,
     ) -> CheckpointTuple | None:
         """Gets a checkpoint tuple asynchronously, querying PostgreSQL when not in memory."""
         thread_id = str(config["configurable"]["thread_id"])
@@ -83,15 +102,9 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
             if checkpoint := self._checkpoints.get(thread_id, {}).get(checkpoint_id):
                 metadata = self._metadata.get(thread_id, {}).get(checkpoint_id, {})
                 writes = self._writes.get(thread_id, {}).get(checkpoint_id, [])
-                parent_config = None
-                if checkpoint.get("parent_checkpoint_id"):
-                    parent_config = {
-                        "configurable": {
-                            "thread_id": thread_id,
-                            "checkpoint_ns": checkpoint_ns,
-                            "checkpoint_id": checkpoint["parent_checkpoint_id"],
-                        }
-                    }
+                parent_config: RunnableConfig | None = self._parent_config(
+                    thread_id, checkpoint_ns, checkpoint_id
+                )
                 return CheckpointTuple(
                     config,
                     checkpoint,
@@ -106,15 +119,7 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
                 checkpoint = checkpoints[latest_id]
                 metadata = self._metadata.get(thread_id, {}).get(latest_id, {})
                 writes = self._writes.get(thread_id, {}).get(latest_id, [])
-                parent_config = None
-                if checkpoint.get("parent_checkpoint_id"):
-                    parent_config = {
-                        "configurable": {
-                            "thread_id": thread_id,
-                            "checkpoint_ns": checkpoint_ns,
-                            "checkpoint_id": checkpoint["parent_checkpoint_id"],
-                        }
-                    }
+                parent_config = self._parent_config(thread_id, checkpoint_ns, latest_id)
                 return CheckpointTuple(
                     {
                         "configurable": {
@@ -138,21 +143,15 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
 
         return None
 
-    def get_tuple(self, config: Any) -> CheckpointTuple | None:
+    def get_tuple(self, config: RunnableConfig) -> CheckpointTuple | None:
         """Gets a checkpoint tuple from in-memory buffer."""
         thread_id = str(config["configurable"]["thread_id"])
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         if checkpoint_id := get_checkpoint_id(config):
             if checkpoint := self._checkpoints.get(thread_id, {}).get(checkpoint_id):
-                parent_config = None
-                if checkpoint.get("parent_checkpoint_id"):
-                    parent_config = {
-                        "configurable": {
-                            "thread_id": thread_id,
-                            "checkpoint_ns": checkpoint_ns,
-                            "checkpoint_id": checkpoint["parent_checkpoint_id"],
-                        }
-                    }
+                parent_config: RunnableConfig | None = self._parent_config(
+                    thread_id, checkpoint_ns, checkpoint_id
+                )
                 return CheckpointTuple(
                     config,
                     checkpoint,
@@ -165,15 +164,7 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
                 checkpoints = self._checkpoints[thread_id]
                 latest_id = max(checkpoints.keys())
                 checkpoint = checkpoints[latest_id]
-                parent_config = None
-                if checkpoint.get("parent_checkpoint_id"):
-                    parent_config = {
-                        "configurable": {
-                            "thread_id": thread_id,
-                            "checkpoint_ns": checkpoint_ns,
-                            "checkpoint_id": checkpoint["parent_checkpoint_id"],
-                        }
-                    }
+                parent_config = self._parent_config(thread_id, checkpoint_ns, latest_id)
                 return CheckpointTuple(
                     {
                         "configurable": {
@@ -231,8 +222,12 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
         chk_bytes = bytes(row["checkpoint"])
         meta_bytes = bytes(row["metadata"])
 
-        checkpoint = self.serde.loads_typed((chk_type, chk_bytes))
-        metadata = self.serde.loads_typed(("msgpack", meta_bytes)) if meta_bytes else {}
+        checkpoint = cast(Checkpoint, self.serde.loads_typed((chk_type, chk_bytes)))
+        metadata = (
+            cast(CheckpointMetadata, self.serde.loads_typed(("msgpack", meta_bytes)))
+            if meta_bytes
+            else {}
+        )
 
         # Fetch pending writes from checkpoint_writes table
         writes_stmt = text("""
@@ -255,20 +250,21 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
             w_val = self.serde.loads_typed((w_type, bytes(w_row["value"])))
             pending_writes.append((w_row["task_id"], w_row["channel"], w_val))
 
-        config = {
+        config: RunnableConfig = {
             "configurable": {
                 "thread_id": thread_id,
                 "checkpoint_ns": checkpoint_ns,
                 "checkpoint_id": chk_id,
             }
         }
-        parent_config = None
-        if row["parent_checkpoint_id"]:
+        parent_config: RunnableConfig | None = None
+        parent_checkpoint_id = row["parent_checkpoint_id"]
+        if isinstance(parent_checkpoint_id, str):
             parent_config = {
                 "configurable": {
                     "thread_id": thread_id,
                     "checkpoint_ns": checkpoint_ns,
-                    "checkpoint_id": row["parent_checkpoint_id"],
+                    "checkpoint_id": parent_checkpoint_id,
                 }
             }
 
@@ -282,10 +278,10 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
 
     async def alist(
         self,
-        config: Any | None,
+        config: RunnableConfig | None,
         *,
         filter: dict[str, Any] | None = None,
-        before: Any | None = None,
+        before: RunnableConfig | None = None,
         limit: int | None = None,
     ) -> AsyncIterator[CheckpointTuple]:
         """Lists checkpoints matching criteria from PostgreSQL."""
@@ -322,8 +318,12 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
                 chk_type = row["type"] or "msgpack"
                 chk_bytes = bytes(row["checkpoint"])
                 meta_bytes = bytes(row["metadata"])
-                checkpoint = self.serde.loads_typed((chk_type, chk_bytes))
-                metadata = self.serde.loads_typed(("msgpack", meta_bytes)) if meta_bytes else {}
+                checkpoint = cast(Checkpoint, self.serde.loads_typed((chk_type, chk_bytes)))
+                metadata = (
+                    cast(CheckpointMetadata, self.serde.loads_typed(("msgpack", meta_bytes)))
+                    if meta_bytes
+                    else {}
+                )
 
                 writes_stmt = text("""
                     SELECT task_id, channel, type, value
@@ -345,20 +345,21 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
                     w_val = self.serde.loads_typed((w_type, bytes(w_row["value"])))
                     pending_writes.append((w_row["task_id"], w_row["channel"], w_val))
 
-                tuple_config = {
+                tuple_config: RunnableConfig = {
                     "configurable": {
                         "thread_id": thread_id,
                         "checkpoint_ns": checkpoint_ns,
                         "checkpoint_id": chk_id,
                     }
                 }
-                parent_config = None
-                if row["parent_checkpoint_id"]:
+                parent_config: RunnableConfig | None = None
+                parent_checkpoint_id = row["parent_checkpoint_id"]
+                if isinstance(parent_checkpoint_id, str):
                     parent_config = {
                         "configurable": {
                             "thread_id": thread_id,
                             "checkpoint_ns": checkpoint_ns,
-                            "checkpoint_id": row["parent_checkpoint_id"],
+                            "checkpoint_id": parent_checkpoint_id,
                         }
                     }
 
@@ -372,20 +373,20 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
 
     async def aput(
         self,
-        config: Any,
+        config: RunnableConfig,
         checkpoint: Checkpoint,
         metadata: CheckpointMetadata,
-        new_versions: Any,
-    ) -> Any:
+        new_versions: ChannelVersions,
+    ) -> RunnableConfig:
         return self.put(config, checkpoint, metadata, new_versions)
 
     def put(
         self,
-        config: Any,
+        config: RunnableConfig,
         checkpoint: Checkpoint,
         metadata: CheckpointMetadata,
-        new_versions: Any,
-    ) -> Any:
+        new_versions: ChannelVersions,
+    ) -> RunnableConfig:
         """Buffers a checkpoint write in memory."""
         thread_id = str(config["configurable"]["thread_id"])
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
@@ -417,17 +418,19 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
 
     async def aput_writes(
         self,
-        config: Any,
+        config: RunnableConfig,
         writes: Sequence[tuple[str, Any]],
         task_id: str,
+        task_path: str = "",
     ) -> None:
-        self.put_writes(config, writes, task_id)
+        self.put_writes(config, writes, task_id, task_path)
 
     def put_writes(
         self,
-        config: Any,
+        config: RunnableConfig,
         writes: Sequence[tuple[str, Any]],
         task_id: str,
+        task_path: str = "",
     ) -> None:
         """Buffers pending channel writes."""
         thread_id = str(config["configurable"]["thread_id"])
@@ -547,6 +550,7 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
 
 
 
-def get_checkpoint_id(config: Any) -> str | None:
+def get_checkpoint_id(config: RunnableConfig) -> str | None:
     """Helper to extract checkpoint_id from config."""
-    return config.get("configurable", {}).get("checkpoint_id")
+    checkpoint_id = config.get("configurable", {}).get("checkpoint_id")
+    return checkpoint_id if isinstance(checkpoint_id, str) else None

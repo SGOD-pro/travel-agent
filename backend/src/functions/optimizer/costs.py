@@ -14,9 +14,10 @@ def estimate_transit_cost(mode: TransportMode, distance_km: float) -> Money:
         TransportMode.FLIGHT: Decimal("8.0"),
         TransportMode.TRAIN: Decimal("1.8"),
         TransportMode.BUS: Decimal("1.2"),
-        TransportMode.CAB: Decimal("15.0"),
-        TransportMode.FERRY: Decimal("3.0"),
-        TransportMode.WALK: Decimal("0.0"),
+        TransportMode.CAR_PETROL: Decimal("15.0"),
+        TransportMode.MOTORCYCLE_PETROL: Decimal("8.0"),
+        TransportMode.WALKING: Decimal("0.0"),
+        TransportMode.BICYCLE: Decimal("0.0"),
     }.get(mode, Decimal("2.0"))
 
     total = max(Decimal("50.0"), rate_per_km * Decimal(str(distance_km)))

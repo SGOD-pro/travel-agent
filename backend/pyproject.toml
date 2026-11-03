@@ -26,6 +26,8 @@ dependencies = [
     "psycopg-binary>=3.3.6",
     "pyjwt>=2.14.0",
     "cryptography>=50.0.1",
+    "boto3>=1.43.119",
+    "youtube-transcript-api>=1.2.3",
 ]
 
 [project.optional-dependencies]
@@ -47,6 +49,7 @@ packages = [
     "src/contracts",
     "src/functions",
     "src/middleware",
+    "src/workflows",
 ]
 
 [tool.ruff]

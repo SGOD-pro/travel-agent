@@ -17,8 +17,13 @@ from functions.orchestrator.execution.cancellation import cancel_execution
 from functions.orchestrator.execution.job_events import get_job_events
 from functions.orchestrator.execution.models import ExecutionModel, TaskModel
 from middleware.auth import AuthenticatedUser, get_current_user
+from middleware.rate_limit import public_request_rate_limiter
 
-router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
+router = APIRouter(
+    prefix="/api/v1/jobs",
+    tags=["jobs"],
+    dependencies=[Depends(public_request_rate_limiter)],
+)
 
 
 class JobEventDTO(BaseModel):
@@ -42,6 +47,7 @@ class JobStatusResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     error: dict[str, Any] | None = None
     result_available: bool = False
+    result: dict[str, Any] | None = None
     retry_after_seconds: int = 0
     timeline: list[JobEventDTO] = Field(default_factory=list)
     next_cursor: str | None = None
@@ -68,12 +74,76 @@ class CancelJobResponse(BaseModel):
     cancelled: bool
 
 
+def _extract_trip_plan(state: Any) -> dict[str, Any] | None:
+    values = getattr(state, "values", {})
+    direct_proposal = values.get("proposal") if isinstance(values, dict) else None
+    if isinstance(direct_proposal, dict):
+        return {"travel_plan": direct_proposal, "destination_source": "trip_brief"}
+    outputs = values.get("product_outputs", {}) if isinstance(values, dict) else {}
+    travel = outputs.get("travel", {}) if isinstance(outputs, dict) else {}
+    proposal = travel.get("proposal") if isinstance(travel, dict) else None
+    result: dict[str, Any] = {}
+    if isinstance(proposal, dict):
+        result.update(
+            {
+                "travel_plan": proposal,
+                "destination_source": travel.get("destination_source", "trip_brief"),
+            }
+        )
+    route = outputs.get("route", {}) if isinstance(outputs, dict) else {}
+    optimized_route = route.get("optimized_route") if isinstance(route, dict) else None
+    if optimized_route is not None:
+        if hasattr(optimized_route, "model_dump"):
+            result["route"] = optimized_route.model_dump(mode="json")
+        elif isinstance(optimized_route, dict):
+            result["route"] = optimized_route
+    return result or None
+
+
+async def _load_trip_plan(job_id: uuid.UUID, workflow: str) -> dict[str, Any] | None:
+    from config.db import get_session_factory
+    from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
+
+    checkpointer = TransactionBoundCheckpointer(session_factory=get_session_factory())
+    if workflow == "API_COMPOSITION":
+        from functions.api.service import build_api_composition_workflow
+
+        graph = build_api_composition_workflow(checkpointer=checkpointer)
+    else:
+        from functions.orchestrator.graphs.trip_planner.graph import (
+            compile_trip_planning_workflow,
+        )
+
+        graph = compile_trip_planning_workflow(checkpointer=checkpointer)
+    state = await graph.aget_state({"configurable": {"thread_id": str(job_id)}})
+    return _extract_trip_plan(state)
+
+
+def _safe_failure_message(events: list[Any]) -> str | None:
+    safe_prefixes = (
+        "This YouTube video has no publicly accessible captions.",
+        "This YouTube video has no readable public captions.",
+        "YouTube captions could not be accessed from this server.",
+        "Media URL hostname is not on the configured allowlist.",
+        "MEDIA_ALLOWED_HOSTS must be configured before media downloads.",
+    )
+    for event in reversed(events):
+        if event.event_type != "EXECUTION_FAILED":
+            continue
+        reason = event.safe_payload.get("reason")
+        if isinstance(reason, str) and reason.startswith(safe_prefixes):
+            return reason[:300]
+    return None
+
+
 @router.get("/{job_id}", response_model=JobStatusResponse)
 async def get_job_status(
     job_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    cursor: Annotated[int | None, Query(description="Sequence cursor for timeline pagination")] = None,
+    cursor: Annotated[
+        int | None, Query(description="Sequence cursor for timeline pagination")
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="Max timeline events to return")] = 50,
 ) -> JobStatusResponse:
     """Retrieves owner-scoped job status, progress, and initial timeline events."""
@@ -87,13 +157,11 @@ async def get_job_status(
         )
 
     # Compute task progress counts
-    task_counts_stmt = (
-        select(
-            sa.func.count(TaskModel.id).label("total"),
-            sa.func.count(TaskModel.id).filter(TaskModel.status == "COMPLETED").label("completed"),
-            sa.func.count(TaskModel.id).filter(TaskModel.status == "FAILED").label("failed"),
-        ).where(TaskModel.execution_id == job_id)
-    )
+    task_counts_stmt = select(
+        sa.func.count(TaskModel.id).label("total"),
+        sa.func.count(TaskModel.id).filter(TaskModel.status == "COMPLETED").label("completed"),
+        sa.func.count(TaskModel.id).filter(TaskModel.status == "FAILED").label("failed"),
+    ).where(TaskModel.execution_id == job_id)
     counts = (await session.execute(task_counts_stmt)).first()
     total_tasks = counts.total if counts else 0
     completed_tasks = counts.completed if counts else 0
@@ -107,7 +175,9 @@ async def get_job_status(
     }
 
     # Fetch timeline events
-    events, next_seq = await get_job_events(session, execution_id=job_id, cursor=cursor, limit=limit)
+    events, next_seq = await get_job_events(
+        session, execution_id=job_id, cursor=cursor, limit=limit
+    )
     event_dtos = [
         JobEventDTO(
             id=e.id,
@@ -122,12 +192,19 @@ async def get_job_status(
     is_active = execution.status in ("CREATED", "RUNNING", "WAITING_TASKS", "WAITING_USER")
     retry_after = 5 if is_active else 0
     result_available = execution.status == "SUCCEEDED"
+    result = (
+        await _load_trip_plan(job_id, execution.workflow)
+        if execution.workflow in ("API_COMPOSITION", "TRAVEL")
+        and execution.status in ("SUCCEEDED", "PARTIAL")
+        else None
+    )
 
     error_info = None
     if execution.status == "FAILED":
         error_info = {
             "code": "EXECUTION_FAILED",
-            "message": "Workflow execution failed or deadline exceeded",
+            "message": _safe_failure_message(events)
+            or "Workflow execution failed or deadline exceeded",
         }
 
     return JobStatusResponse(
@@ -138,7 +215,8 @@ async def get_job_status(
         missing_inputs=[],
         warnings=[],
         error=error_info,
-        result_available=result_available,
+        result_available=result_available or result is not None,
+        result=result,
         retry_after_seconds=retry_after,
         timeline=event_dtos,
         next_cursor=str(next_seq) if next_seq is not None else None,
@@ -150,7 +228,9 @@ async def get_job_timeline_events(
     job_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    cursor: Annotated[int | None, Query(description="Sequence cursor for timeline pagination")] = None,
+    cursor: Annotated[
+        int | None, Query(description="Sequence cursor for timeline pagination")
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="Max timeline events to return")] = 50,
 ) -> JobEventsPageResponse:
     """Retrieves paginated timeline events for an execution."""
@@ -163,7 +243,9 @@ async def get_job_timeline_events(
             detail=f"Job {job_id} not found",
         )
 
-    events, next_seq = await get_job_events(session, execution_id=job_id, cursor=cursor, limit=limit)
+    events, next_seq = await get_job_events(
+        session, execution_id=job_id, cursor=cursor, limit=limit
+    )
     event_dtos = [
         JobEventDTO(
             id=e.id,

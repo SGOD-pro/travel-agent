@@ -1,18 +1,18 @@
 """Regression tests covering review findings for 0001 execution engine slice."""
 
-import pytest
-import uuid
 import os
-import asyncio
-from unittest.mock import patch, MagicMock
+import uuid
+from unittest.mock import patch
 
-from config.db import async_sessionmaker
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text, delete
+import pytest
 
-from functions.orchestrator.execution.transport import build_sqs_transport, NullTransportAdapter, SqsTransportAdapter
-from functions.orchestrator.execution.executor_registry import dispatch, WorkerNotImplementedError
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
+from functions.orchestrator.execution.executor_registry import WorkerNotImplementedError, dispatch
+from functions.orchestrator.execution.transport import (
+    NullTransportAdapter,
+    SqsTransportAdapter,
+    build_sqs_transport,
+)
 
 
 def test_invalid_transport_configuration_fails_clearly():
@@ -56,8 +56,6 @@ async def test_checkpointer_mid_flush_failure_retains_pending(session_factory):
     # Simulate a mid-flush failure
     async with session_factory() as session:
         # Patch session.execute to raise an Exception
-        original_execute = session.execute
-
         async def failing_execute(*args, **kwargs):
             raise RuntimeError("Injected DB failure")
 
@@ -76,4 +74,3 @@ async def test_checkpointer_mid_flush_failure_retains_pending(session_factory):
 
     # Verify it flushed successfully
     assert thread_id not in checkpointer._pending_flushes
-

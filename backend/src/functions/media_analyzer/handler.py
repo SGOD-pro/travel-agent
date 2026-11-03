@@ -49,6 +49,13 @@ async def analyze_media_handler(payload: dict[str, Any]) -> dict[str, Any]:
             audio = ExtractedAudio(**raw_audio)
         except Exception as e:
             logger.warning("Failed to parse audio metadata dict: %s", e)
+    audio_bytes: bytes | None = None
+    raw_audio_bytes = payload.get("audio_bytes_b64")
+    if isinstance(raw_audio_bytes, str):
+        try:
+            audio_bytes = base64.b64decode(raw_audio_bytes, validate=True)
+        except ValueError as e:
+            raise ValueError("audio_bytes_b64 must be valid base64.") from e
 
     # 4. Parse mock transcript (used for offline testing and benchmarking)
     mock_transcript = payload.get("mock_transcript")
@@ -70,6 +77,7 @@ async def analyze_media_handler(payload: dict[str, Any]) -> dict[str, Any]:
         frames=frames,
         audio=audio,
         frame_images=frame_images if frame_images else None,
+        audio_bytes=audio_bytes,
         mock_transcript=mock_transcript,
         job_id=active_job_id,
     )

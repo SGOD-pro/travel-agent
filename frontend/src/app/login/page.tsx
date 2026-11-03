@@ -1,17 +1,40 @@
 "use client";
 
-import React, { Suspense } from "react";
+import React, { Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ShieldAlert, Compass, LogIn, ArrowLeft, KeyRound, ExternalLink } from "lucide-react";
+import { ShieldAlert, Compass, LogIn, ArrowLeft, KeyRound } from "lucide-react";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
+import { authClient } from "@/lib/auth-client";
 
 function LoginContent() {
   const searchParams = useSearchParams();
   const error = searchParams.get("error");
   const details = searchParams.get("details");
   const message = searchParams.get("message");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+  const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
+  const [formError, setFormError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setFormError(null);
+    const result =
+      mode === "sign-in"
+        ? await authClient.signIn.email({ email, password, callbackURL: "/dashboard" })
+        : await authClient.signUp.email({ email, password, name, callbackURL: "/dashboard" });
+    if (result.error) {
+      setFormError(result.error.message || "Authentication failed.");
+      setSubmitting(false);
+      return;
+    }
+    window.location.assign("/dashboard");
+  };
 
   return (
     <div className="w-full max-w-md bg-[#15271F] border border-[#233E32] rounded-3xl p-8 shadow-2xl space-y-6">
@@ -21,7 +44,7 @@ function LoginContent() {
         </div>
         <div>
           <h1 className="text-lg font-bold text-[#F7F7F2]">SWENA Authentication</h1>
-          <p className="text-xs text-[#A9B8AD]">Sovereign OAuth 2.1 / OIDC</p>
+          <p className="text-xs text-[#A9B8AD]">Local Better Auth</p>
         </div>
       </div>
 
@@ -46,23 +69,21 @@ function LoginContent() {
       )}
 
       <div className="space-y-3">
-        <a
-          href="/api/auth/login"
-          className="btn-sage w-full py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 text-sm shadow-lg cursor-pointer"
-        >
-          <LogIn className="w-4 h-4" />
-          <span>Sign In via SWYRA Auth</span>
-        </a>
-
-        <a
-          href="https://github.com/SGOD-pro/OAuth2.1"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="btn-outline-forest w-full py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5"
-        >
-          <span>SWYRA Auth Documentation</span>
-          <ExternalLink className="w-3 h-3" />
-        </a>
+        <form onSubmit={submit} className="space-y-3">
+          {mode === "sign-up" && (
+            <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Name" required className="w-full rounded-xl bg-[#0D1915] border border-[#233E32] px-4 py-3 text-sm" />
+          )}
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" required className="w-full rounded-xl bg-[#0D1915] border border-[#233E32] px-4 py-3 text-sm" />
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Password" minLength={8} required className="w-full rounded-xl bg-[#0D1915] border border-[#233E32] px-4 py-3 text-sm" />
+          {formError && <p className="text-xs text-amber-400">{formError}</p>}
+          <button type="submit" disabled={submitting} className="btn-sage w-full py-3.5 rounded-xl font-semibold flex items-center justify-center gap-2 text-sm shadow-lg disabled:opacity-50">
+            <LogIn className="w-4 h-4" />
+            {submitting ? "Please wait..." : mode === "sign-in" ? "Sign In" : "Create Account"}
+          </button>
+        </form>
+        <button type="button" onClick={() => setMode(mode === "sign-in" ? "sign-up" : "sign-in")} className="text-xs text-[#B7C9AD] underline">
+          {mode === "sign-in" ? "Create a new account" : "Already have an account? Sign in"}
+        </button>
       </div>
 
       <div className="pt-4 border-t border-[#233E32] flex items-center justify-between text-xs text-[#A9B8AD]">
@@ -72,7 +93,7 @@ function LoginContent() {
         </Link>
         <span className="flex items-center gap-1 text-[11px]">
           <KeyRound className="w-3 h-3 text-[#B7C9AD]" />
-          RFC 8252 + PKCE S256
+          Email + password
         </span>
       </div>
     </div>

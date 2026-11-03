@@ -11,13 +11,13 @@ from typing import Any
 
 def get_s3_client() -> Any:
     """Return a boto3 S3 client lazily."""
-    import boto3  # type: ignore
+    import boto3
 
     return boto3.client("s3")
 
 
 def get_sqs_client() -> Any:
     """Return a boto3 SQS client lazily."""
-    import boto3  # type: ignore
+    import boto3
 
     return boto3.client("sqs")

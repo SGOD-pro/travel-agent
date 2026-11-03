@@ -1,10 +1,21 @@
 """State schema for the Media Location Workflow."""
-from typing import TypedDict, List, Optional
-from contracts.media import MediaExtractionResult, MediaAnalyzed, VerifiedPlace
+
+from typing import TypedDict
+
+from contracts.media import (
+    AsrObservation,
+    MediaAnalyzed,
+    MediaExtractionResult,
+    MediaLocationGraph,
+    VerifiedPlace,
+)
+
 
 class MediaLocationState(TypedDict):
     url: str
-    extraction_result: Optional[MediaExtractionResult]
-    analyzed: Optional[MediaAnalyzed]
-    verified_places: List[VerifiedPlace]
+    extraction_result: MediaExtractionResult | None
+    caption_observation: AsrObservation | None
+    analyzed: MediaAnalyzed | None
+    location_graph: MediaLocationGraph | None
+    verified_places: list[VerifiedPlace]
     attempt_count: int

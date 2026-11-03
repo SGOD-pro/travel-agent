@@ -13,13 +13,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.db import get_session, get_session_factory
 from contracts.jobs import Job, JobStatus
 from contracts.trips import Trip, TripBrief, TripState
-from functions.api.idempotency import IdempotencyConflictError, IdempotencyRepository
-from functions.api.models import TripModel
+from functions.api.models import TripModel, TripVersionModel
 from functions.api.repository import SqlAlchemyUnitOfWork, TripVersionConflictError
+from functions.api.schemas import (
+    AcceptedJobResponse,
+    CreateTripRequest,
+    PlanRequest,
+)
+from functions.api.service import accept_composition_job
 from functions.orchestrator.graphs.trip_planner.graph import trip_planning_workflow
 from middleware.auth import AuthenticatedUser, get_current_user
+from middleware.rate_limit import public_request_rate_limiter
 
-router = APIRouter(prefix="/api/v1/trips", tags=["trips"])
+router = APIRouter(
+    prefix="/api/v1/trips",
+    tags=["trips"],
+    dependencies=[Depends(public_request_rate_limiter)],
+)
 
 
 def get_uow() -> SqlAlchemyUnitOfWork:
@@ -30,11 +40,6 @@ UowDep = Annotated[SqlAlchemyUnitOfWork, Depends(get_uow)]
 
 
 # --- Request & Response DTOs ---
-
-
-class CreateTripRequest(BaseModel):
-    owner_id: uuid.UUID
-    brief: TripBrief
 
 
 class UpdateBriefRequest(BaseModel):
@@ -59,17 +64,6 @@ class PlanJobResponse(BaseModel):
     result: dict[str, Any] | None = None
 
 
-class StartPlanRequest(BaseModel):
-    planning_options: dict[str, Any] = Field(default_factory=dict)
-    workflow: str = "TRAVEL"
-
-
-class AcceptedPlanResponse(BaseModel):
-    job_id: uuid.UUID
-    status: str
-    status_url: str
-
-
 # --- Route Handlers ---
 
 
@@ -77,10 +71,11 @@ class AcceptedPlanResponse(BaseModel):
 async def create_trip(
     request: CreateTripRequest,
     uow: UowDep,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> TripResponse:
     """Creates a new Trip aggregate and persists its initial version (v1)."""
     async with uow:
-        trip = Trip(owner_id=request.owner_id, current_version=0, state=TripState.DRAFT)
+        trip = Trip(owner_id=current_user.id, current_version=0, state=TripState.DRAFT)
         await uow.trips.save(trip)
 
         command_id = uuid.uuid4()
@@ -105,11 +100,12 @@ async def create_trip(
 async def get_trip(
     trip_id: uuid.UUID,
     uow: UowDep,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> TripResponse:
     """Retrieves a Trip aggregate and its latest active brief snapshot."""
     async with uow:
         trip = await uow.trips.get_by_id(trip_id)
-        if not trip:
+        if not trip or trip.owner_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Trip {trip_id} not found",
@@ -130,6 +126,7 @@ async def update_trip_brief(
     trip_id: uuid.UUID,
     request: UpdateBriefRequest,
     uow: UowDep,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> TripResponse:
     """Updates the trip brief with atomic optimistic locking.
 
@@ -138,7 +135,7 @@ async def update_trip_brief(
     """
     async with uow:
         trip = await uow.trips.get_by_id(trip_id)
-        if not trip:
+        if not trip or trip.owner_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Trip {trip_id} not found",
@@ -171,11 +168,12 @@ async def update_trip_brief(
 async def plan_trip(
     trip_id: uuid.UUID,
     uow: UowDep,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> PlanJobResponse:
     """Triggers end-to-end trip planning workflow and enqueues a durable job."""
     async with uow:
         trip = await uow.trips.get_by_id(trip_id)
-        if not trip:
+        if not trip or trip.owner_id != current_user.id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Trip {trip_id} not found",
@@ -215,16 +213,16 @@ async def plan_trip(
 
 @router.post(
     "/{trip_id}/plans",
-    response_model=AcceptedPlanResponse,
+    response_model=AcceptedJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def start_trip_plan(
     trip_id: uuid.UUID,
-    request: StartPlanRequest,
+    request: PlanRequest,
     session: Annotated[AsyncSession, Depends(get_session)],
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
-) -> AcceptedPlanResponse:
+) -> AcceptedJobResponse:
     """Accepts a trip planning job with owner-scoped idempotency reservation."""
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(
@@ -241,24 +239,31 @@ async def start_trip_plan(
             detail=f"Trip {trip_id} not found",
         )
 
-    idempotency_repo = IdempotencyRepository(session)
-    payload_dict = {
-        "trip_id": str(trip_id),
-        **request.model_dump(mode="json"),
-    }
-    try:
-        response_json, status_code_res, is_cached = await idempotency_repo.accept_job(
-            owner_id=current_user.id,
-            operation=f"start_trip_plan:{trip_id}",
-            idempotency_key=idempotency_key.strip(),
-            payload=payload_dict,
-            trip_id=trip_id,
-            workflow=request.workflow,
-        )
-    except IdempotencyConflictError as e:
+    version_stmt = select(TripVersionModel).where(
+        TripVersionModel.trip_id == trip_id,
+        TripVersionModel.version == trip.current_version,
+    )
+    version = (await session.execute(version_stmt)).scalar_one_or_none()
+    if version is None:
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=str(e),
-        ) from e
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Trip {trip_id} has no valid brief snapshot",
+        )
 
-    return AcceptedPlanResponse(**response_json)
+    payload_dict = request.model_dump(mode="json")
+    payload_dict.update(
+        {
+            "trip_id": str(trip_id),
+            "version": trip.current_version,
+            "brief": version.brief_json,
+        }
+    )
+    response_json = await accept_composition_job(
+        session=session,
+        owner_id=current_user.id,
+        operation=f"start_trip_plan:{trip_id}",
+        idempotency_key=idempotency_key.strip(),
+        payload=payload_dict,
+        trip_id=trip_id,
+    )
+    return AcceptedJobResponse(**response_json)

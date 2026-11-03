@@ -11,13 +11,12 @@ Conforms strictly to docs/TRD.md:
 from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
-from typing import List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from contracts.money import BudgetCategory, BudgetLine, Currency
 from contracts.trips import TransportMode
-
 
 # ============================================================================
 # PART 1: ROUTING GRAPH MODELS (Required by functions/optimizer/routing.py)
@@ -43,7 +42,7 @@ class RouteLeg(BaseModel):
 class RouteAlternative(BaseModel):
     """A viable route option (e.g. Scenic vs. Fastest)."""
     name: str = "Default Route"
-    legs: List[RouteLeg] = Field(default_factory=list)
+    legs: list[RouteLeg] = Field(default_factory=list)
     total_distance_km: float = 0.0
     total_duration_minutes: int = 0
     estimated_cost_inr: float = 0.0
@@ -52,23 +51,23 @@ class RouteAlternative(BaseModel):
 class RouteRequest(BaseModel):
     """Input schema for requesting route alternatives."""
     origin: RoutePoint
-    destinations: List[RoutePoint]
-    preferences: dict = Field(default_factory=dict)  # e.g. {"avoid_tolls": true, "scenic_only": true}
+    destinations: list[RoutePoint]
+    preferences: dict[str, Any] = Field(default_factory=dict)  # e.g. {"avoid_tolls": true, "scenic_only": true}
 
 
 class RouteResponse(BaseModel):
     """Output schema containing ranked route alternatives."""
     request_id: str
-    alternatives: List[RouteAlternative] = Field(default_factory=list)
-    best_alternative: Optional[RouteAlternative] = None
+    alternatives: list[RouteAlternative] = Field(default_factory=list)
+    best_alternative: RouteAlternative | None = None
 
 
 class RouteMatrix(BaseModel):
     """Matrix of distances and durations between multiple points."""
-    from_points: List[RoutePoint]
-    to_points: List[RoutePoint]
-    distance_matrix: List[List[float]]
-    duration_matrix: List[List[int]]
+    from_points: list[RoutePoint]
+    to_points: list[RoutePoint]
+    distance_matrix: list[list[float]]
+    duration_matrix: list[list[int]]
 
 
 class TimeWindow(BaseModel):

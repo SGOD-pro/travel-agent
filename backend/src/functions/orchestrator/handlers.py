@@ -70,9 +70,9 @@ async def handle_export_itinerary(job: Job, uow: UnitOfWorkPort) -> dict[str, An
         download_url = f"/api/v1/artifacts/{artifact_id}/download"
         await uow.artifacts.update_status(
             artifact_id=artifact_id,
-            status=ArtifactStatus.COMPLETED.value,
-            size_bytes=len(pdf_bytes),
-            download_url=download_url,
+            status=ArtifactStatus.COMPLETED,
+            file_size_bytes=len(pdf_bytes),
+            url=download_url,
         )
         await uow.commit()
 

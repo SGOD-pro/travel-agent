@@ -246,7 +246,7 @@ class CompletionReconciliationService:
                 # Phase 3: Barrier Checks
                 # Cancellation Barrier: do not resume or update graph for cancelled execution
                 if execution.status == "CANCELLED" or execution.cancelled_at is not None:
-                    if hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
+                    if active_graph is not None and hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
                         active_graph.checkpointer.discard(str(execution_id))
                     await session.execute(
                         text(
@@ -265,7 +265,7 @@ class CompletionReconciliationService:
 
                 # Deadline Barrier
                 if execution.deadline_at <= now:
-                    if hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
+                    if active_graph is not None and hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
                         active_graph.checkpointer.discard(str(execution_id))
                     if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"):
                         execution.status = "FAILED"

@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any
 
 from contracts.routing import TimeWindow  # Ensure TimeWindow is imported if used
 
 
 def apply_time_window_constraints(
-    destinations: List[dict[str, Any]], 
+    destinations: list[dict[str, Any]],
     start_datetime: datetime
-) -> List[TimeWindow]:
+) -> list[TimeWindow]:
     """Applies time window constraints (e.g. opening hours) to destinations.
 
     Args:
@@ -21,8 +21,8 @@ def apply_time_window_constraints(
     Returns:
         List[TimeWindow]: A list of TimeWindow constraints for the solver.
     """
-    windows: List[TimeWindow] = []
-    
+    windows: list[TimeWindow] = []
+
     # Origin (index 0) typically has no time window constraint
     windows.append(TimeWindow(start_minute=0, end_minute=1439))
 

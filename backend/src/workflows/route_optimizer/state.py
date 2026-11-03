@@ -1,12 +1,13 @@
 """State schema for the Route Optimizer LangGraph workflow."""
-from typing import TypedDict, List, Optional, Any
+from typing import Any, TypedDict
+
 
 class RouteState(TypedDict):
-    request: dict
-    coordinates: List[tuple]
-    transit_matrix: Optional[List[List[int]]]
-    distance_matrix: Optional[List[List[float]]]
-    constraints: List[Any]
-    optimized_route: Optional[Any]
+    request: dict[str, Any]
+    coordinates: list[tuple[float, float]]
+    transit_matrix: list[list[int]] | None
+    distance_matrix: list[list[float]] | None
+    constraints: list[Any]
+    optimized_route: Any | None
     validation_status: str
     attempt_count: int

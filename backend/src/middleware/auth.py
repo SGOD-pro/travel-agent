@@ -1,87 +1,72 @@
-"""OAuth 2.1 & OIDC Authentication dependency for FastAPI.
-
-Validates incoming Bearer tokens issued by SWYRA Auth (SGOD-pro/OAuth2.1).
-Supports offline JWKS verification and audience binding.
-"""
+"""OAuth 2.1 & OIDC authentication dependency for FastAPI."""
 
 from __future__ import annotations
 
-import base64
-import json
-import time
+import asyncio
 import uuid
 from typing import Any
 
+import jwt
 from fastapi import Header, HTTPException, status
-from pydantic import BaseModel
+from jwt import PyJWKClient, PyJWKClientConnectionError, PyJWKClientError
+from pydantic import BaseModel, Field
 
 from config.config import settings
+
+_jwks_client = PyJWKClient(settings.JWKS_URL, cache_keys=True, timeout=5)
 
 
 class AuthenticatedUser(BaseModel):
     id: uuid.UUID
     email: str
     client_id: str | None = None
-    claims: dict[str, Any] = {}
+    claims: dict[str, Any] = Field(default_factory=dict)
 
 
 async def get_current_user(
     authorization: str | None = Header(default=None),
 ) -> AuthenticatedUser:
-    """Extract and validate OAuth 2.1 Bearer token from the Authorization header."""
+    """Validate a signed OAuth 2.1 JWT and map its subject to an application user."""
     if not authorization:
-        # Default authenticated user for local development / internal calls
-        return AuthenticatedUser(
-            id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
-            email="traveler@swena.internal",
-            client_id=settings.CLIENT_ID,
+        if settings.ENVIRONMENT == "local" and settings.LOCAL_AUTH_BYPASS:
+            return AuthenticatedUser(
+                id=uuid.uuid5(uuid.NAMESPACE_URL, "swena-local-development-user"),
+                email="local-dev@swena.internal",
+                claims={"name": "Local developer", "auth_mode": "local_bypass"},
+            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Bearer token required",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     parts = authorization.split()
     if len(parts) != 2 or parts[0].lower() != "bearer":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format. Expected 'Bearer <token>'",
+            detail="Invalid authorization header format. Expected Bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     token = parts[1]
-
     try:
-        payload_data: dict[str, Any] = {}
-        if "." in token:
-            # Standard JWT token
-            token_parts = token.split(".")
-            if len(token_parts) >= 2:
-                # Add padding if needed
-                padded = token_parts[1] + "=" * ((4 - len(token_parts[1]) % 4) % 4)
-                decoded_bytes = base64.urlsafe_b64decode(padded)
-                payload_data = json.loads(decoded_bytes.decode("utf-8"))
-        else:
-            padded = token + "=" * ((4 - len(token) % 4) % 4)
-            decoded_bytes = base64.urlsafe_b64decode(padded)
-            payload_data = json.loads(decoded_bytes.decode("utf-8"))
-
-        # Check expiration if present
-        exp = payload_data.get("exp")
-        if exp and isinstance(exp, (int, float)) and exp < time.time():
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Token has expired",
-                headers={
-                    "WWW-Authenticate": 'Bearer error="invalid_token", error_description="The token has expired"'
-                },
-            )
-
-        # Enforce client_id binding if present
+        signing_key = await asyncio.to_thread(_jwks_client.get_signing_key_from_jwt, token)
+        payload_data = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=settings.CLIENT_ID,
+            issuer=settings.AUTH_ISSUER,
+            options={"require": ["exp", "iat", "sub"]},
+        )
         token_client = payload_data.get("client_id") or payload_data.get("azp")
-        if token_client and token_client != settings.CLIENT_ID:
+        if token_client is not None and token_client != settings.CLIENT_ID:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Token was not issued for this client application",
             )
 
-        raw_sub = payload_data.get("sub", "00000000-0000-0000-0000-000000000001")
+        raw_sub = payload_data["sub"]
         try:
             user_uuid = uuid.UUID(str(raw_sub))
         except ValueError:
@@ -89,16 +74,20 @@ async def get_current_user(
 
         return AuthenticatedUser(
             id=user_uuid,
-            email=str(payload_data.get("email", "traveler@swena.internal")),
+            email=str(payload_data.get("email", "")),
             client_id=token_client,
             claims=payload_data,
         )
-
     except HTTPException:
         raise
-    except Exception as e:
+    except PyJWKClientConnectionError as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Token verification service is temporarily unavailable",
+        ) from e
+    except (jwt.PyJWTError, PyJWKClientError, ValueError, TypeError) as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token claims: {e!s}",
+            detail="Invalid or unverifiable bearer token",
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from e

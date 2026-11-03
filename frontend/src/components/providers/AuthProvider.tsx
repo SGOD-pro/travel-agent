@@ -1,11 +1,14 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import { authClient } from "@/lib/auth-client";
 
 export interface AuthUser {
   id: string;
   name: string;
   email: string;
+  isDemo?: boolean;
+  isLocalAuth?: boolean;
 }
 
 interface AuthContextType {
@@ -24,49 +27,48 @@ const AuthContext = createContext<AuthContextType>({
   simulateLogin: () => {},
 });
 
-const STATIC_USER: AuthUser = {
-  id: "usr_swena_traveler",
-  name: "Karnataka Explorer",
-  email: "traveler@swena.internal",
+const DEMO_USER: AuthUser = {
+  id: "demo-user",
+  name: "Karnataka Tourer",
+  email: "",
+  isDemo: true,
 };
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // Auth system temporarily disabled per user instruction — using static user and ID
-  const [user, setUser] = useState<AuthUser | null>(STATIC_USER);
-  const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // useEffect(() => {
-  //   fetch("/api/auth/me")
-  //     .then((res) => res.json())
-  //     .then((data) => {
-  //       setUser(data.user || null);
-  //     })
-  //     .catch(() => {
-  //       setUser(null);
-  //     })
-  //     .finally(() => {
-  //       setIsLoading(false);
-  //     });
-  // }, []);
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then(async (response) => {
+        const data = (await response.json()) as {
+          user?: (AuthUser & { auth_mode?: string }) | null;
+        };
+        setUser(
+          response.ok && data.user
+            ? {
+                ...data.user,
+                isDemo: false,
+                isLocalAuth: data.user.auth_mode === "local_bypass",
+              }
+            : null
+        );
+      })
+      .catch(() => setUser(null))
+      .finally(() => setIsLoading(false));
+  }, []);
 
   const login = () => {
-    window.location.href = "/api/auth/login";
+    window.location.href = "/login";
   };
 
-  const simulateLogin = () => {
-    const mockUser: AuthUser = {
-      id: "usr_swena_default_traveler",
-      name: "Karnataka Explorer",
-      email: "traveler@swena.internal",
-    };
-    setUser(mockUser);
-  };
+  const simulateLogin = () => setUser(DEMO_USER);
 
   const logout = async () => {
     try {
-      await fetch("/api/auth/logout", { method: "POST" });
+      await authClient.signOut();
     } catch {
-      // ignore
+      return;
     }
     setUser(null);
   };

@@ -10,25 +10,18 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta
-from typing import Any, List, Optional, Tuple, TypedDict
+from typing import Any, TypedDict
 
 from ortools.constraint_solver import pywrapcp, routing_enums_pb2
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
+from contracts.routing import TimeWindow
 
 # --- Domain Schemas ---
 
 class Coordinate(TypedDict):
     lat: float
     lng: float
-
-
-class TimeWindow(BaseModel):
-    """Represents a time constraint window for a location (e.g. opening hours)."""
-    model_config = ConfigDict(frozen=True)
-
-    start_minute: int = Field(ge=0, le=1439, description="Start time in minutes from midnight")
-    end_minute: int = Field(ge=0, le=1439, description="End time in minutes from midnight")
 
 
 class ScheduledStop(BaseModel):
@@ -61,8 +54,8 @@ class OptimizedRoute(BaseModel):
     """Complete optimized route output including costs and validation status."""
     model_config = ConfigDict(frozen=True)
 
-    stops: List[ScheduledStop]
-    legs: List[ScheduledLeg]
+    stops: list[ScheduledStop]
+    legs: list[ScheduledLeg]
     total_travel_minutes: int
     total_fuel_cost_inr: float
     total_toll_cost_inr: float
@@ -70,6 +63,9 @@ class OptimizedRoute(BaseModel):
     is_valid: bool
     is_optimal: bool
     validation_message: str = ""
+    geometry_geojson: dict[str, Any] | None = None
+    routing_provider: str | None = None
+    return_to_origin: bool = False
 
 
 # --- Core Solver ---
@@ -99,15 +95,17 @@ class ItineraryScheduler:
         stops: list[dict[str, Any]],
         start_datetime: datetime,
         # External integration parameters
-        transit_matrix: Optional[list[list[int]]] = None,  # duration in minutes
-        distance_matrix: Optional[list[list[float]]] = None,  # distance in km
-        time_windows: Optional[list[TimeWindow]] = None,  # constraints per node index
+        transit_matrix: list[list[int]] | None = None,  # duration in minutes
+        distance_matrix: list[list[float]] | None = None,  # distance in km
+        time_windows: list[TimeWindow] | None = None,  # constraints per node index
+        end_node_index: int | None = None,
         fuel_price_per_liter: float = 102.5,
         vehicle_mileage_kmpl: float = 15.0,
         toll_cost_per_km: float = 5.0,
+        return_to_origin: bool = False,
     ) -> OptimizedRoute:
         """Optimizes stop order, respects time windows, and calculates cost breakdowns."""
-        
+
         # 1. Assemble Location Nodes
         all_locations: list[dict[str, Any]] = [
             {"name": origin_name, "lat": origin_lat, "lng": origin_lng, "stay_minutes": 0}
@@ -120,6 +118,16 @@ class ItineraryScheduler:
                     "lng": float(s["lng"]),
                     "stay_minutes": int(s.get("stay_minutes", 120)),
                     "cost_entry_inr": float(s.get("cost_entry_inr", 0.0)),
+                }
+            )
+        if return_to_origin:
+            all_locations.append(
+                {
+                    "name": origin_name,
+                    "lat": origin_lat,
+                    "lng": origin_lng,
+                    "stay_minutes": 0,
+                    "is_return": True,
                 }
             )
 
@@ -144,6 +152,7 @@ class ItineraryScheduler:
                 total_cost_inr=0.0,
                 is_valid=True,
                 is_optimal=True,
+                return_to_origin=return_to_origin,
             )
 
         # 2. Build Matrices if not provided (Fallback to Haversine)
@@ -173,7 +182,15 @@ class ItineraryScheduler:
             dist_matrix = distance_matrix
 
         # 3. Formulate OR-Tools Routing Model (TSPTW)
-        manager = pywrapcp.RoutingIndexManager(n, 1, 0)
+        if end_node_index is not None and not 1 <= end_node_index < n:
+            raise ValueError("The route endpoint must identify one of the destination stops.")
+        if return_to_origin:
+            end_node_index = n - 1
+        manager = (
+            pywrapcp.RoutingIndexManager(n, 1, [0], [end_node_index])
+            if end_node_index is not None
+            else pywrapcp.RoutingIndexManager(n, 1, 0)
+        )
         routing = pywrapcp.RoutingModel(manager)
 
         def transit_callback(from_index: int, to_index: int) -> int:
@@ -219,6 +236,8 @@ class ItineraryScheduler:
             while not routing.IsEnd(index):
                 route_nodes.append(manager.IndexToNode(index))
                 index = solution.Value(routing.NextVar(index))
+            if end_node_index is not None:
+                route_nodes.append(end_node_index)
         else:
             # Fallback: Sequential order
             route_nodes = list(range(n))
@@ -291,4 +310,5 @@ class ItineraryScheduler:
             is_valid=is_valid,
             is_optimal=is_optimal,
             validation_message="Route optimized successfully." if is_valid else "Solver fell back to sequential order.",
+            return_to_origin=return_to_origin,
         )

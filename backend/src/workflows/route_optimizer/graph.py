@@ -1,17 +1,20 @@
 """Compiles the LangGraph workflow for the Route Optimizer."""
-from langgraph.graph import StateGraph, END
-from .state import RouteState
+from typing import Any
+
+from langgraph.graph import END, StateGraph
+
 from .nodes import (
+    constraint_node,
     geocode_node,
     routing_matrix_node,
-    constraint_node,
     solver_node,
     validation_node,
 )
 from .policies import route_validation_policy
+from .state import RouteState
 
 
-def create_route_optimizer_graph():
+def create_route_optimizer_graph() -> Any:
     graph = StateGraph(RouteState)
 
     graph.add_node("geocode", geocode_node)

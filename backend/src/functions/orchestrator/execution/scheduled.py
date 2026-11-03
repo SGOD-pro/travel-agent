@@ -30,6 +30,8 @@ def _compute_remaining_budget_seconds(context: Any, default_seconds: float = 25.
     """Computes max runtime budget in seconds from Lambda context with a safety buffer."""
     if context and hasattr(context, "get_remaining_time_in_millis"):
         remaining_ms = context.get_remaining_time_in_millis()
+        if not isinstance(remaining_ms, (int, float)):
+            raise TypeError("Lambda remaining time must be numeric")
         # Leave a 3 second buffer for graceful teardown/flush
         budget_seconds = (remaining_ms - 3000) / 1000.0
         return max(1.0, budget_seconds)

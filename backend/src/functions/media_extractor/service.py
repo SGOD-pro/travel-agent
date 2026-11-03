@@ -12,10 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import io
+import json
 import logging
-import os
 import shutil
-import subprocess
 import tempfile
 import time
 import uuid
@@ -39,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 class MediaExtractorService:
     """Service handling bounded media extraction, FFmpeg execution, and quality filtering."""
+
+    _SUBPROCESS_TIMEOUT_SECONDS = 120.0
 
     def __init__(self, ffmpeg_bin: str | None = None, ffprobe_bin: str | None = None) -> None:
         self._ffmpeg = ffmpeg_bin or shutil.which("ffmpeg")
@@ -69,7 +70,7 @@ class MediaExtractorService:
         if size_bytes > req.max_size_bytes:
             runtime_ms = (time.perf_counter() - start_time) * 1000.0
             return MediaExtractionResult(
-                media_id=active_job_id,
+                job_id=active_job_id,
                 correlation_id=active_correlation_id,
                 status=MediaExtractionStatus.FILE_TOO_LARGE,
                 error_message=f"Media size {size_bytes} bytes exceeds ceiling of {req.max_size_bytes} bytes",
@@ -79,7 +80,7 @@ class MediaExtractorService:
         if size_bytes == 0:
             runtime_ms = (time.perf_counter() - start_time) * 1000.0
             return MediaExtractionResult(
-                media_id=active_job_id,
+                job_id=active_job_id,
                 correlation_id=active_correlation_id,
                 status=MediaExtractionStatus.CORRUPT_MEDIA,
                 error_message="Received empty 0-byte media payload",
@@ -134,6 +135,7 @@ class MediaExtractorService:
                     timestamp_seconds=0.0,
                     frame_index=0,
                     blur_threshold=request.blur_threshold,
+                    image_bytes=media_bytes,
                 )
 
                 meta = MediaMetadata(
@@ -149,7 +151,7 @@ class MediaExtractorService:
 
                 runtime_ms = (time.perf_counter() - start_time) * 1000.0
                 return MediaExtractionResult(
-                    media_id=job_id,
+                    job_id=job_id,
                     correlation_id=correlation_id,
                     status=MediaExtractionStatus.SUCCESS,
                     metadata=meta,
@@ -162,7 +164,7 @@ class MediaExtractorService:
         except Exception as e:
             runtime_ms = (time.perf_counter() - start_time) * 1000.0
             return MediaExtractionResult(
-                media_id=job_id,
+                job_id=job_id,
                 correlation_id=correlation_id,
                 status=MediaExtractionStatus.CORRUPT_MEDIA,
                 error_message=f"Failed parsing image payload: {e!s}",
@@ -182,10 +184,12 @@ class MediaExtractorService:
         # Check if it's raw WAV audio
         wav_audio = inspect_wav_audio(media_bytes)
         if wav_audio is not None:
+            wav_audio = wav_audio.model_copy(update={"audio_bytes": media_bytes})
+        if wav_audio is not None:
             if wav_audio.duration_seconds > request.max_duration_seconds:
                 runtime_ms = (time.perf_counter() - start_time) * 1000.0
                 return MediaExtractionResult(
-                    media_id=job_id,
+                    job_id=job_id,
                     correlation_id=correlation_id,
                     status=MediaExtractionStatus.DURATION_EXCEEDED,
                     duration_seconds=wav_audio.duration_seconds,
@@ -202,7 +206,7 @@ class MediaExtractorService:
             )
             runtime_ms = (time.perf_counter() - start_time) * 1000.0
             return MediaExtractionResult(
-                media_id=job_id,
+                job_id=job_id,
                 correlation_id=correlation_id,
                 status=MediaExtractionStatus.SUCCESS,
                 metadata=meta,
@@ -227,7 +231,7 @@ class MediaExtractorService:
         # FFmpeg not present: Return unsupported format or corrupt media gracefully
         runtime_ms = (time.perf_counter() - start_time) * 1000.0
         return MediaExtractionResult(
-            media_id=job_id,
+            job_id=job_id,
             correlation_id=correlation_id,
             status=MediaExtractionStatus.UNSUPPORTED_FORMAT,
             error_message="FFmpeg binary not detected in runtime environment for video container parsing",
@@ -285,6 +289,21 @@ class MediaExtractorService:
             ]
 
             try:
+                duration_seconds = await self._probe_duration(in_file)
+                if duration_seconds > request.max_duration_seconds:
+                    runtime_ms = (time.perf_counter() - start_time) * 1000.0
+                    return MediaExtractionResult(
+                        job_id=job_id,
+                        correlation_id=correlation_id,
+                        status=MediaExtractionStatus.DURATION_EXCEEDED,
+                        duration_seconds=duration_seconds,
+                        error_message=(
+                            f"Media duration {duration_seconds}s exceeds ceiling "
+                            f"{request.max_duration_seconds}s"
+                        ),
+                        runtime_ms=round(runtime_ms, 2),
+                    )
+
                 # Run frame and audio extraction concurrently
                 proc_frames = await asyncio.create_subprocess_exec(
                     *cmd_frames,
@@ -297,21 +316,39 @@ class MediaExtractorService:
                     stderr=asyncio.subprocess.PIPE,
                 )
 
-                await proc_frames.communicate()
-                await proc_audio.communicate()
+                frame_output, _audio_output = await asyncio.gather(
+                    asyncio.wait_for(
+                        proc_frames.communicate(),
+                        timeout=self._SUBPROCESS_TIMEOUT_SECONDS,
+                    ),
+                    asyncio.wait_for(
+                        proc_audio.communicate(),
+                        timeout=self._SUBPROCESS_TIMEOUT_SECONDS,
+                    ),
+                )
+                if proc_frames.returncode != 0:
+                    raise RuntimeError(
+                        f"FFmpeg frame extraction failed: {frame_output[1].decode(errors='replace')[-500:]}"
+                    )
 
                 # Process all extracted frame files
                 frame_files = sorted(frames_dir.glob("frame_*.jpg"))
                 extracted_frames: list[ExtractedFrame] = []
+                frame_timestamps = await self._probe_frame_timestamps(in_file)
 
                 for idx, f_path in enumerate(frame_files):
-                    timestamp = float(idx) / float(fps)
+                    timestamp = (
+                        frame_timestamps[idx]
+                        if idx < len(frame_timestamps)
+                        else float(idx) / float(fps)
+                    )
                     with Image.open(f_path) as f_img:
                         frame = process_image_frame(
                             f_img,
                             timestamp_seconds=timestamp,
                             frame_index=idx,
                             blur_threshold=request.blur_threshold,
+                            image_bytes=f_path.read_bytes(),
                         )
                         extracted_frames.append(frame)
 
@@ -324,15 +361,18 @@ class MediaExtractorService:
                 # Read audio if present
                 audio_res: ExtractedAudio | None = None
                 if out_audio.exists() and out_audio.stat().st_size > 44:
-                    audio_res = inspect_wav_audio(out_audio.read_bytes())
+                    audio_bytes = out_audio.read_bytes()
+                    audio_res = inspect_wav_audio(audio_bytes)
+                    if audio_res is not None:
+                        audio_res = audio_res.model_copy(update={"audio_bytes": audio_bytes})
 
-                duration_est = len(frame_files) / fps if frame_files else (audio_res.duration_seconds if audio_res else 0.0)
+                duration_est = duration_seconds
 
                 # Duration cap check
                 if duration_est > request.max_duration_seconds:
                     runtime_ms = (time.perf_counter() - start_time) * 1000.0
                     return MediaExtractionResult(
-                        media_id=job_id,
+                        job_id=job_id,
                         correlation_id=correlation_id,
                         status=MediaExtractionStatus.DURATION_EXCEEDED,
                         duration_seconds=duration_est,
@@ -350,7 +390,7 @@ class MediaExtractorService:
 
                 runtime_ms = (time.perf_counter() - start_time) * 1000.0
                 return MediaExtractionResult(
-                    media_id=job_id,
+                    job_id=job_id,
                     correlation_id=correlation_id,
                     status=MediaExtractionStatus.SUCCESS,
                     metadata=meta,
@@ -363,9 +403,70 @@ class MediaExtractorService:
             except Exception as e:
                 runtime_ms = (time.perf_counter() - start_time) * 1000.0
                 return MediaExtractionResult(
-                    media_id=job_id,
+                    job_id=job_id,
                     correlation_id=correlation_id,
                     status=MediaExtractionStatus.CORRUPT_MEDIA,
                     error_message=f"FFmpeg extraction failed: {e!s}",
                     runtime_ms=round(runtime_ms, 2),
                 )
+
+    async def _probe_duration(self, input_path: Path) -> float:
+        """Reads authoritative container duration with FFprobe."""
+        if not self._ffprobe:
+            raise RuntimeError("FFprobe binary not detected in runtime environment")
+
+        process = await asyncio.create_subprocess_exec(
+            self._ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "json",
+            str(input_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=self._SUBPROCESS_TIMEOUT_SECONDS,
+        )
+        if process.returncode != 0:
+            raise RuntimeError(f"FFprobe duration failed: {stderr.decode(errors='replace')[-500:]}")
+
+        duration = json.loads(stdout.decode()).get("format", {}).get("duration")
+        if duration is None:
+            raise RuntimeError("FFprobe did not return a media duration")
+        return round(float(duration), 2)
+
+    async def _probe_frame_timestamps(self, input_path: Path) -> list[float]:
+        """Reads best-effort timestamps for video frames with FFprobe."""
+        if not self._ffprobe:
+            return []
+
+        process = await asyncio.create_subprocess_exec(
+            self._ffprobe,
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "frame=best_effort_timestamp_time",
+            "-of",
+            "csv=p=0",
+            str(input_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            process.communicate(),
+            timeout=self._SUBPROCESS_TIMEOUT_SECONDS,
+        )
+        if process.returncode != 0:
+            raise RuntimeError(f"FFprobe timestamp extraction failed: {stderr.decode(errors='replace')[-500:]}")
+
+        timestamps: list[float] = []
+        for raw_timestamp in stdout.decode().splitlines():
+            if raw_timestamp.strip():
+                timestamps.append(round(float(raw_timestamp.split(",", 1)[0]), 6))
+        return timestamps

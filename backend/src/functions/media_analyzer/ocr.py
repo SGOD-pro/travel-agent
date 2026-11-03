@@ -10,7 +10,6 @@ Conforms to Phase 10:
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from PIL import Image
 
@@ -20,7 +19,6 @@ from contracts.media import (
     OcrObservation,
     OcrWord,
 )
-
 
 # Simple script detection regex ranges
 SCRIPT_PATTERNS = {
@@ -49,7 +47,7 @@ def map_ocr_to_clues(observation: OcrObservation) -> list[MediaClue]:
     against spoken audio clues (ASR) and geospatial metadata with standardized confidence scores.
     """
     clues: list[MediaClue] = []
-    
+
     # Map word-level OCR details
     for word in observation.words:
         clues.append(
@@ -62,7 +60,7 @@ def map_ocr_to_clues(observation: OcrObservation) -> list[MediaClue]:
                 language=word.language,
             )
         )
-        
+
     # Map raw detected texts if word-level structures are missing
     for text in observation.detected_texts:
         if not any(c.text_content == text for c in clues):
@@ -76,7 +74,7 @@ def map_ocr_to_clues(observation: OcrObservation) -> list[MediaClue]:
                     language=observation.languages[0] if observation.languages else "en",
                 )
             )
-            
+
     return clues
 
 

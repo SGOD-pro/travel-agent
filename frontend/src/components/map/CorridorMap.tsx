@@ -26,9 +26,18 @@ export interface MapPlace {
   description?: string;
 }
 
+export interface RouteGeometry {
+  type: "Feature";
+  geometry: {
+    type: "LineString";
+    coordinates: [number, number][];
+  };
+}
+
 interface CorridorMapProps {
   stops: MapStop[];
   places?: MapPlace[];
+  routeGeometry?: RouteGeometry;
   activeStopIndex?: number;
   onSelectPlace?: (place: MapPlace) => void;
 }
@@ -36,6 +45,7 @@ interface CorridorMapProps {
 export default function CorridorMap({
   stops,
   places = [],
+  routeGeometry,
   activeStopIndex = 0,
   onSelectPlace,
 }: CorridorMapProps) {
@@ -90,8 +100,16 @@ export default function CorridorMap({
     layerGroup.clearLayers();
     const latLngs: L.LatLngExpression[] = [];
 
-    // 1. Draw corridor route polyline connecting stops
-    if (stops.length > 1) {
+    // 1. Draw provider-backed route geometry when available.
+    if (routeGeometry?.geometry.coordinates.length) {
+      L.geoJSON(routeGeometry as GeoJSON.GeoJsonObject, {
+        style: {
+          color: "#B7C9AD",
+          weight: 4,
+          opacity: 0.95,
+        },
+      }).addTo(layerGroup);
+    } else if (stops.length > 1) {
       const stopPoints: [number, number][] = stops.map((s) => [s.lat, s.lng]);
       
       // Outer subtle glow line
@@ -244,7 +262,7 @@ export default function CorridorMap({
     if (latLngs.length > 0) {
       map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40], maxZoom: 11 });
     }
-  }, [stops, places, activeStopIndex, onSelectPlace]);
+  }, [stops, places, routeGeometry, activeStopIndex, onSelectPlace]);
 
   return (
     <div className="relative w-full h-full min-h-[380px] rounded-2xl overflow-hidden border border-[#233E32] bg-[#0D1915]">

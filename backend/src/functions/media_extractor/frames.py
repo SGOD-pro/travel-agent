@@ -9,10 +9,6 @@ Conforms to Phase 9:
 
 from __future__ import annotations
 
-import io
-from pathlib import Path
-from typing import Any
-
 import numpy as np
 from PIL import Image
 
@@ -87,6 +83,7 @@ def process_image_frame(
     blur_threshold: float = 80.0,
     file_path: str | None = None,
     s3_key: str | None = None,
+    image_bytes: bytes | None = None,
 ) -> ExtractedFrame:
     """Computes quality and perceptual metrics for a single frame.
 
@@ -116,6 +113,7 @@ def process_image_frame(
         is_duplicate=False,
         file_path=file_path,
         s3_key=s3_key,
+        image_bytes=image_bytes,
     )
 
 
@@ -151,6 +149,7 @@ def filter_and_deduplicate_frames(
             is_duplicate=is_dup,
             file_path=f.file_path,
             s3_key=f.s3_key,
+            image_bytes=f.image_bytes,
         )
 
         if is_dup and drop_blurry:
@@ -163,4 +162,4 @@ def filter_and_deduplicate_frames(
 
         processed.append(updated_frame)
 
-    return processeds
+    return processed
