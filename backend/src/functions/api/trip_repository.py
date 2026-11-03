@@ -31,8 +31,6 @@ class SqlAlchemyTripRepository(TripRepositoryPort):
             owner_id=model.owner_id,
             current_version=model.current_version,
             state=TripState(model.state),
-            current_route_id=model.current_route_id,
-            itinerary_json=model.itinerary_json,
             created_at=model.created_at,
             updated_at=model.updated_at,
         )
@@ -45,8 +43,6 @@ class SqlAlchemyTripRepository(TripRepositoryPort):
                 owner_id=trip.owner_id,
                 current_version=trip.current_version,
                 state=trip.state.value,
-                current_route_id=trip.current_route_id,
-                itinerary_json=trip.itinerary_json,
                 created_at=trip.created_at,
                 updated_at=trip.updated_at,
             )
@@ -54,8 +50,6 @@ class SqlAlchemyTripRepository(TripRepositoryPort):
         else:
             model.current_version = trip.current_version
             model.state = trip.state.value
-            model.current_route_id = trip.current_route_id
-            model.itinerary_json = trip.itinerary_json
             model.updated_at = trip.updated_at
 
     async def commit_version(

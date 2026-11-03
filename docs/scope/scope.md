@@ -13,9 +13,7 @@ Asynchronous travel planning and intelligence platform with durable workflow exe
 | 2 | Evidence collection with provenance and canonical place/claim verification | Phase 4: Evidence & Verification | done |
 | 3 | Browser escalation worker service and orchestrator dispatch | Phase 5: Browser Escalation | done |
 | 4 | Remote LAYA decision router integration | Phase 6: Decision Routing | done |
-| 5 | Route optimizer and multimodal itinerary planning | Phase 7: Route Optimization | done |
-| 6 | Route graph, map GeoJSON, and end to end vertical slice | Phase 8: Route Graph & Map | done |
-| 7 | Trip planner end to end execution, hosted LLM integration, and weather advisory | Phase 12: Trip Planner Graph | in-progress |
+| 5 | Route optimizer and multimodal itinerary planning | Phase 7: Route Optimization | in-progress |
 
 ## Foundations
 
@@ -133,102 +131,20 @@ Spec 0004 (`docs/specs/0004-remote-laya-decision-router.md`, Status: Accepted) �
 
 ## Phase 7: Route Optimization
 
-### 5. Route optimizer and multimodal itinerary planning · done
+### 5. Route optimizer and multimodal itinerary planning · in-progress
 Optimize multi stop itineraries across opening hours, dwell times, and transit modes using Google OR Tools constraint solving and Valhalla road matrices, with automated parking hub injection for pedestrian destinations, dynamic road closure avoidance, and mid trip replanning. Strictly excludes payments, booking checkout, client user interfaces, and live AWS deployment.
 **Done when:** domain contracts and PostGIS tables persist routes and legs, OR Tools solver enforces time windows and stop priorities with drop penalties for optional stops, Valhalla adapter calculates road and pedestrian matrices with circuit breaking, parking hubs are injected for pedestrian restricted venues, mid trip replanning freezes completed stops from live GPS coordinates, and async worker executes under PostgreSQL lease fencing.
 - [x] Design it (spec): [0005](../specs/0005-route-optimizer.md)
-- [x] Build it: `/develop route optimizer and multimodal itinerary planning`
-   - [x] Offline core solver vertical slice, routing contracts, and scheduler facade (AC-1, AC-2, AC-5)
-   - [x] Database migration and PostGIS repository with UUID foreign keys (AC-6)
-   - [x] Multimodal vehicle continuity and canonical parking hub service (AC-4)
-   - [x] External Valhalla HTTP client, hard closure avoidance, and connected gate (AC-3, AC-7)
-   - [x] Mid trip dynamic replanning engine and optimistic concurrency (AC-8)
-   - [x] Fenced SQS worker service, job API polling, and standalone Lambda packaging (AC-7, AC-9)
-   - [x] Standalone Lambda ZIP packaging and connected provider acceptance (AC-7, AC-9)
-- [x] Verify it: `/check verify 0005-route-optimizer`
-   - [x] Slice 1 offline core solver and routing contracts: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 15 behaviors)
-   - [x] Slice 2 database migration and PostGIS repository: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 4 live database behaviors)
-   - [x] Slice 3 multimodal vehicle continuity and parking hub service: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 12 behaviors)
-   - [x] Slice 4 external Valhalla HTTP client and hard closure avoidance: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 19 unit and integration behaviors)
-   - [x] Slice 5 mid trip dynamic replanning engine and optimistic concurrency: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 11 behaviors)
-   - [x] Slice 6 fenced SQS worker service, REST API, and standalone packaging: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 13 behaviors)
-   - [x] Slice 7 standalone Lambda ZIP packaging and connected provider acceptance: [verify.md](../specs/0005-route-optimizer/verify.md) (passed all 12 unit and integration behaviors)
-- [x] Review it (fresh model): `/check review 0005-route-optimizer`
-   - [x] Slice 1 offline core solver and routing contracts: [2026-10-23-route-optimizer-slice1.md](../reviews/2026-10-23-route-optimizer-slice1.md) (Approve)
-   - [x] Slice 2 database migration and PostGIS repository: [2026-10-23-route-optimizer-slice2.md](../reviews/2026-10-23-route-optimizer-slice2.md) (Approve)
-   - [x] Slice 3 multimodal vehicle continuity and parking hub service: [2026-10-23-route-optimizer-slice3.md](../reviews/2026-10-23-route-optimizer-slice3.md) (Approve with nits)
-   - [x] Slice 4 external Valhalla HTTP client and hard closure avoidance: [2026-10-24-route-optimizer-slice4.md](../reviews/2026-10-24-route-optimizer-slice4.md) (Approve)
-   - [x] Slice 5 mid trip dynamic replanning engine and optimistic concurrency: [2026-10-24-route-optimizer-slice5.md](../reviews/2026-10-24-route-optimizer-slice5.md) (Approve)
-   - [x] Slice 6 fenced SQS worker service, REST API, and standalone packaging: [2026-10-24-route-optimizer-slice6.md](../reviews/2026-10-24-route-optimizer-slice6.md) (Approve with nits)
-   - [x] Slice 7 standalone Lambda ZIP packaging and connected provider acceptance: [2026-10-24-route-optimizer-slice7.md](../reviews/2026-10-24-route-optimizer-slice7.md) (Approve with nits)
-   - [x] Production integration repair: [2026-10-25-main.md](../reviews/2026-10-25-main.md) (Approve)
-- [x] Test it: `/test 0005-route-optimizer` (111 tests passing across unit and live database integration suites including 13 production regressions, 7 connected tests cleanly gated)
+- [ ] Build it: `/develop route optimizer and multimodal itinerary planning`
+   - [ ] Offline core solver vertical slice, routing contracts, and scheduler facade (AC-1, AC-2, AC-5)
+   - [ ] Database migration and PostGIS repository with UUID foreign keys (AC-6)
+   - [ ] Multimodal vehicle continuity and canonical parking hub service (AC-4)
+   - [ ] External Valhalla HTTP client, hard closure avoidance, and connected gate (AC-3, AC-7)
+   - [ ] Mid trip dynamic replanning engine and optimistic concurrency (AC-8)
+   - [ ] Fenced SQS worker service, job API polling, and standalone Lambda packaging (AC-7, AC-9)
+- [ ] Verify it: `/check verify 0005-route-optimizer`
+- [ ] Review it (fresh model): `/check review 0005-route-optimizer`
+- [ ] Test it: `/test 0005-route-optimizer`
 - [ ] Document it: `/document 0005-route-optimizer`
 
-Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: Accepted) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`
- 
-## Phase 8: Route Graph & Map
-
-### 6. Route graph, map GeoJSON, and end to end vertical slice · done
-Orchestrate route solving and dynamic mid trip replanning inside a dedicated LangGraph state machine, compile PostGIS route geometries into standards compliant GeoJSON FeatureCollections, and extend frontend Leaflet CorridorMap for interactive multi color route inspection. Strictly excludes payments, booking checkout, client user interfaces, and live AWS deployment.
-**Done when:** RouteOptimizerGraph executes under transactional checkpointing, GET /api/v1/optimization/routes/{route_id}/map returns valid styled GeoJSON FeatureCollections, replanning records parent_route_id lineage and version comparison deltas, Leaflet CorridorMap renders driving, walking, detour, and parking legs, and automated integration trace passes on live PostgreSQL.
-- [x] Design it (spec): [0006](../specs/0006-route-graph-and-map-e2e.md)
-- [x] Build it: `/develop route graph, map GeoJSON, and end to end vertical slice`
-   - [x] Core submit, graph dispatch, worker resume, job discovery, and map vertical slice (AC-1, AC-2, AC-3, AC-4, AC-5, AC-9)
-   - [x] Mid trip replanning engine, parent lineage tracking, and versions history (AC-6, AC-7)
-   - [x] Infeasible and partial route handling, diagnostic preservation, and failure separation (AC-8)
-   - [x] Frontend CorridorMap GeoJSON layer integration, safe popups, and attribution (AC-10)
-   - [x] Browser end to end test suite and connected Valhalla verification gate (AC-11)
-- [x] Verify it: `/check verify 0006-route-graph-and-map-e2e`
-   - [x] Slice 1 core submit, graph dispatch, worker resume, job discovery, and map: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed on live PostgreSQL)
-   - [x] Slice 2 mid trip replanning engine, parent lineage tracking, and versions history: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed on live PostgreSQL)
-   - [x] Slice 3 infeasible and partial route handling, diagnostic preservation, and failure separation: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed on live PostgreSQL)
-   - [x] Slice 4 frontend CorridorMap GeoJSON, safe popups, and live page verification: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed TypeScript, Next.js build, and live HTTP rendering)
-   - [x] Slice 5 browser end to end suite and connected Valhalla verification gate: [verify.md](../specs/0006-route-graph-and-map-e2e/verify.md) (passed Playwright suite, clean skip, and live Valhalla provider execution)
-- [x] Review it (fresh model): `/check review 0006-route-graph-and-map-e2e`
-   - [x] Slice 1 core submit, graph dispatch, worker resume, job discovery, and map: [2026-10-25-route-optimizer-graph-slice1.md](../reviews/2026-10-25-route-optimizer-graph-slice1.md) (Approve with nits)
-   - [x] Slice 2 mid trip replanning engine, parent lineage tracking, and versions history: [2026-10-26-route-optimizer-graph-slice2.md](../reviews/2026-10-26-route-optimizer-graph-slice2.md) (Approve with nits)
-   - [x] Slice 3 infeasible and partial route handling, diagnostic preservation, and failure separation: [2026-10-26-route-optimizer-graph-slice3.md](../reviews/2026-10-26-route-optimizer-graph-slice3.md) (Approve with nits)
-   - [x] Slice 4 frontend CorridorMap GeoJSON, safe popups, and polling hook: [2026-10-26-route-optimizer-graph-slice4.md](../reviews/2026-10-26-route-optimizer-graph-slice4.md) (Approve)
-   - [x] Slice 5 browser end to end suite and connected Valhalla verification gate: [2026-10-26-route-optimizer-graph-slice5.md](../reviews/2026-10-26-route-optimizer-graph-slice5.md) (Approve)
-   - [x] Acceptance and replan lifecycle gaps: [2026-10-28-route-optimizer-acceptance-gaps.md](../reviews/2026-10-28-route-optimizer-acceptance-gaps.md) (Approve)
-   - [x] Acceptance isolation and cleanup ordering: [2026-10-28-route-optimizer-acceptance-isolation.md](../reviews/2026-10-28-route-optimizer-acceptance-isolation.md) (Approve)
-   - [x] Database safety guards and checkpointer isolation: [2026-10-28-route-optimizer-database-safety-guards.md](../reviews/2026-10-28-route-optimizer-database-safety-guards.md) (Approve)
-   - [x] DNS cache port handling: [2026-10-28-route-optimizer-dns-cache-port-handling.md](../reviews/2026-10-28-route-optimizer-dns-cache-port-handling.md) (Approve)
-- [x] Test it: `/test 0006-route-graph-and-map-e2e` (32 unit tests, 5 live database integration suites, 8 mocked UI tests, 7 browser acceptance tests, and 1 connected provider gate passing)
-- [x] Document it: `/document 0006-route-graph-and-map-e2e` (10 capability entries in CHANGELOG.md)
-
-Spec 0006 (`docs/specs/0006-route-graph-and-map-e2e.md`, Status: Accepted) · code in `backend/src/functions/orchestrator/graphs/route_optimizer/`, `backend/src/functions/api/routes/optimization.py`, and `frontend/src/components/map/`
-
-## Phase 12: Trip Planner Graph
-
-### 7. Trip planner end to end execution, language model integration, and weather advisory · in-progress
-Coordinate brief parsing, generative place research, deterministic candidate validation, evidence collection, weather advisory fetching, route optimization, budget computation, and proposal synthesis under transactional checkpointing. Strictly excludes payments, booking checkout, and live AWS deployment.
-**Done when:** TripPlannerGraph executes under transactional checkpointing, language model client proposes candidate places via provider neutral port with bounded retries, Open Meteo fetches corridor weather metrics with 16 day horizon gating, asynchronous route optimizer worker solves routes under lease fencing and links route_id to trips, GET /api/v1/trips/{trip_id}/itinerary returns the complete proposal, Next.js frontend renders the inspectable itinerary, and automated integration trace passes on live PostgreSQL.
-- [x] Design it (spec): [0007](../specs/0007-trip-planner-e2e/index.md)
-- [ ] Build it: `/develop trip planner end to end execution, language model integration, and weather advisory`
-   - [x] Provider neutral language model client contracts, abstract port, and offline fixtures (AC-2, AC-3)
-   - [x] Open Meteo weather service, forecast horizon policy, and corridor weather aggregator (AC-6)
-   - [x] Place candidate registration, spatial corridor validation, and deterministic claim eligibility gate (AC-1, AC-3)
-   - [x] Route optimizer task dispatch, interrupt boundary, worker resume, and trip linking (AC-4, AC-5)
-   - [x] End to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking (AC-1, AC-7, AC-8, AC-9)
-   - [x] REST API updates and Next.js frontend itinerary view integration (AC-8, AC-10, AC-11)
-   - [ ] Gated scenario evaluation suite across offline and live gates (AC-12)
-- [ ] Verify it: `/check verify 0007-trip-planner-e2e`
-   - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
-   - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, separately gated live smoke, strict mypy typing, and ruff linting)
-   - [x] Slice 3 place candidate registration, spatial corridor validation, and deterministic claim eligibility gate: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL integration suite, strict mypy typing, and ruff linting)
-   - [x] Slice 4 route optimizer task dispatch, interrupt boundary, worker resume, and trip linking: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL integration suite, strict mypy typing, and ruff linting)
-   - [x] Slice 5 end to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL integration suite, strict mypy typing, and ruff linting)
-   - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL lifecycle integration test, Next.js build, and Playwright browser acceptance suite)
-- [ ] Review it (fresh model): `/check review 0007-trip-planner-e2e`
-   - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
-   - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
-   - [x] Slice 3 place candidate registration, spatial corridor validation, and deterministic claim eligibility gate: [2026-10-31-trip-planner-candidate-slice3.md](../reviews/2026-10-31-trip-planner-candidate-slice3.md) · [2026-11-01-main.md](../reviews/2026-11-01-main.md) (Approve)
-   - [x] Slice 4 route optimizer task dispatch, interrupt boundary, worker resume, and trip linking: [2026-11-01-main.md](../reviews/2026-11-01-main.md) (Approve)
-   - [x] Slice 5 end to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking: [2026-11-02-main.md](../reviews/2026-11-02-main.md) (Approve)
-   - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [2026-11-03-main.md](../reviews/2026-11-03-main.md) (Approve)
-- [ ] Test it: `/test 0007-trip-planner-e2e`
-- [ ] Document it: `/document 0007-trip-planner-e2e`
-
-Spec 0007 (`docs/specs/0007-trip-planner-e2e/index.md`, Status: In Progress) · code in `backend/src/functions/orchestrator/graphs/trip_planner/`, `backend/src/functions/orchestrator/llm/`, `backend/src/functions/orchestrator/weather/`, `backend/src/functions/api/routes/trips.py`, and `frontend/src/app/trips/[id]/`
+Spec 0005 (`docs/specs/0005-route-optimizer.md`, Status: Proposed) · code in `backend/src/contracts/routing.py`, `backend/src/functions/route_optimizer/`, and `backend/src/functions/orchestrator/routing/`

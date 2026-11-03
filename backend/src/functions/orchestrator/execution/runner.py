@@ -114,50 +114,19 @@ class GraphRunnerService:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         default_graph: Any | None = None,
-        workflow_graphs: dict[str, Any] | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         max_runtime_seconds: float = DEFAULT_RUNNER_LEASE_SECONDS,
     ) -> None:
         self._session_factory = session_factory
         self._default_graph = default_graph
-        self._workflow_graphs = dict(workflow_graphs or {})
-        for g in [default_graph, *self._workflow_graphs.values()]:
-            if (
-                g is not None
-                and getattr(g, "checkpointer", None) is not None
-                and getattr(g.checkpointer, "session_factory", None) is None
-            ):
-                g.checkpointer.session_factory = session_factory
+        if (
+            default_graph is not None
+            and hasattr(default_graph, "checkpointer")
+            and getattr(default_graph.checkpointer, "session_factory", None) is None
+        ):
+            default_graph.checkpointer.session_factory = session_factory
         self._max_steps = max_steps
         self._max_runtime_seconds = max_runtime_seconds
-
-    def _resolve_graph(self, workflow: str | None, explicit_graph: Any | None = None) -> Any:
-        """Resolves the appropriate LangGraph state machine based on execution workflow."""
-        if explicit_graph is not None:
-            return explicit_graph
-        if workflow and workflow in self._workflow_graphs:
-            return self._workflow_graphs[workflow]
-        if workflow in ("ROUTE_OPTIMIZER_GRAPH", "ROUTE_OPTIMIZER", "ROUTE_OPTIMIZATION"):
-            from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
-            from functions.orchestrator.graphs.route_optimizer import (
-                compile_route_optimizer_workflow,
-            )
-
-            checkpointer = TransactionBoundCheckpointer(session_factory=self._session_factory)
-            g = compile_route_optimizer_workflow(checkpointer=checkpointer)
-            self._workflow_graphs[workflow] = g
-            return g
-        if workflow in ("TRAVEL", "TRIP_PLANNER", "TRIP_PLANNER_GRAPH", "PLANNING"):
-            from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
-            from functions.orchestrator.graphs.trip_planner import (
-                compile_trip_planning_workflow,
-            )
-
-            checkpointer = TransactionBoundCheckpointer(session_factory=self._session_factory)
-            g = compile_trip_planning_workflow(checkpointer=checkpointer)
-            self._workflow_graphs[workflow] = g
-            return g
-        return self._default_graph
 
     async def handle_execution_start(
         self,
@@ -181,10 +150,13 @@ class GraphRunnerService:
         else:
             event_obj = event
 
+        active_graph = graph or self._default_graph
+        if active_graph is None:
+            raise GraphRunnerError("No graph provided and no default graph configured")
+
         execution_id = event_obj.execution_id
         now = datetime.now(UTC)
         runner_lease = uuid.uuid4()
-        workflow_name = event_obj.workflow
 
         # Phase 1: Lock execution and evaluate barriers
         async with self._session_factory() as session:
@@ -228,7 +200,7 @@ class GraphRunnerService:
                     )
 
                 # Duplicate / Replay check
-                if execution.status in ("WAITING_TASKS", "SUCCEEDED", "PARTIAL", "FAILED", "SUPERSEDED"):
+                if execution.status in ("WAITING_TASKS", "SUCCEEDED", "PARTIAL", "FAILED"):
                     # Check if tasks already exist for this execution
                     task_stmt = select(TaskModel).where(TaskModel.execution_id == execution_id)
                     existing_tasks = (await session.execute(task_stmt)).scalars().all()
@@ -255,7 +227,6 @@ class GraphRunnerService:
                         graph_advanced=False,
                     )
 
-                workflow_name = execution.workflow or workflow_name
                 # Acquire lease and mark RUNNING
                 execution.status = "RUNNING"
                 execution.lease_token = runner_lease
@@ -268,29 +239,11 @@ class GraphRunnerService:
                     safe_payload={"status": "RUNNING"},
                 )
 
-        active_graph = self._resolve_graph(workflow_name, explicit_graph=graph)
-        if active_graph is None:
-            raise GraphRunnerError(
-                f"No graph configured for workflow '{workflow_name}' and no default graph configured"
-            )
-
-        checkpointer = getattr(active_graph, "checkpointer", None)
-        if (
-            checkpointer
-            and hasattr(checkpointer, "session_factory")
-            and checkpointer.session_factory is None
-        ):
-            checkpointer.session_factory = self._session_factory
-        if checkpointer and hasattr(checkpointer, "discard"):
-            checkpointer.discard(str(execution_id))
-
         # Phase 2: Execute LangGraph start outside database transaction
         config = {
             "configurable": {
                 "thread_id": str(execution_id),
                 "session_factory": self._session_factory,
-                "runner_lease": runner_lease,
-                "checkpointer": checkpointer,
             }
         }
         initial_state = {
@@ -301,6 +254,12 @@ class GraphRunnerService:
             "execution_id": str(execution_id),
             **(event_obj.payload or {}),
         }
+
+        checkpointer = getattr(active_graph, "checkpointer", None)
+        if checkpointer and hasattr(checkpointer, "session_factory") and checkpointer.session_factory is None:
+            checkpointer.session_factory = self._session_factory
+        if checkpointer and hasattr(checkpointer, "discard"):
+            checkpointer.discard(str(execution_id))
 
         try:
             # Check if thread state already exists in checkpointer
@@ -353,10 +312,13 @@ class GraphRunnerService:
         else:
             event_obj = event
 
+        active_graph = graph or self._default_graph
+        if active_graph is None:
+            raise GraphRunnerError("No graph provided and no default graph configured")
+
         execution_id = event_obj.execution_id
         now = datetime.now(UTC)
         runner_lease = uuid.uuid4()
-        workflow_name: str | None = None
 
         # Phase 1: Lock execution and evaluate barriers
         async with self._session_factory() as session:
@@ -394,7 +356,7 @@ class GraphRunnerService:
                     )
 
                 # Terminal barrier: already finished
-                if execution.status in ("SUCCEEDED", "PARTIAL", "FAILED", "SUPERSEDED"):
+                if execution.status in ("SUCCEEDED", "PARTIAL", "FAILED"):
                     return GraphRunnerResult(
                         execution_id=execution_id,
                         status=execution.status,
@@ -434,7 +396,6 @@ class GraphRunnerService:
                         graph_advanced=False,
                     )
 
-                workflow_name = execution.workflow
                 # Acquire lease and set RUNNING
                 execution.status = "RUNNING"
                 execution.lease_token = runner_lease
@@ -447,31 +408,18 @@ class GraphRunnerService:
                     safe_payload={"status": "RUNNING", "action": "resume_graph"},
                 )
 
-        active_graph = self._resolve_graph(workflow_name, explicit_graph=graph)
-        if active_graph is None:
-            raise GraphRunnerError(
-                f"No graph configured for workflow '{workflow_name}' and no default graph configured"
-            )
-
-        checkpointer = getattr(active_graph, "checkpointer", None)
-        if (
-            checkpointer
-            and hasattr(checkpointer, "session_factory")
-            and checkpointer.session_factory is None
-        ):
-            checkpointer.session_factory = self._session_factory
-        if checkpointer and hasattr(checkpointer, "discard"):
-            checkpointer.discard(str(execution_id))
-
         # Phase 2: Execute LangGraph continuation outside database transaction
         config = {
             "configurable": {
                 "thread_id": str(execution_id),
                 "session_factory": self._session_factory,
-                "runner_lease": runner_lease,
-                "checkpointer": checkpointer,
             }
         }
+        checkpointer = getattr(active_graph, "checkpointer", None)
+        if checkpointer and hasattr(checkpointer, "session_factory") and checkpointer.session_factory is None:
+            checkpointer.session_factory = self._session_factory
+        if checkpointer and hasattr(checkpointer, "discard"):
+            checkpointer.discard(str(execution_id))
 
         try:
             post_state = await active_graph.aget_state(config=config)
@@ -643,11 +591,7 @@ class GraphRunnerService:
                             # Deduplicate tasks already created
                             continue
 
-                        task_id = (
-                            uuid.UUID(str(task_spec["task_id"]))
-                            if task_spec.get("task_id")
-                            else uuid.uuid4()
-                        )
+                        task_id = uuid.uuid4()
                         task_deadline = execution.deadline_at or (
                             now + timedelta(seconds=int(task_spec.get("deadline_seconds", 3600)))
                         )
@@ -728,7 +672,7 @@ class GraphRunnerService:
                 # Case B: Graph reached completion with no remaining nodes
                 if not has_next_nodes:
                     terminal_status = state_values.get("status", "SUCCEEDED")
-                    if terminal_status not in ("SUCCEEDED", "PARTIAL", "FAILED", "SUPERSEDED"):
+                    if terminal_status not in ("SUCCEEDED", "PARTIAL", "FAILED"):
                         terminal_status = "SUCCEEDED"
 
                     execution.status = terminal_status

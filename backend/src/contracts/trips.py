@@ -49,8 +49,6 @@ class DestinationPoint(BaseModel):
     confidence: float = Field(default=1.0, ge=0.0, le=1.0)
     provider_place_id: str | None = None
     stay_days: int = Field(default=1, ge=1)
-    visit_date: date | None = None
-    day_offset: int | None = Field(default=None, ge=0)
 
 
 class TripBrief(BaseModel):
@@ -64,9 +62,6 @@ class TripBrief(BaseModel):
     destinations: list[DestinationPoint] = Field(..., min_length=1)
     start_date: date
     end_date: date
-    timezone: str = Field(
-        default="Asia/Kolkata", description="Target IANA timezone string for trip scheduling"
-    )
     adults: int = Field(default=1, ge=1)
     child_ages: list[int] = Field(default_factory=list)
     rooms: int = Field(default=1, ge=1)
@@ -75,19 +70,6 @@ class TripBrief(BaseModel):
     dietary_preferences: list[str] = Field(default_factory=list)
     accessibility_requirements: list[str] = Field(default_factory=list)
     hard_constraints: list[str] = Field(default_factory=list)
-
-    @field_validator("timezone")
-    @classmethod
-    def validate_timezone(cls, v: str) -> str:
-        if not v or not v.strip():
-            return "Asia/Kolkata"
-        import zoneinfo
-
-        try:
-            zoneinfo.ZoneInfo(v.strip())
-        except Exception as exc:
-            raise ValueError(f"Invalid IANA timezone string: '{v}'") from exc
-        return v.strip()
 
     @field_validator("end_date")
     @classmethod
@@ -124,8 +106,6 @@ class Trip(BaseModel):
     owner_id: uuid.UUID
     current_version: int = Field(default=0, ge=0)
     state: TripState = Field(default=TripState.DRAFT)
-    current_route_id: uuid.UUID | None = Field(default=None)
-    itinerary_json: dict[str, Any] | None = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

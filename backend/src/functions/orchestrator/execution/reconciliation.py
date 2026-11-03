@@ -116,7 +116,6 @@ class CompletionReconciliationService:
         session_factory: async_sessionmaker[AsyncSession],
         *,
         default_graph: Any | None = None,
-        workflow_graphs: dict[str, Any] | None = None,
         batch_size: int = DEFAULT_RECONCILIATION_BATCH_SIZE,
         max_batch_size: int = DEFAULT_MAX_RECONCILIATION_BATCH_SIZE,
         max_runtime_seconds: float = DEFAULT_MAX_RECONCILIATION_RUNTIME_SECONDS,
@@ -124,46 +123,10 @@ class CompletionReconciliationService:
     ) -> None:
         self._session_factory = session_factory
         self._default_graph = default_graph
-        self._workflow_graphs = dict(workflow_graphs or {})
-        for g in [default_graph, *self._workflow_graphs.values()]:
-            if (
-                g is not None
-                and hasattr(g, "checkpointer")
-                and getattr(g.checkpointer, "session_factory", None) is None
-            ):
-                g.checkpointer.session_factory = session_factory
         self._max_batch_size = max_batch_size
         self._batch_size = max(1, min(batch_size, max_batch_size))
         self._max_runtime_seconds = max(1.0, max_runtime_seconds)
         self._stalled_interval_seconds = max(1, stalled_interval_seconds)
-
-    def _resolve_graph(self, workflow: str | None, explicit_graph: Any | None = None) -> Any:
-        """Resolves the appropriate LangGraph state machine based on execution workflow."""
-        if explicit_graph is not None:
-            return explicit_graph
-        if workflow and workflow in self._workflow_graphs:
-            return self._workflow_graphs[workflow]
-        if workflow in ("ROUTE_OPTIMIZER_GRAPH", "ROUTE_OPTIMIZER", "ROUTE_OPTIMIZATION"):
-            from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
-            from functions.orchestrator.graphs.route_optimizer import (
-                compile_route_optimizer_workflow,
-            )
-
-            checkpointer = TransactionBoundCheckpointer(session_factory=self._session_factory)
-            g = compile_route_optimizer_workflow(checkpointer=checkpointer)
-            self._workflow_graphs[workflow] = g
-            return g
-        if workflow in ("TRAVEL", "TRIP_PLANNER", "TRIP_PLANNER_GRAPH", "PLANNING"):
-            from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
-            from functions.orchestrator.graphs.trip_planner import (
-                compile_trip_planning_workflow,
-            )
-
-            checkpointer = TransactionBoundCheckpointer(session_factory=self._session_factory)
-            g = compile_trip_planning_workflow(checkpointer=checkpointer)
-            self._workflow_graphs[workflow] = g
-            return g
-        return self._default_graph
 
     async def reconcile_task_event(
         self,
@@ -203,6 +166,13 @@ class CompletionReconciliationService:
             event_output = event.output
             event_error = event.error
 
+        active_graph = graph or self._default_graph
+        if (
+            active_graph is not None
+            and hasattr(active_graph, "checkpointer")
+            and getattr(active_graph.checkpointer, "session_factory", None) is None
+        ):
+            active_graph.checkpointer.session_factory = self._session_factory
         now = datetime.now(UTC)
 
         async with self._session_factory() as session:
@@ -218,14 +188,6 @@ class CompletionReconciliationService:
                 execution = (await session.execute(exec_stmt)).scalar_one_or_none()
                 if execution is None:
                     raise ExecutionNotFoundError(f"Execution {execution_id} not found")
-
-                active_graph = self._resolve_graph(execution.workflow, explicit_graph=graph)
-                if (
-                    active_graph is not None
-                    and hasattr(active_graph, "checkpointer")
-                    and getattr(active_graph.checkpointer, "session_factory", None) is None
-                ):
-                    active_graph.checkpointer.session_factory = self._session_factory
 
                 task_stmt = select(TaskModel).where(TaskModel.id == task_id).with_for_update()
                 task = (await session.execute(task_stmt)).scalar_one_or_none()
@@ -284,11 +246,7 @@ class CompletionReconciliationService:
                 # Phase 3: Barrier Checks
                 # Cancellation Barrier: do not resume or update graph for cancelled execution
                 if execution.status == "CANCELLED" or execution.cancelled_at is not None:
-                    if (
-                        active_graph is not None
-                        and hasattr(active_graph, "checkpointer")
-                        and hasattr(active_graph.checkpointer, "discard")
-                    ):
+                    if hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
                         active_graph.checkpointer.discard(str(execution_id))
                     await session.execute(
                         text(
@@ -306,14 +264,10 @@ class CompletionReconciliationService:
                     )
 
                 # Deadline Barrier
-                if execution.deadline_at and execution.deadline_at <= now:
-                    if (
-                        active_graph is not None
-                        and hasattr(active_graph, "checkpointer")
-                        and hasattr(active_graph.checkpointer, "discard")
-                    ):
+                if execution.deadline_at <= now:
+                    if hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "discard"):
                         active_graph.checkpointer.discard(str(execution_id))
-                    if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED", "SUPERSEDED"):
+                    if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED"):
                         execution.status = "FAILED"
                         execution.lease_token = None
                         execution.lease_expiry = None
@@ -370,7 +324,7 @@ class CompletionReconciliationService:
                     )
 
                 # Ineligible parent execution
-                if execution.status in ("SUCCEEDED", "FAILED", "PARTIAL", "SUPERSEDED"):
+                if execution.status in ("SUCCEEDED", "FAILED", "PARTIAL"):
                     await session.execute(
                         text(
                             "UPDATE completion_receipts SET applied_at = :now WHERE event_id = :event_id AND applied_at IS NULL"
@@ -472,8 +426,7 @@ class CompletionReconciliationService:
                         merged_outputs = {**existing_outputs, str(task_id): task_output}
                         node_target = (
                             "worker_node"
-                            if hasattr(active_graph, "nodes")
-                            and "worker_node" in active_graph.nodes
+                            if hasattr(active_graph, "nodes") and "worker_node" in active_graph.nodes
                             else None
                         )
                         await active_graph.aupdate_state(
@@ -484,9 +437,7 @@ class CompletionReconciliationService:
                             },
                             as_node=node_target,
                         )
-                        if hasattr(active_graph, "checkpointer") and hasattr(
-                            active_graph.checkpointer, "flush"
-                        ):
+                        if hasattr(active_graph, "checkpointer") and hasattr(active_graph.checkpointer, "flush"):
                             await active_graph.checkpointer.flush(session, str(execution_id))
                         checkpoint_updated = True
 
@@ -554,53 +505,8 @@ class CompletionReconciliationService:
                                     "reason": "tasks_failed_or_cancelled",
                                 },
                             )
-                    elif execution.workflow in (
-                        "ROUTE_OPTIMIZATION",
-                        "ROUTE_REPLAN",
-                        "OPTIMIZER",
-                        "ROUTE_OPTIMIZER",
-                    ):
-                        # All tasks completed successfully for standalone optimizer workflow:
-                        # Reconcile directly to terminal SUCCEEDED status
-                        execution.status = "SUCCEEDED"
-                        execution.lease_token = None
-                        execution.lease_expiry = None
-                        execution.updated_at = now
-                        success_event_id = uuid.uuid4()
-                        session.add(
-                            OutboxEventModel(
-                                id=success_event_id,
-                                execution_id=execution_id,
-                                aggregate_id=execution_id,
-                                task_id=task_id,
-                                kind="EXECUTION_SUCCEEDED",
-                                event_type="EXECUTION_SUCCEEDED",
-                                payload_ref={
-                                    "execution_id": str(execution_id),
-                                    "status": "SUCCEEDED",
-                                    "workflow": execution.workflow,
-                                },
-                                payload={
-                                    "execution_id": str(execution_id),
-                                    "status": "SUCCEEDED",
-                                    "workflow": execution.workflow,
-                                },
-                                due_at=now,
-                                attempts=0,
-                                created_at=now,
-                            )
-                        )
-                        await record_job_event(
-                            session,
-                            execution_id=execution_id,
-                            event_type="EXECUTION_SUCCEEDED",
-                            safe_payload={
-                                "status": "SUCCEEDED",
-                                "workflow": execution.workflow,
-                            },
-                        )
                     elif execution.status == "WAITING_TASKS":
-                        # Non-optimizer graph workflow: persist durable graph-resume action and transition to RUNNING state
+                        # All tasks completed successfully: persist durable graph-resume action
                         execution.status = "RUNNING"
                         execution.updated_at = now
                         resume_event_id = uuid.uuid4()

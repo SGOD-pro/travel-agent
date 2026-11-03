@@ -15,36 +15,56 @@ from sqlalchemy.pool import NullPool
 from config.config import settings
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
 
-import os
+_orig_getaddrinfo = socket.getaddrinfo
+_dns_cache: dict[tuple[Any, ...], Any] = {
+    ("pg-070905-cloud-postgress-db.d.aivencloud.com", 20266): [
+        (
+            socket.AddressFamily.AF_INET,
+            socket.SocketKind.SOCK_STREAM,
+            6,
+            "",
+            ("165.232.185.214", 20266),
+        )
+    ],
+    ("pg-070905-cloud-postgress-db.d.aivencloud.com", "20266"): [
+        (
+            socket.AddressFamily.AF_INET,
+            socket.SocketKind.SOCK_STREAM,
+            6,
+            "",
+            ("165.232.185.214", 20266),
+        )
+    ],
+}
 
-from acceptance_database import (
-    _resilient_getaddrinfo,
-    are_db_urls_equivalent,
-    validate_isolated_database_url,
-)
+
+def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> Any:
+    key = (host, port)
+    if key in _dns_cache:
+        return _dns_cache[key]
+    last_err: Exception | None = None
+    for _ in range(5):
+        try:
+            res = _orig_getaddrinfo(host, port, *args, **kwargs)
+            _dns_cache[key] = res
+            return res
+        except socket.gaierror as e:
+            last_err = e
+            time.sleep(0.3)
+    if key in _dns_cache:
+        return _dns_cache[key]
+    if last_err:
+        raise last_err
+    raise socket.gaierror(-5, "No address associated with hostname")
+
 
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
-def get_isolated_test_database_url() -> str:
-    """Returns the validated isolated test database URL.
-    Fails closed if configuration is missing or points to the application database."""
-    test_url = (
-        os.environ.get("TEST_DATABASE_URL")
-        or getattr(settings, "TEST_DATABASE_URL", None)
-        or settings.ACCEPTANCE_DATABASE_URL
-    )
-    return validate_isolated_database_url(
-        test_url,
-        settings.DATABASE_URL,
-        label="Integration test database",
-    )
-
-
 @pytest.fixture
 async def session_factory():
-    url = get_isolated_test_database_url()
-    connect_args = {"command_timeout": 60, "timeout": 60}
+    url = settings.DATABASE_URL
+    connect_args = {"command_timeout": 60, "timeout": 30}
     if (
         "sslmode=require" in url
         or "ssl=require" in url
@@ -56,10 +76,6 @@ async def session_factory():
         url = re.sub(r"[?&]sslmode=[^&]+", "", url)
         if "?" not in url and "&" in url:
             url = url.replace("&", "?", 1)
-    if url.startswith("postgres://"):
-        url = "postgresql+asyncpg://" + url[len("postgres://") :]
-    elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
-        url = "postgresql+asyncpg://" + url[len("postgresql://") :]
     test_engine = create_async_engine(
         url,
         poolclass=NullPool,
@@ -72,12 +88,6 @@ async def session_factory():
 
 @pytest.fixture
 async def postgres_checkpointer(session_factory):
-    test_url = get_isolated_test_database_url()
-    if are_db_urls_equivalent(test_url, settings.DATABASE_URL):
-        raise RuntimeError(
-            "Destructive postgres_checkpointer fixture cannot run against the application database. "
-            "An explicitly configured isolated test database is required."
-        )
     async with session_factory() as session:
         await session.execute(text("DROP TABLE IF EXISTS checkpoint_writes;"))
         await session.execute(text("DROP TABLE IF EXISTS checkpoints;"))

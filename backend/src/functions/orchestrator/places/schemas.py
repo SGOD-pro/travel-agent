@@ -13,8 +13,6 @@ from geoalchemy2.shape import to_shape
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from shapely.geometry import Point
 
-from contracts.candidate import CoordinatePoint as _BaseCoordinatePoint
-
 
 class AccessStatus(StrEnum):
     PUBLIC = "PUBLIC"
@@ -22,8 +20,29 @@ class AccessStatus(StrEnum):
     UNKNOWN = "UNKNOWN"
 
 
-class CoordinatePoint(_BaseCoordinatePoint):
+class CoordinatePoint(BaseModel):
     """WGS84 coordinate point (EPSG:4326) with longitude and latitude."""
+
+    model_config = ConfigDict(frozen=True)
+
+    lng: float = Field(..., ge=-180.0, le=180.0, description="Longitude in decimal degrees")
+    lat: float = Field(..., ge=-90.0, le=90.0, description="Latitude in decimal degrees")
+
+    def to_ewkt(self, srid: int = 4326) -> str:
+        """Return EWKT representation with SRID."""
+        return f"SRID={srid};POINT({self.lng} {self.lat})"
+
+    def to_plain_wkt(self) -> str:
+        """Return plain WKT POINT representation without SRID."""
+        return f"POINT({self.lng} {self.lat})"
+
+    def to_wkt(self, srid: int = 4326) -> str:
+        """Return EWKT representation with SRID (alias for to_ewkt)."""
+        return self.to_ewkt(srid=srid)
+
+    def to_point_wkt(self) -> str:
+        """Return plain WKT POINT representation (alias for to_plain_wkt)."""
+        return self.to_plain_wkt()
 
     @classmethod
     def from_shape(cls, shape: Point) -> CoordinatePoint:

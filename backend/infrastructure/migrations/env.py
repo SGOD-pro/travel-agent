@@ -14,7 +14,6 @@ import functions.evidence_collector.models  # noqa: F401
 import functions.orchestrator.evidence.models  # noqa: F401
 import functions.orchestrator.execution.models  # noqa: F401
 import functions.orchestrator.places.models  # noqa: F401
-import functions.orchestrator.routing.models  # noqa: F401
 from config.base_model import Base
 from config.config import settings
 
@@ -99,15 +98,7 @@ async def run_async_migrations() -> None:
     """
 
     section = config.get_section(config.config_ini_section, {})
-    import os
-    target_url = os.environ.get("TARGET_DATABASE_URL")
-    if not target_url and os.environ.get("USE_ACCEPTANCE_DB"):
-        target_url = settings.ACCEPTANCE_DATABASE_URL
-    url = target_url or os.environ.get("DATABASE_URL") or settings.DATABASE_URL
-    if url.startswith("postgres://"):
-        url = "postgresql+asyncpg://" + url[len("postgres://") :]
-    elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
-        url = "postgresql+asyncpg://" + url[len("postgresql://") :]
+    url = settings.DATABASE_URL
     connect_args = {"command_timeout": 60, "timeout": 30}
     if "sslmode=require" in url or "ssl=require" in url or "aivencloud.com" in url or settings.DB_SSL:
         connect_args["ssl"] = "require"

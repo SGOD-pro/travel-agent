@@ -25,25 +25,6 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/contracts/decision.py` | Internal decision domain models, action enums, envelope payloads, and port interfaces |
 | `src/functions/decision_router/` | Remote LAYA decision router client adapter, TypeSafe Jev wire schemas, sanitization, and offline fixtures |
 | `src/functions/orchestrator/decision/` | Decision policy validator, database models, canonical replay digests, and idempotent repository |
-| `src/contracts/routing.py` | Domain routing contracts, stop inputs, leg outputs, and fuel profiles |
-| `src/functions/route_optimizer/` | OR Tools VRPTW routing solver, vehicle continuity tracker, multimodal parking hubs, Valhalla client, closure avoidance, mid trip replanning, and fenced worker service |
-| `src/functions/route_optimizer/consumer.py` | Dedicated SQS consumer Lambda handler with partial batch failure reporting and deadline guards |
-| `src/functions/route_optimizer/packaging.py` | Standalone Lambda packaging under 250 MB unpacked (0.28 MB lightweight, ~211 MB dependency inclusive), asset auditing, and clean isolated runtime verification |
-| `src/functions/api/routes/optimization.py` | Asynchronous route optimization, job discovery by-job, map GeoJSON, route retrieval, and replanning endpoints |
-| `src/functions/orchestrator/graphs/route_optimizer/` | RouteOptimizerGraph LangGraph state machine, solver task emission, and route finalization |
-| `src/functions/orchestrator/graphs/trip_planner/` | TripPlannerGraph LangGraph state machine coordinating place research, candidate validation, weather advisory, and route optimizer task dispatch and resumption |
-| `src/functions/orchestrator/routing/` | Route persistence repository, single child replan constraint, PostGIS spatial models, and RFC 7946 GeoJSON map assembler |
-| `src/acceptance_database.py` | Dedicated acceptance database URL validation, normalization, and isolated session factory |
-| `src/acceptance_server.py` | Local acceptance server and worker orchestration with injected MockValhallaClient for browser testing |
-| `src/contracts/llm.py` | Pydantic domain contracts for language model proposals, structured opening hours, and provider configuration |
-| `src/functions/orchestrator/llm/` | Provider neutral language model client abstract port, deterministic FixtureLlmClient, and factory |
-| `src/contracts/weather.py` | Pydantic domain contracts for stop forecasts, corridor weather advisories, and risk enums |
-| `src/functions/orchestrator/weather/` | Weather client abstract port, Open Meteo adapter, deterministic FixtureWeatherClient, and factory |
-| `src/contracts/candidate.py` | Pydantic domain contracts for corridor validation, candidate statuses, and eligibility reports |
-| `src/functions/orchestrator/places/candidate_service.py` | Place proposal registration, PostGIS persistence, deduplication, and replay idempotency |
-| `src/functions/orchestrator/places/corridor.py` | Geodesic corridor boundary calculation and coordinate bounds validation |
-| `src/functions/orchestrator/evidence/eligibility.py` | Deterministic evidence eligibility gate, assumed hours labeling, and contradiction exclusion |
-| `src/functions/api/routes/trips.py` | Trip creation, brief updates, job acceptance, owner authorized itinerary proposal with GeoJSON map, and corridor weather endpoints |
 
 ## Commands
 
@@ -65,9 +46,6 @@ uv run python -m functions.evidence_collector.packaging
 
 # Package isolated browser worker Lambda
 uv run python -m functions.browser.packaging
-
-# Package isolated route optimizer Lambda
-uv run python -m functions.route_optimizer.packaging
 
 # Run database migrations
 uv run alembic upgrade head
@@ -100,61 +78,6 @@ uv run alembic upgrade head
 - LangGraph evidence routing node records chronological decision envelopes in laya_decisions table and executes between candidate discovery and dynamic evidence escalation.
 - Trip planner workflow compiles with an interrupt before await_evidence_results, resuming back to route_evidence_decision once completed task results or persisted source observations arrive.
 - Route optimizer and trip planner end to end workflows precede media location development.
-- Route optimizer enforces forbidden unreachable transitions via arc removal, dwell completion before venue closing, and honest solver statuses (OPTIMAL requires proof, timeout returns TIME_LIMIT).
-- Multimodal routes for private vehicles automatically discover verified public parking hubs within DEFAULT_PARKING_SEARCH_RADIUS_METERS, failing closed with INFEASIBLE and NO_VERIFIED_PARKING_HUB when missing.
-- Vehicle continuity tracker guarantees driving legs depart only from the stop where the vehicle is currently parked, preventing teleportation, and fuel calculations strictly isolate driving distance from walking.
-- Valhalla HTTP client provides matrices and turn by turn routes with polyline6 decoding, bounded retry backoff, and coordinate boundary safety.
-- Closure avoidance service transforms verified road restrictions into Valhalla exclude polygons and enforces post routing spatial revalidation with strict fail closed semantics.
-- Shared configured Valhalla client provider instance is used across solve, multimodal, and replan workflows without implicit production haversine or hardcoded speed fallbacks.
-- Post hydration arrival, wait, and dwell times are revalidated against window end; mandatory breaches transition to INFEASIBLE, while optional breaches drop the stop, re solve remaining stops, and return PARTIAL.
-- Provider hydration and schedule revalidation apply to both FEASIBLE and PARTIAL routes in solve and replan paths, ensuring all scheduled legs carry provider geometries.
-- ScheduledStopOutput preserves input stop identifier for both scheduled and dropped stops.
-- Mid trip replanning freezes completed stops with historical timestamps, injects traveler GPS coordinates as departure origin, re optimizes remaining stops, and enforces two tier optimistic concurrency checks on immutable route versions.
-- Route optimizer worker service executes under WorkerFencingService with parent first locking order, cooperative cancellation checks, and atomic completion.
-- Route optimizer consumer reports SQS partial batch failures via batchItemFailures and uses remaining execution time guards (< 5000ms) for safe redrive.
-- Standalone completion reconciliation scopes strictly to optimizer workflows, leaving orchestrator graph workflows in waiting states untouched.
-- Route optimizer packages independently into an isolated Lambda artifact under 50 MB compressed and 250 MB uncompressed (0.28 MB lightweight, ~211 MB dependency inclusive), excluding LangGraph, Playwright, and FastAPI dependencies.
-- Optimization endpoints enforce caller tenant ownership with explicit 403 Forbidden responses on tenant mismatch.
-- Replan endpoint enforces (owner_id, "route_optimization:replan", idemp_key) idempotency semantics: identical payload replays the cached 202 response even after completion, changed payload returns 409 Conflict, and retry is permitted after terminal failure or cancellation when no child route was committed.
-- Acceptance testing and local worker polling strictly isolate owned test fixtures and executions without global outbox acknowledgements or unrelated route mutations.
-- Acceptance environment requires an explicitly configured dedicated PostgreSQL database via ACCEPTANCE_DATABASE_URL and fails closed on missing configuration or reuse of DATABASE_URL; the acceptance worker processes only owned fixtures matching DEFAULT_ALLOWED_TRIP_IDS.
-- Database equivalence guard compares host, port, and database name, ignoring PostgreSQL username credentials, resolving host aliases (loopback variants, format differences, and IP aliases), and fails closed if target identity cannot be safely determined.
-- Integration test checkpointer fixtures require an isolated test database (TEST_DATABASE_URL or ACCEPTANCE_DATABASE_URL), failing closed before running destructive checkpoint table teardown against shared development or application databases.
-- DNS caching in acceptance database, server, worker, seeder, and integration fixtures preserves caller requested ports across cache lookups, string ports, and fallback resolution without cross port contamination.
-- RouteOptimizerGraph compiles with interrupt_before=[RouteOptimizerNode.AWAIT_SOLVER_RESULT], clearing pending_tasks upon resumption to eliminate duplicate dispatch, and preserves INFEASIBLE route outcomes with status SUCCEEDED (see spec 0006).
-- GET /api/v1/optimization/routes/{route_id}/map returns RFC 7946 GeoJSON FeatureCollection with PostGIS stop coordinates, JSONB leg polylines, simplestyle presentation attributes, and 4 element bbox (see spec 0006).
-- GET /api/v1/optimization/routes/{route_id}/versions traces root to child replan lineage with recursive PostgreSQL CTE, computing distance deltas, duration deltas, and dropped stops (see spec 0006).
-- Language model integration uses a provider neutral abstract port (HostedLlmClientPort) with deterministic offline fixtures (FixtureLlmClient) for hermetic local testing and continuous integration without cloud dependencies.
-- Language model proposals enforce uncertainty labels (EDITORIAL_DISCOVERY) and strict coordinate bounds, with unverified candidates excluded from route solver execution.
-- Visiting hours support structured opening hours (DayOpeningHours, StructuredOpeningHours) alongside human readable strings to support deterministic claim eligibility and scheduling.
-- Weather integration consumes Open Meteo forecast API under non commercial terms with required attribution ("Weather data by Open Meteo.com") and 16 day forecast horizon gating without presenting historical averages as live forecasts.
-- Weather corridor forecasts sample each stop for its actual local arrival date and hour, defaulting to departure midday only with an explicit diagnostic note, support multi day trips and midnight arrival, bound missing hour drift with explicit diagnostics, preserve severe hazards on partial corridors, require verified inputs for monsoon risk without zero defaulting to low risk, and validate provider array bounds safely.
-- Open Meteo licensing status models commercial subscriptions explicitly via CommercialLicenseStatus, never inferring commercial rights from API keys alone, and strictly prevents key leakage into diagnostics or logs.
-- Routing provider outages adhere to specification 0005 fail closed routing without straight line Euclidean distance guesswork, publishing incomplete itineraries with unrouted stops preserved.
-- Candidate places must lie within 100 kilometers of the travel corridor connecting origin to destination stops, with coordinate or distance match alone proving neither existence nor operating hours.
-- Unverified candidate places are retained solely as editorial recommendations cards with uncertainty EDITORIAL_DISCOVERY and never enter the route optimizer solver schedule.
-- Contradicted candidate places refuted by negative observations or conflicting claims are excluded entirely from both route solver stops and recommendation cards.
-- Places with verified existence but unknown operating hours receive assumed daytime visiting windows (09:00 to 18:00) explicitly labeled in state and schedule as HOURS_ASSUMED, never presented as verified hours.
-- Evidence eligibility verifies place identity: claims linked to a place id strictly match only that place id, while name only claims require valid established coordinate distance within 1.0 kilometer, with missing, malformed, or non finite coordinates rejected.
-- Candidate evaluation validates caller ownership, cancellation status, and execution deadlines before persisting candidates, and uses runner provided session factories across transaction boundaries.
-- TripPlannerGraph dispatches route optimization tasks to worker OPTIMIZER with action solve, halts at interrupt boundary AWAIT_ROUTE_RESULTS, clears pending_tasks on resumption to prevent duplicate dispatch, and links route_id and diagnostics without bundling OR Tools into the orchestrator Lambda.
-- Trip planner routing provider outages enforce specification 0005 fail closed routing without straight line guesswork, setting route_id to None, routing_status to ROUTING_UNAVAILABLE, and preserving stops without road polylines.
-- Overconstrained stop windows produce routing_status INFEASIBLE and preserve dropped stop diagnostics without failing parent execution.
-- Route result consumption strictly binds to the dispatched optimizer task identifier (optimizer_task_id), ignoring prior browser or evidence task errors.
-- When optimizer task output is absent from checkpoint state, result recovery loads from WorkerResultModel using task result_id, validates parent execution and tenant ownership, and propagates worker failure status.
-- Production route result consumption fails closed without guessing if session factory is missing, owner is missing, route lookup fails, or execution and trip identifiers are missing or mismatch.
-- Trip departure and stop opening windows resolve in the trip intended timezone (TripBrief.timezone, defaulting to Asia/Kolkata) before consistent UTC conversion, rejecting invalid timezone overrides with ValueError, handling midnight date boundary crossings and multi day visit offsets.
-- Proposal publication enforces pessimistic row locking with SELECT FOR UPDATE on trips and executions to prevent concurrent write races between background planning executions and user updates.
-- Proposal publication fails closed in production when session factory, trip ID, owner ID, or execution identity is missing or invalid.
-- Proposal publication verifies execution ownership against caller owner ID under lock, raising PermissionError on cross tenant access, and verifies execution trip association, raising ValueError on mismatch.
-- Proposal publication fences writes using current runner lease token and expiry timestamp, evaluating lease expiry and execution deadlines after acquiring row locks on both executions and trips, halting stale or expired runners immediately without mutating execution status, trips, deltas, or events.
-- Proposal publication validates base version match (trips current_version equals state version); concurrent brief modifications record a PROPOSAL_SUPERSEDED event, transition execution status to SUPERSEDED, and protect trips from stale proposal overwrite.
-- SUPERSEDED status is treated as terminal across runner start, resume, and completion reconciliation, preventing duplicate delivery from restarting superseded executions or overwriting newer proposals.
-- Budget computation calculates estimated road fuel and tolls for scheduled legs, estimated accommodation from destination stay days and benchmark hotel rates, quoted entrance fees strictly backed by evidence authorized for the execution from PostgreSQL (matching execution ID, source observation execution ID, place ID or nearby location, SUPPORTS support type, AVAILABLE availability, and FRESH within 90 days), rejecting candidate fields, raw task output claims with fabricated evidence, and unpersisted estimates as proof, keeping unverified fees explicit unknown budget lines with provenance without zero coercion.
-- When routing is unavailable, budget computation preserves accommodation and verified entrance fees while omitting road fuel and tolls without fabricating road travel.
-- Proposal publication atomically updates trips (current_route_id, itinerary_json, state proposed), creates or updates TripDeltaModel, enforces publication event idempotency to prevent duplicate PROPOSAL_PUBLISHED timeline job events on crash recovery or replay, and defers execution completion to GraphRunnerService outbox transaction alongside checkpoint flush to prevent unrecoverable false success.
-- Tenant isolation verifies caller owner matches trip owner under transaction row lock, raising PermissionError on cross tenant access.
-- Replay safety and duplicate delivery idempotency update existing proposal deltas for trip and base version without duplicate TripDeltaModel insertions.
 
 ## Gotchas
 

@@ -1,19 +1,23 @@
-"""Optimizer module."""
+"""Optimizer package exports."""
 
-from functions.optimizer.constraints import RouteConstraints
-from functions.optimizer.costs import estimate_transit_cost
 from functions.optimizer.solver import (
     ItineraryScheduler,
-    OptimizedSchedule,
-    ScheduledLeg,
+    OptimizedRoute,      # <-- FIXED: Renamed from OptimizedSchedule
     ScheduledStop,
+    ScheduledLeg,
 )
+
+# Optional: Export schemas if they are defined
+try:
+    from functions.optimizer.schemas import RouteRequest, RouteResponse
+except ImportError:
+    pass
 
 __all__ = [
     "ItineraryScheduler",
-    "OptimizedSchedule",
-    "ScheduledLeg",
+    "OptimizedRoute",
     "ScheduledStop",
-    "RouteConstraints",
-    "estimate_transit_cost",
+    "ScheduledLeg",
+    "RouteRequest",
+    "RouteResponse",
 ]
