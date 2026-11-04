@@ -15,6 +15,8 @@ export interface ScheduleStop {
   window_start?: string | null;
   window_end?: string | null;
   is_hours_assumed: boolean;
+  assumed_daylight_hours?: boolean;
+  hours_assumed?: boolean;
   hours_status: string;
 }
 
@@ -62,6 +64,7 @@ export interface EditorialRecommendation {
   uncertainty: string;
   source?: string | null;
   detour_km?: number;
+  extra_duration_minutes?: number;
   latitude?: number;
   longitude?: number;
   lat?: number;
@@ -105,6 +108,7 @@ export interface ItineraryResponse {
   route_diagnostics: string[];
   provider_diagnostics: Record<string, any>;
   map_geojson: RouteMapGeoJsonResponse | null;
+  timezone?: string;
   generated_at: string | null;
 }
 

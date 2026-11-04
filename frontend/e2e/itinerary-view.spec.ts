@@ -1,9 +1,11 @@
 import { test, expect } from "@playwright/test";
 
 /**
- * End-to-end and component acceptance test suite for Itinerary View (Spec 0007 Slice 6).
+ * Mocked UI Acceptance Test Suite for Itinerary View (Spec 0007 Slice 6).
  *
- * Validates:
+ * Uses Playwright route interception (page.route) to verify client presentation,
+ * badge styling, and UI state transitions against deterministic fixture payloads.
+ * (Live database and real cryptographic auth paths are verified in itinerary-live-backend.spec.ts).
  * 1. Loaded proposal state with schedule timeline, interactive map, weather advisory, and budget lines.
  * 2. Operating hours invariant: stops with assumed hours display the HOURS_ASSUMED badge (AC-3).
  * 3. Zero-coercion guarantee: unquoted tolls remain UNKNOWN and are not coerced to zero (AC-7).
@@ -173,7 +175,7 @@ const MOCK_TRIP = {
   current_route_id: "77777777-7777-7777-7777-777777777777",
 };
 
-test.describe("Itinerary Proposal View Acceptance (Slice 6)", () => {
+test.describe("Itinerary Proposal Mocked UI Acceptance (Spec 0007 Slice 6)", () => {
   test("Scenario 1: Renders complete published itinerary with schedule, weather, map, and zero-coercion budget", async ({
     page,
   }) => {

@@ -14,6 +14,7 @@ Conforms to spec 0007 AC-8, AC-10, and AC-11 against isolated PostgreSQL:
 from __future__ import annotations
 
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -21,7 +22,10 @@ import shapely.geometry
 from geoalchemy2.shape import from_shape
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from acceptance_keys import TEST_PUBLIC_KEY_PEM, generate_jwt
+from config.config import settings
 from config.db import get_session
 from contracts.routing import (
     StopType,
@@ -37,7 +41,9 @@ from middleware.auth import AuthenticatedUser, get_current_user
 
 
 @pytest.mark.asyncio
-async def test_trip_itinerary_api_e2e_lifecycle(session_factory) -> None:
+async def test_trip_itinerary_api_e2e_lifecycle(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
     """Verifies end-to-end HTTP itinerary API contract against live PostgreSQL."""
     owner_id = uuid.uuid4()
     foreign_owner_id = uuid.uuid4()
@@ -51,7 +57,7 @@ async def test_trip_itinerary_api_e2e_lifecycle(session_factory) -> None:
     foreign_user = AuthenticatedUser(id=foreign_owner_id, email="intruder@swena.internal")
 
     # Dependency overrides for FastAPI app
-    async def override_get_session():
+    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
         async with session_factory() as session:
             yield session
 
@@ -389,3 +395,83 @@ async def test_trip_itinerary_api_e2e_lifecycle(session_factory) -> None:
         res_weather_404 = await client.get(f"/api/v1/trips/{missing_id}/weather")
         assert res_weather_404.status_code == 404
         assert "not found" in res_weather_404.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_trip_itinerary_api_real_auth_lifecycle(
+    session_factory: async_sessionmaker[AsyncSession],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies real cryptographic JWT authentication against live PostgreSQL."""
+    monkeypatch.setattr(settings, "AUTH_PUBLIC_KEY", TEST_PUBLIC_KEY_PEM)
+    monkeypatch.setattr(settings, "AUTH_ISSUER", "https://oauth21.vercel.app")
+    monkeypatch.setattr(settings, "CLIENT_ID", "swena_travel_agent_client")
+    monkeypatch.setattr(settings, "ALLOW_DEV_LOCAL_USER", False)
+
+    owner_id = uuid.uuid4()
+    foreign_owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
+        async with session_factory() as session:
+            yield session
+
+    app.dependency_overrides[get_session] = override_get_session
+    app.dependency_overrides[get_uow] = lambda: SqlAlchemyUnitOfWork(session_factory)
+    app.dependency_overrides.pop(get_current_user, None)
+
+    # Seed trip with published proposal
+    async with session_factory() as session:
+        trip = TripModel(
+            id=trip_id,
+            owner_id=owner_id,
+            current_version=1,
+            state="proposed",
+            created_at=now,
+            updated_at=now,
+            itinerary_json={
+                "version": 1,
+                "status": "ready_for_approval",
+                "schedule": {"stops": []},
+            },
+        )
+        session.add(trip)
+        await session.commit()
+
+    # Generate real signed JWT tokens
+    owner_token = generate_jwt(sub=owner_id, email="owner@swena.internal")
+    foreign_token = generate_jwt(sub=foreign_owner_id, email="foreign@swena.internal")
+    forged_token = generate_jwt(sub=owner_id, email="owner@swena.internal", is_forged=True)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. Missing credentials -> HTTP 401 Unauthorized
+        res_no_auth = await client.get(f"/api/v1/trips/{trip_id}/itinerary")
+        assert res_no_auth.status_code == 401
+
+        # 2. Forged signature -> HTTP 401 Unauthorized
+        res_forged = await client.get(
+            f"/api/v1/trips/{trip_id}/itinerary",
+            headers={"Authorization": f"Bearer {forged_token}"},
+        )
+        assert res_forged.status_code == 401
+        assert "invalid token signature" in res_forged.json()["detail"].lower()
+
+        # 3. Foreign owner token -> HTTP 403 Forbidden
+        res_foreign = await client.get(
+            f"/api/v1/trips/{trip_id}/itinerary",
+            headers={"Authorization": f"Bearer {foreign_token}"},
+        )
+        assert res_foreign.status_code == 403
+        assert "belongs to another tenant" in res_foreign.json()["detail"].lower()
+
+        # 4. Valid owner token -> HTTP 200 OK
+        res_owner = await client.get(
+            f"/api/v1/trips/{trip_id}/itinerary",
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        assert res_owner.status_code == 200
+        data = res_owner.json()
+        assert data["trip_id"] == str(trip_id)
+        assert data["status"] == "ready_for_approval"

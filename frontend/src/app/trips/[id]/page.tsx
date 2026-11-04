@@ -8,6 +8,7 @@ import { Footer } from "@/components/layout/Footer";
 import CorridorMapWrapper from "@/components/map/CorridorMapWrapper";
 import CorridorWeatherAdvisory, { StopWeather } from "@/components/weather/CorridorWeatherAdvisory";
 import VoiceBriefAssistant from "@/components/voice/VoiceBriefAssistant";
+import { useAuth } from "@/components/providers/AuthProvider";
 import type {
   ItineraryResponse,
   TripResponse,
@@ -48,6 +49,8 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
   const resolvedParams = use(params);
   const tripId = resolvedParams.id;
 
+  const { token, isLoading: authLoading } = useAuth();
+
   const [copied, setCopied] = useState(false);
   const [showQrModal, setShowQrModal] = useState(false);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string>("");
@@ -66,10 +69,15 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
     setErrorMessage(null);
     setStatusCode(null);
 
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
     try {
       // 1. Fetch itinerary proposal
       const itinRes = await fetch(`${apiBase}/api/v1/trips/${tripId}/itinerary`, {
-        headers: { "Content-Type": "application/json" },
+        headers,
       });
 
       if (!itinRes.ok) {
@@ -88,7 +96,7 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
       // 2. Fetch basic trip metadata for origin/destination names and brief dates
       try {
         const tripRes = await fetch(`${apiBase}/api/v1/trips/${tripId}`, {
-          headers: { "Content-Type": "application/json" },
+          headers,
         });
         if (tripRes.ok) {
           const tripData: TripResponse = await tripRes.json();
@@ -104,11 +112,13 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
     } finally {
       setLoading(false);
     }
-  }, [apiBase, tripId]);
+  }, [apiBase, tripId, token]);
 
   useEffect(() => {
-    fetchTripData();
-  }, [fetchTripData]);
+    if (!authLoading) {
+      fetchTripData();
+    }
+  }, [authLoading, fetchTripData]);
 
   // QR Code generation
   useEffect(() => {
@@ -165,48 +175,78 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
 
   const tripDuration = `${totalDays} Day${totalDays > 1 ? "s" : ""} • ${Math.max(1, totalDays - 1)} Night${totalDays > 2 ? "s" : ""}`;
 
-  // Map schedule stops to MapStop format
+  const tripTimezone = itinerary?.timezone || trip?.brief?.timezone || "Asia/Kolkata";
+
+  // Map schedule stops to MapStop format using authoritative trip timezone
   const stops: MapStop[] = (itinerary?.schedule?.stops || []).map((s) => ({
     name: s.name,
     lat: s.latitude,
     lng: s.longitude,
     stayMinutes: s.stay_duration_minutes,
-    arrivalTime: s.arrival_time ? new Date(s.arrival_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : undefined,
-    departureTime: s.departure_time ? new Date(s.departure_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : undefined,
+    arrivalTime: s.arrival_time
+      ? new Date(s.arrival_time).toLocaleTimeString([], { timeZone: tripTimezone, hour: "2-digit", minute: "2-digit" })
+      : undefined,
+    departureTime: s.departure_time
+      ? new Date(s.departure_time).toLocaleTimeString([], { timeZone: tripTimezone, hour: "2-digit", minute: "2-digit" })
+      : undefined,
   }));
 
-  // Map editorial recommendations to MapPlace format
-  const places: MapPlace[] = (itinerary?.editorial_recommendations || []).map((r) => ({
-    name: r.name || r.primary_name || "Discovered Place",
-    category: r.category || "Discovery",
-    fitScore: r.fit_score ?? 0.85,
-    detourKm: r.detour_km ?? 5.0,
-    extraDurationMins: 45,
-    source: r.source || "AI Discovery Gate",
-    uncertainty: r.uncertainty || "EDITORIAL_DISCOVERY",
-    lat: r.latitude ?? r.lat ?? 0,
-    lng: r.longitude ?? r.lng ?? 0,
-    description: r.description,
-  }));
+  // Map editorial recommendations to MapPlace format (render places with known coordinates and omit invented defaults)
+  const places: MapPlace[] = (itinerary?.editorial_recommendations || [])
+    .filter((r) => (r.latitude != null || r.lat != null) && (r.longitude != null || r.lng != null))
+    .map((r) => ({
+      name: r.name || r.primary_name || "Discovered Place",
+      category: r.category || "Discovery",
+      fitScore: r.fit_score != null ? Number(r.fit_score) : undefined,
+      detourKm: r.detour_km != null ? Number(r.detour_km) : undefined,
+      extraDurationMins: r.extra_duration_minutes != null ? Number(r.extra_duration_minutes) : undefined,
+      source: r.source,
+      uncertainty: r.uncertainty || "EDITORIAL_DISCOVERY",
+      lat: Number(r.latitude ?? r.lat),
+      lng: Number(r.longitude ?? r.lng),
+      description: r.description,
+    }));
 
-  // Map weather advisories to StopWeather format
+  // Map weather advisories to StopWeather format without invented values
   const weatherStops: StopWeather[] = (itinerary?.weather_advisories || []).map((w) => ({
     stopName: w.stop_name || w.stopName || "Corridor Stop",
-    temperatureC: Math.round(w.temperature_celsius ?? w.temperatureC ?? 24),
-    condition: (["sunny", "cloudy", "rainy", "foggy"].includes(w.condition as any)
-      ? w.condition
-      : "cloudy") as StopWeather["condition"],
-    humidityPercent: w.humidity_percent ?? w.humidityPercent ?? 55,
-    monsoonRisk: (["low", "moderate", "severe"].includes(w.monsoon_risk as any)
-      ? w.monsoon_risk
-      : (w.monsoonRisk as any) || "low") as StopWeather["monsoonRisk"],
+    temperatureC:
+      w.temperature_celsius != null
+        ? Math.round(Number(w.temperature_celsius))
+        : w.temperatureC != null
+          ? Math.round(Number(w.temperatureC))
+          : null,
+    condition: w.condition ?? "unknown",
+    humidityPercent: w.humidity_percent ?? w.humidityPercent ?? null,
+    monsoonRisk: w.monsoon_risk ?? w.monsoonRisk ?? "unknown",
     ghatCaution: w.ghat_caution || w.ghatCaution || undefined,
   }));
 
-  // Prepare narrative for voice assistant
-  const narrativeScript = itinerary?.schedule?.stops && itinerary.schedule.stops.length > 0
-    ? `Welcome to your itinerary for ${tripTitle}. This journey visits ${itinerary.schedule.stops.map((s) => s.name).join(", ")}. Operating hours and travel corridors have been verified by the SWENA planner.`
-    : `Welcome to your travel proposal for ${tripTitle}.`;
+  // Prepare narrative for voice assistant reflecting actual evidence and assumed hours
+  const hasAssumedHours = Boolean(
+    itinerary?.schedule?.stops?.some(
+      (s) => s.assumed_daylight_hours || s.hours_assumed || s.is_hours_assumed
+    )
+  );
+  const isRoutingUnavailable = itinerary?.routing_status === "ROUTING_UNAVAILABLE";
+  const isRouteInfeasible = itinerary?.route_status === "INFEASIBLE";
+
+  let narrativeScript = `Welcome to your travel proposal for ${tripTitle}. `;
+  if (itinerary?.schedule?.stops && itinerary.schedule.stops.length > 0) {
+    narrativeScript += `This journey visits ${itinerary.schedule.stops.map((s) => s.name).join(", ")}. `;
+  }
+  if (hasAssumedHours) {
+    narrativeScript += `Please note that visiting windows for some stops are assumed daylight hours without published operating schedules. `;
+  } else if (itinerary?.schedule?.stops && itinerary.schedule.stops.length > 0) {
+    narrativeScript += `Operating hours have been verified against published opening times. `;
+  }
+  if (isRoutingUnavailable) {
+    narrativeScript += `Road routing is currently unavailable, so road polyline traces and driving durations are omitted. `;
+  } else if (isRouteInfeasible) {
+    narrativeScript += `The route has timing breaches or skipped stops due to journey constraints. `;
+  } else if (itinerary?.route_id) {
+    narrativeScript += `Road routes and travel times have been computed by the routing engine. `;
+  }
 
   return (
     <div className="min-h-screen bg-[#0D1915] text-[#F7F7F2] flex flex-col font-sans">
@@ -477,6 +517,7 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                   geoJson={itinerary.routing_status === "ROUTING_UNAVAILABLE" ? null : itinerary.map_geojson}
                   stops={stops}
                   places={places}
+                  timezone={tripTimezone}
                 />
               </div>
             </div>
@@ -518,10 +559,10 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                         const isOrigin = idx === 0;
                         const isLast = idx === itinerary.schedule!.stops.length - 1;
                         const arrivalStr = stop.arrival_time
-                          ? new Date(stop.arrival_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                          ? new Date(stop.arrival_time).toLocaleTimeString([], { timeZone: tripTimezone, hour: "2-digit", minute: "2-digit" })
                           : "TBD";
                         const depStr = stop.departure_time
-                          ? new Date(stop.departure_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                          ? new Date(stop.departure_time).toLocaleTimeString([], { timeZone: tripTimezone, hour: "2-digit", minute: "2-digit" })
                           : "TBD";
 
                         return (
@@ -606,6 +647,16 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                                 </span>
                               </div>
                               <h4 className="text-sm font-bold text-[#F7F7F2] mb-1">{name}</h4>
+                              {(rec.fit_score != null || rec.detour_km != null) && (
+                                <div className="flex items-center gap-2 mb-2">
+                                  {rec.fit_score != null && (
+                                    <span className="text-[10px] text-[#A9B8AD]">Fit: {Math.round(Number(rec.fit_score) * 100)}%</span>
+                                  )}
+                                  {rec.detour_km != null && (
+                                    <span className="text-[10px] text-[#A9B8AD]">+{rec.detour_km} km detour</span>
+                                  )}
+                                </div>
+                              )}
                               {rec.description && (
                                 <p className="text-xs text-[#A9B8AD] leading-relaxed line-clamp-2">
                                   {rec.description}

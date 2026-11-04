@@ -77,6 +77,7 @@ class ItineraryResponse(BaseModel):
     route_diagnostics: list[str] = Field(default_factory=list)
     provider_diagnostics: dict[str, Any] = Field(default_factory=dict)
     map_geojson: RouteMapGeoJsonResponse | dict[str, Any] | None = None
+    timezone: str = "Asia/Kolkata"
     generated_at: str | None = None
 
 
@@ -364,6 +365,8 @@ async def get_trip_itinerary(
         if route_model is not None:
             map_geojson = assemble_route_map_geojson(route_model)
 
+    timezone = proposal.get("timezone") or "Asia/Kolkata"
+
     return ItineraryResponse(
         trip_id=trip.id,
         version=proposal.get("version", trip.current_version),
@@ -384,6 +387,7 @@ async def get_trip_itinerary(
         route_diagnostics=proposal.get("route_diagnostics", []),
         provider_diagnostics=proposal.get("provider_diagnostics", {}),
         map_geojson=map_geojson,
+        timezone=timezone,
         generated_at=proposal.get("generated_at"),
     )
 

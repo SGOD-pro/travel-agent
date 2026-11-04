@@ -1,15 +1,15 @@
 "use client";
 
 import React from "react";
-import { CloudRain, Sun, Cloud, AlertTriangle, ShieldCheck, Wind } from "lucide-react";
+import { CloudRain, Sun, Cloud, AlertTriangle, ShieldCheck, Wind, HelpCircle } from "lucide-react";
 
 export interface StopWeather {
   stopName: string;
-  temperatureC: number;
-  condition: "sunny" | "cloudy" | "rainy" | "foggy";
-  humidityPercent: number;
-  monsoonRisk: "low" | "moderate" | "severe";
-  ghatCaution?: string;
+  temperatureC?: number | null;
+  condition?: "sunny" | "cloudy" | "rainy" | "foggy" | "unknown" | string | null;
+  humidityPercent?: number | null;
+  monsoonRisk?: "low" | "moderate" | "severe" | "unknown" | string | null;
+  ghatCaution?: string | null;
 }
 
 interface CorridorWeatherAdvisoryProps {
@@ -17,8 +17,8 @@ interface CorridorWeatherAdvisoryProps {
 }
 
 export default function CorridorWeatherAdvisory({ stops }: CorridorWeatherAdvisoryProps) {
-  const getConditionIcon = (condition: StopWeather["condition"]) => {
-    switch (condition) {
+  const getConditionIcon = (condition?: StopWeather["condition"]) => {
+    switch (condition?.toLowerCase()) {
       case "sunny":
         return <Sun className="w-4 h-4 text-amber-400" />;
       case "rainy":
@@ -26,13 +26,14 @@ export default function CorridorWeatherAdvisory({ stops }: CorridorWeatherAdviso
       case "foggy":
         return <Wind className="w-4 h-4 text-[#A9B8AD]" />;
       case "cloudy":
-      default:
         return <Cloud className="w-4 h-4 text-[#B7C9AD]" />;
+      default:
+        return <HelpCircle className="w-4 h-4 text-[#A9B8AD]" />;
     }
   };
 
-  const getRiskBadge = (risk: StopWeather["monsoonRisk"]) => {
-    switch (risk) {
+  const getRiskBadge = (risk?: StopWeather["monsoonRisk"]) => {
+    switch (risk?.toLowerCase()) {
       case "severe":
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/20 text-red-400 border border-red-500/30">
@@ -46,10 +47,15 @@ export default function CorridorWeatherAdvisory({ stops }: CorridorWeatherAdviso
           </span>
         );
       case "low":
-      default:
         return (
           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
             <ShieldCheck className="w-2.5 h-2.5" /> Optimal
+          </span>
+        );
+      default:
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-[#15271F] text-[#A9B8AD] border border-[#233E32]">
+            Risk: Unknown
           </span>
         );
     }
@@ -73,36 +79,45 @@ export default function CorridorWeatherAdvisory({ stops }: CorridorWeatherAdviso
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
-        {stops.map((stop, idx) => (
-          <div
-            key={idx}
-            className="bg-[#0D1915] p-3.5 rounded-xl border border-[#233E32] flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-medium text-sm text-[#F7F7F2] truncate">{stop.stopName}</span>
-                {getRiskBadge(stop.monsoonRisk)}
+        {stops.map((stop, idx) => {
+          const hasCondition = stop.condition && stop.condition !== "unknown";
+          const conditionLabel = hasCondition ? stop.condition : "Unknown condition";
+          const tempDisplay = stop.temperatureC != null ? `${stop.temperatureC}°C` : "Unknown";
+          const humDisplay = stop.humidityPercent != null ? ` • ${stop.humidityPercent}% Hum` : "";
+
+          return (
+            <div
+              key={idx}
+              className="bg-[#0D1915] p-3.5 rounded-xl border border-[#233E32] flex flex-col justify-between"
+            >
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-sm text-[#F7F7F2] truncate">{stop.stopName}</span>
+                  {getRiskBadge(stop.monsoonRisk)}
+                </div>
+
+                <div className="flex items-center gap-3 my-2">
+                  <div className="p-2 rounded-lg bg-[#15271F] border border-[#233E32]">
+                    {getConditionIcon(stop.condition)}
+                  </div>
+                  <div>
+                    <div className="text-lg font-bold text-[#F7F7F2]">{tempDisplay}</div>
+                    <div className="text-xs text-[#A9B8AD] capitalize">
+                      {conditionLabel}{humDisplay}
+                    </div>
+                  </div>
+                </div>
               </div>
 
-              <div className="flex items-center gap-3 my-2">
-                <div className="p-2 rounded-lg bg-[#15271F] border border-[#233E32]">
-                  {getConditionIcon(stop.condition)}
+              {stop.ghatCaution && (
+                <div className="mt-2 text-[11px] text-[#A9B8AD] bg-[#15271F]/80 p-2 rounded-lg border border-[#233E32] flex items-start gap-1.5">
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                  <span>{stop.ghatCaution}</span>
                 </div>
-                <div>
-                  <div className="text-lg font-bold text-[#F7F7F2]">{stop.temperatureC}°C</div>
-                  <div className="text-xs text-[#A9B8AD] capitalize">{stop.condition} • {stop.humidityPercent}% Hum</div>
-                </div>
-              </div>
+              )}
             </div>
-
-            {stop.ghatCaution && (
-              <div className="mt-2 text-[11px] text-[#A9B8AD] bg-[#15271F]/80 p-2 rounded-lg border border-[#233E32] flex items-start gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                <span>{stop.ghatCaution}</span>
-              </div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

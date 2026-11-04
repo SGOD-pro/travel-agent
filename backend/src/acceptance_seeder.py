@@ -12,7 +12,6 @@ import logging
 import socket
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import shapely.geometry
 from geoalchemy2.shape import from_shape
@@ -24,10 +23,6 @@ from acceptance_database import (
     ensure_acceptance_schema,
     validate_acceptance_database_url,
 )
-
-# Resilient DNS caching for PostgreSQL connectivity
-socket.getaddrinfo = _resilient_getaddrinfo
-
 from acceptance_worker import LocalAcceptanceWorker
 from contracts.routing import Point, RouteRequest, RouteStopInput, StopType
 from contracts.trips import TransportMode
@@ -49,6 +44,9 @@ from functions.orchestrator.routing.models import (
     RouteStopModel,
 )
 from middleware.auth import AuthenticatedUser
+
+# Resilient DNS caching for PostgreSQL connectivity
+socket.getaddrinfo = _resilient_getaddrinfo
 
 logger = logging.getLogger("acceptance_seeder")
 
@@ -398,6 +396,118 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
         worker=worker,
     )
     logger.info("Generated User B route %s via live execution pipeline", USER_B_ROUTE_ID)
+
+    # 6. Seed genuinely published proposal on DEMO_TRIP_A_ID linking live PostGIS MULTIMODAL_ROUTE_ID
+    async with session_factory() as session:
+        trip_a = await session.get(TripModel, DEMO_TRIP_A_ID)
+        if trip_a is not None:
+            trip_a.state = "proposed"
+            trip_a.current_route_id = MULTIMODAL_ROUTE_ID
+            trip_a.itinerary_json = {
+                "version": 1,
+                "status": "ready_for_approval",
+                "timezone": "Asia/Kolkata",
+                "route_id": str(MULTIMODAL_ROUTE_ID),
+                "routing_status": "FEASIBLE",
+                "route_status": "FEASIBLE",
+                "schedule": {
+                    "stops": [
+                        {
+                            "position": 1,
+                            "place_id": "11111111-1111-1111-1111-111111111101",
+                            "name": "Bengaluru MG Road Depot",
+                            "arrival_time": "2026-11-05T09:00:00+05:30",
+                            "departure_time": "2026-11-05T09:00:00+05:30",
+                            "stay_duration_minutes": 0,
+                            "assumed_daylight_hours": False,
+                            "is_hours_assumed": False,
+                            "hours_status": "CONFIRMED",
+                            "latitude": 12.9716,
+                            "longitude": 77.5946,
+                        },
+                        {
+                            "position": 2,
+                            "place_id": str(PARKING_HUB_ID),
+                            "name": "Cubbon Park Verified Parking Hub",
+                            "arrival_time": "2026-11-05T09:20:00+05:30",
+                            "departure_time": "2026-11-05T09:25:00+05:30",
+                            "stay_duration_minutes": 5,
+                            "assumed_daylight_hours": False,
+                            "is_hours_assumed": False,
+                            "hours_status": "CONFIRMED",
+                            "latitude": 12.9794,
+                            "longitude": 77.5855,
+                        },
+                        {
+                            "position": 3,
+                            "place_id": "11111111-1111-1111-1111-111111111103",
+                            "name": "Botanical Glass House Sanctuary",
+                            "arrival_time": "2026-11-05T09:40:00+05:30",
+                            "departure_time": "2026-11-05T10:40:00+05:30",
+                            "stay_duration_minutes": 60,
+                            "assumed_daylight_hours": True,
+                            "is_hours_assumed": True,
+                            "hours_status": "HOURS_ASSUMED",
+                            "latitude": 12.9822,
+                            "longitude": 77.5843,
+                        },
+                    ],
+                    "total_travel_minutes": 40,
+                },
+                "budget_summary": {
+                    "is_complete": False,
+                    "known_total": {"amount": "450.00", "currency": "INR"},
+                    "unknown_count": 1,
+                    "unknown_categories": ["toll"],
+                },
+                "budget_lines": [
+                    {
+                        "category": "fuel",
+                        "basis": "distance",
+                        "amount": "450.00",
+                        "currency": "INR",
+                        "estimated": False,
+                        "unknown_reason": None,
+                    },
+                    {
+                        "category": "toll",
+                        "basis": "highway_concession",
+                        "amount": None,
+                        "currency": "INR",
+                        "estimated": False,
+                        "unknown_reason": "UNQUOTED_TOLL_STRUCTURE",
+                    },
+                ],
+                "editorial_recommendations": [
+                    {
+                        "name": "Attara Kacheri High Court View",
+                        "category": "Architecture",
+                        "source": "Karnataka State Archives",
+                        "uncertainty": "EDITORIAL_DISCOVERY",
+                        "fit_score": 0.88,
+                        "detour_km": 1.2,
+                        "extra_duration_minutes": 20,
+                        "latitude": 12.9778,
+                        "longitude": 77.5913,
+                        "description": "Historical neoclassical building in red terracotta.",
+                    }
+                ],
+                "weather_advisories": [
+                    {
+                        "stop_name": "Cubbon Park Verified Parking Hub",
+                        "temperature_celsius": 26,
+                        "condition": "cloudy",
+                        "humidity_percent": 60,
+                        "monsoon_risk": "low",
+                    }
+                ],
+                "weather_status": "OPTIMAL",
+                "route_diagnostics": [],
+                "provider_diagnostics": {"open_meteo": "cached"},
+                "generated_at": now.isoformat(),
+            }
+            await session.commit()
+            logger.info("Seeded published itinerary proposal on trip %s", DEMO_TRIP_A_ID)
 
 
 async def _execute_route_pipeline(

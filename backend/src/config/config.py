@@ -67,6 +67,14 @@ class Settings(BaseSettings):
         default="swena_travel_agent_client",
         description="OAuth 2.1 client ID for audience enforcement",
     )
+    AUTH_PUBLIC_KEY: str | None = Field(
+        default=None,
+        description="Optional public key PEM for offline/test token verification",
+    )
+    ALLOW_DEV_LOCAL_USER: bool = Field(
+        default=False,
+        description="Explicit gate for default traveler identity in local development; strictly disabled in staging/production",
+    )
 
     # AWS Configuration
     AWS_REGION: str = Field(

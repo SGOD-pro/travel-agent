@@ -24,6 +24,7 @@ from acceptance_database import (
     get_acceptance_session_factory,
     validate_acceptance_database_url,
 )
+from acceptance_keys import TEST_PUBLIC_KEY_PEM
 from acceptance_seeder import seed_acceptance_fixtures
 from acceptance_worker import LocalAcceptanceWorker
 from config.config import settings
@@ -33,12 +34,16 @@ from functions.api.app import create_app
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("acceptance_server")
 
+# Configure cryptographic JWT verification key for browser acceptance testing
+if not settings.AUTH_PUBLIC_KEY:
+    settings.AUTH_PUBLIC_KEY = TEST_PUBLIC_KEY_PEM
+
 # Resilient DNS caching for PostgreSQL connectivity
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
 @asynccontextmanager
-async def lifespan(app: Any):
+async def lifespan(app: Any) -> AsyncGenerator[None, None]:
     # Fails closed if ACCEPTANCE_DATABASE_URL is missing or reuses application database
     session_factory = get_acceptance_session_factory()
     if getattr(settings, "ENVIRONMENT", "local") == "production":
@@ -80,7 +85,7 @@ app.dependency_overrides[get_session] = _override_get_session
 
 
 @app.post("/api/v1/test/reset-replan-fixtures")
-async def reset_replan_fixtures():
+async def reset_replan_fixtures() -> dict[str, Any]:
     """Surgically resets child replans and reservations for owned acceptance test entities."""
     from fastapi import HTTPException, status
 

@@ -21,11 +21,11 @@ export interface MapStop {
 export interface MapPlace {
   name: string;
   category: string;
-  fitScore: number;
-  detourKm: number;
-  extraDurationMins: number;
-  source: string;
-  uncertainty: string;
+  fitScore?: number;
+  detourKm?: number;
+  extraDurationMins?: number;
+  source?: string | null;
+  uncertainty?: string;
   lat: number;
   lng: number;
   description?: string;
@@ -36,6 +36,7 @@ export interface CorridorMapProps {
   stops?: MapStop[];
   places?: MapPlace[];
   activeStopIndex?: number;
+  timezone?: string;
   onSelectStop?: (stopId: string) => void;
   onSelectPlace?: (place: MapPlace) => void;
 }
@@ -43,7 +44,7 @@ export interface CorridorMapProps {
 /**
  * Constructs a DOM Element for stop popups with textContent escaping to prevent XSS.
  */
-function createSafeStopPopup(props: StopFeatureProperties): HTMLElement {
+function createSafeStopPopup(props: StopFeatureProperties, timezone: string = "Asia/Kolkata"): HTMLElement {
   const container = document.createElement("div");
   container.className = "swena-safe-stop-popup";
   container.style.cssText =
@@ -91,14 +92,14 @@ function createSafeStopPopup(props: StopFeatureProperties): HTMLElement {
   if (props.planned_arrival_at) {
     const arr = document.createElement("div");
     arr.style.cssText = "font-size: 11px; color: #B7C9AD; margin-top: 2px;";
-    arr.textContent = `Arrival: ${new Date(props.planned_arrival_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    arr.textContent = `Arrival: ${new Date(props.planned_arrival_at).toLocaleTimeString([], { timeZone: timezone, hour: "2-digit", minute: "2-digit" })}`;
     container.appendChild(arr);
   }
 
   if (props.planned_departure_at) {
     const dep = document.createElement("div");
     dep.style.cssText = "font-size: 11px; color: #A9B8AD; margin-top: 1px;";
-    dep.textContent = `Departure: ${new Date(props.planned_departure_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+    dep.textContent = `Departure: ${new Date(props.planned_departure_at).toLocaleTimeString([], { timeZone: timezone, hour: "2-digit", minute: "2-digit" })}`;
     container.appendChild(dep);
   }
 
@@ -178,6 +179,7 @@ export default function CorridorMap({
   stops = [],
   places = [],
   activeStopIndex = 0,
+  timezone = "Asia/Kolkata",
   onSelectStop,
   onSelectPlace,
 }: CorridorMapProps) {
@@ -270,52 +272,60 @@ export default function CorridorMap({
         }
       });
 
-      // 2. Render Leg LineStrings
-      geoJson.features.forEach((feat) => {
-        if (feat.properties.feature_type === "leg") {
-          const props = feat.properties as LegFeatureProperties;
-          const geom = feat.geometry;
+      // 2. Render Leg LineStrings (prevent drawing polylines when route is infeasible or routing is unavailable)
+      const routeProps = geoJson.properties as Record<string, any> | undefined;
+      const isRouteInfeasibleOrUnavailable =
+        geoJson.status === "INFEASIBLE" ||
+        routeProps?.status === "INFEASIBLE" ||
+        routeProps?.routing_status === "ROUTING_UNAVAILABLE";
 
-          if (geom.type === "LineString" && Array.isArray(geom.coordinates)) {
-            const latLngs: [number, number][] = geom.coordinates.map(
-              ([lon, lat]: number[]) => {
-                allCoords.push([lat, lon]);
-                return [lat, lon];
+      if (!isRouteInfeasibleOrUnavailable) {
+        geoJson.features.forEach((feat) => {
+          if (feat.properties.feature_type === "leg") {
+            const props = feat.properties as LegFeatureProperties;
+            const geom = feat.geometry;
+
+            if (geom.type === "LineString" && Array.isArray(geom.coordinates)) {
+              const latLngs: [number, number][] = geom.coordinates.map(
+                ([lon, lat]: number[]) => {
+                  allCoords.push([lat, lon]);
+                  return [lat, lon];
+                }
+              );
+
+              if (latLngs.length >= 2) {
+                const strokeColor = props.stroke || "#3b82f6";
+                const strokeWidth = props["stroke-width"] || 4;
+                const dashArray =
+                  props["stroke-dasharray"] && props["stroke-dasharray"] !== "none"
+                    ? props["stroke-dasharray"]
+                    : undefined;
+
+                // Subtle glowing underlayer line
+                L.polyline(latLngs, {
+                  color: strokeColor,
+                  weight: strokeWidth + 4,
+                  opacity: 0.25,
+                  lineCap: "round",
+                  lineJoin: "round",
+                }).addTo(layerGroup);
+
+                // Main active polyline
+                const line = L.polyline(latLngs, {
+                  color: strokeColor,
+                  weight: strokeWidth,
+                  opacity: 0.95,
+                  dashArray: dashArray,
+                  lineCap: "round",
+                  lineJoin: "round",
+                });
+                line.bindPopup(createSafeLegPopup(props));
+                line.addTo(layerGroup);
               }
-            );
-
-            if (latLngs.length >= 2) {
-              const strokeColor = props.stroke || "#3b82f6";
-              const strokeWidth = props["stroke-width"] || 4;
-              const dashArray =
-                props["stroke-dasharray"] && props["stroke-dasharray"] !== "none"
-                  ? props["stroke-dasharray"]
-                  : undefined;
-
-              // Subtle glowing underlayer line
-              L.polyline(latLngs, {
-                color: strokeColor,
-                weight: strokeWidth + 4,
-                opacity: 0.25,
-                lineCap: "round",
-                lineJoin: "round",
-              }).addTo(layerGroup);
-
-              // Main active polyline
-              const line = L.polyline(latLngs, {
-                color: strokeColor,
-                weight: strokeWidth,
-                opacity: 0.95,
-                dashArray: dashArray,
-                lineCap: "round",
-                lineJoin: "round",
-              });
-              line.bindPopup(createSafeLegPopup(props));
-              line.addTo(layerGroup);
             }
           }
-        }
-      });
+        });
+      }
 
       // 3. Render Stop Points with custom color markers and sequence symbols
       geoJson.features.forEach((feat) => {
@@ -360,7 +370,7 @@ export default function CorridorMap({
             });
 
             const marker = L.marker([lat, lon], { icon: stopIcon })
-              .bindPopup(createSafeStopPopup(props))
+              .bindPopup(createSafeStopPopup(props, timezone))
               .addTo(layerGroup);
 
             if (onSelectStop) {
@@ -384,26 +394,8 @@ export default function CorridorMap({
         map.fitBounds(L.latLngBounds(allCoords), { padding: [40, 40], maxZoom: 14 });
       }
     } else {
-      // Fallback: Legacy stops and places rendering
-      if (stops.length > 1) {
-        const stopPoints: [number, number][] = stops.map((s) => [s.lat, s.lng]);
-        L.polyline(stopPoints, {
-          color: "rgba(183, 201, 173, 0.25)",
-          weight: 8,
-          lineCap: "round",
-          lineJoin: "round",
-        }).addTo(layerGroup);
-
-        L.polyline(stopPoints, {
-          color: "#B7C9AD",
-          weight: 3.5,
-          opacity: 0.95,
-          dashArray: "6, 8",
-          lineCap: "round",
-          lineJoin: "round",
-        }).addTo(layerGroup);
-      }
-
+      // Fallback: When authoritative route geometry is missing or unavailable,
+      // render stop and place markers WITHOUT drawing straight-line road polyline guesses.
       stops.forEach((stop, index) => {
         allCoords.push([stop.lat, stop.lng]);
         const isActive = index === activeStopIndex;
@@ -451,11 +443,14 @@ export default function CorridorMap({
         };
 
         L.marker([stop.lat, stop.lng], { icon: stopIcon })
-          .bindPopup(createSafeStopPopup(stopProps))
+          .bindPopup(createSafeStopPopup(stopProps, timezone))
           .addTo(layerGroup);
       });
 
       places.forEach((place) => {
+        if (place.lat == null || place.lng == null || isNaN(place.lat) || isNaN(place.lng)) {
+          return;
+        }
         allCoords.push([place.lat, place.lng]);
 
         const poiIcon = L.divIcon({
@@ -485,11 +480,38 @@ export default function CorridorMap({
         });
 
         const popupDiv = document.createElement("div");
-        popupDiv.style.cssText = "padding: 4px 6px; color: #F7F7F2;";
+        popupDiv.style.cssText = "padding: 6px 8px; color: #F7F7F2; min-width: 140px;";
         const nameDiv = document.createElement("div");
         nameDiv.style.fontWeight = "700";
+        nameDiv.style.fontSize = "12px";
         nameDiv.textContent = place.name;
         popupDiv.appendChild(nameDiv);
+
+        if (place.category) {
+          const catDiv = document.createElement("div");
+          catDiv.style.fontSize = "10px";
+          catDiv.style.color = "#B7C9AD";
+          catDiv.style.marginTop = "2px";
+          catDiv.textContent = place.category;
+          popupDiv.appendChild(catDiv);
+        }
+
+        if (place.detourKm != null) {
+          const detourDiv = document.createElement("div");
+          detourDiv.style.fontSize = "10px";
+          detourDiv.style.color = "#A9B8AD";
+          detourDiv.textContent = `Detour: +${place.detourKm} km`;
+          popupDiv.appendChild(detourDiv);
+        }
+
+        if (place.source) {
+          const srcDiv = document.createElement("div");
+          srcDiv.style.fontSize = "9px";
+          srcDiv.style.color = "#8F9E93";
+          srcDiv.style.marginTop = "3px";
+          srcDiv.textContent = `Source: ${place.source}`;
+          popupDiv.appendChild(srcDiv);
+        }
 
         const marker = L.marker([place.lat, place.lng], { icon: poiIcon })
           .bindPopup(popupDiv)
@@ -504,7 +526,7 @@ export default function CorridorMap({
         map.fitBounds(L.latLngBounds(allCoords), { padding: [40, 40], maxZoom: 11 });
       }
     }
-  }, [geoJson, stops, places, activeStopIndex, onSelectStop, onSelectPlace]);
+  }, [geoJson, stops, places, activeStopIndex, timezone, onSelectStop, onSelectPlace]);
 
   // Derive route summary metrics from GeoJSON
   const routeStatus = geoJson?.properties?.status || geoJson?.status;

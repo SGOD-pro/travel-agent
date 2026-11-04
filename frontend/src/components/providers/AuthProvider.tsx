@@ -10,6 +10,7 @@ export interface AuthUser {
 
 interface AuthContextType {
   user: AuthUser | null;
+  token: string | null;
   isLoading: boolean;
   login: () => void;
   logout: () => Promise<void>;
@@ -18,36 +19,33 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
+  token: null,
   isLoading: true,
   login: () => {},
   logout: async () => {},
   simulateLogin: () => {},
 });
 
-const STATIC_USER: AuthUser = {
-  id: "usr_swena_traveler",
-  name: "Karnataka Explorer",
-  email: "traveler@swena.internal",
-};
-
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // Auth system temporarily disabled per user instruction — using static user and ID
-  const [user, setUser] = useState<AuthUser | null>(STATIC_USER);
-  const [isLoading, setIsLoading] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
-  // useEffect(() => {
-  //   fetch("/api/auth/me")
-  //     .then((res) => res.json())
-  //     .then((data) => {
-  //       setUser(data.user || null);
-  //     })
-  //     .catch(() => {
-  //       setUser(null);
-  //     })
-  //     .finally(() => {
-  //       setIsLoading(false);
-  //     });
-  // }, []);
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => res.json())
+      .then((data) => {
+        setUser(data.user || null);
+        setToken(data.token || null);
+      })
+      .catch(() => {
+        setUser(null);
+        setToken(null);
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
+  }, []);
 
   const login = () => {
     window.location.href = "/api/auth/login";
@@ -55,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const simulateLogin = () => {
     const mockUser: AuthUser = {
-      id: "usr_swena_default_traveler",
+      id: "00000000-0000-0000-0000-000000000001",
       name: "Karnataka Explorer",
       email: "traveler@swena.internal",
     };
@@ -69,10 +67,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // ignore
     }
     setUser(null);
+    setToken(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, simulateLogin }}>
+    <AuthContext.Provider value={{ user, token, isLoading, login, logout, simulateLogin }}>
       {children}
     </AuthContext.Provider>
   );
