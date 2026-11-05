@@ -1,0 +1,27 @@
+# Vercel deployment bundle ignore file
+# Prevents large test artifacts, caches, and docs from exceeding the 500 MB Lambda ceiling
+
+# Python virtual environment and bytecode
+.venv/
+backend/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Tests and test fixtures
+tests/
+backend/tests/
+
+# Documentation and archives
+docs/
+archive/
+
+# Version control and IDE files
+.git/
+.github/
+.vscode/
+.vs/
