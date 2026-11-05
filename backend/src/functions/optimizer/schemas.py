@@ -24,6 +24,8 @@ class RouteRequest(BaseModel):
     avoid_tolls: bool = False
     avoid_highways: bool = False
     avoid_ferries: bool = False
+    detour_waypoints: list[dict[str, Any]] = Field(default_factory=list)
+    road_condition: str | None = None
 
 
 class RouteResponse(BaseModel):

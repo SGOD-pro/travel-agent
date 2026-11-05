@@ -36,6 +36,7 @@ class ScheduledStop(BaseModel):
     departure_time: datetime
     stay_duration_minutes: int
     cost_entry_inr: float = 0.0
+    stop_type: str = "DESTINATION"
 
 
 class ScheduledLeg(BaseModel):
@@ -48,6 +49,7 @@ class ScheduledLeg(BaseModel):
     distance_km: float
     fuel_cost_inr: float = 0.0
     toll_cost_inr: float = 0.0
+    mode: str = "car"
 
 
 class OptimizedRoute(BaseModel):
@@ -108,7 +110,13 @@ class ItineraryScheduler:
 
         # 1. Assemble Location Nodes
         all_locations: list[dict[str, Any]] = [
-            {"name": origin_name, "lat": origin_lat, "lng": origin_lng, "stay_minutes": 0}
+            {
+                "name": origin_name,
+                "lat": origin_lat,
+                "lng": origin_lng,
+                "stay_minutes": 0,
+                "stop_type": "ORIGIN",
+            }
         ]
         for s in stops:
             all_locations.append(
@@ -118,6 +126,11 @@ class ItineraryScheduler:
                     "lng": float(s["lng"]),
                     "stay_minutes": int(s.get("stay_minutes", 120)),
                     "cost_entry_inr": float(s.get("cost_entry_inr", 0.0)),
+                    "stop_type": str(s.get("stop_type", "DESTINATION")),
+                    "requires_parking": bool(s.get("requires_parking", False)),
+                    "parking_name": s.get("parking_name"),
+                    "parking_lat": s.get("parking_lat"),
+                    "parking_lng": s.get("parking_lng"),
                 }
             )
         if return_to_origin:
@@ -128,6 +141,7 @@ class ItineraryScheduler:
                     "lng": origin_lng,
                     "stay_minutes": 0,
                     "is_return": True,
+                    "stop_type": "ORIGIN",
                 }
             )
 
@@ -143,6 +157,7 @@ class ItineraryScheduler:
                         arrival_time=start_datetime,
                         departure_time=start_datetime,
                         stay_duration_minutes=0,
+                        stop_type="ORIGIN",
                     )
                 ],
                 legs=[],
@@ -152,6 +167,7 @@ class ItineraryScheduler:
                 total_cost_inr=0.0,
                 is_valid=True,
                 is_optimal=True,
+                routing_provider="osrm",
                 return_to_origin=return_to_origin,
             )
 
@@ -203,7 +219,6 @@ class ItineraryScheduler:
 
         # Add Time Windows Constraint if provided
         if time_windows:
-            # Cumulative time dimension
             routing.AddDimension(
                 transit_callback_index,
                 slack_max=0,
@@ -251,54 +266,203 @@ class ItineraryScheduler:
         total_fuel = 0.0
         total_toll = 0.0
 
+        last_stop_name = origin_name
+
         for pos, node_idx in enumerate(route_nodes):
             loc = all_locations[node_idx]
             stay = loc["stay_minutes"]
 
-            if pos > 0:
-                prior_idx = route_nodes[pos - 1]
-                travel_mins = time_matrix[prior_idx][node_idx]
-                leg_dist = dist_matrix[prior_idx][node_idx]
-                total_travel_minutes += travel_mins
+            if pos == 0:
+                # Origin stop
+                arr_time = current_time
+                dep_time = current_time + timedelta(minutes=stay)
+                current_time = dep_time
+                scheduled_stops.append(
+                    ScheduledStop(
+                        position=0,
+                        name=loc["name"],
+                        latitude=loc["lat"],
+                        longitude=loc["lng"],
+                        arrival_time=arr_time,
+                        departure_time=dep_time,
+                        stay_duration_minutes=stay,
+                        cost_entry_inr=loc.get("cost_entry_inr", 0.0),
+                        stop_type="ORIGIN",
+                    )
+                )
+                last_stop_name = loc["name"]
+                continue
 
-                # Cost calculations
+            prior_idx = route_nodes[pos - 1]
+            travel_mins = time_matrix[prior_idx][node_idx]
+            leg_dist = dist_matrix[prior_idx][node_idx]
+
+            # Check if this stop requires parking & walking multimodal transition
+            if loc.get("requires_parking"):
+                p_name = str(loc.get("parking_name") or f"{loc['name']} Parking Hub")
+                p_lat = float(
+                    loc.get("parking_lat")
+                    if loc.get("parking_lat") is not None
+                    else loc["lat"] - 0.002
+                )
+                p_lng = float(
+                    loc.get("parking_lng")
+                    if loc.get("parking_lng") is not None
+                    else loc["lng"] - 0.002
+                )
+
+                # 1. Drive to Parking Hub
                 fuel_needed = leg_dist / vehicle_mileage_kmpl
                 leg_fuel_cost = fuel_needed * fuel_price_per_liter
                 leg_toll_cost = leg_dist * toll_cost_per_km
                 total_fuel += leg_fuel_cost
                 total_toll += leg_toll_cost
+                total_travel_minutes += travel_mins
 
                 scheduled_legs.append(
                     ScheduledLeg(
-                        from_stop=all_locations[prior_idx]["name"],
+                        from_stop=last_stop_name,
+                        to_stop=p_name,
+                        duration_minutes=travel_mins,
+                        distance_km=round(leg_dist, 2),
+                        fuel_cost_inr=round(leg_fuel_cost, 2),
+                        toll_cost_inr=round(leg_toll_cost, 2),
+                        mode="car",
+                    )
+                )
+                current_time = current_time + timedelta(minutes=travel_mins)
+
+                # 2. Parking Hub arrival & park vehicle (5 min)
+                p_arr = current_time
+                p_dep = current_time + timedelta(minutes=5)
+                current_time = p_dep
+                scheduled_stops.append(
+                    ScheduledStop(
+                        position=len(scheduled_stops),
+                        name=p_name,
+                        latitude=p_lat,
+                        longitude=p_lng,
+                        arrival_time=p_arr,
+                        departure_time=p_dep,
+                        stay_duration_minutes=5,
+                        stop_type="PARKING_HUB",
+                    )
+                )
+
+                # 3. Walk to Destination
+                walk_dist = max(
+                    0.1,
+                    round(cls._haversine_distance_km(p_lat, p_lng, loc["lat"], loc["lng"]), 2),
+                )
+                walk_mins = max(2, int(round((walk_dist / 4.0) * 60)))
+                total_travel_minutes += walk_mins
+                scheduled_legs.append(
+                    ScheduledLeg(
+                        from_stop=p_name,
+                        to_stop=loc["name"],
+                        duration_minutes=walk_mins,
+                        distance_km=walk_dist,
+                        fuel_cost_inr=0.0,
+                        toll_cost_inr=0.0,
+                        mode="walk",
+                    )
+                )
+                current_time = current_time + timedelta(minutes=walk_mins)
+
+                # 4. Destination stay
+                dest_arr = current_time
+                dest_dep = current_time + timedelta(minutes=stay)
+                current_time = dest_dep
+                scheduled_stops.append(
+                    ScheduledStop(
+                        position=len(scheduled_stops),
+                        name=loc["name"],
+                        latitude=loc["lat"],
+                        longitude=loc["lng"],
+                        arrival_time=dest_arr,
+                        departure_time=dest_dep,
+                        stay_duration_minutes=stay,
+                        cost_entry_inr=loc.get("cost_entry_inr", 0.0),
+                        stop_type="DESTINATION",
+                    )
+                )
+
+                # 5. Walk back to Parking Hub
+                total_travel_minutes += walk_mins
+                scheduled_legs.append(
+                    ScheduledLeg(
+                        from_stop=loc["name"],
+                        to_stop=p_name,
+                        duration_minutes=walk_mins,
+                        distance_km=walk_dist,
+                        fuel_cost_inr=0.0,
+                        toll_cost_inr=0.0,
+                        mode="walk",
+                    )
+                )
+                current_time = current_time + timedelta(minutes=walk_mins)
+
+                # 6. Retrieve vehicle at Parking Hub (5 min)
+                ret_arr = current_time
+                ret_dep = current_time + timedelta(minutes=5)
+                current_time = ret_dep
+                scheduled_stops.append(
+                    ScheduledStop(
+                        position=len(scheduled_stops),
+                        name=p_name,
+                        latitude=p_lat,
+                        longitude=p_lng,
+                        arrival_time=ret_arr,
+                        departure_time=ret_dep,
+                        stay_duration_minutes=5,
+                        stop_type="PARKING_HUB",
+                    )
+                )
+                last_stop_name = p_name
+
+            else:
+                # Standard Driving Stop
+                fuel_needed = leg_dist / vehicle_mileage_kmpl
+                leg_fuel_cost = fuel_needed * fuel_price_per_liter
+                leg_toll_cost = leg_dist * toll_cost_per_km
+                total_fuel += leg_fuel_cost
+                total_toll += leg_toll_cost
+                total_travel_minutes += travel_mins
+
+                scheduled_legs.append(
+                    ScheduledLeg(
+                        from_stop=last_stop_name,
                         to_stop=loc["name"],
                         duration_minutes=travel_mins,
                         distance_km=round(leg_dist, 2),
                         fuel_cost_inr=round(leg_fuel_cost, 2),
                         toll_cost_inr=round(leg_toll_cost, 2),
+                        mode="car",
                     )
                 )
                 current_time = current_time + timedelta(minutes=travel_mins)
 
-            arr_time = current_time
-            dep_time = current_time + timedelta(minutes=stay)
-            current_time = dep_time
+                arr_time = current_time
+                dep_time = current_time + timedelta(minutes=stay)
+                current_time = dep_time
 
-            scheduled_stops.append(
-                ScheduledStop(
-                    position=pos,
-                    name=loc["name"],
-                    latitude=loc["lat"],
-                    longitude=loc["lng"],
-                    arrival_time=arr_time,
-                    departure_time=dep_time,
-                    stay_duration_minutes=stay,
-                    cost_entry_inr=loc.get("cost_entry_inr", 0.0),
+                scheduled_stops.append(
+                    ScheduledStop(
+                        position=len(scheduled_stops),
+                        name=loc["name"],
+                        latitude=loc["lat"],
+                        longitude=loc["lng"],
+                        arrival_time=arr_time,
+                        departure_time=dep_time,
+                        stay_duration_minutes=stay,
+                        cost_entry_inr=loc.get("cost_entry_inr", 0.0),
+                        stop_type=loc.get("stop_type", "ORIGIN" if loc.get("is_return") else "DESTINATION"),
+                    )
                 )
-            )
+                last_stop_name = loc["name"]
 
         total_cost = total_fuel + total_toll + sum(s.cost_entry_inr for s in scheduled_stops)
-        is_valid = is_optimal  # Simple validation check
+        is_valid = is_optimal
 
         return OptimizedRoute(
             stops=scheduled_stops,
@@ -310,5 +474,6 @@ class ItineraryScheduler:
             is_valid=is_valid,
             is_optimal=is_optimal,
             validation_message="Route optimized successfully." if is_valid else "Solver fell back to sequential order.",
+            routing_provider="osrm",
             return_to_origin=return_to_origin,
         )

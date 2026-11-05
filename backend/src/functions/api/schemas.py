@@ -27,6 +27,11 @@ class RouteDestination(ApiSchema):
     lat: float = Field(ge=-90, le=90)
     lng: float = Field(ge=-180, le=180)
     stay_minutes: int = Field(default=180, ge=0, le=1440)
+    requires_parking: bool = False
+    parking_name: str | None = None
+    parking_lat: float | None = None
+    parking_lng: float | None = None
+    stop_type: str = Field(default="DESTINATION")
 
 
 class RouteRequest(ApiSchema):
@@ -42,6 +47,8 @@ class RouteRequest(ApiSchema):
     avoid_tolls: bool = False
     avoid_highways: bool = False
     avoid_ferries: bool = False
+    detour_waypoints: list[dict[str, Any]] = Field(default_factory=list)
+    road_condition: str | None = None
 
     @field_validator("start_datetime")
     @classmethod

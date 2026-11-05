@@ -1,4 +1,4 @@
-"""Google Maps driving-matrix adapter for route optimization."""
+"""Routing matrix and geometry adapter for route optimization (OSRM and Google Routes)."""
 
 from __future__ import annotations
 
@@ -65,15 +65,69 @@ def _provider_http_error(response: httpx.Response, product: str) -> RuntimeError
     return RuntimeError(f"Google Routes {product} request failed: {message}")
 
 
-async def get_transit_matrix(
+async def _get_osrm_transit_matrix(
     coordinates: list[tuple[float, float]],
-    average_speed_kmh: float = 45.0,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    route_options: dict[str, object] | None = None,
+    mode: str = "driving",
+) -> tuple[list[list[int]], list[list[float]]]:
+    """Fetch transit matrix from OpenStreetMap / OSRM table service."""
+    settings = get_settings()
+    base_url = getattr(settings, "OSRM_BASE_URL", "https://router.project-osrm.org").rstrip("/")
+    if not coordinates:
+        raise ValueError("At least one coordinate is required to build a route matrix.")
+
+    size = len(coordinates)
+    time_matrix = [[0] * size for _ in range(size)]
+    distance_matrix = [[0.0] * size for _ in range(size)]
+
+    coords_str = ";".join(f"{coord[1]:.6f},{coord[0]:.6f}" for coord in coordinates)
+    url = f"{base_url}/table/v1/{mode}/{coords_str}?annotations=duration,distance"
+
+    async with httpx.AsyncClient(
+        timeout=settings.HTTP_REQUEST_TIMEOUT_SECONDS,
+        trust_env=False,
+        transport=transport,
+    ) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"OSRM table request failed: HTTP {exc.response.status_code}") from None
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"OSRM table request network error: {exc}") from None
+
+    data = response.json()
+    if data.get("code") != "Ok":
+        raise RuntimeError(f"OSRM returned error code: {data.get('code')}")
+
+    durations = data.get("durations", [])
+    distances = data.get("distances", [])
+
+    for i in range(size):
+        for j in range(size):
+            if i == j:
+                continue
+            dur = durations[i][j] if i < len(durations) and j < len(durations[i]) else None
+            dist = distances[i][j] if i < len(distances) and j < len(distances[i]) else None
+            if dur is not None and dist is not None:
+                time_matrix[i][j] = max(1, int(round(dur / 60.0)))
+                distance_matrix[i][j] = round(dist / 1000.0, 2)
+            else:
+                time_matrix[i][j] = 9999
+                distance_matrix[i][j] = 9999.0
+
+    return time_matrix, distance_matrix
+
+
+async def _get_google_transit_matrix(
+    coordinates: list[tuple[float, float]],
     *,
     transport: httpx.AsyncBaseTransport | None = None,
     route_options: dict[str, object] | None = None,
 ) -> tuple[list[list[int]], list[list[float]]]:
-    """Fetch driving durations and distances; never substitute straight-line estimates."""
-    del average_speed_kmh
+    """Fetch driving durations and distances from Google Maps Distance Matrix."""
     settings = get_settings()
     if not settings.GOOGLE_MAPS_API_KEY:
         raise RuntimeError("GOOGLE_MAPS_API_KEY is required for route optimization.")
@@ -158,6 +212,36 @@ async def get_transit_matrix(
     return time_matrix, distance_matrix
 
 
+async def get_transit_matrix(
+    coordinates: list[tuple[float, float]],
+    average_speed_kmh: float = 45.0,
+    *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    route_options: dict[str, object] | None = None,
+) -> tuple[list[list[int]], list[list[float]]]:
+    """Fetch durations and distances from OSRM or Google Routes."""
+    del average_speed_kmh
+    settings = get_settings()
+    provider = getattr(settings, "ROUTING_PROVIDER", "osrm")
+    if provider == "osrm":
+        mode = (
+            "foot"
+            if route_options and str(route_options.get("mode", "")).lower() in ("walk", "walking")
+            else "driving"
+        )
+        return await _get_osrm_transit_matrix(
+            coordinates,
+            transport=transport,
+            route_options=route_options,
+            mode=mode,
+        )
+    return await _get_google_transit_matrix(
+        coordinates,
+        transport=transport,
+        route_options=route_options,
+    )
+
+
 def _decode_polyline(encoded: str) -> list[list[float]]:
     points: list[list[float]] = []
     index = lat = lng = 0
@@ -184,13 +268,63 @@ def _decode_polyline(encoded: str) -> list[list[float]]:
     return points
 
 
-async def get_route_geometry(
+async def _get_osrm_route_geometry(
+    coordinates: list[tuple[float, float]],
+    *,
+    route_options: dict[str, object] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+    mode: str = "driving",
+) -> dict[str, object]:
+    """Fetch route geometry from OpenStreetMap / OSRM route service."""
+    settings = get_settings()
+    base_url = getattr(settings, "OSRM_BASE_URL", "https://router.project-osrm.org").rstrip("/")
+    if len(coordinates) < 2:
+        raise ValueError("At least two coordinates are required for route geometry.")
+
+    coords_str = ";".join(f"{coord[1]:.6f},{coord[0]:.6f}" for coord in coordinates)
+    url = f"{base_url}/route/v1/{mode}/{coords_str}?overview=full&geometries=geojson&steps=true"
+
+    async with httpx.AsyncClient(
+        timeout=settings.HTTP_REQUEST_TIMEOUT_SECONDS,
+        trust_env=False,
+        transport=transport,
+    ) as client:
+        try:
+            response = await client.get(url)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise RuntimeError(f"OSRM route request failed: HTTP {exc.response.status_code}") from None
+        except httpx.RequestError as exc:
+            raise RuntimeError(f"OSRM route request network error: {exc}") from None
+
+    data = response.json()
+    if data.get("code") != "Ok" or not data.get("routes"):
+        raise RuntimeError(f"OSRM could not compute route geometry: {data.get('code')}")
+
+    route = data["routes"][0]
+    geometry = route.get("geometry")
+    if not geometry or not geometry.get("coordinates") or len(geometry["coordinates"]) < 2:
+        raise RuntimeError("OSRM returned incomplete route geometry.")
+
+    return {
+        "type": "Feature",
+        "properties": {
+            "provider": "osrm",
+            "routing_basis": "openstreetmap",
+            "distance_meters": route.get("distance", 0.0),
+            "duration_seconds": route.get("duration", 0.0),
+        },
+        "geometry": geometry,
+    }
+
+
+async def _get_google_route_geometry(
     coordinates: list[tuple[float, float]],
     *,
     route_options: dict[str, object] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict[str, object]:
-    """Fetch the selected route geometry as GeoJSON LineString coordinates."""
+    """Fetch route geometry from Google Maps Directions API."""
     settings = get_settings()
     if not settings.GOOGLE_MAPS_API_KEY:
         raise RuntimeError("GOOGLE_MAPS_API_KEY is required for route geometry.")
@@ -242,3 +376,31 @@ async def get_route_geometry(
         "properties": {"provider": "google"},
         "geometry": {"type": "LineString", "coordinates": coordinates_geojson},
     }
+
+
+async def get_route_geometry(
+    coordinates: list[tuple[float, float]],
+    *,
+    route_options: dict[str, object] | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, object]:
+    """Fetch the selected route geometry as GeoJSON LineString coordinates."""
+    settings = get_settings()
+    provider = getattr(settings, "ROUTING_PROVIDER", "osrm")
+    if provider == "osrm":
+        mode = (
+            "foot"
+            if route_options and str(route_options.get("mode", "")).lower() in ("walk", "walking")
+            else "driving"
+        )
+        return await _get_osrm_route_geometry(
+            coordinates,
+            route_options=route_options,
+            transport=transport,
+            mode=mode,
+        )
+    return await _get_google_route_geometry(
+        coordinates,
+        route_options=route_options,
+        transport=transport,
+    )

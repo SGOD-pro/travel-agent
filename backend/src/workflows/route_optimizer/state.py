@@ -2,9 +2,10 @@
 from typing import Any, TypedDict
 
 
-class RouteState(TypedDict):
+class RouteState(TypedDict, total=False):
     request: dict[str, Any]
     coordinates: list[tuple[float, float]]
+    effective_stops: list[dict[str, Any]]
     transit_matrix: list[list[int]] | None
     distance_matrix: list[list[float]] | None
     constraints: list[Any]

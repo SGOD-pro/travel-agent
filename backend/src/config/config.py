@@ -102,6 +102,8 @@ class Settings(BaseSettings):
     AWS_MEDIA_BUCKET: str | None = None
     MEDIA_TRANSCRIBE_TIMEOUT_SECONDS: int = Field(default=300, ge=10, le=1800)
     MEDIA_TRANSCRIBE_POLL_INTERVAL_SECONDS: float = Field(default=2.0, ge=0.1, le=60.0)
+    ROUTING_PROVIDER: Literal["osrm", "google"] = "osrm"
+    OSRM_BASE_URL: str = "https://router.project-osrm.org"
     GOOGLE_MAPS_API_KEY: str | None = None
     GOOGLE_MAPS_MATRIX_URL: str = (
         "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
@@ -188,7 +190,7 @@ class Settings(BaseSettings):
             raise ValueError("LOCAL_AUTH_BYPASS is only allowed when ENVIRONMENT=local")
         if self.ENVIRONMENT == "production":
             missing: list[str] = []
-            if not self.GOOGLE_MAPS_API_KEY:
+            if self.ROUTING_PROVIDER == "google" and not self.GOOGLE_MAPS_API_KEY:
                 missing.append("GOOGLE_MAPS_API_KEY")
             if not self.MEDIA_ALLOWED_HOSTS:
                 missing.append("MEDIA_ALLOWED_HOSTS")
