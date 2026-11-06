@@ -214,6 +214,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] End to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking (AC-1, AC-7, AC-8, AC-9)
    - [x] REST API updates and Next.js frontend itinerary view integration (AC-8, AC-10, AC-11)
    - [ ] Gated scenario evaluation suite across offline and live gates (AC-12)
+   - [ ] Real runner execution, bounded research query planning, evidence task dispatch, browser fallback, and resume reconciliation (AC-13, AC-14, AC-15, AC-16)
 - [ ] Verify it: `/check verify 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, separately gated live smoke, strict mypy typing, and ruff linting)

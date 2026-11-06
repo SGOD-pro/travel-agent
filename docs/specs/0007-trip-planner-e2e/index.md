@@ -1,11 +1,14 @@
 # 0007. Trip Planner End to End Execution, Language Model Integration, and Weather Advisory
 
 **Date**: 2026-10-29
+**Updated**: 2026-11-06
 **Status**: In Progress
 
 ## Summary
 
 This specification defines the complete end to end execution milestone for the SWENA trip planner. It coordinates traveler brief parsing, language model place discovery, deterministic candidate eligibility, weather advisories, asynchronous route optimization, budget computation, and atomic proposal publication under LangGraph checkpointing.
+
+This update adds the missing raw backend workflow for evidence-backed road trip research, specifying query planning, SerpAPI search, permitted static extraction, browser escalation, and the boundary between hosted language model (Bedrock or equivalent) generated suggestions and deterministic evidence. It reconciles the latest test report, which exercises nodes and the optimizer worker directly on seeded evidence and does not constitute a search-to-publication end to end run. It defines the first bounded development slice for a real runner, task dispatch, collector, browser fallback, and resume path.
 
 Language model integration uses a provider neutral abstract port with deterministic offline fixtures in Slice 1. This keeps Slice 1 completely independent of external cloud credentials or paid API calls, while allowing hosted adapters (such as AWS Bedrock Claude, direct Anthropic Claude, or OpenAI) to plug in cleanly once provider choices and credentials are confirmed.
 
@@ -50,6 +53,10 @@ A resilient partial result policy guarantees that external outages or solver inf
   (e) Infeasible route scenario: verifies that impossible stop windows produce `INFEASIBLE` route records with clear diagnostic reasons.
   (f) Offline gate: runs in default continuous integration with hermetic fixtures.
   (g) Connected live gate: gated under `@pytest.mark.connected` and `RUN_CONNECTED_EVAL=1` to validate live external APIs when credentials are provided.
+- **AC-13**: Bounded research flow and query planning: A query planner produces bounded search specifications across four distinct categories (travel advisories and disaster warnings, road closures and toll pricing, authentic regional food and cultural stops, and affordable accommodation). Searches execute via the SerpAPI adapter with strict call ceilings (maximum 6 queries per execution) and minor unit cost caps (maximum 500 minor units INR). Web extraction uses Scrapling for static pages, parsing clean excerpts and SHA256 hashes into immutable `source_observations`. Dynamic pages emitting `NEEDS_BROWSER` escalate to the Playwright browser worker only when mandatory, bounded to at most 2 URLs per execution.
+- **AC-14**: Bedrock evidence ingestion and suggestion boundary: Bedrock receives the verified evidence payload, including source links, retrieval timestamps, canonical place identities, and conflicting claims. Bedrock generated narrative proposals or candidate suggestions remain strictly unverified with uncertainty `EDITORIAL_DISCOVERY` until corroborated by independent `source_observations`. Bedrock must cite source links and timestamps in recommendations, preserve place identity without destructive merging, and surface conflicting claims transparently rather than picking one arbitrarily.
+- **AC-15**: Honest uncertainty, stale states, and fail closed safety: Route geometry and safety remain fail closed. Absence of a travel advisory or hazard report must never be interpreted as positive proof of route safety; such routes are labeled `ADVISORY_UNKNOWN`. Road closures from authoritative sources enforce polygon exclusions in Valhalla routing. Stale evidence (advisories older than 24 hours, hotel prices older than 7 days) transitions to `STALE` and generates traveler warning notices. Unquoted tolls, missing hotel prices, or unverified venue fees remain explicit `UNKNOWN` budget entries with documented reasons, never defaulting to zero.
+- **AC-16**: Test report reconciliation and complete runner lifecycle: Current test reports declaring zero SerpAPI calls and using seeded destination evidence are classified as fixture backed integration tests, not complete search to publication end to end runs. The workflow supports a genuine runner lifecycle where `TripPlannerGraph` emits real task specifications, halts at `AWAIT_EVIDENCE_RESULTS`, resumes upon evidence task completion via transactional outbox reconciliation, evaluates candidate eligibility against persistent observations, dispatches the route optimizer, and completes proposal publication.
 
 ## Decision
 
@@ -164,11 +171,18 @@ Workflow graph execution moves sequentially through twelve stages:
 | Toll budget line | Toll amount or explicit unknown reason | Highway toll tables or explicit unknown entry with reason (labeled `UNKNOWN`) |
 | Lodging budget line | Hotel stay amount, nights, rooms | Destination stay days multiplied by room count benchmark (labeled `ESTIMATED`) |
 | Weather attribution | Provider attribution text | Required static text: "Weather data by Open Meteo.com" |
+| Travel advisories and alerts | Advisory text, severity, source timestamp | IMD bulletins, NDMA warnings, police alerts via `source_observations` (or labeled `ADVISORY_UNKNOWN`) |
+| Road closures and exclusions | Polygon boundaries, restriction intervals | Authoritative police or transport department claims mapped to Valhalla `exclude_polygons` |
+| Local food and hidden places | Dining spots, cultural stops, opening hours | Query planned SerpAPI search and Scrapling extraction backed by `source_observations` |
+| Accommodation quotes | Hotel room rates, amenities, check in policy | Scrapling and browser hotel observations with validity timestamps (labeled `UNKNOWN` if missing) |
 
 **Key invariants**:
 - Generated language model text is labeled with uncertainty `EDITORIAL_DISCOVERY` and never converted into verified evidence without corroborating `source_observations`.
 - Candidate places without verified existence never enter the route solver and remain in the itinerary only as editorial recommendation cards.
 - Verified places with unknown operating hours receive assumed daytime visiting windows explicitly labeled as `HOURS_ASSUMED`.
+- Absence of travel advisories or hazard reports must never be inferred as positive evidence of safety; unmonitored or unverified conditions remain explicitly labeled `ADVISORY_UNKNOWN`.
+- Route geometry and road networks remain fail closed; missing route or closure evidence must never result in guessed road speeds or straight line polylines.
+- Tolls, hotel prices, entrance fees, or operating hours that are missing, unquoted, or stale remain explicitly labeled `UNKNOWN` or `STALE` with documented reasons, never defaulted to zero.
 - Candidate places must lie within 100 kilometers of the corridor between origin and destinations.
 - Every trip mutation and read is gated by the caller tenant identifier (`owner_id`).
 - When external APIs fail, the workflow preserves partial findings and produces an inspectable incomplete itinerary rather than throwing an unhandled job exception.
@@ -214,6 +228,7 @@ The build plan follows the Tracer Bullet approach, delivering thin, testable ver
 5. **Slice 5: End to end trip planner graph compilation, budget calculation, atomic proposal publication transaction with pessimistic locking and version checking, and resilient partial result policy**, satisfies **AC-1**, **AC-7**, **AC-8**, **AC-9**.
 6. **Slice 6: REST API endpoints and Next.js frontend itinerary view integration**, satisfies **AC-8**, **AC-10**, **AC-11**.
 7. **Slice 7: Gated evaluation suites with measurable assertions across offline and live gates**, satisfies **AC-12**.
+8. **Slice 8: Real runner execution, bounded research query planning, evidence task dispatch, browser fallback, and resume reconciliation**, satisfies **AC-13**, **AC-14**, **AC-15**, **AC-16**.
 
 ### Detailed Tasks for Slice 1: Provider Neutral Language Model Client Contracts and Offline Fixtures
 
@@ -257,6 +272,20 @@ Verification commands for Slice 3:
 ```bash
 cd backend && PYTHONPATH=src pytest tests/unit/test_candidate_corridor_and_eligibility.py -v
 cd backend && PYTHONPATH=src pytest tests/integration/test_candidate_registration_persistence.py -v
+```
+
+### Detailed Tasks for Slice 8: Real Runner Execution, Bounded Research Query Planning, Evidence Task Dispatch, Browser Fallback, and Resume Reconciliation
+
+- [ ] 1. Implement deterministic query planning in `backend/src/functions/orchestrator/evidence/query_planner.py` formulating bounded queries across travel advisories, road closures, tolls, authentic local food, and affordable lodging, enforcing a ceiling of 6 queries and 500 minor units INR, satisfies **AC-13**.
+- [ ] 2. Update `TripPlannerGraph` `route_evidence_decision_node` and `await_evidence_results_node` to formulate typed `TASK_DISPATCH` records for worker `EVIDENCE` with action `collect`, halting at interrupt boundary `AWAIT_EVIDENCE_RESULTS`, satisfies **AC-13**, **AC-16**.
+- [ ] 3. Wire `CompletionReconciliationService` to ingest `WorkerResultModel` from evidence tasks, deduplicate receipts via `ReceiptModel`, update checkpoints idempotently, and resume `TripPlannerGraph`, satisfies **AC-16**.
+- [ ] 4. Support browser escalation fallback for dynamic pages emitting `NEEDS_BROWSER`, limiting browser escalation to at most 2 URLs per execution and adhering to SSRF controls, satisfies **AC-13**.
+- [ ] 5. Enforce fail closed route risk policies: mark routes with absent alerts as `ADVISORY_UNKNOWN` rather than `SAFE`, map verified road closures to Valhalla `exclude_polygons`, and retain unquoted tolls or hotel prices as explicit `UNKNOWN` lines, satisfies **AC-14**, **AC-15**.
+- [ ] 6. Add integration tests in `backend/tests/integration/test_trip_planner_evidence_runner_lifecycle.py` executing the complete runner lifecycle with genuine task dispatch, worker claim under lease fencing, browser fallback, receipt deduplication, and resume on isolated PostgreSQL, satisfies **AC-13**, **AC-15**, **AC-16**.
+
+Verification commands for Slice 8:
+```bash
+cd backend && TEST_DATABASE_URL=$ACCEPTANCE_DATABASE_URL PYTHONPATH=src pytest tests/integration/test_trip_planner_evidence_runner_lifecycle.py -v
 ```
 
 ## Consequences
