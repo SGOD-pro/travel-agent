@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from config.config import Settings, get_settings
+from functions.orchestrator.llm.adapters.bedrock import BedrockLlmClient
 from functions.orchestrator.llm.adapters.fixture_client import FixtureLlmClient
 from functions.orchestrator.llm.port import HostedLlmClientPort
 
@@ -15,6 +17,10 @@ def create_llm_client(
     timeout_seconds: float | None = None,
     max_retries: int | None = None,
     fixture_dir: Path | str | None = None,
+    model_id: str | None = None,
+    region: str | None = None,
+    profile_name: str | None = None,
+    boto3_client: Any | None = None,
 ) -> HostedLlmClientPort:
     """Creates and returns the configured language model client adapter.
 
@@ -24,6 +30,10 @@ def create_llm_client(
         timeout_seconds: Optional socket timeout in seconds.
         max_retries: Optional maximum retry attempts.
         fixture_dir: Optional custom directory containing JSON fixture files.
+        model_id: Optional Bedrock model ID.
+        region: Optional AWS region name for Bedrock.
+        profile_name: Optional AWS profile name for credentials.
+        boto3_client: Optional injected boto3 bedrock-runtime client for testing.
 
     Returns:
         Instance conforming to HostedLlmClientPort.
@@ -54,13 +64,24 @@ def create_llm_client(
             max_retries=effective_retries,
         )
 
-    if effective_provider in ("bedrock", "anthropic", "openai", "gemini"):
+    if effective_provider == "bedrock":
+        return BedrockLlmClient(
+            model_id=model_id,
+            region=region,
+            profile_name=profile_name,
+            timeout_seconds=effective_timeout,
+            max_retries=effective_retries,
+            boto3_client=boto3_client,
+            settings=effective_settings,
+        )
+
+    if effective_provider in ("anthropic", "openai", "gemini"):
         raise NotImplementedError(
             f"Hosted adapter for provider '{effective_provider}' is deferred "
             "until API credentials and deployment choices are confirmed. "
-            "Use 'fixture' for local testing and continuous integration."
+            "Use 'fixture' for local testing and continuous integration, or 'bedrock' for AWS Bedrock."
         )
 
     raise ValueError(
-        f"Unsupported LLM provider '{effective_provider}'. Supported providers: 'fixture'."
+        f"Unsupported LLM provider '{effective_provider}'. Supported providers: 'fixture', 'bedrock'."
     )

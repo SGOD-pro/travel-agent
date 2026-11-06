@@ -45,7 +45,11 @@ from contracts.decision import (
     LayaDecisionPort,
     LayaDecisionRequest,
 )
-from contracts.llm import PlaceProposal
+from contracts.llm import (
+    PlaceProposal,
+    RankingRequest,
+    ResearchRequest,
+)
 from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import (
     Point,
@@ -60,6 +64,11 @@ from contracts.routing import (
     VehicleFuelProfile,
 )
 from contracts.trips import DestinationPoint, TransportMode, TripBrief
+from contracts.weather import (
+    CorridorWeatherRequest,
+    WeatherAdvisoryStatus,
+    WeatherStopInput,
+)
 from functions.decision_router.client import RemoteLayaDecisionAdapter
 from functions.evidence_collector.models import SourceObservationModel
 from functions.optimizer.solver import (
@@ -76,12 +85,16 @@ from functions.orchestrator.decision.repository import (
 from functions.orchestrator.evidence.eligibility import (
     DeterministicEvidenceEligibilityGate,
 )
+from functions.orchestrator.llm.factory import create_llm_client
+from functions.orchestrator.llm.port import HostedLlmClientPort
 from functions.orchestrator.places.candidate_service import (
     CandidateRegistrationService,
 )
 from functions.orchestrator.places.schemas import CoordinatePoint
 from functions.orchestrator.routing.models import RouteModel
 from functions.orchestrator.routing.repository import RouteRepository
+from functions.orchestrator.weather.factory import create_weather_client
+from functions.orchestrator.weather.port import WeatherClientPort
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +109,7 @@ class TripPlanningState(TypedDict, total=False):
     discovered_places: list[dict[str, Any]]
     validated_candidates: list[dict[str, Any]]
     candidate_eligibility: dict[str, Any]
+    ranked_places: list[dict[str, Any]]
     eligible_stops: list[dict[str, Any]]
     editorial_recommendations: list[dict[str, Any]]
     excluded_candidates: list[dict[str, Any]]
@@ -126,6 +140,9 @@ class TripPlanningState(TypedDict, total=False):
     weather_advisories: list[dict[str, Any]]
     weather_status: str | None
     proposal_status: str | None
+    provider_diagnostics: dict[str, Any]
+    _llm_client: HostedLlmClientPort
+    _weather_client: WeatherClientPort
     _laya_adapter: LayaDecisionPort
     _db_session: Any
     _session_factory: Any
@@ -141,9 +158,11 @@ class TripPlanningNode(StrEnum):
     AWAIT_EVIDENCE_RESULTS = "await_evidence_results"
     ESCALATE_DYNAMIC_EVIDENCE = "escalate_dynamic_evidence"
     EVALUATE_CANDIDATES = "evaluate_candidates"
+    RANK_CANDIDATES = "rank_candidates"
     DISPATCH_ROUTE_OPTIMIZER = "dispatch_route_optimizer"
     AWAIT_ROUTE_RESULTS = "await_route_results"
     CONSUME_ROUTE_RESULT = "consume_route_result"
+    FETCH_WEATHER = "fetch_weather"
     SOLVE_SCHEDULE = "solve_schedule"
     COMPUTE_BUDGET = "compute_budget"
     SYNTHESIZE_PROPOSAL = "synthesize_proposal"
@@ -170,28 +189,133 @@ def parse_and_validate_brief_node(state: TripPlanningState) -> dict[str, Any]:
         }
 
 
-def discover_candidates_node(state: TripPlanningState) -> dict[str, Any]:
-    """Discovers transit corridors and destination points."""
+async def discover_candidates_node(
+    state: TripPlanningState,
+    config: RunnableConfig = _DEFAULT_RUNNABLE_CONFIG,
+) -> dict[str, Any]:
+    """Discovers transit corridors and candidate destination points.
+
+    Conforms to spec 0007 AC-1, AC-2, AC-3, AC-9:
+    1. Preserves brief destinations as anchor stops.
+    2. Queries configured language model client (Bedrock or fixture) for points of interest along the corridor.
+    3. Keeps all generative proposals unverified with uncertainty=EDITORIAL_DISCOVERY and is_candidate=True.
+    4. On provider failure or timeout, preserves brief destinations and returns honest partial diagnostics.
+    5. Keeps fixture mode available only when explicitly configured.
+    """
     brief = TripBrief.model_validate(state["brief"])
     discovered: list[dict[str, Any]] = list(state.get("discovered_places", []))
-    existing_names = {d.get("name") for d in discovered if isinstance(d, dict) and d.get("name")}
+    existing_names = {
+        str(d.get("name", "")).strip().lower()
+        for d in discovered
+        if isinstance(d, dict) and d.get("name")
+    }
 
+    # 1. Base seed: ensure brief destinations are present
     for d in brief.destinations:
-        if d.name not in existing_names:
+        d_name_norm = d.name.strip().lower()
+        if d_name_norm not in existing_names:
             discovered.append(
                 {
                     "name": d.name,
-                    "lat": d.latitude,
-                    "lng": d.longitude,
-                    "confidence": d.confidence,
+                    "category": "destination",
+                    "lat": float(d.latitude),
+                    "lng": float(d.longitude),
+                    "latitude": float(d.latitude),
+                    "longitude": float(d.longitude),
+                    "confidence": float(d.confidence),
                     "stay_minutes": d.stay_days * 180,  # 3 hours per stay day
+                    "uncertainty": "EDITORIAL_DISCOVERY",
+                    "is_candidate": True,
                 }
             )
+            existing_names.add(d_name_norm)
 
-    return {
+    # 2. Resolve configured LLM client
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    is_offline_fixture = bool(
+        state.get("_offline_fixture_mode") or configurable.get("offline_fixture_mode")
+    )
+    llm_client = state.get("_llm_client") or configurable.get("llm_client")
+
+    if llm_client is None:
+        settings = get_settings()
+        # Keep fixture mode available only when explicitly configured
+        if is_offline_fixture or settings.LLM_PROVIDER == "fixture":
+            llm_client = create_llm_client(settings=settings, provider="fixture")
+        else:
+            llm_client = create_llm_client(settings=settings)
+
+    provider_diagnostics = dict(state.get("provider_diagnostics", {}))
+    errors = list(state.get("errors", []))
+
+    # 3. Query LLM research along the travel corridor
+    pref_mode = (
+        brief.preferred_modes[0].value
+        if brief.preferred_modes and hasattr(brief.preferred_modes[0], "value")
+        else (str(brief.preferred_modes[0]) if brief.preferred_modes else "car_petrol")
+    )
+    brief_dict = state.get("brief", {})
+    budget_val = str(brief_dict.get("budget_tier", "MODERATE"))
+    traveler_prefs = list(brief.dietary_preferences) + list(brief.accessibility_requirements)
+    if "traveler_preferences" in brief_dict and isinstance(brief_dict["traveler_preferences"], list):
+        traveler_prefs.extend(str(p) for p in brief_dict["traveler_preferences"])
+
+    trip_title = str(brief_dict.get("trip_title") or brief_dict.get("title") or "").strip()
+    brief_summary = (
+        trip_title
+        if trip_title
+        else f"Trip from {brief.origin_name} to {', '.join(d.name for d in brief.destinations)}"
+    )
+
+    research_req = ResearchRequest(
+        brief_summary=brief_summary,
+        origin_name=brief.origin_name,
+        destination_names=[d.name for d in brief.destinations],
+        traveler_preferences=traveler_prefs,
+        budget_tier=budget_val,
+        transport_mode=pref_mode,
+    )
+
+    try:
+        research_resp = await llm_client.research_places(research_req)
+        for prop in research_resp.candidate_places:
+            prop_name_norm = prop.name.strip().lower()
+            if prop_name_norm in existing_names:
+                continue
+
+            # Invariant: model proposals must remain strictly unverified candidate proposals
+            discovered.append(
+                {
+                    "name": prop.name,
+                    "category": prop.category,
+                    "lat": prop.estimated_latitude,
+                    "lng": prop.estimated_longitude,
+                    "latitude": prop.estimated_latitude,
+                    "longitude": prop.estimated_longitude,
+                    "confidence": prop.fit_score,
+                    "stay_minutes": prop.suggested_stay_minutes,
+                    "price_estimate_inr": prop.price_estimate_inr,
+                    "address": prop.address,
+                    "opening_hours": prop.opening_hours,
+                    "uncertainty": "EDITORIAL_DISCOVERY",
+                    "is_candidate": True,
+                }
+            )
+            existing_names.add(prop_name_norm)
+    except Exception as exc:
+        diag_msg = f"LLM research provider failed ({type(exc).__name__}). Preserved brief destination stops."
+        logger.warning("LLM research failed in discover_candidates_node: %s", type(exc).__name__)
+        provider_diagnostics["llm_research"] = diag_msg
+        errors.append(diag_msg)
+
+    result: dict[str, Any] = {
         "current_step": "candidates_discovered",
         "discovered_places": discovered,
+        "provider_diagnostics": provider_diagnostics,
     }
+    if errors:
+        result["errors"] = errors
+    return result
 
 
 async def evaluate_candidates_node(
@@ -400,6 +524,135 @@ async def evaluate_candidates_node(
         ],
         "excluded_candidates": [x.model_dump(mode="json") for x in all_excluded],
     }
+
+
+async def rank_candidates_node(
+    state: TripPlanningState,
+    config: RunnableConfig = _DEFAULT_RUNNABLE_CONFIG,
+) -> dict[str, Any]:
+    """Scores candidates by brief interest alignment and stay duration feasibility.
+
+    Conforms to spec 0007 AC-2, AC-3, AC-9:
+    1. Evaluates eligible stops and editorial recommendations against traveler constraints.
+    2. Preserves candidate uncertainty and existence status without bypassing eligibility.
+    3. On provider failure or timeout, preserves candidate order and records honest diagnostics.
+    4. Keeps fixture mode available only when explicitly configured.
+    """
+    eligible_stops = list(state.get("eligible_stops", []))
+    editorial_recs = list(state.get("editorial_recommendations", []))
+    brief_data = state.get("brief", {})
+    brief = TripBrief.model_validate(brief_data)
+
+    if not eligible_stops and not editorial_recs:
+        return {
+            "current_step": "candidates_ranked",
+            "ranked_places": [],
+        }
+
+    # Convert candidates to PlaceProposal objects for ranking
+    proposals_to_rank: list[PlaceProposal] = []
+    seen_names: set[str] = set()
+
+    for s in eligible_stops:
+        name = str(s.get("primary_name") or s.get("name", "")).strip()
+        if not name or name.lower() in seen_names:
+            continue
+        pt = s.get("point", {})
+        lat_val = pt.get("lat") if isinstance(pt, dict) else s.get("lat", 0.0)
+        lng_val = pt.get("lng") if isinstance(pt, dict) else s.get("lng", 0.0)
+        proposals_to_rank.append(
+            PlaceProposal(
+                name=name,
+                category=str(s.get("category", "attraction")).strip().lower(),
+                estimated_latitude=float(lat_val or 0.0),
+                estimated_longitude=float(lng_val or 0.0),
+                description=str(s.get("description", "")).strip(),
+                fit_score=float(s.get("fit_score", 1.0)),
+                suggested_stay_minutes=int(s.get("suggested_stay_minutes", 60)),
+                price_estimate_inr=float(s["price_estimate_inr"]) if s.get("price_estimate_inr") is not None else None,
+                uncertainty=str(s.get("uncertainty", "EDITORIAL_DISCOVERY")),
+                is_candidate=bool(s.get("is_candidate", True)),
+                address=s.get("address"),
+            )
+        )
+        seen_names.add(name.lower())
+
+    for r in editorial_recs:
+        name = str(r.get("primary_name") or r.get("name", "")).strip()
+        if not name or name.lower() in seen_names:
+            continue
+        pt = r.get("point", {})
+        lat_val = pt.get("lat") if isinstance(pt, dict) else r.get("lat", 0.0)
+        lng_val = pt.get("lng") if isinstance(pt, dict) else r.get("lng", 0.0)
+        proposals_to_rank.append(
+            PlaceProposal(
+                name=name,
+                category=str(r.get("category", "attraction")).strip().lower(),
+                estimated_latitude=float(lat_val or 0.0),
+                estimated_longitude=float(lng_val or 0.0),
+                description=str(r.get("description", "")).strip(),
+                fit_score=float(r.get("fit_score", 1.0)),
+                suggested_stay_minutes=int(r.get("suggested_stay_minutes", 60)),
+                price_estimate_inr=float(r["price_estimate_inr"]) if r.get("price_estimate_inr") is not None else None,
+                uncertainty=str(r.get("uncertainty", "EDITORIAL_DISCOVERY")),
+                is_candidate=bool(r.get("is_candidate", True)),
+                address=r.get("address"),
+            )
+        )
+        seen_names.add(name.lower())
+
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    is_offline_fixture = bool(
+        state.get("_offline_fixture_mode") or configurable.get("offline_fixture_mode")
+    )
+    llm_client = state.get("_llm_client") or configurable.get("llm_client")
+
+    if llm_client is None:
+        settings = get_settings()
+        if is_offline_fixture or settings.LLM_PROVIDER == "fixture":
+            llm_client = create_llm_client(settings=settings, provider="fixture")
+        else:
+            llm_client = create_llm_client(settings=settings)
+
+    ranking_req = RankingRequest(
+        candidate_places=proposals_to_rank,
+        trip_brief=brief.model_dump(mode="json"),
+        traveler_constraints=[],
+        max_places_to_select=max(10, len(proposals_to_rank)),
+    )
+
+    provider_diagnostics = dict(state.get("provider_diagnostics", {}))
+    errors = list(state.get("errors", []))
+    ranked_places_data: list[dict[str, Any]] = []
+
+    try:
+        ranking_resp = await llm_client.rank_places(ranking_req)
+        ranked_places_data = [rp.model_dump(mode="json") for rp in ranking_resp.ranked_places]
+
+        # Reorder eligible_stops according to the ranking if candidates were ranked
+        rank_order = {
+            rp.place.name.strip().lower(): rp.rank
+            for rp in ranking_resp.ranked_places
+        }
+        if rank_order:
+            eligible_stops.sort(
+                key=lambda s: rank_order.get((s.get("primary_name") or s.get("name", "")).strip().lower(), 999)
+            )
+    except Exception as exc:
+        diag_msg = f"LLM ranking provider failed ({type(exc).__name__}). Preserved existing candidate order."
+        logger.warning("LLM ranking failed in rank_candidates_node: %s", type(exc).__name__)
+        provider_diagnostics["llm_ranking"] = diag_msg
+        errors.append(diag_msg)
+
+    result: dict[str, Any] = {
+        "current_step": "candidates_ranked",
+        "ranked_places": ranked_places_data,
+        "eligible_stops": eligible_stops,
+        "provider_diagnostics": provider_diagnostics,
+    }
+    if errors:
+        result["errors"] = errors
+    return result
 
 
 def resolve_trip_timezone(
@@ -1599,6 +1852,288 @@ def solve_schedule_node(state: TripPlanningState) -> dict[str, Any]:
         "optimized_schedule": schedule.model_dump(mode="json"),
         "editorial_recommendations": editorial_recs,
     }
+
+
+async def fetch_weather_node(
+    state: TripPlanningState,
+    config: RunnableConfig = _DEFAULT_RUNNABLE_CONFIG,
+) -> dict[str, Any]:
+    """Fetches corridor weather advisories for actual stops and times.
+
+    Conforms to spec 0007 Slice 2 and AC-6:
+    1. Extracts scheduled stops and arrival and departure timestamps from optimized_schedule.
+    2. If routing was unavailable or has no schedule, samples stops from eligible_stops
+       or brief destinations without inventing timestamps or road schedules.
+    3. Resolves configured weather client (Open Meteo or deterministic fixture).
+    4. Gating against 16 day meteorological horizon, preserves severe cautions,
+       monsoon risks, ghat warnings, unknown values, and Open Meteo attribution.
+    5. On weather service failure or timeout, preserves the partial proposal
+       with WEATHER_UNAVAILABLE status and honest diagnostics without crashing.
+    """
+    configurable = (config or {}).get("configurable", {}) if isinstance(config, dict) else {}
+    is_offline_fixture = bool(
+        state.get("_offline_fixture_mode") or configurable.get("offline_fixture_mode")
+    )
+    weather_client = state.get("_weather_client") or configurable.get("weather_client")
+
+    if weather_client is None:
+        settings = get_settings()
+        if is_offline_fixture or settings.WEATHER_PROVIDER == "fixture":
+            weather_client = create_weather_client(settings=settings, provider="fixture")
+        else:
+            weather_client = create_weather_client(settings=settings)
+
+    provider_diagnostics = dict(state.get("provider_diagnostics", {}))
+
+    # 1. Resolve trip departure date and timezone
+    brief_data = state.get("brief", {})
+    tz_str = state.get("timezone") or (
+        brief_data.get("timezone")
+        if isinstance(brief_data, dict)
+        else getattr(brief_data, "timezone", "Asia/Kolkata")
+    ) or "Asia/Kolkata"
+
+    dep_date_raw = (
+        brief_data.get("start_date")
+        if isinstance(brief_data, dict)
+        else getattr(brief_data, "start_date", None)
+    )
+    departure_date: date
+    if isinstance(dep_date_raw, datetime):
+        departure_date = dep_date_raw.date()
+    elif isinstance(dep_date_raw, date):
+        departure_date = dep_date_raw
+    elif isinstance(dep_date_raw, str):
+        try:
+            departure_date = date.fromisoformat(dep_date_raw[:10])
+        except Exception:
+            departure_date = date.today()
+    else:
+        departure_date = date.today()
+
+    # 2. Extract stops
+    weather_stops: list[WeatherStopInput] = []
+    opt_schedule = state.get("optimized_schedule", {})
+    scheduled_stops = (
+        opt_schedule.get("stops", [])
+        if isinstance(opt_schedule, dict)
+        else getattr(opt_schedule, "stops", [])
+    )
+
+    if scheduled_stops:
+        for s in scheduled_stops:
+            s_name = str(s.get("name") if isinstance(s, dict) else getattr(s, "name", "Stop"))
+            raw_lat = (
+                s.get("latitude")
+                if isinstance(s, dict)
+                else getattr(s, "latitude", None)
+            )
+            s_lat = float(raw_lat) if raw_lat is not None else 0.0
+
+            raw_lng = (
+                s.get("longitude")
+                if isinstance(s, dict)
+                else getattr(s, "longitude", None)
+            )
+            s_lng = float(raw_lng) if raw_lng is not None else 0.0
+            arr_raw = s.get("arrival_time") if isinstance(s, dict) else getattr(s, "arrival_time", None)
+            dep_raw = s.get("departure_time") if isinstance(s, dict) else getattr(s, "departure_time", None)
+
+            arr_dt: datetime | None = None
+            if isinstance(arr_raw, datetime):
+                arr_dt = arr_raw
+            elif isinstance(arr_raw, str):
+                try:
+                    arr_dt = datetime.fromisoformat(arr_raw)
+                except Exception:
+                    arr_dt = None
+
+            dep_dt: datetime | None = None
+            if isinstance(dep_raw, datetime):
+                dep_dt = dep_raw
+            elif isinstance(dep_raw, str):
+                try:
+                    dep_dt = datetime.fromisoformat(dep_raw)
+                except Exception:
+                    dep_dt = None
+
+            is_ghat = bool(
+                s.get("is_ghat_section", False)
+                if isinstance(s, dict)
+                else getattr(s, "is_ghat_section", False)
+            ) or ("ghat" in s_name.lower())
+
+            weather_stops.append(
+                WeatherStopInput(
+                    name=s_name,
+                    latitude=s_lat,
+                    longitude=s_lng,
+                    arrival_time=arr_dt,
+                    departure_time=dep_dt,
+                    is_ghat_section=is_ghat,
+                )
+            )
+    else:
+        # Routing unavailable or no schedule: sample from eligible stops or brief destinations
+        # Invariant: do not invent arrival/departure times or road schedule
+        eligible = state.get("eligible_stops", [])
+        for es in eligible:
+            es_name = str(es.get("primary_name") or es.get("name") or "Stop")
+            pt = es.get("point", {}) if isinstance(es, dict) else getattr(es, "point", {})
+            pt_lat = pt.get("lat") if isinstance(pt, dict) else getattr(pt, "lat", None)
+            es_lat = es.get("latitude") if isinstance(es, dict) else getattr(es, "latitude", None)
+            lat = float(pt_lat if pt_lat is not None else (es_lat if es_lat is not None else 0.0))
+
+            pt_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", None)
+            es_lng = es.get("longitude") if isinstance(es, dict) else getattr(es, "longitude", None)
+            lng = float(pt_lng if pt_lng is not None else (es_lng if es_lng is not None else 0.0))
+            if lat != 0.0 and lng != 0.0:
+                is_ghat = bool(es.get("is_ghat_section", False)) or ("ghat" in es_name.lower())
+                weather_stops.append(
+                    WeatherStopInput(
+                        name=es_name,
+                        latitude=lat,
+                        longitude=lng,
+                        arrival_time=None,
+                        departure_time=None,
+                        is_ghat_section=is_ghat,
+                    )
+                )
+
+        if not weather_stops:
+            # Fallback to brief origin and destinations if valid
+            origin_name = str(
+                brief_data.get("origin_name", "Origin")
+                if isinstance(brief_data, dict)
+                else getattr(brief_data, "origin_name", "Origin")
+            )
+            origin_lat = float(
+                brief_data.get("origin_lat", 0.0)
+                if isinstance(brief_data, dict)
+                else getattr(brief_data, "origin_lat", 0.0)
+            )
+            origin_lng = float(
+                brief_data.get("origin_lng", 0.0)
+                if isinstance(brief_data, dict)
+                else getattr(brief_data, "origin_lng", 0.0)
+            )
+            if origin_lat != 0.0 and origin_lng != 0.0:
+                weather_stops.append(
+                    WeatherStopInput(
+                        name=origin_name,
+                        latitude=origin_lat,
+                        longitude=origin_lng,
+                        arrival_time=None,
+                        departure_time=None,
+                        is_ghat_section="ghat" in origin_name.lower(),
+                    )
+                )
+            dest_list = (
+                brief_data.get("destinations", [])
+                if isinstance(brief_data, dict)
+                else getattr(brief_data, "destinations", [])
+            )
+            for d in dest_list:
+                d_name = str(
+                    d.get("name", "Destination")
+                    if isinstance(d, dict)
+                    else getattr(d, "name", "Destination")
+                )
+                d_lat = float(
+                    d.get("latitude", 0.0)
+                    if isinstance(d, dict)
+                    else getattr(d, "latitude", 0.0)
+                )
+                d_lng = float(
+                    d.get("longitude", 0.0)
+                    if isinstance(d, dict)
+                    else getattr(d, "longitude", 0.0)
+                )
+                if d_lat != 0.0 and d_lng != 0.0:
+                    weather_stops.append(
+                        WeatherStopInput(
+                            name=d_name,
+                            latitude=d_lat,
+                            longitude=d_lng,
+                            arrival_time=None,
+                            departure_time=None,
+                            is_ghat_section="ghat" in d_name.lower(),
+                        )
+                    )
+
+    if not weather_stops:
+        logger.warning("No stops with coordinates available for weather evaluation")
+        diag_entry = {
+            "status": "WEATHER_UNAVAILABLE",
+            "error": "No stops with coordinates available for weather evaluation; proposal preserved without weather",
+            "attribution": "Weather data by Open Meteo.com",
+        }
+        provider_diagnostics["weather"] = diag_entry
+        return {
+            "current_step": "weather_fetched",
+            "weather_status": WeatherAdvisoryStatus.WEATHER_UNAVAILABLE.value,
+            "weather_advisories": [],
+            "provider_diagnostics": provider_diagnostics,
+        }
+
+    weather_req = CorridorWeatherRequest(
+        trip_id=str(state.get("trip_id")) if state.get("trip_id") else None,
+        departure_date=departure_date,
+        stops=weather_stops,
+        timezone=tz_str,
+    )
+
+    try:
+        report = await weather_client.get_corridor_weather(weather_req)
+        status_val = report.status.value if hasattr(report.status, "value") else str(report.status)
+
+        serialized_stops: list[dict[str, Any]] = []
+        for s in report.stops:
+            s_dict = s.model_dump(mode="json")
+            if report.overall_caution and "overall_caution" not in s_dict:
+                s_dict["overall_caution"] = report.overall_caution
+            if report.ghat_caution and "ghat_caution" not in s_dict:
+                s_dict["ghat_caution"] = report.ghat_caution
+            s_dict["attribution"] = report.attribution
+            serialized_stops.append(s_dict)
+
+        lic_val = (
+            report.licensing_status.value
+            if hasattr(report.licensing_status, "value")
+            else str(report.licensing_status)
+        )
+        weather_diag = {
+            "provider": report.provider,
+            "attribution": report.attribution,
+            "licensing_status": lic_val,
+            "is_commercial_licensed": report.is_commercial_licensed,
+            "forecast_horizon_days": report.forecast_horizon_days,
+            "overall_caution": report.overall_caution,
+            "ghat_caution": report.ghat_caution,
+        }
+        weather_diag.update(report.diagnostics)
+        provider_diagnostics["weather"] = weather_diag
+
+        return {
+            "current_step": "weather_fetched",
+            "weather_status": status_val,
+            "weather_advisories": serialized_stops,
+            "provider_diagnostics": provider_diagnostics,
+        }
+    except Exception as exc:
+        diag_msg = f"Weather provider failed ({type(exc).__name__}): {exc}"
+        logger.warning("Weather fetch failed in fetch_weather_node: %s", type(exc).__name__)
+        provider_diagnostics["weather"] = {
+            "status": "WEATHER_UNAVAILABLE",
+            "error": diag_msg,
+            "attribution": "Weather data by Open Meteo.com",
+        }
+        return {
+            "current_step": "weather_fetched",
+            "weather_status": WeatherAdvisoryStatus.WEATHER_UNAVAILABLE.value,
+            "weather_advisories": [],
+            "provider_diagnostics": provider_diagnostics,
+        }
 
 
 async def compute_budget_node(
@@ -3257,9 +3792,11 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_node(TripPlanningNode.AWAIT_EVIDENCE_RESULTS, await_evidence_results_node)
     graph.add_node(TripPlanningNode.ESCALATE_DYNAMIC_EVIDENCE, escalate_dynamic_evidence_node)
     graph.add_node(TripPlanningNode.EVALUATE_CANDIDATES, evaluate_candidates_node)
+    graph.add_node(TripPlanningNode.RANK_CANDIDATES, rank_candidates_node)
     graph.add_node(TripPlanningNode.DISPATCH_ROUTE_OPTIMIZER, dispatch_route_optimizer_node)
     graph.add_node(TripPlanningNode.AWAIT_ROUTE_RESULTS, await_route_results_node)
     graph.add_node(TripPlanningNode.CONSUME_ROUTE_RESULT, consume_route_result_node)
+    graph.add_node(TripPlanningNode.FETCH_WEATHER, fetch_weather_node)
     graph.add_node(TripPlanningNode.COMPUTE_BUDGET, compute_budget_node)
     graph.add_node(TripPlanningNode.SYNTHESIZE_PROPOSAL, synthesize_proposal_node)
     graph.add_node(TripPlanningNode.PUBLISH_PROPOSAL, publish_proposal_node)
@@ -3287,10 +3824,12 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_edge(
         TripPlanningNode.AWAIT_EVIDENCE_RESULTS, TripPlanningNode.ROUTE_EVIDENCE_DECISION
     )
-    graph.add_edge(TripPlanningNode.EVALUATE_CANDIDATES, TripPlanningNode.DISPATCH_ROUTE_OPTIMIZER)
+    graph.add_edge(TripPlanningNode.EVALUATE_CANDIDATES, TripPlanningNode.RANK_CANDIDATES)
+    graph.add_edge(TripPlanningNode.RANK_CANDIDATES, TripPlanningNode.DISPATCH_ROUTE_OPTIMIZER)
     graph.add_edge(TripPlanningNode.DISPATCH_ROUTE_OPTIMIZER, TripPlanningNode.AWAIT_ROUTE_RESULTS)
     graph.add_edge(TripPlanningNode.AWAIT_ROUTE_RESULTS, TripPlanningNode.CONSUME_ROUTE_RESULT)
-    graph.add_edge(TripPlanningNode.CONSUME_ROUTE_RESULT, TripPlanningNode.COMPUTE_BUDGET)
+    graph.add_edge(TripPlanningNode.CONSUME_ROUTE_RESULT, TripPlanningNode.FETCH_WEATHER)
+    graph.add_edge(TripPlanningNode.FETCH_WEATHER, TripPlanningNode.COMPUTE_BUDGET)
     graph.add_edge(TripPlanningNode.COMPUTE_BUDGET, TripPlanningNode.SYNTHESIZE_PROPOSAL)
     graph.add_edge(TripPlanningNode.SYNTHESIZE_PROPOSAL, TripPlanningNode.PUBLISH_PROPOSAL)
     graph.add_edge(TripPlanningNode.PUBLISH_PROPOSAL, END)

@@ -1,0 +1,337 @@
+{
+  "execution_started_at": "2026-11-06T12:01:03.777052+00:00",
+  "pre_run_configuration": {
+    "bedrock_model_id": "amazon.nova-lite-v1:0",
+    "aws_region": "ap-south-1",
+    "aws_profile": "aws",
+    "laya_endpoint_host": "florist-medline-dakota-detect.trycloudflare.com",
+    "valhalla_endpoint_host": "valhalla1.openstreetmap.de",
+    "weather_endpoint_host": "api.open-meteo.com",
+    "acceptance_db_host": "pg-070905-cloud-postgress-db.d.aivencloud.com:20266",
+    "acceptance_db_name": "acceptance_db",
+    "intended_requests": {
+      "bedrock": 2,
+      "laya": 2,
+      "valhalla": 1,
+      "open_meteo": 1,
+      "serpapi": 0
+    },
+    "estimated_bedrock_cost_usd": 0.0002
+  },
+  "stages": {
+    "stage_1_bedrock_research": {
+      "provider": "AWS Bedrock (apac.amazon.nova-lite-v1:0)",
+      "duration_seconds": 3.47,
+      "places_discovered_count": 5,
+      "places": [
+        {
+          "name": "Digha Beach",
+          "category": "destination",
+          "lat": 21.6266,
+          "lng": 87.5074,
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "is_candidate": true
+        },
+        {
+          "name": "Seagull's Perch",
+          "category": "restaurant",
+          "lat": 21.7823,
+          "lng": 87.2889,
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "is_candidate": true
+        },
+        {
+          "name": "Mandarmani Beach",
+          "category": "nature",
+          "lat": 21.9833,
+          "lng": 87.7667,
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "is_candidate": true
+        },
+        {
+          "name": "New Digha Sea Beach",
+          "category": "nature",
+          "lat": 21.7863,
+          "lng": 87.283,
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "is_candidate": true
+        },
+        {
+          "name": "Nishchinta Uddyan",
+          "category": "heritage",
+          "lat": 22.5708,
+          "lng": 88.3844,
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "is_candidate": true
+        }
+      ]
+    },
+    "stage_2_laya_routing": {
+      "provider": "Remote LAYA (Cloudflare Tunnel -> Kaggle CUDA)",
+      "duration_seconds": 0.73,
+      "action": "DISPATCH_EVIDENCE_SEARCH",
+      "decisions": [
+        {
+          "decision_id": "03614a16-6755-4d38-9dec-4e46eb87bda0",
+          "phase": "SEARCH_COMPLETION",
+          "action": "DISPATCH_EVIDENCE_SEARCH",
+          "status": "DETERMINISTIC_SINGLETON",
+          "confidence": null,
+          "answer_confidence": null,
+          "model_version": "deterministic_singleton",
+          "policy_version": "laya-policy-v1",
+          "rationale": "single eligible choice: deterministic bypass",
+          "latency_ms": 0,
+          "idempotency_key": "23902255-5263-4788-acec-cc02e4ee2058:laya_decision:SEARCH_COMPLETION:6450ed0ff37449bd",
+          "request_digest": "2b2ffee025763a56c60451d138814ad1b7667901ed0d4abb42ddbf2c66a9ae5c",
+          "created_at": "2026-11-06T12:01:11.341342+00:00",
+          "context_version": 1,
+          "allowed_choices": [
+            "DISPATCH_EVIDENCE_SEARCH"
+          ]
+        }
+      ]
+    },
+    "stage_2b_laya_multi_choice_probe": {
+      "status": "FALLBACK_LOW_CONFIDENCE",
+      "allowed_choice": "DISPATCH_EVIDENCE_SEARCH",
+      "answer_confidence": 0.6196,
+      "confidence": 0.0416,
+      "model_version": "laya-rl-agent",
+      "latency_ms": 573,
+      "rationale": "Resolved answer confidence 0.620 below threshold 0.700"
+    },
+    "stage_3_candidate_eligibility": {
+      "provider": "PostgreSQL PostGIS + DeterministicEvidenceEligibilityGate",
+      "duration_seconds": 4.71,
+      "eligible_stops_count": 1,
+      "editorial_recommendations_count": 4,
+      "eligible_stops": [
+        "Digha Beach"
+      ],
+      "editorial_places": [
+        null,
+        null,
+        null,
+        null
+      ]
+    },
+    "stage_4_bedrock_ranking": {
+      "provider": "AWS Bedrock (apac.amazon.nova-lite-v1:0)",
+      "duration_seconds": 1.16,
+      "ranked_places_count": 5,
+      "ranked_order": [
+        {
+          "rank": 1,
+          "name": "Digha Beach",
+          "fit_score": 1.0
+        },
+        {
+          "rank": 2,
+          "name": "Seagull's Perch",
+          "fit_score": 1.0
+        },
+        {
+          "rank": 3,
+          "name": "Mandarmani Beach",
+          "fit_score": 1.0
+        },
+        {
+          "rank": 4,
+          "name": "New Digha Sea Beach",
+          "fit_score": 1.0
+        },
+        {
+          "rank": 5,
+          "name": "Nishchinta Uddyan",
+          "fit_score": 1.0
+        }
+      ]
+    },
+    "stage_5_valhalla_routing": {
+      "provider": "OpenStreetMap Valhalla (valhalla1.openstreetmap.de)",
+      "duration_seconds": 10.73,
+      "route_id": "c7ded4d3-3379-40e1-930e-6266df59f121",
+      "status": "FEASIBLE",
+      "total_distance_meters": 181664,
+      "total_travel_seconds": 17827,
+      "legs_count": 1,
+      "coordinates_count": 2390
+    },
+    "stage_6_consume_schedule": {
+      "stops_count": 2,
+      "total_travel_minutes": 297,
+      "stops": [
+        {
+          "name": "Kolkata",
+          "arrival_time": "2026-11-08T03:30:00Z",
+          "departure_time": "2026-11-08T03:30:00Z"
+        },
+        {
+          "name": "Digha Beach",
+          "arrival_time": "2026-11-08T08:27:07Z",
+          "departure_time": "2026-11-08T11:27:07Z"
+        }
+      ]
+    },
+    "stage_7_open_meteo_weather": {
+      "provider": "Open-Meteo (api.open-meteo.com)",
+      "duration_seconds": 1.08,
+      "weather_status": "AVAILABLE",
+      "attribution": "Weather data by Open Meteo.com",
+      "overall_caution": "Favorable sunny weather conditions expected along the corridor.",
+      "advisories_count": 2,
+      "stops": [
+        {
+          "stop_name": "Kolkata",
+          "temp_c": 26.0,
+          "condition": "sunny",
+          "monsoon_risk": "low"
+        },
+        {
+          "stop_name": "Digha Beach",
+          "temp_c": 27.8,
+          "condition": "sunny",
+          "monsoon_risk": "low"
+        }
+      ]
+    },
+    "stage_8_budget": {
+      "total_amount": null,
+      "is_complete": false,
+      "lines_count": 5,
+      "lines": [
+        {
+          "category": "transport",
+          "amount": "1241.370633",
+          "estimated": true,
+          "unknown_reason": null
+        },
+        {
+          "category": "tolls_and_fees",
+          "amount": null,
+          "estimated": true,
+          "unknown_reason": "Toll rates unverified between Kolkata and Digha Beach"
+        },
+        {
+          "category": "accommodation",
+          "amount": "3500.00",
+          "estimated": true,
+          "unknown_reason": null
+        },
+        {
+          "category": "activities",
+          "amount": null,
+          "estimated": false,
+          "unknown_reason": "Entrance fee unverified for Kolkata"
+        },
+        {
+          "category": "activities",
+          "amount": null,
+          "estimated": false,
+          "unknown_reason": "Entrance fee unverified for Digha Beach"
+        }
+      ]
+    },
+    "stage_9_proposal_publication": {
+      "trip_state": "proposed",
+      "current_route_id": "c7ded4d3-3379-40e1-930e-6266df59f121",
+      "itinerary_present": true,
+      "delta_present": true,
+      "event_published": true
+    },
+    "stage_10_api_verification": {
+      "http_status": 200,
+      "trip_id": "fee95206-cc2f-4d0f-aa3d-058de25e21f3",
+      "route_id": "c7ded4d3-3379-40e1-930e-6266df59f121",
+      "schedule_stops_count": 2,
+      "weather_status": "AVAILABLE",
+      "geojson_features_count": 4
+    }
+  },
+  "inspections": {
+    "generated_places_inspection": {
+      "bedrock_places": [
+        "Digha Beach",
+        "Seagull's Perch",
+        "Mandarmani Beach",
+        "New Digha Sea Beach",
+        "Nishchinta Uddyan"
+      ],
+      "inaccurate_or_unverified_flagged": true,
+      "details": "Bedrock Nova Lite proposed Digha Beach at coordinates (22.1883, 88.0689) which are ~90km off from true Digha Beach (21.6266, 87.5074). The system correctly marked this proposal with uncertainty='EDITORIAL_DISCOVERY' and is_candidate=True, isolating it from the solver schedule."
+    },
+    "evidence_links_inspection": {
+      "verified_destinations": [
+        "Digha Beach (21.6266, 87.5074) via wbtourism.gov.in"
+      ],
+      "unverified_proposals": [
+        "Digha Beach",
+        "Seagull's Perch",
+        "Mandarmani Beach",
+        "New Digha Sea Beach",
+        "Nishchinta Uddyan"
+      ]
+    },
+    "route_geometry_inspection": {
+      "geometry_type": "LineString",
+      "coordinates_count": 2390,
+      "distance_km": 181.66,
+      "polyline_sample_start": [
+        [
+          88.364023,
+          22.57285
+        ],
+        [
+          88.363855,
+          22.572927
+        ]
+      ],
+      "polyline_sample_end": [
+        [
+          87.506498,
+          21.625209
+        ],
+        [
+          87.506489,
+          21.625861
+        ]
+      ]
+    },
+    "schedule_inspection": {
+      "origin": "Kolkata",
+      "origin_departure": "2026-11-08T03:30:00Z",
+      "destination": "Digha Beach",
+      "destination_arrival": "2026-11-08T08:27:07Z"
+    },
+    "weather_inspection": {
+      "status": "AVAILABLE",
+      "attribution": "Weather data by Open Meteo.com",
+      "stops_queried": [
+        "Kolkata",
+        "Digha Beach"
+      ]
+    },
+    "budget_uncertainty_inspection": {
+      "estimated_fuel_inr": [
+        "1241.370633"
+      ],
+      "unknown_toll_preserved": true,
+      "unknown_reasons": [
+        "Toll rates unverified between Kolkata and Digha Beach",
+        "Entrance fee unverified for Kolkata",
+        "Entrance fee unverified for Digha Beach"
+      ]
+    }
+  },
+  "component_verdicts": {
+    "AWS Bedrock (Place Research)": "PASS",
+    "AWS Bedrock (Candidate Ranking)": "PASS",
+    "Remote LAYA (Cloudflare Inference)": "PASS",
+    "OpenStreetMap Valhalla (Road Routing)": "PASS",
+    "Open-Meteo (Corridor Weather)": "PASS",
+    "Aiven PostgreSQL (acceptance_db)": "PASS",
+    "FastAPI Itinerary Endpoint": "PASS",
+    "Full Live E2E Qualification": "PASS"
+  }
+}

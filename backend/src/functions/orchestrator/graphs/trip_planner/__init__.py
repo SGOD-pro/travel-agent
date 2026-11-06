@@ -9,6 +9,7 @@ from functions.orchestrator.graphs.trip_planner.graph import (
     consume_route_result_node,
     dispatch_route_optimizer_node,
     escalate_dynamic_evidence_node,
+    fetch_weather_node,
     solve_schedule_node,
     trip_planning_workflow,
 )
@@ -25,6 +26,7 @@ __all__ = [
     "consume_route_result_node",
     "dispatch_route_optimizer_node",
     "escalate_dynamic_evidence_node",
+    "fetch_weather_node",
     "solve_schedule_node",
     "trip_planning_workflow",
 ]

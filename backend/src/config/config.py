@@ -81,6 +81,10 @@ class Settings(BaseSettings):
         default="ap-south-1",
         description="AWS region name",
     )
+    AWS_PROFILE: str | None = Field(
+        default=None,
+        description="Optional AWS profile name for local development",
+    )
     SQS_QUEUE_URL: str | None = Field(
         default=None,
         description="Amazon SQS queue URL for outbox relay events",
@@ -219,6 +223,10 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = Field(
         default="fixture",
         description="Language model provider identifier (fixture, bedrock, anthropic, openai)",
+    )
+    BEDROCK_MODEL_ID: str = Field(
+        default="amazon.nova-lite-v1:0",
+        description="Model ID for AWS Bedrock hosted language model integration",
     )
     LLM_TIMEOUT_SECONDS: float = Field(
         default=15.0,

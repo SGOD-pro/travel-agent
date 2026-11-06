@@ -227,7 +227,8 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 3 place candidate registration, spatial corridor validation, and deterministic claim eligibility gate: [2026-10-31-trip-planner-candidate-slice3.md](../reviews/2026-10-31-trip-planner-candidate-slice3.md) · [2026-11-01-main.md](../reviews/2026-11-01-main.md) (Approve)
    - [x] Slice 4 route optimizer task dispatch, interrupt boundary, worker resume, and trip linking: [2026-11-01-main.md](../reviews/2026-11-01-main.md) (Approve)
    - [x] Slice 5 end to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking: [2026-11-02-main.md](../reviews/2026-11-02-main.md) (Approve)
-   - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [2026-11-03-main.md](../reviews/2026-11-03-main.md) (Approve)
+   - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [2026-11-03-main.md](../reviews/2026-11-03-main.md) · [2026-11-04-main.md](../reviews/2026-11-04-main.md) (Approve)
+   - [x] Live provider wiring for Bedrock LLM research and ranking and Open Meteo weather graph integration: [2026-11-05-main.md](../reviews/2026-11-05-main.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

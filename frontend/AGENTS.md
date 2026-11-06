@@ -27,6 +27,7 @@ Next.js 16 App Router frontend for SWENA. Provides interactive multi stop itiner
 | `e2e/route-optimization-e2e.spec.ts` | Playwright mocked UI regression test suite |
 | `e2e/route-optimization-acceptance.spec.ts` | Playwright full stack browser acceptance test suite against real services |
 | `e2e/itinerary-view.spec.ts` | Playwright browser acceptance test suite for itinerary proposal view states and invariants |
+| `e2e/itinerary-live-backend.spec.ts` | Playwright browser acceptance test suite against live FastAPI backend and isolated PostgreSQL with real RS256 authentication |
 
 ## Commands
 
@@ -46,4 +47,7 @@ npx playwright test
 - Safe popups must construct HTML elements using `document.createElement` and assign untrusted properties strictly through `textContent` to prevent Cross Site Scripting.
 - GeoJSON RFC 7946 coordinates `[lon, lat]` must be flipped to Leaflet `[lat, lon]` order for markers, polylines, and bounding box calculations.
 - Tile layer attribution for OpenStreetMap and CARTO must be preserved.
+- Do not invent road polylines or straight line geometries when authoritative route geometry is missing, unavailable, or infeasible.
+- Do not use invented weather, risk, score, detour, or coordinate defaults; render missing attributes explicitly as unknown.
+- Format displayed schedule times using the authoritative trip timezone.
 

@@ -121,9 +121,10 @@ async def get_current_user(
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from e
     except (PyJWTError, Exception) as e:
+        logger.warning("Token verification failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token credentials: {e!s}",
+            detail="Invalid token credentials",
             headers={"WWW-Authenticate": 'Bearer error="invalid_token"'},
         ) from e
 

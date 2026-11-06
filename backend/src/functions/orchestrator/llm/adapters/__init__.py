@@ -1,5 +1,6 @@
 """Language model client adapters package."""
 
+from functions.orchestrator.llm.adapters.bedrock import BedrockLlmClient
 from functions.orchestrator.llm.adapters.fixture_client import FixtureLlmClient
 
-__all__ = ["FixtureLlmClient"]
+__all__ = ["BedrockLlmClient", "FixtureLlmClient"]

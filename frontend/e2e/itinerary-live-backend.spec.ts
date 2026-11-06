@@ -110,8 +110,10 @@ test.describe("Itinerary Proposal Live Backend Integration (Isolated PostgreSQL 
     // 2. Navigate to trip proposal page without mocking network calls
     await page.goto(`/trips/${TRIP_A_ID}`);
 
-    // 3. Verify schedule stops rendered from live backend proposal
-    await expect(page.getByRole("heading", { name: "Solved Itinerary Schedule" })).toBeVisible();
+    // 3. Verify schedule stops rendered from live backend proposal (with generous timeout for initial cold query)
+    await expect(page.getByRole("heading", { name: "Solved Itinerary Schedule" })).toBeVisible({
+      timeout: 15000,
+    });
     await expect(page.getByText("Bengaluru MG Road Depot").first()).toBeVisible();
     await expect(page.getByText("Cubbon Park Verified Parking Hub").first()).toBeVisible();
     await expect(page.getByText("Botanical Glass House Sanctuary").first()).toBeVisible();

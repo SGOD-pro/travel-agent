@@ -347,17 +347,32 @@ class ValhallaClient:
         durations_s: list[list[int | None]] = []
         distances_m: list[list[int | None]] = []
 
-        for row in sources_to_targets:
+        for i, row in enumerate(sources_to_targets):
             dur_row: list[int | None] = []
             dist_row: list[int | None] = []
-            for cell in row:
-                if (
-                    cell is None
-                    or cell.get("distance") is None
-                    or cell.get("time") is None
-                ):
+            for j, cell in enumerate(row):
+                if cell is None:
                     dur_row.append(None)
                     dist_row.append(None)
+                elif cell.get("distance") is None or cell.get("time") is None:
+                    if i < len(origins) and j < len(destinations):
+                        # Point-to-point fallback for public Valhalla distance limits
+                        try:
+                            leg_res = await self.route([origins[i], destinations[j]], mode=mode)
+                            dur_row.append(leg_res.total_travel_seconds)
+                            dist_row.append(leg_res.total_distance_m)
+                        except Exception as exc:
+                            logger.warning(
+                                "Valhalla point-to-point fallback failed for %s -> %s: %s",
+                                origins[i],
+                                destinations[j],
+                                exc,
+                            )
+                            dur_row.append(None)
+                            dist_row.append(None)
+                    else:
+                        dur_row.append(None)
+                        dist_row.append(None)
                 else:
                     dist_km = float(cell["distance"])
                     dur_s = int(round(float(cell["time"])))

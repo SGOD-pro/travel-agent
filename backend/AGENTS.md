@@ -36,7 +36,7 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/acceptance_database.py` | Dedicated acceptance database URL validation, normalization, and isolated session factory |
 | `src/acceptance_server.py` | Local acceptance server and worker orchestration with injected MockValhallaClient for browser testing |
 | `src/contracts/llm.py` | Pydantic domain contracts for language model proposals, structured opening hours, and provider configuration |
-| `src/functions/orchestrator/llm/` | Provider neutral language model client abstract port, deterministic FixtureLlmClient, and factory |
+| `src/functions/orchestrator/llm/` | Provider neutral language model client abstract port, Bedrock boto3 adapter, deterministic FixtureLlmClient, and factory |
 | `src/contracts/weather.py` | Pydantic domain contracts for stop forecasts, corridor weather advisories, and risk enums |
 | `src/functions/orchestrator/weather/` | Weather client abstract port, Open Meteo adapter, deterministic FixtureWeatherClient, and factory |
 | `src/contracts/candidate.py` | Pydantic domain contracts for corridor validation, candidate statuses, and eligibility reports |
@@ -79,7 +79,7 @@ uv run alembic upgrade head
 - Money values must use Decimal and the Money value object. Never use floating point numbers for currency.
 - Unknown expenses such as unquoted tolls must stay explicit unknowns with an unknown reason. Never coerce unknown costs to zero.
 - PostgreSQL with PostGIS is the single source of truth for trips, versions, and jobs.
-- Validate incoming tokens using SWYRA Auth JWKS. Reject client supplied owner identifiers.
+- Validate incoming tokens using SWYRA Auth JWKS. Reject client supplied owner identifiers. Real cryptographic OAuth 2.1 token verification validates RS256/ES256 signatures, issuer, audience, and expiration via PyJWKClient or configured public key; missing credentials fail closed in production and are strictly gated by ALLOW_DEV_LOCAL_USER in local development.
 - Route solving uses OR Tools for stop sequencing while keeping road network geometry from routing providers.
 - Orchestrator operations enforce parent first lock ordering (executions then tasks) and savepoint transaction isolation on fencing mutations.
 - Source observations in PostgreSQL are write once and immutable, keyed by (execution_id, canonical_url, content_hash) with zero in place mutations.
@@ -155,6 +155,8 @@ uv run alembic upgrade head
 - Proposal publication atomically updates trips (current_route_id, itinerary_json, state proposed), creates or updates TripDeltaModel, enforces publication event idempotency to prevent duplicate PROPOSAL_PUBLISHED timeline job events on crash recovery or replay, and defers execution completion to GraphRunnerService outbox transaction alongside checkpoint flush to prevent unrecoverable false success.
 - Tenant isolation verifies caller owner matches trip owner under transaction row lock, raising PermissionError on cross tenant access.
 - Replay safety and duplicate delivery idempotency update existing proposal deltas for trip and base version without duplicate TripDeltaModel insertions.
+- Hosted LLM place research and candidate ranking adapters use boto3 Bedrock with cross region inference profile retry (apac.amazon.nova-lite-v1:0), safe asyncio.to_thread execution, and keep candidate proposals stamped with uncertainty EDITORIAL_DISCOVERY so they cannot bypass deterministic evidence eligibility gates.
+- Weather integration queries WeatherClientPort after route result consumption, evaluating actual schedule stop timestamps and timezones against the 16 day meteorological horizon, preserving severe monsoon and ghat cautions, and falling back safely without straight line schedule or coordinate guesswork.
 
 ## Gotchas
 

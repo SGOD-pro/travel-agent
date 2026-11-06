@@ -340,8 +340,14 @@ class TestLlmClientFactory:
         assert client.timeout_seconds == 25.0
         assert client.max_retries == 1
 
+    def test_create_bedrock_client_factory(self) -> None:
+        from functions.orchestrator.llm.adapters.bedrock import BedrockLlmClient
+        client = create_llm_client(provider="bedrock")
+        assert isinstance(client, BedrockLlmClient)
+        assert isinstance(client, HostedLlmClientPort)
+
     def test_deferred_providers_raise_not_implemented(self) -> None:
-        for provider in ("bedrock", "anthropic", "openai", "gemini"):
+        for provider in ("anthropic", "openai", "gemini"):
             with pytest.raises(NotImplementedError) as exc_info:
                 create_llm_client(provider=provider)
             assert "deferred" in str(exc_info.value).lower()
