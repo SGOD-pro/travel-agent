@@ -85,6 +85,7 @@ from functions.orchestrator.decision.repository import (
 from functions.orchestrator.evidence.eligibility import (
     DeterministicEvidenceEligibilityGate,
 )
+from functions.orchestrator.evidence.query_planner import QueryPlanningService
 from functions.orchestrator.llm.factory import create_llm_client
 from functions.orchestrator.llm.port import HostedLlmClientPort
 from functions.orchestrator.places.candidate_service import (
@@ -480,6 +481,20 @@ async def evaluate_candidates_node(
             owner_id=owner_uuid,
         )
         if session is not None:
+            if is_caller_owned:
+                await session.flush()
+            else:
+                await session.commit()
+            from functions.orchestrator.evidence.claim_ingestion import (
+                ingest_claims_from_observations,
+            )
+
+            await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_uuid,
+                candidates=valid_cands,
+                owner_id=owner_uuid,
+            )
             if is_caller_owned:
                 await session.flush()
             else:
@@ -2513,7 +2528,8 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "editorial_recommendations": state.get("editorial_recommendations", []),
         "excluded_candidates": state.get("excluded_candidates", []),
         "weather_advisories": state.get("weather_advisories", []),
-        "weather_status": state.get("weather_status", "WEATHER_UNAVAILABLE"),
+        "weather_status": state.get("weather_status") or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
+        "advisory_status": state.get("weather_status") or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
         "validated_candidates": state.get("validated_candidates", []),
         "discovered_places": state.get("discovered_places", []),
         "route_id": state.get("route_id"),
@@ -2951,6 +2967,8 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
         except Exception:
             max_slots = 3
 
+    # For 0007 trip planner workflow, apply maximum 2 browser URLs without changing general worker cap
+    max_slots = min(2, max_slots)
     available_slots = max(0, max_slots - len(already_dispatched))
 
     if available_slots <= 0:
@@ -3356,6 +3374,8 @@ async def route_evidence_decision_node(
         max_slots = int(get_settings().BROWSER_MAX_ESCALATION_TASKS)
     except Exception:
         max_slots = 3
+    # For 0007 trip planner workflow, apply maximum 2 browser URLs without changing general worker cap
+    max_slots = min(2, max_slots)
     remaining_browser_slots = max(0, max_slots - len(already_dispatched))
 
     # 2. Extract canonical destination requirements: identity and coordinates
@@ -3707,22 +3727,16 @@ async def route_evidence_decision_node(
     # 8. Action enactment
     if envelope.allowed_choice == DecisionAction.DISPATCH_EVIDENCE_SEARCH:
         dest_hash = hashlib.sha256(dest_name.encode("utf-8")).hexdigest()
+        planned_queries = QueryPlanningService.plan_destination_queries(brief, max_queries=4)
+        budget_dict = QueryPlanningService.calculate_collector_budget(planned_queries)
         search_task = {
             "worker": "EVIDENCE",
             "action": "collect",
             "payload": {
-                "queries": [
-                    f"{dest_name} attractions activities",
-                    f"{dest_name} lodging hotels",
-                ],
-                "budget": {
-                    "cost_per_call_minor": 50,
-                    "currency": "INR",
-                    "remaining_tool_calls": 5,
-                    "remaining_cost_minor": 500,
-                },
+                "queries": planned_queries,
+                "budget": budget_dict,
                 "destination": dest_name,
-                "origin": brief.get("origin_name", ""),
+                "origin": brief.get("origin_name", "") if isinstance(brief, dict) else getattr(brief, "origin_name", ""),
                 "categories": ["attractions", "lodging", "transit"],
             },
             "idempotency_key": f"{exec_uuid}:collect:{dest_hash[:16]}",

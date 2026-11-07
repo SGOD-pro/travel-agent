@@ -46,6 +46,7 @@ class WeatherAdvisoryStatus(StrEnum):
     PARTIAL = "PARTIAL"
     OUT_OF_FORECAST_HORIZON = "OUT_OF_FORECAST_HORIZON"
     WEATHER_UNAVAILABLE = "WEATHER_UNAVAILABLE"
+    ADVISORY_UNKNOWN = "ADVISORY_UNKNOWN"
 
 
 class CommercialLicenseStatus(StrEnum):

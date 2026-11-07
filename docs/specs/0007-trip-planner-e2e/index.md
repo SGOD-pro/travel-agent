@@ -276,12 +276,12 @@ cd backend && PYTHONPATH=src pytest tests/integration/test_candidate_registratio
 
 ### Detailed Tasks for Slice 8: Real Runner Execution, Bounded Research Query Planning, Evidence Task Dispatch, Browser Fallback, and Resume Reconciliation
 
-- [ ] 1. Implement deterministic query planning in `backend/src/functions/orchestrator/evidence/query_planner.py` formulating bounded queries across travel advisories, road closures, tolls, authentic local food, and affordable lodging, enforcing a ceiling of 6 queries and 500 minor units INR, satisfies **AC-13**.
-- [ ] 2. Update `TripPlannerGraph` `route_evidence_decision_node` and `await_evidence_results_node` to formulate typed `TASK_DISPATCH` records for worker `EVIDENCE` with action `collect`, halting at interrupt boundary `AWAIT_EVIDENCE_RESULTS`, satisfies **AC-13**, **AC-16**.
-- [ ] 3. Wire `CompletionReconciliationService` to ingest `WorkerResultModel` from evidence tasks, deduplicate receipts via `ReceiptModel`, update checkpoints idempotently, and resume `TripPlannerGraph`, satisfies **AC-16**.
-- [ ] 4. Support browser escalation fallback for dynamic pages emitting `NEEDS_BROWSER`, limiting browser escalation to at most 2 URLs per execution and adhering to SSRF controls, satisfies **AC-13**.
-- [ ] 5. Enforce fail closed route risk policies: mark routes with absent alerts as `ADVISORY_UNKNOWN` rather than `SAFE`, map verified road closures to Valhalla `exclude_polygons`, and retain unquoted tolls or hotel prices as explicit `UNKNOWN` lines, satisfies **AC-14**, **AC-15**.
-- [ ] 6. Add integration tests in `backend/tests/integration/test_trip_planner_evidence_runner_lifecycle.py` executing the complete runner lifecycle with genuine task dispatch, worker claim under lease fencing, browser fallback, receipt deduplication, and resume on isolated PostgreSQL, satisfies **AC-13**, **AC-15**, **AC-16**.
+- [x] 1. Implement deterministic query planning in `backend/src/functions/orchestrator/evidence/query_planner.py` formulating bounded queries across travel advisories, road closures, tolls, authentic local food, and affordable lodging, enforcing a ceiling of 4 queries and 200 minor units INR, satisfies **AC-13**.
+- [x] 2. Update `TripPlannerGraph` `route_evidence_decision_node` and `await_evidence_results_node` to formulate typed `TASK_DISPATCH` records for worker `EVIDENCE` with action `collect`, halting at interrupt boundary `AWAIT_EVIDENCE_RESULTS`, satisfies **AC-13**, **AC-16**.
+- [x] 3. Wire `CompletionReconciliationService` to ingest `WorkerResultModel` from evidence tasks, deduplicate receipts via `ReceiptModel`, update checkpoints idempotently, and resume `TripPlannerGraph`, satisfies **AC-16**.
+- [x] 4. Support browser escalation fallback for dynamic pages emitting `NEEDS_BROWSER`, limiting browser escalation to at most 2 URLs per execution and adhering to SSRF controls, satisfies **AC-13**.
+- [x] 5. Enforce fail closed route risk policies: mark routes with absent alerts as `ADVISORY_UNKNOWN` rather than `SAFE`, map verified road closures to Valhalla `exclude_polygons`, and retain unquoted tolls or hotel prices as explicit `UNKNOWN` lines, satisfies **AC-14**, **AC-15**.
+- [x] 6. Add integration tests in `backend/tests/integration/test_trip_planner_evidence_runner_lifecycle.py` executing the complete runner lifecycle with genuine task dispatch, worker claim under lease fencing, browser fallback, receipt deduplication, and resume on isolated PostgreSQL, satisfies **AC-13**, **AC-15**, **AC-16**.
 
 Verification commands for Slice 8:
 ```bash

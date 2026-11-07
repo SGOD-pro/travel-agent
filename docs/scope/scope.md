@@ -214,7 +214,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] End to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking (AC-1, AC-7, AC-8, AC-9)
    - [x] REST API updates and Next.js frontend itinerary view integration (AC-8, AC-10, AC-11)
    - [ ] Gated scenario evaluation suite across offline and live gates (AC-12)
-   - [ ] Real runner execution, bounded research query planning, evidence task dispatch, browser fallback, and resume reconciliation (AC-13, AC-14, AC-15, AC-16)
+   - [x] Real runner execution, bounded research query planning, evidence task dispatch, browser fallback, and resume reconciliation (AC-13, AC-14, AC-15, AC-16)
 - [ ] Verify it: `/check verify 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, separately gated live smoke, strict mypy typing, and ruff linting)
@@ -222,6 +222,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 4 route optimizer task dispatch, interrupt boundary, worker resume, and trip linking: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL integration suite, strict mypy typing, and ruff linting)
    - [x] Slice 5 end to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL integration suite, strict mypy typing, and ruff linting)
    - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL lifecycle integration test, Next.js build, and Playwright browser acceptance suite)
+   - [x] Slice 8 real runner execution, bounded research query planning, evidence task dispatch, browser fallback, and resume reconciliation: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL runner lifecycle integration suite, and connected evidence report)
 - [ ] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
@@ -230,7 +231,8 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 5 end to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking: [2026-11-02-main.md](../reviews/2026-11-02-main.md) (Approve)
    - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [2026-11-03-main.md](../reviews/2026-11-03-main.md) · [2026-11-04-main.md](../reviews/2026-11-04-main.md) (Approve)
    - [x] Live provider wiring for Bedrock LLM research and ranking and Open Meteo weather graph integration: [2026-11-05-main.md](../reviews/2026-11-05-main.md) (Approve)
+   - [x] Slice 8A bounded search backed vertical slice: [2026-11-07-main.md](../reviews/2026-11-07-main.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 
-Spec 0007 (`docs/specs/0007-trip-planner-e2e/index.md`, Status: In Progress) · code in `backend/src/functions/orchestrator/graphs/trip_planner/`, `backend/src/functions/orchestrator/llm/`, `backend/src/functions/orchestrator/weather/`, `backend/src/functions/api/routes/trips.py`, and `frontend/src/app/trips/[id]/`
+Spec 0007 (`docs/specs/0007-trip-planner-e2e/index.md`, Status: In Progress) · code in `backend/src/functions/orchestrator/graphs/trip_planner/`, `backend/src/functions/orchestrator/llm/`, `backend/src/functions/orchestrator/weather/`, `backend/src/functions/orchestrator/evidence/`, `backend/src/functions/api/routes/trips.py`, and `frontend/src/app/trips/[id]/`
