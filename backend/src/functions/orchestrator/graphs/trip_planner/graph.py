@@ -379,8 +379,6 @@ async def evaluate_candidates_node(
         except Exception as e:
             logger.debug("Skipping unparseable candidate proposal %s: %s", p, e)
 
-    proposals = brief_proposals + candidate_proposals
-
     # Resolve execution and owner IDs
     exec_id_raw = state.get("execution_id")
     exec_uuid = uuid.UUID(str(exec_id_raw)) if exec_id_raw else None
@@ -408,22 +406,6 @@ async def evaluate_candidates_node(
                 "Silent in-memory registration fallback is prohibited."
             )
 
-    if not proposals:
-        report = CandidateEligibilityReport(
-            eligible_stops=[],
-            editorial_recommendations=[],
-            excluded_candidates=[],
-            summary={"total_candidates": 0, "eligible_stops": 0},
-        )
-        return {
-            "current_step": "candidates_evaluated",
-            "validated_candidates": [],
-            "candidate_eligibility": report.model_dump(mode="json"),
-            "eligible_stops": [],
-            "editorial_recommendations": [],
-            "excluded_candidates": [],
-        }
-
     fixture_obs_list: list[Any] = []
     fixture_claims_list: list[Any] = []
     if is_offline_fixture:
@@ -439,6 +421,57 @@ async def evaluate_candidates_node(
                         fixture_obs_list.extend(sub["observations"])
                     if "claims" in sub and isinstance(sub["claims"], list):
                         fixture_claims_list.extend(sub["claims"])
+
+    # Extract evidence-backed place candidates from collected search/scraping observations
+    obs_for_extraction: list[Any] = list(fixture_obs_list)
+    if not is_offline_fixture and exec_uuid is not None:
+        try:
+            from functions.evidence_collector.models import SourceObservationModel
+
+            obs_stmt = select(SourceObservationModel).where(SourceObservationModel.execution_id == exec_uuid)
+            if db_session is not None:
+                obs_res = await db_session.execute(obs_stmt)
+                obs_for_extraction.extend(list(obs_res.scalars().all()))
+            elif session_factory is not None:
+                async with session_factory() as session:
+                    obs_res = await session.execute(obs_stmt)
+                    obs_for_extraction.extend(list(obs_res.scalars().all()))
+        except Exception as obs_err:
+            logger.debug("Failed querying observations for candidate extraction: %s", obs_err)
+
+    if obs_for_extraction:
+        from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
+
+        default_lat = brief.destinations[0].latitude if brief.destinations else None
+        default_lng = brief.destinations[0].longitude if brief.destinations else None
+        evidence_proposals = PlaceExtractionService.extract_candidates_from_observations(
+            obs_for_extraction,
+            default_destination_lat=default_lat,
+            default_destination_lng=default_lng,
+        )
+        existing_names = {p.name.strip().lower() for p in candidate_proposals}
+        for ep in evidence_proposals:
+            if ep.name.strip().lower() not in existing_names:
+                candidate_proposals.append(ep)
+                existing_names.add(ep.name.strip().lower())
+
+    proposals = brief_proposals + candidate_proposals
+
+    if not proposals:
+        report = CandidateEligibilityReport(
+            eligible_stops=[],
+            editorial_recommendations=[],
+            excluded_candidates=[],
+            summary={"total_candidates": 0, "eligible_stops": 0},
+        )
+        return {
+            "current_step": "candidates_evaluated",
+            "validated_candidates": [],
+            "candidate_eligibility": report.model_dump(mode="json"),
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "excluded_candidates": [],
+        }
 
     async def _verify_execution_barriers(session: Any | None) -> None:
         """Verifies authorization, cancellation, and deadline barriers before persistent writes."""
@@ -489,12 +522,13 @@ async def evaluate_candidates_node(
                 ingest_claims_from_observations,
             )
 
-            await ingest_claims_from_observations(
-                session=session,
-                execution_id=exec_uuid,
-                candidates=valid_cands,
-                owner_id=owner_uuid,
-            )
+            if exec_uuid is not None:
+                await ingest_claims_from_observations(
+                    session=session,
+                    execution_id=exec_uuid,
+                    candidates=valid_cands,
+                    owner_id=owner_uuid,
+                )
             if is_caller_owned:
                 await session.flush()
             else:
@@ -3727,7 +3761,8 @@ async def route_evidence_decision_node(
     # 8. Action enactment
     if envelope.allowed_choice == DecisionAction.DISPATCH_EVIDENCE_SEARCH:
         dest_hash = hashlib.sha256(dest_name.encode("utf-8")).hexdigest()
-        planned_queries = QueryPlanningService.plan_destination_queries(brief, max_queries=4)
+        llm_for_queries = state.get("_llm_client") or configurable.get("llm_client")
+        planned_queries = await QueryPlanningService.plan_queries_with_llm(brief, llm_client=llm_for_queries, max_queries=4)
         budget_dict = QueryPlanningService.calculate_collector_budget(planned_queries)
         search_task = {
             "worker": "EVIDENCE",

@@ -71,6 +71,28 @@ class FixtureLlmClient(HostedLlmClientPort):
         with open(file_path, encoding="utf-8") as f:
             return cast(dict[str, Any], json.load(f))
 
+    async def generate_search_queries(
+        self,
+        request: ResearchRequest,
+        max_queries: int = 4,
+    ) -> list[str]:
+        """Generates deterministic targeted search queries for web evidence collection."""
+        if self.simulate_timeout:
+            raise TimeoutError("Simulated LLM client socket timeout")
+
+        if self.simulate_error is not None:
+            raise self.simulate_error
+
+        primary = request.destination_names[0] if request.destination_names else "Destination"
+        pref = f" {request.traveler_preferences[0]}" if request.traveler_preferences else ""
+        queries = [
+            f"{primary}{pref} top sights attractions",
+            f"{primary} authentic local food dining",
+            f"{primary} budget hotels accommodation",
+            f"{request.origin_name} to {primary} road travel advisory",
+        ]
+        return queries[:max_queries]
+
     async def research_places(self, request: ResearchRequest) -> ResearchResponse:
         """Returns deterministic candidate places based on research request."""
         if self.simulate_timeout:

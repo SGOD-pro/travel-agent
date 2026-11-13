@@ -100,6 +100,61 @@ class QueryPlanningService:
         return query_candidates[:ceiling]
 
     @classmethod
+    async def plan_queries_with_llm(
+        cls,
+        brief: dict[str, Any] | TripBrief,
+        llm_client: Any | None = None,
+        max_queries: int = DEFAULT_MAX_QUERIES,
+    ) -> list[str]:
+        """Plans queries using configured LLM client with fallback to deterministic templates."""
+        if llm_client is not None and hasattr(llm_client, "generate_search_queries"):
+            try:
+                from contracts.llm import ResearchRequest
+
+                origin = ""
+                destinations: list[str] = []
+                prefs: list[str] = []
+                budget_tier = "MODERATE"
+                mode = "car_petrol"
+                if isinstance(brief, TripBrief):
+                    origin = brief.origin_name
+                    destinations = [d.name for d in brief.destinations if d.name]
+                    prefs = list(brief.dietary_preferences) + list(brief.accessibility_requirements)
+                    budget_tier = str(getattr(brief, "budget_tier", "MODERATE"))
+                elif isinstance(brief, dict):
+                    origin = str(brief.get("origin_name") or "")
+                    for d in brief.get("destinations", []):
+                        if isinstance(d, dict) and d.get("name"):
+                            destinations.append(str(d["name"]))
+                        elif isinstance(d, str) and d.strip():
+                            destinations.append(d.strip())
+                        elif hasattr(d, "name") and d.name:
+                            destinations.append(str(d.name))
+                    if not destinations and brief.get("destination_name"):
+                        destinations.append(str(brief["destination_name"]).strip())
+                    prefs = list(brief.get("dietary_preferences", [])) + list(brief.get("accessibility_requirements", []))
+                    if "traveler_preferences" in brief and isinstance(brief["traveler_preferences"], list):
+                        prefs.extend(str(p) for p in brief["traveler_preferences"])
+                    budget_tier = str(brief.get("budget_tier") or "MODERATE")
+
+                req = ResearchRequest(
+                    brief_summary=f"Trip from {origin} to {', '.join(destinations)}",
+                    origin_name=origin or "Origin",
+                    destination_names=destinations or ["Destination"],
+                    traveler_preferences=prefs,
+                    budget_tier=budget_tier,
+                    transport_mode=mode,
+                )
+                queries = await llm_client.generate_search_queries(req)
+                if queries:
+                    queries_list: list[str] = [str(q) for q in queries]
+                    return queries_list[:min(max_queries, DEFAULT_MAX_QUERIES)]
+            except Exception as exc:
+                logger.warning("LLM query planning failed (%s); using deterministic fallback", exc)
+
+        return cls.plan_destination_queries(brief, max_queries)
+
+    @classmethod
     def calculate_collector_budget(
         cls,
         queries: list[str],

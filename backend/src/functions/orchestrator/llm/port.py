@@ -21,20 +21,26 @@ class HostedLlmClientPort(ABC):
     """Provider-neutral abstract port for language model services."""
 
     @abstractmethod
-    async def research_places(self, request: ResearchRequest) -> ResearchResponse:
-        """Discovers candidate points of interest along the destination corridor.
+    async def generate_search_queries(
+        self,
+        request: ResearchRequest,
+        max_queries: int = 4,
+    ) -> list[str]:
+        """Generates targeted search queries for real web search and evidence collection.
 
         Args:
             request: Typed corridor research parameters including origin, destinations,
                 preferences, budget tier, and transport mode.
+            max_queries: Maximum number of queries to generate (default 4).
 
         Returns:
-            ResearchResponse with candidate place proposals and travel advisories.
-
-        Raises:
-            TimeoutError: When request duration exceeds configured socket timeout.
-            Exception: On unrecoverable provider failures after retries.
+            List of targeted search query strings for search engine execution.
         """
+        raise NotImplementedError
+
+    @abstractmethod
+    async def research_places(self, request: ResearchRequest) -> ResearchResponse:
+        """Discovers candidate points of interest along the corridor or prepares search discovery notes."""
         raise NotImplementedError
 
     @abstractmethod

@@ -182,7 +182,10 @@ class SerpApiAdapter:
             artifact_metadata = {
                 "place_id": place.get("place_id"),
                 "data_id": place.get("data_id"),
+                "title": title,
+                "address": address,
                 "gps": gps,
+                "gps_coordinates": gps,
                 "rating": rating,
                 "reviews": reviews,
             }
@@ -279,15 +282,15 @@ class SerpApiAdapter:
 
             results: list[RawObservation] = []
 
-            # 1. Parse organic results
-            organic_raw = data.get("organic_results", [])
-            if isinstance(organic_raw, list):
-                results.extend(self._parse_organic_results(organic_raw, retrieved_at))
-
-            # 2. Parse place or local results
+            # 1. Parse place or local results first to capture structured POIs with verified coordinates
             local_raw = data.get("local_results") or data.get("places_results")
             if local_raw:
                 results.extend(self._parse_place_results(local_raw, retrieved_at))
+
+            # 2. Parse organic results to capture web articles and multi-publisher consensus citations
+            organic_raw = data.get("organic_results", [])
+            if isinstance(organic_raw, list):
+                results.extend(self._parse_organic_results(organic_raw, retrieved_at))
 
             return results[:limit]
 

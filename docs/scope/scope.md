@@ -223,7 +223,8 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 5 end to end trip planner graph compilation, budget calculation, and atomic proposal publication under pessimistic locking: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL integration suite, strict mypy typing, and ruff linting)
    - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL lifecycle integration test, Next.js build, and Playwright browser acceptance suite)
    - [x] Slice 8 real runner execution, bounded research query planning, evidence task dispatch, browser fallback, and resume reconciliation: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL runner lifecycle integration suite, and connected evidence report)
-- [ ] Review it (fresh model): `/check review 0007-trip-planner-e2e`
+   - [x] Non-hallucinatory search query planning, place discovery via SerpAPI with real geolocation coordinates, multi-site consensus ranking, and API timing middleware: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live connected AWS Bedrock and SerpAPI integration test, clean ruff linting, and strict mypy verification)
+- [x] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
    - [x] Slice 3 place candidate registration, spatial corridor validation, and deterministic claim eligibility gate: [2026-10-31-trip-planner-candidate-slice3.md](../reviews/2026-10-31-trip-planner-candidate-slice3.md) · [2026-11-01-main.md](../reviews/2026-11-01-main.md) (Approve)
@@ -232,6 +233,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [2026-11-03-main.md](../reviews/2026-11-03-main.md) · [2026-11-04-main.md](../reviews/2026-11-04-main.md) (Approve)
    - [x] Live provider wiring for Bedrock LLM research and ranking and Open Meteo weather graph integration: [2026-11-05-main.md](../reviews/2026-11-05-main.md) (Approve)
    - [x] Slice 8A bounded search backed vertical slice: [2026-11-07-main.md](../reviews/2026-11-07-main.md) (Approve)
+   - [x] Non-hallucinatory search query planning, place discovery via SerpAPI with real geolocation coordinates, multi-site consensus ranking, and API timing middleware: [2026-11-14-main.md](../reviews/2026-11-14-main.md) (Blocked)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

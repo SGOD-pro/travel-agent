@@ -58,6 +58,52 @@ class TestBedrockLlmClient:
         assert adapter.max_retries == 2
 
     @pytest.mark.asyncio
+    async def test_generate_search_queries(self) -> None:
+        mock_boto = MagicMock()
+        mock_boto.converse.return_value = {
+            "output": {
+                "message": {
+                    "content": [
+                        {
+                            "text": """
+                            ```json
+                            {
+                              "search_queries": [
+                                "Kolkata authentic street food dining restaurants",
+                                "Kolkata top heritage architecture places to visit",
+                                "Kolkata budget hotels affordable accommodation",
+                                "Kolkata to Digha road travel advisory route conditions"
+                              ]
+                            }
+                            ```
+                            """
+                        }
+                    ]
+                }
+            }
+        }
+
+        adapter = BedrockLlmClient(
+            model_id="amazon.nova-lite-v1:0",
+            region="ap-south-1",
+            timeout_seconds=5.0,
+            boto3_client=mock_boto,
+        )
+
+        req = ResearchRequest(
+            brief_summary="Kolkata to Digha coastal journey",
+            origin_name="Kolkata",
+            destination_names=["Digha"],
+            traveler_preferences=["food"],
+        )
+
+        queries = await adapter.generate_search_queries(req)
+
+        assert len(queries) == 4
+        assert "street food" in queries[0]
+        assert mock_boto.converse.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_research_places_successful_mapping(self) -> None:
         mock_boto = MagicMock()
         mock_boto.converse.return_value = {
@@ -68,22 +114,10 @@ class TestBedrockLlmClient:
                             "text": """
                             ```json
                             {
-                              "candidate_places": [
-                                {
-                                  "name": "Kolaghat Highway Hub",
-                                  "category": "restaurant",
-                                  "estimated_latitude": 22.4285,
-                                  "estimated_longitude": 87.8712,
-                                  "description": "Popular stop for snacks",
-                                  "fit_score": 0.95,
-                                  "suggested_stay_minutes": 45,
-                                  "price_estimate_inr": 300.0,
-                                  "opening_hours": "07:00 - 23:00",
-                                  "address": "NH16 Kolaghat"
-                                }
-                              ],
-                              "regional_travel_notes": ["Monsoon caution on NH16"],
-                              "recommended_pace": "RELAXED"
+                              "search_queries": [
+                                "Kolkata top sights attractions",
+                                "Kolkata authentic local food"
+                              ]
                             }
                             ```
                             """
@@ -111,22 +145,11 @@ class TestBedrockLlmClient:
 
         assert isinstance(resp, ResearchResponse)
         assert resp.provider == "bedrock"
-        assert resp.recommended_pace == "RELAXED"
-        assert len(resp.candidate_places) == 1
-        assert resp.regional_travel_notes == ["Monsoon caution on NH16"]
-
-        place = resp.candidate_places[0]
-        assert isinstance(place, PlaceProposal)
-        assert place.name == "Kolaghat Highway Hub"
-        assert place.category == "restaurant"
-        assert place.estimated_latitude == 22.4285
-        assert place.estimated_longitude == 87.8712
-        assert place.fit_score == 0.95
-        assert place.suggested_stay_minutes == 45
-        assert place.price_estimate_inr == 300.0
-        # Crucial invariant: must strictly remain unverified candidate
-        assert place.uncertainty == "EDITORIAL_DISCOVERY"
-        assert place.is_candidate is True
+        assert resp.recommended_pace == "MODERATE"
+        # Invariant: Bedrock does NOT invent hallucinatory places with fake coordinates
+        assert len(resp.candidate_places) == 0
+        assert len(resp.regional_travel_notes) == 2
+        assert "Planned search query:" in resp.regional_travel_notes[0]
 
         assert mock_boto.converse.call_count == 1
         call_kwargs = mock_boto.converse.call_args[1]
@@ -141,30 +164,31 @@ class TestBedrockLlmClient:
                     "content": [
                         {
                             "text": """
+                            ```json
                             {
                               "ranked_places": [
                                 {
                                   "name": "Target Attraction",
                                   "rank": 1,
-                                  "fit_score": 0.99,
-                                  "selection_rationale": "Strongest brief alignment"
+                                  "fit_score": 0.95,
+                                  "selection_rationale": "High heritage alignment and evidence consensus"
                                 }
                               ],
                               "eliminated_candidates": [
                                 {
                                   "name": "Lesser Spot",
-                                  "reason": "Exceeded daily pace limit"
+                                  "reason": "Exceeded candidate selection limit"
                                 }
                               ],
-                              "overall_pacing_evaluation": "Feasible pace for 1-day trip."
+                              "overall_pacing_evaluation": "Feasible afternoon schedule"
                             }
+                            ```
                             """
                         }
                     ]
                 }
             }
         }
-
         adapter = BedrockLlmClient(boto3_client=mock_boto)
 
         c1 = PlaceProposal(
@@ -195,10 +219,45 @@ class TestBedrockLlmClient:
         assert len(resp.ranked_places) == 1
         assert resp.ranked_places[0].place.name == "Target Attraction"
         assert resp.ranked_places[0].rank == 1
-        assert resp.ranked_places[0].fit_score == 0.99
-        assert resp.ranked_places[0].selection_rationale == "Strongest brief alignment"
+        assert resp.ranked_places[0].fit_score == 0.95
+        assert "heritage alignment" in resp.ranked_places[0].selection_rationale
         assert len(resp.eliminated_candidates) == 1
         assert resp.eliminated_candidates[0]["name"] == "Lesser Spot"
+        assert mock_boto.converse.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_rank_places_fallback_on_converse_error(self) -> None:
+        mock_boto = MagicMock()
+        mock_boto.converse.side_effect = RuntimeError("Bedrock service throttle")
+        adapter = BedrockLlmClient(boto3_client=mock_boto)
+
+        c1 = PlaceProposal(
+            name="Top Consensus Spot",
+            category="heritage",
+            estimated_latitude=22.5,
+            estimated_longitude=88.3,
+            fit_score=0.92,
+        )
+        c2 = PlaceProposal(
+            name="Lesser Spot",
+            category="park",
+            estimated_latitude=22.6,
+            estimated_longitude=88.4,
+            fit_score=0.55,
+        )
+
+        req = RankingRequest(
+            candidate_places=[c1, c2],
+            max_places_to_select=1,
+            traveler_constraints=["Scenic photography"],
+        )
+
+        # Should fall back cleanly to evidence consensus fit_score order without crashing
+        resp = await adapter.rank_places(req)
+        assert len(resp.ranked_places) == 1
+        assert resp.ranked_places[0].place.name == "Top Consensus Spot"
+        assert resp.ranked_places[0].fit_score == 0.92
+        assert "evidence consensus" in resp.ranked_places[0].selection_rationale
 
     @pytest.mark.asyncio
     async def test_rank_places_empty_input(self) -> None:
@@ -250,7 +309,7 @@ class TestBedrockLlmClient:
                 "message": {
                     "content": [
                         {
-                            "text": '{"candidate_places": [{"name": "Retry Place", "category": "nature", "estimated_latitude": 22.0, "estimated_longitude": 88.0}]}'
+                            "text": '{"search_queries": ["Digha top sights attractions", "Digha beach sea food"]}'
                         }
                     ]
                 }
@@ -270,9 +329,9 @@ class TestBedrockLlmClient:
             destination_names=["Digha"],
         )
 
-        resp = await adapter.research_places(req)
-        assert len(resp.candidate_places) == 1
-        assert resp.candidate_places[0].name == "Retry Place"
+        queries = await adapter.generate_search_queries(req)
+        assert len(queries) == 2
+        assert "Digha" in queries[0]
         assert mock_boto.converse.call_count == 2
         # Second call should have prefixed with apac.
         assert mock_boto.converse.call_args_list[1][1]["modelId"] == "apac.amazon.nova-lite-v1:0"
@@ -296,11 +355,23 @@ class TestBedrockLlmClient:
             traveler_preferences=["food", "heritage"],
         )
 
-        resp = await adapter.research_places(req)
-        assert isinstance(resp, ResearchResponse)
-        assert resp.provider == "bedrock"
-        assert len(resp.candidate_places) >= 1
-        for p in resp.candidate_places:
-            assert p.uncertainty == "EDITORIAL_DISCOVERY"
-            assert p.is_candidate is True
+        queries = await adapter.generate_search_queries(req)
+        assert len(queries) >= 3
+        assert any("Digha" in q or "Kolkata" in q for q in queries)
+
+
+@pytest.mark.asyncio
+async def test_fixture_llm_client_generate_search_queries() -> None:
+    from functions.orchestrator.llm.adapters.fixture_client import FixtureLlmClient
+
+    client = FixtureLlmClient()
+    req = ResearchRequest(
+        brief_summary="Kolkata foodie weekend",
+        origin_name="Kolkata",
+        destination_names=["Kolkata"],
+        traveler_preferences=["local food"],
+    )
+    queries = await client.generate_search_queries(req, max_queries=2)
+    assert len(queries) == 2
+    assert "Kolkata" in queries[0]
 

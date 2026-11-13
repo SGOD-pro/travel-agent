@@ -20,7 +20,6 @@ from botocore.exceptions import ClientError
 
 from config.config import Settings, get_settings
 from contracts.llm import (
-    PlaceProposal,
     RankedPlace,
     RankingRequest,
     RankingResponse,
@@ -189,97 +188,70 @@ class BedrockLlmClient(HostedLlmClientPort):
             logger.warning("Bedrock LLM request timed out after %.1f seconds", self.timeout_seconds)
             raise TimeoutError(f"Bedrock LLM request timed out after {self.timeout_seconds}s") from exc
 
-    async def research_places(self, request: ResearchRequest) -> ResearchResponse:
-        """Discovers candidate points of interest along the destination corridor using Bedrock."""
+    async def generate_search_queries(
+        self,
+        request: ResearchRequest,
+        max_queries: int = 4,
+    ) -> list[str]:
+        """Formulates targeted search queries for web evidence discovery using Bedrock."""
         system_prompt = (
-            "You are an expert India travel intelligence engine. "
-            "You suggest authentic points of interest, dining spots, cultural attractions, and rest hubs along travel corridors. "
-            "You must return ONLY a single valid JSON object strictly matching the requested schema. "
+            "You are an expert India travel research query planner. "
+            "You formulate targeted search engine queries to discover authentic points of interest, "
+            "regional dining spots, cultural attractions, and travel advisories from real web sources. "
+            "You must return ONLY a single valid JSON object strictly matching this schema: "
+            '{"search_queries": ["query 1", "query 2", "query 3", "query 4"]}. '
             "Do not include conversational preamble or markdown commentary outside the JSON block."
         )
 
         user_content = (
-            f"Please propose candidate points of interest for the following travel corridor:\n"
+            f"Formulate 3 to 4 high-signal web search queries for this travel corridor:\n"
             f"- Origin: {request.origin_name}\n"
             f"- Destinations: {', '.join(request.destination_names)}\n"
-            f"- Brief Summary: {request.brief_summary}\n"
-            f"- Traveler Preferences: {', '.join(request.traveler_preferences) if request.traveler_preferences else 'General sights, scenic stops'}\n"
+            f"- Summary: {request.brief_summary}\n"
+            f"- Preferences: {', '.join(request.traveler_preferences) if request.traveler_preferences else 'General sights, scenic stops'}\n"
             f"- Budget Tier: {request.budget_tier}\n"
-            f"- Transport Mode: {request.transport_mode}\n"
-            f"- Corridor Max Distance: {request.corridor_distance_km_limit} km\n\n"
-            "Return JSON matching this exact structure:\n"
-            "{\n"
-            '  "candidate_places": [\n'
-            "    {\n"
-            '      "name": "Place Name",\n'
-            '      "category": "restaurant | street_food | heritage | nature | museum | attraction",\n'
-            '      "estimated_latitude": 22.5726,\n'
-            '      "estimated_longitude": 88.3639,\n'
-            '      "description": "Short highlight",\n'
-            '      "fit_score": 0.95,\n'
-            '      "suggested_stay_minutes": 60,\n'
-            '      "price_estimate_inr": 250.0,\n'
-            '      "opening_hours": "09:00 - 18:00",\n'
-            '      "address": "Approximate landmark or street"\n'
-            "    }\n"
-            "  ],\n"
-            '  "regional_travel_notes": ["Notable driving or weather tip"],\n'
-            '  "recommended_pace": "MODERATE"\n'
-            "}"
+            f"- Transport Mode: {request.transport_mode}\n\n"
+            "Return JSON matching: {\"search_queries\": [\"...\"]}"
         )
 
         messages = [{"role": "user", "content": [{"text": user_content}]}]
         system = [{"text": system_prompt}]
 
-        raw_response = await self._call_converse_async(messages, system)
-        parsed = _extract_json_payload(raw_response)
+        try:
+            raw_response = await self._call_converse_async(messages, system)
+            parsed = _extract_json_payload(raw_response)
+            queries = [str(q).strip() for q in parsed.get("search_queries", []) if str(q).strip()]
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            logger.warning("Bedrock query planning converse failed: %s", exc)
+            queries = []
 
-        raw_candidates = parsed.get("candidate_places", [])
-        proposals: list[PlaceProposal] = []
-        for raw_p in raw_candidates:
-            if not isinstance(raw_p, dict) or not raw_p.get("name"):
-                continue
+        if not queries:
+            primary_dest = request.destination_names[0] if request.destination_names else "Destination"
+            pref_tag = f" {request.traveler_preferences[0]}" if request.traveler_preferences else ""
+            queries = [
+                f"{primary_dest}{pref_tag} top sights attractions places to visit",
+                f"{primary_dest} authentic local food dining restaurants",
+                f"{primary_dest} budget hotels affordable accommodation",
+                f"{request.origin_name} to {primary_dest} road travel advisory route conditions",
+            ]
 
-            try:
-                raw_lat = raw_p.get("estimated_latitude", raw_p.get("lat"))
-                raw_lng = raw_p.get("estimated_longitude", raw_p.get("lng"))
-                lat_val = float(raw_lat) if raw_lat is not None else 0.0
-                lng_val = float(raw_lng) if raw_lng is not None else 0.0
-                fit_score = float(raw_p.get("fit_score", 1.0))
-                stay_mins = int(raw_p.get("suggested_stay_minutes", 60))
-                price_val = raw_p.get("price_estimate_inr")
+        return queries[:max_queries]
 
-                # Guarantee invariant: generative proposals are strictly EDITORIAL_DISCOVERY candidates
-                proposal = PlaceProposal(
-                    name=str(raw_p["name"]).strip(),
-                    category=str(raw_p.get("category", "attraction")).strip().lower(),
-                    estimated_latitude=lat_val,
-                    estimated_longitude=lng_val,
-                    description=str(raw_p.get("description", "")).strip(),
-                    fit_score=max(0.0, min(1.0, fit_score)),
-                    suggested_stay_minutes=max(5, min(1440, stay_mins)),
-                    price_estimate_inr=float(price_val) if price_val is not None else None,
-                    uncertainty="EDITORIAL_DISCOVERY",
-                    is_candidate=True,
-                    opening_hours=raw_p.get("opening_hours"),
-                    address=raw_p.get("address"),
-                )
-                proposals.append(proposal)
-            except Exception as exc:
-                logger.debug("Skipping unparseable place proposal %s: %s", raw_p, type(exc).__name__)
-
-        notes = [str(n) for n in parsed.get("regional_travel_notes", []) if isinstance(n, (str, int, float))]
-        pace = str(parsed.get("recommended_pace", "MODERATE")).strip().upper()
-
+    async def research_places(self, request: ResearchRequest) -> ResearchResponse:
+        """Formulates web discovery queries and regional notes for search-backed discovery."""
+        queries = await self.generate_search_queries(request)
+        notes = [f"Planned search query: {q}" for q in queries]
         return ResearchResponse(
-            candidate_places=proposals,
+            candidate_places=[],
             regional_travel_notes=notes,
-            recommended_pace=pace,
+            recommended_pace="MODERATE",
             provider="bedrock",
         )
 
     async def rank_places(self, request: RankingRequest) -> RankingResponse:
-        """Evaluates and orders candidate places by brief alignment and feasibility using Bedrock."""
+        """Evaluates and orders candidate places by traveler constraints, pacing, and multi-site consensus."""
         if not request.candidate_places:
             return RankingResponse(
                 ranked_places=[],
@@ -288,9 +260,41 @@ class BedrockLlmClient(HostedLlmClientPort):
                 provider="bedrock",
             )
 
+        # Baseline consensus sort fallback
+        fallback_candidates = sorted(
+            request.candidate_places,
+            key=lambda p: (p.fit_score, -(p.suggested_stay_minutes)),
+            reverse=True,
+        )
+
+        def _build_fallback_response(reason: str) -> RankingResponse:
+            max_sel = min(len(fallback_candidates), request.max_places_to_select)
+            sel = fallback_candidates[:max_sel]
+            elim = fallback_candidates[max_sel:]
+            ranked = [
+                RankedPlace(
+                    place=p,
+                    rank=idx,
+                    fit_score=p.fit_score,
+                    selection_rationale=f"Ranked #{idx} based on multi-site evidence consensus (fit: {p.fit_score:.2f})",
+                )
+                for idx, p in enumerate(sel, start=1)
+            ]
+            eliminated = [
+                {"name": p.name, "reason": "Exceeded maximum candidate selection limit"}
+                for p in elim
+            ]
+            return RankingResponse(
+                ranked_places=ranked,
+                eliminated_candidates=eliminated,
+                overall_pacing_evaluation=f"Selected {len(ranked)} places using evidence consensus ({reason}).",
+                provider="bedrock",
+            )
+
         system_prompt = (
             "You are a travel itinerary constraint evaluator. "
-            "You evaluate candidate places against traveler constraints and pace preferences. "
+            "You evaluate candidate places against traveler constraints and pace preferences, "
+            "weighting multi-site consensus appearance fit_scores. "
             "You must return ONLY a single valid JSON object strictly matching the requested schema."
         )
 
@@ -332,14 +336,23 @@ class BedrockLlmClient(HostedLlmClientPort):
         messages = [{"role": "user", "content": [{"text": user_content}]}]
         system = [{"text": system_prompt}]
 
-        raw_response = await self._call_converse_async(messages, system)
-        parsed = _extract_json_payload(raw_response)
+        try:
+            raw_response = await self._call_converse_async(messages, system)
+            parsed = _extract_json_payload(raw_response)
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            logger.warning("Bedrock candidate ranking converse failed: %s; falling back to consensus order", exc)
+            return _build_fallback_response("inference fallback")
 
         candidate_map = {p.name.strip().lower(): p for p in request.candidate_places}
         ranked_list: list[RankedPlace] = []
         ranked_names_lower: set[str] = set()
 
         raw_ranked = parsed.get("ranked_places", [])
+        if not isinstance(raw_ranked, list) or not raw_ranked:
+            return _build_fallback_response("empty model ranking")
+
         for idx, item in enumerate(raw_ranked, start=1):
             if not isinstance(item, dict):
                 continue
@@ -358,18 +371,22 @@ class BedrockLlmClient(HostedLlmClientPort):
                 ranked_list.append(ranked_place)
                 ranked_names_lower.add(item_key)
 
+        if not ranked_list:
+            return _build_fallback_response("unmatched candidate names")
+
         eliminated_list: list[dict[str, str]] = []
         raw_eliminated = parsed.get("eliminated_candidates", [])
-        for item in raw_eliminated:
-            if isinstance(item, dict) and item.get("name"):
-                eliminated_list.append(
-                    {
-                        "name": str(item["name"]).strip(),
-                        "reason": str(item.get("reason", "Excluded by pacing or budget limits")).strip(),
-                    }
-                )
+        if isinstance(raw_eliminated, list):
+            for item in raw_eliminated:
+                if isinstance(item, dict) and item.get("name"):
+                    eliminated_list.append(
+                        {
+                            "name": str(item["name"]).strip(),
+                            "reason": str(item.get("reason", "Excluded by pacing or budget limits")).strip(),
+                        }
+                    )
 
-        # Include any remaining candidates that were neither ranked nor listed as eliminated
+        # Include remaining candidates that were neither ranked nor eliminated
         for cand in request.candidate_places:
             cand_key = cand.name.strip().lower()
             if cand_key not in ranked_names_lower and not any(
