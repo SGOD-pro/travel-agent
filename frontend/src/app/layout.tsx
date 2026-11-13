@@ -102,11 +102,7 @@ const organizationJsonLd = {
   },
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={cn("font-sans", bodoni.variable, manrope.variable)}>
       <body className="antialiased bg-[#0D1915] text-[#F7F7F2]">
@@ -117,7 +113,9 @@ export default function RootLayout({
         <AuthProvider>
           <SmoothScrollProvider>
             <Navbar />
-            <main id="main-content" className="min-h-screen">{children}</main>
+            <main id="main-content" className="min-h-screen">
+              {children}
+            </main>
             <Footer />
           </SmoothScrollProvider>
         </AuthProvider>

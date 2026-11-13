@@ -92,7 +92,9 @@ export default function CorridorWeatherAdvisory({ stops }: CorridorWeatherAdviso
             >
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium text-sm text-[#F7F7F2] truncate">{stop.stopName}</span>
+                  <span className="font-medium text-sm text-[#F7F7F2] truncate">
+                    {stop.stopName}
+                  </span>
                   {getRiskBadge(stop.monsoonRisk)}
                 </div>
 
@@ -103,7 +105,8 @@ export default function CorridorWeatherAdvisory({ stops }: CorridorWeatherAdviso
                   <div>
                     <div className="text-lg font-bold text-[#F7F7F2]">{tempDisplay}</div>
                     <div className="text-xs text-[#A9B8AD] capitalize">
-                      {conditionLabel}{humDisplay}
+                      {conditionLabel}
+                      {humDisplay}
                     </div>
                   </div>
                 </div>

@@ -23,7 +23,6 @@ import {
   Printer,
   Calendar,
   Clock,
-  ExternalLink,
   ChevronRight,
   ShieldCheck,
   Check,
@@ -38,7 +37,6 @@ import {
   Sparkles,
   Info,
   DollarSign,
-  FileText,
 } from "lucide-react";
 
 interface PublicTripPageProps {
@@ -105,9 +103,11 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
       } catch (err) {
         console.warn("Could not fetch supplementary trip metadata:", err);
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error("Failed to load itinerary proposal:", err);
-      setErrorMessage(err.message || "Network error loading itinerary proposal");
+      setErrorMessage(
+        err instanceof Error ? err.message : "Network error loading itinerary proposal",
+      );
       setStatusCode(0);
     } finally {
       setLoading(false);
@@ -156,22 +156,26 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
   const tripTitle = brief
     ? `${brief.origin_name} to ${brief.destinations.map((d) => d.name).join(", ")}`
     : itinerary?.schedule?.stops && itinerary.schedule.stops.length > 1
-    ? `${itinerary.schedule.stops[0].name} to ${itinerary.schedule.stops[itinerary.schedule.stops.length - 1].name}`
-    : `Trip Itinerary Proposal #${tripId.slice(0, 8)}`;
+      ? `${itinerary.schedule.stops[0].name} to ${itinerary.schedule.stops[itinerary.schedule.stops.length - 1].name}`
+      : `Trip Itinerary Proposal #${tripId.slice(0, 8)}`;
 
-  const tripDates = brief?.start_date && brief?.end_date
-    ? `${brief.start_date} to ${brief.end_date}`
-    : "Travel Window Verified";
+  const tripDates =
+    brief?.start_date && brief?.end_date
+      ? `${brief.start_date} to ${brief.end_date}`
+      : "Travel Window Verified";
 
-  const totalDays = brief?.start_date && brief?.end_date
-    ? Math.max(
-        1,
-        Math.round(
-          (new Date(brief.end_date).getTime() - new Date(brief.start_date).getTime()) /
-            (1000 * 60 * 60 * 24)
-        ) + 1
-      )
-    : itinerary?.schedule?.stops ? Math.max(1, Math.ceil(itinerary.schedule.stops.length / 3)) : 1;
+  const totalDays =
+    brief?.start_date && brief?.end_date
+      ? Math.max(
+          1,
+          Math.round(
+            (new Date(brief.end_date).getTime() - new Date(brief.start_date).getTime()) /
+              (1000 * 60 * 60 * 24),
+          ) + 1,
+        )
+      : itinerary?.schedule?.stops
+        ? Math.max(1, Math.ceil(itinerary.schedule.stops.length / 3))
+        : 1;
 
   const tripDuration = `${totalDays} Day${totalDays > 1 ? "s" : ""} • ${Math.max(1, totalDays - 1)} Night${totalDays > 2 ? "s" : ""}`;
 
@@ -184,10 +188,18 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
     lng: s.longitude,
     stayMinutes: s.stay_duration_minutes,
     arrivalTime: s.arrival_time
-      ? new Date(s.arrival_time).toLocaleTimeString([], { timeZone: tripTimezone, hour: "2-digit", minute: "2-digit" })
+      ? new Date(s.arrival_time).toLocaleTimeString([], {
+          timeZone: tripTimezone,
+          hour: "2-digit",
+          minute: "2-digit",
+        })
       : undefined,
     departureTime: s.departure_time
-      ? new Date(s.departure_time).toLocaleTimeString([], { timeZone: tripTimezone, hour: "2-digit", minute: "2-digit" })
+      ? new Date(s.departure_time).toLocaleTimeString([], {
+          timeZone: tripTimezone,
+          hour: "2-digit",
+          minute: "2-digit",
+        })
       : undefined,
   }));
 
@@ -199,7 +211,8 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
       category: r.category || "Discovery",
       fitScore: r.fit_score != null ? Number(r.fit_score) : undefined,
       detourKm: r.detour_km != null ? Number(r.detour_km) : undefined,
-      extraDurationMins: r.extra_duration_minutes != null ? Number(r.extra_duration_minutes) : undefined,
+      extraDurationMins:
+        r.extra_duration_minutes != null ? Number(r.extra_duration_minutes) : undefined,
       source: r.source,
       uncertainty: r.uncertainty || "EDITORIAL_DISCOVERY",
       lat: Number(r.latitude ?? r.lat),
@@ -225,8 +238,8 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
   // Prepare narrative for voice assistant reflecting actual evidence and assumed hours
   const hasAssumedHours = Boolean(
     itinerary?.schedule?.stops?.some(
-      (s) => s.assumed_daylight_hours || s.hours_assumed || s.is_hours_assumed
-    )
+      (s) => s.assumed_daylight_hours || s.hours_assumed || s.is_hours_assumed,
+    ),
   );
   const isRoutingUnavailable = itinerary?.routing_status === "ROUTING_UNAVAILABLE";
   const isRouteInfeasible = itinerary?.route_status === "INFEASIBLE";
@@ -257,11 +270,10 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
         {loading && (
           <div className="bg-[#15271F] border border-[#233E32] rounded-3xl p-8 sm:p-12 shadow-2xl flex flex-col items-center justify-center text-center my-12 min-h-96">
             <div className="w-12 h-12 rounded-full border-3 border-[#B7C9AD] border-t-transparent animate-spin mb-4" />
-            <h2 className="text-xl font-bold text-[#F7F7F2] mb-2">
-              Loading Itinerary Proposal
-            </h2>
+            <h2 className="text-xl font-bold text-[#F7F7F2] mb-2">Loading Itinerary Proposal</h2>
             <p className="text-sm text-[#A9B8AD] max-w-md">
-              Connecting to SWENA trip planner to retrieve verified stops, route solver state, and corridor weather advisories...
+              Connecting to SWENA trip planner to retrieve verified stops, route solver state, and
+              corridor weather advisories...
             </p>
           </div>
         )}
@@ -272,11 +284,11 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
             <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto mb-5">
               <RefreshCw className="w-7 h-7 animate-spin text-amber-400" />
             </div>
-            <h2 className="text-2xl font-bold text-[#F7F7F2] mb-3">
-              Trip Planning in Progress
-            </h2>
+            <h2 className="text-2xl font-bold text-[#F7F7F2] mb-3">Trip Planning in Progress</h2>
             <p className="text-sm text-[#A9B8AD] max-w-lg mx-auto mb-6 leading-relaxed">
-              The AI planner and mathematical route optimizer are currently researching candidate places, checking spatial corridors, gathering weather advisories, and solving schedules for this trip.
+              The AI planner and mathematical route optimizer are currently researching candidate
+              places, checking spatial corridors, gathering weather advisories, and solving
+              schedules for this trip.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
               <button
@@ -302,11 +314,10 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
             <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-5">
               <Lock className="w-7 h-7 text-red-400" />
             </div>
-            <h2 className="text-2xl font-bold text-[#F7F7F2] mb-3">
-              Access Forbidden
-            </h2>
+            <h2 className="text-2xl font-bold text-[#F7F7F2] mb-3">Access Forbidden</h2>
             <p className="text-sm text-[#A9B8AD] max-w-lg mx-auto mb-6 leading-relaxed">
-              Strict tenant isolation protects this travel proposal. This trip belongs to another traveler account and cannot be viewed without authorized credentials.
+              Strict tenant isolation protects this travel proposal. This trip belongs to another
+              traveler account and cannot be viewed without authorized credentials.
             </p>
             <Link
               href="/dashboard"
@@ -323,11 +334,10 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
             <div className="w-14 h-14 rounded-2xl bg-[#102D25] border border-[#233E32] text-[#A9B8AD] flex items-center justify-center mx-auto mb-5">
               <Search className="w-7 h-7 text-[#B7C9AD]" />
             </div>
-            <h2 className="text-2xl font-bold text-[#F7F7F2] mb-3">
-              Itinerary Proposal Not Found
-            </h2>
+            <h2 className="text-2xl font-bold text-[#F7F7F2] mb-3">Itinerary Proposal Not Found</h2>
             <p className="text-sm text-[#A9B8AD] max-w-lg mx-auto mb-6 leading-relaxed">
-              No proposal has been published for trip #{tripId.slice(0, 8)}. If this trip was recently submitted, planning may not have started yet.
+              No proposal has been published for trip #{tripId.slice(0, 8)}. If this trip was
+              recently submitted, planning may not have started yet.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
               <Link
@@ -347,26 +357,30 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
         )}
 
         {/* State 5: Generic Error Banner */}
-        {!loading && statusCode !== 200 && statusCode !== 409 && statusCode !== 403 && statusCode !== 401 && statusCode !== 404 && (
-          <div className="bg-[#15271F] border border-red-500/30 rounded-3xl p-8 shadow-2xl text-center my-12">
-            <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4">
-              <AlertTriangle className="w-6 h-6 text-red-400" />
+        {!loading &&
+          statusCode !== 200 &&
+          statusCode !== 409 &&
+          statusCode !== 403 &&
+          statusCode !== 401 &&
+          statusCode !== 404 && (
+            <div className="bg-[#15271F] border border-red-500/30 rounded-3xl p-8 shadow-2xl text-center my-12">
+              <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-center justify-center mx-auto mb-4">
+                <AlertTriangle className="w-6 h-6 text-red-400" />
+              </div>
+              <h2 className="text-lg font-bold text-[#F7F7F2] mb-2">Failed to Load Itinerary</h2>
+              <p className="text-xs text-[#A9B8AD] mb-6">
+                {errorMessage ||
+                  "An unexpected error occurred while contacting the itinerary service."}
+              </p>
+              <button
+                onClick={fetchTripData}
+                className="btn-sage px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Retry Request</span>
+              </button>
             </div>
-            <h2 className="text-lg font-bold text-[#F7F7F2] mb-2">
-              Failed to Load Itinerary
-            </h2>
-            <p className="text-xs text-[#A9B8AD] mb-6">
-              {errorMessage || "An unexpected error occurred while contacting the itinerary service."}
-            </p>
-            <button
-              onClick={fetchTripData}
-              className="btn-sage px-4 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-2 cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry Request</span>
-            </button>
-          </div>
-        )}
+          )}
 
         {/* State 6: Loaded Proposal View */}
         {!loading && statusCode === 200 && itinerary && (
@@ -380,7 +394,9 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                     Road Routing Engine Unavailable
                   </h3>
                   <p className="text-xs text-amber-200/80 mt-1 leading-relaxed">
-                    Road routing engine unavailable; stops preserved without driving schedule or route polyline. In conformance with our fail-closed routing guarantee, straight-line distance guesses or fabricated travel times are never generated.
+                    Road routing engine unavailable; stops preserved without driving schedule or
+                    route polyline. In conformance with our fail-closed routing guarantee,
+                    straight-line distance guesses or fabricated travel times are never generated.
                   </p>
                   {itinerary.route_diagnostics && itinerary.route_diagnostics.length > 0 && (
                     <ul className="mt-2 space-y-1 text-xs text-amber-300/90 list-disc list-inside">
@@ -398,11 +414,11 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
               <div className="mb-6 bg-red-500/10 border border-red-500/30 rounded-2xl p-4 sm:p-5 flex items-start gap-3.5 shadow-lg">
                 <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
                 <div>
-                  <h3 className="text-sm font-bold text-red-300">
-                    Route Infeasible Diagnostics
-                  </h3>
+                  <h3 className="text-sm font-bold text-red-300">Route Infeasible Diagnostics</h3>
                   <p className="text-xs text-red-200/80 mt-1 leading-relaxed">
-                    Overconstrained stop time windows or impossible transit constraints prevented a complete itinerary from solving. Certain stops could not be visited within their operating hours.
+                    Overconstrained stop time windows or impossible transit constraints prevented a
+                    complete itinerary from solving. Certain stops could not be visited within their
+                    operating hours.
                   </p>
                   {itinerary.route_diagnostics && itinerary.route_diagnostics.length > 0 && (
                     <ul className="mt-2 space-y-1 text-xs text-red-300/90 list-disc list-inside">
@@ -424,7 +440,9 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                     Departure Beyond Forecast Horizon
                   </h3>
                   <p className="text-xs text-blue-200/80 mt-1 leading-relaxed">
-                    Your scheduled departure date is beyond the 16-day live meteorological forecast model. Regional climate advisories are active; live weather metrics will update automatically closer to your travel window.
+                    Your scheduled departure date is beyond the 16-day live meteorological forecast
+                    model. Regional climate advisories are active; live weather metrics will update
+                    automatically closer to your travel window.
                   </p>
                 </div>
               </div>
@@ -455,7 +473,9 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                     </span>
                     <span className="flex items-center gap-1.5">
                       <Car className="w-4 h-4 text-[#B7C9AD]" />
-                      {brief?.preferred_modes?.[0] ? brief.preferred_modes[0].replace("_", " ").toUpperCase() : "Petrol Car (15 km/L)"}
+                      {brief?.preferred_modes?.[0]
+                        ? brief.preferred_modes[0].replace("_", " ").toUpperCase()
+                        : "Petrol Car (15 km/L)"}
                     </span>
                   </p>
                 </div>
@@ -468,7 +488,11 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                     onClick={handleCopyLink}
                     className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-[#102D25] text-[#F7F7F2] border border-[#233E32] hover:border-[#B7C9AD] flex items-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    {copied ? <Check className="w-3.5 h-3.5 text-[#B7C9AD]" /> : <Share2 className="w-3.5 h-3.5 text-[#B7C9AD]" />}
+                    {copied ? (
+                      <Check className="w-3.5 h-3.5 text-[#B7C9AD]" />
+                    ) : (
+                      <Share2 className="w-3.5 h-3.5 text-[#B7C9AD]" />
+                    )}
                     <span>{copied ? "Copied Link!" : "Share Trip"}</span>
                   </button>
 
@@ -509,12 +533,18 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                       <ChevronRight className="w-3.5 h-3.5" />
                     </Link>
                   )}
-                  <span className="text-xs text-[#A9B8AD] hidden sm:inline">Dark Matter PostGIS Engine</span>
+                  <span className="text-xs text-[#A9B8AD] hidden sm:inline">
+                    Dark Matter PostGIS Engine
+                  </span>
                 </div>
               </div>
               <div className="h-105 w-full rounded-2xl overflow-hidden border border-[#233E32] shadow-2xl">
                 <CorridorMapWrapper
-                  geoJson={itinerary.routing_status === "ROUTING_UNAVAILABLE" ? null : itinerary.map_geojson}
+                  geoJson={
+                    itinerary.routing_status === "ROUTING_UNAVAILABLE"
+                      ? null
+                      : itinerary.map_geojson
+                  }
                   stops={stops}
                   places={places}
                   timezone={tripTimezone}
@@ -544,12 +574,13 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                     </h3>
                     {itinerary.schedule && (
                       <span className="text-xs text-[#A9B8AD] bg-[#102D25] px-3 py-1 rounded-full border border-[#233E32]">
-                        {itinerary.schedule.stops.length} Stops • {itinerary.schedule.total_travel_minutes} mins travel
+                        {itinerary.schedule.stops.length} Stops •{" "}
+                        {itinerary.schedule.total_travel_minutes} mins travel
                       </span>
                     )}
                   </div>
 
-                  {(!itinerary.schedule?.stops || itinerary.schedule.stops.length === 0) ? (
+                  {!itinerary.schedule?.stops || itinerary.schedule.stops.length === 0 ? (
                     <div className="text-sm text-[#A9B8AD] p-6 text-center">
                       No schedule stops recorded in this proposal.
                     </div>
@@ -559,27 +590,39 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                         const isOrigin = idx === 0;
                         const isLast = idx === itinerary.schedule!.stops.length - 1;
                         const arrivalStr = stop.arrival_time
-                          ? new Date(stop.arrival_time).toLocaleTimeString([], { timeZone: tripTimezone, hour: "2-digit", minute: "2-digit" })
+                          ? new Date(stop.arrival_time).toLocaleTimeString([], {
+                              timeZone: tripTimezone,
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
                           : "TBD";
                         const depStr = stop.departure_time
-                          ? new Date(stop.departure_time).toLocaleTimeString([], { timeZone: tripTimezone, hour: "2-digit", minute: "2-digit" })
+                          ? new Date(stop.departure_time).toLocaleTimeString([], {
+                              timeZone: tripTimezone,
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
                           : "TBD";
 
                         return (
                           <div key={idx} className="relative pl-9">
                             <div
                               className={`absolute left-1.5 top-1.5 w-4 h-4 rounded-full border-4 border-[#15271F] ${
-                                isOrigin || isLast ? "bg-[#B7C9AD]" : "bg-[#233E32] border-2 border-[#B7C9AD]"
+                                isOrigin || isLast
+                                  ? "bg-[#B7C9AD]"
+                                  : "bg-[#233E32] border-2 border-[#B7C9AD]"
                               }`}
                             />
                             <div className="bg-[#0D1915] p-4 rounded-xl border border-[#233E32]">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <span className="text-xs font-semibold text-[#B7C9AD]">
-                                  Stop {stop.position} • {arrivalStr} {stop.stay_duration_minutes > 0 ? `- ${depStr}` : ""}
+                                  Stop {stop.position} • {arrivalStr}{" "}
+                                  {stop.stay_duration_minutes > 0 ? `- ${depStr}` : ""}
                                 </span>
                                 <div className="flex items-center gap-2">
                                   {/* AC-3: HOURS_ASSUMED label */}
-                                  {stop.is_hours_assumed || stop.hours_status === "HOURS_ASSUMED" ? (
+                                  {stop.is_hours_assumed ||
+                                  stop.hours_status === "HOURS_ASSUMED" ? (
                                     <span
                                       className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30"
                                       title="Assumed daytime visiting window (09:00 - 18:00); operating hours unverified by source"
@@ -607,7 +650,8 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
 
                               {stop.is_hours_assumed && (
                                 <p className="text-xs text-amber-200/80 mt-1">
-                                  * Daylight visiting hours assumed (09:00 - 18:00). Actual operating times subject to verification.
+                                  * Daylight visiting hours assumed (09:00 - 18:00). Actual
+                                  operating times subject to verification.
                                 </p>
                               )}
                             </div>
@@ -619,63 +663,72 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                 </div>
 
                 {/* Candidate Provenance & Editorial Discovery */}
-                {itinerary.editorial_recommendations && itinerary.editorial_recommendations.length > 0 && (
-                  <div className="bg-[#15271F] rounded-2xl border border-[#233E32] p-6 shadow-xl">
-                    <h3 className="text-lg font-bold text-[#F7F7F2] mb-2 flex items-center gap-2">
-                      <Sparkles className="w-5 h-5 text-[#B7C9AD]" />
-                      Editorial Place Recommendations
-                    </h3>
-                    <p className="text-xs text-[#A9B8AD] mb-6">
-                      Places discovered along your travel corridor. In accordance with AC-3, unverified proposals remain editorial suggestions and never enter the mathematical route solver as confirmed stops.
-                    </p>
+                {itinerary.editorial_recommendations &&
+                  itinerary.editorial_recommendations.length > 0 && (
+                    <div className="bg-[#15271F] rounded-2xl border border-[#233E32] p-6 shadow-xl">
+                      <h3 className="text-lg font-bold text-[#F7F7F2] mb-2 flex items-center gap-2">
+                        <Sparkles className="w-5 h-5 text-[#B7C9AD]" />
+                        Editorial Place Recommendations
+                      </h3>
+                      <p className="text-xs text-[#A9B8AD] mb-6">
+                        Places discovered along your travel corridor. In accordance with AC-3,
+                        unverified proposals remain editorial suggestions and never enter the
+                        mathematical route solver as confirmed stops.
+                      </p>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {itinerary.editorial_recommendations.map((rec: EditorialRecommendation, idx: number) => {
-                        const name = rec.name || rec.primary_name || "Point of Interest";
-                        return (
-                          <div
-                            key={idx}
-                            className="bg-[#0D1915] p-4 rounded-xl border border-[#233E32] flex flex-col justify-between"
-                          >
-                            <div>
-                              <div className="flex items-center justify-between mb-1.5">
-                                <span className="text-xs font-semibold text-[#B7C9AD] uppercase tracking-wider">
-                                  {rec.category || "Discovery"}
-                                </span>
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#15271F] text-[#A9B8AD] border border-[#233E32]">
-                                  {rec.uncertainty || "EDITORIAL_DISCOVERY"}
-                                </span>
-                              </div>
-                              <h4 className="text-sm font-bold text-[#F7F7F2] mb-1">{name}</h4>
-                              {(rec.fit_score != null || rec.detour_km != null) && (
-                                <div className="flex items-center gap-2 mb-2">
-                                  {rec.fit_score != null && (
-                                    <span className="text-[10px] text-[#A9B8AD]">Fit: {Math.round(Number(rec.fit_score) * 100)}%</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {itinerary.editorial_recommendations.map(
+                          (rec: EditorialRecommendation, idx: number) => {
+                            const name = rec.name || rec.primary_name || "Point of Interest";
+                            return (
+                              <div
+                                key={idx}
+                                className="bg-[#0D1915] p-4 rounded-xl border border-[#233E32] flex flex-col justify-between"
+                              >
+                                <div>
+                                  <div className="flex items-center justify-between mb-1.5">
+                                    <span className="text-xs font-semibold text-[#B7C9AD] uppercase tracking-wider">
+                                      {rec.category || "Discovery"}
+                                    </span>
+                                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#15271F] text-[#A9B8AD] border border-[#233E32]">
+                                      {rec.uncertainty || "EDITORIAL_DISCOVERY"}
+                                    </span>
+                                  </div>
+                                  <h4 className="text-sm font-bold text-[#F7F7F2] mb-1">{name}</h4>
+                                  {(rec.fit_score != null || rec.detour_km != null) && (
+                                    <div className="flex items-center gap-2 mb-2">
+                                      {rec.fit_score != null && (
+                                        <span className="text-[10px] text-[#A9B8AD]">
+                                          Fit: {Math.round(Number(rec.fit_score) * 100)}%
+                                        </span>
+                                      )}
+                                      {rec.detour_km != null && (
+                                        <span className="text-[10px] text-[#A9B8AD]">
+                                          +{rec.detour_km} km detour
+                                        </span>
+                                      )}
+                                    </div>
                                   )}
-                                  {rec.detour_km != null && (
-                                    <span className="text-[10px] text-[#A9B8AD]">+{rec.detour_km} km detour</span>
+                                  {rec.description && (
+                                    <p className="text-xs text-[#A9B8AD] leading-relaxed line-clamp-2">
+                                      {rec.description}
+                                    </p>
                                   )}
                                 </div>
-                              )}
-                              {rec.description && (
-                                <p className="text-xs text-[#A9B8AD] leading-relaxed line-clamp-2">
-                                  {rec.description}
-                                </p>
-                              )}
-                            </div>
 
-                            {rec.source && (
-                              <div className="mt-3 pt-2 border-t border-[#233E32]/60 text-[11px] text-[#A9B8AD] flex items-center gap-1.5">
-                                <Info className="w-3 h-3 text-[#B7C9AD]" />
-                                <span className="truncate">Source: {rec.source}</span>
+                                {rec.source && (
+                                  <div className="mt-3 pt-2 border-t border-[#233E32]/60 text-[11px] text-[#A9B8AD] flex items-center gap-1.5">
+                                    <Info className="w-3 h-3 text-[#B7C9AD]" />
+                                    <span className="truncate">Source: {rec.source}</span>
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                            );
+                          },
+                        )}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
               </div>
 
               {/* Itemized Budget Breakdown (1 Col) */}
@@ -766,7 +819,8 @@ export default function PublicTripPage({ params }: PublicTripPageProps) {
                   </div>
 
                   <div className="mt-6 pt-4 border-t border-[#233E32]/60 text-[11px] text-[#A9B8AD] leading-relaxed">
-                    * Zero-coercion guarantee: In conformance with AC-7, unquoted highway tolls and unverified entrance fees remain explicitly unknown and are never coerced to ₹0.
+                    * Zero-coercion guarantee: In conformance with AC-7, unquoted highway tolls and
+                    unverified entrance fees remain explicitly unknown and are never coerced to ₹0.
                   </div>
                 </div>
               </div>

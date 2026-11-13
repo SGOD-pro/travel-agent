@@ -15,12 +15,10 @@ export function Footer() {
               <span className="text-xl font-bold tracking-tight text-[#F7F7F2]">SWENA</span>
             </Link>
             <p className="text-sm text-[#A9B8AD] max-w-md leading-relaxed">
-              India-first travel intelligence. We bring routes, daily stops, and budget
-              assumptions together into one editable plan, with direct handoff to official providers.
+              India-first travel intelligence. We bring routes, daily stops, and budget assumptions
+              together into one editable plan, with direct handoff to official providers.
             </p>
-            <p className="text-xs text-[#6E8274]">
-              “We gave you memory.”
-            </p>
+            <p className="text-xs text-[#6E8274]">“We gave you memory.”</p>
           </div>
 
           {/* Navigation Links (3 cols) */}
@@ -45,7 +43,10 @@ export function Footer() {
                 </Link>
               </li>
               <li>
-                <Link href="/benchmarks" className="text-xs text-[#6E8274] hover:text-[#A9B8AD] transition-colors">
+                <Link
+                  href="/benchmarks"
+                  className="text-xs text-[#6E8274] hover:text-[#A9B8AD] transition-colors"
+                >
                   Evaluation Benchmarks
                 </Link>
               </li>

@@ -36,7 +36,8 @@ export function ClosingScene() {
         </h2>
 
         <p className="text-base sm:text-xl text-[#A9B8AD] max-w-lg mx-auto font-normal leading-relaxed">
-          Less planning. More remembering. Bring your driving route, daily stops, and transparent budget assumptions into one calm workspace.
+          Less planning. More remembering. Bring your driving route, daily stops, and transparent
+          budget assumptions into one calm workspace.
         </p>
 
         <div className="pt-4">

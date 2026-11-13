@@ -29,12 +29,12 @@ export interface UseRouteOptimizationOptions {
 
 export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) {
   const apiBase =
-    options.apiBase ||
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    "http://localhost:8000";
+    options.apiBase || process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
   const optionsRef = useRef(options);
-  optionsRef.current = options;
+  useEffect(() => {
+    optionsRef.current = options;
+  });
   const autoRecover = options.autoRecover ?? true;
 
   const [jobId, setJobId] = useState<string | null>(() => {
@@ -54,7 +54,10 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
   const [jobStatus, setJobStatus] = useState<
     "IDLE" | "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED"
   >(() => {
-    if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("job_id")) {
+    if (
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("job_id")
+    ) {
       return "RUNNING";
     }
     return "IDLE";
@@ -89,39 +92,36 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
         const data: RouteMapGeoJsonResponse = await res.json();
         setRouteMap(data);
         return data;
-      } catch (err: any) {
+      } catch (err) {
         console.error("Error fetching route map GeoJSON:", err);
-        setError(err.message || "Failed to load route map");
+        setError(err instanceof Error ? err.message : "Failed to load route map");
         return null;
       }
     },
-    [apiBase]
+    [apiBase],
   );
 
   // Fetch complete version history tree for a given route_id
   const fetchVersionHistory = useCallback(
     async (id: string): Promise<RouteVersionItem[]> => {
       try {
-        const res = await fetch(
-          `${apiBase}/api/v1/optimization/routes/${id}/versions`,
-          {
-            headers: {
-              "Content-Type": "application/json",
-            },
-          }
-        );
+        const res = await fetch(`${apiBase}/api/v1/optimization/routes/${id}/versions`, {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        });
         if (!res.ok) {
           throw new Error(`Failed to fetch version history: HTTP ${res.status}`);
         }
         const data: RouteVersionHistoryResponse = await res.json();
         setVersions(data.versions || []);
         return data.versions || [];
-      } catch (err: any) {
+      } catch (err) {
         console.error("Error fetching version history:", err);
         return [];
       }
     },
-    [apiBase]
+    [apiBase],
   );
 
   // Stop polling and clear timer
@@ -164,7 +164,7 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
           // If not in result_ref, discover by execution ID directly
           if (!resolvedRouteId) {
             const discRes = await fetch(
-              `${apiBase}/api/v1/optimization/routes/by-job/${activeJobId}`
+              `${apiBase}/api/v1/optimization/routes/by-job/${activeJobId}`,
             );
             if (discRes.ok) {
               const discRoute = await discRes.json();
@@ -203,27 +203,20 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
             // Ignore
           }
           const errorMsg =
-            job.error?.message ||
-            "Route optimization job failed during solver execution.";
+            job.error?.message || "Route optimization job failed during solver execution.";
           setError(errorMsg);
           optionsRef.current.onJobFailed?.(errorMsg);
           return;
         }
 
         // Schedule next poll with exponential backoff capped at 5s
-        pollIntervalRef.current = Math.min(
-          pollIntervalRef.current + 1000,
-          5000
-        );
+        pollIntervalRef.current = Math.min(pollIntervalRef.current + 1000, 5000);
         pollTimeoutRef.current = setTimeout(() => {
           pollJobStatus(activeJobId);
         }, pollIntervalRef.current);
-      } catch (err: any) {
+      } catch (err) {
         consecutiveErrorsRef.current += 1;
-        console.error(
-          `Polling error encountered (failure ${consecutiveErrorsRef.current}):`,
-          err
-        );
+        console.error(`Polling error encountered (failure ${consecutiveErrorsRef.current}):`, err);
 
         // Terminate after 5 consecutive failures and surface an actionable error
         if (consecutiveErrorsRef.current >= 5) {
@@ -235,16 +228,13 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
           return;
         }
 
-        pollIntervalRef.current = Math.min(
-          pollIntervalRef.current + 1000,
-          5000
-        );
+        pollIntervalRef.current = Math.min(pollIntervalRef.current + 1000, 5000);
         pollTimeoutRef.current = setTimeout(() => {
           pollJobStatus(activeJobId);
         }, pollIntervalRef.current);
       }
     },
-    [apiBase, stopPolling, fetchRouteMap, fetchVersionHistory]
+    [apiBase, stopPolling, fetchRouteMap, fetchVersionHistory],
   );
 
   // Start polling a specific job
@@ -272,12 +262,12 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
 
       pollJobStatus(activeJobId);
     },
-    [stopPolling, pollJobStatus]
+    [stopPolling, pollJobStatus],
   );
 
   // Submit initial route optimization request
   const submitRouteOptimization = useCallback(
-    async (payload: any): Promise<string | null> => {
+    async (payload: Record<string, unknown>): Promise<string | null> => {
       setIsSubmitting(true);
       setError(null);
 
@@ -298,25 +288,25 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          throw new Error(
-            errData.detail || `Route submission failed: HTTP ${res.status}`
-          );
+          throw new Error(errData.detail || `Route submission failed: HTTP ${res.status}`);
         }
 
         const data = await res.json();
         const newJobId = data.job_id;
         startPolling(newJobId);
         return newJobId;
-      } catch (err: any) {
+      } catch (err) {
         console.error("Route submission exception:", err);
-        setError(err.message || "Failed to submit route optimization request.");
+        setError(
+          err instanceof Error ? err.message : "Failed to submit route optimization request.",
+        );
         setJobStatus("FAILED");
         return null;
       } finally {
         setIsSubmitting(false);
       }
     },
-    [apiBase, startPolling]
+    [apiBase, startPolling],
   );
 
   // Submit mid-trip replanning request
@@ -331,10 +321,9 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
       setError(null);
 
       try {
-        const expectedPrevVersion =
-          routeMap?.properties?.route_version ?? routeMap?.route_version;
+        const expectedPrevVersion = routeMap?.properties?.route_version ?? routeMap?.route_version;
 
-        const body: Record<string, any> = {
+        const body: Record<string, unknown> = {
           current_location: payload.current_location,
           completed_stop_ids: payload.completed_stop_ids,
           replan_at: payload.replan_at || new Date().toISOString(),
@@ -344,43 +333,38 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
           body.expected_previous_version = expectedPrevVersion;
         }
 
-        const res = await fetch(
-          `${apiBase}/api/v1/optimization/routes/${routeId}/replans`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(body),
-          }
-        );
+        const res = await fetch(`${apiBase}/api/v1/optimization/routes/${routeId}/replans`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
+        });
 
         if (res.status === 409) {
           throw new Error(
-            "Replan conflict: the route has already been updated to a newer version. Please refresh."
+            "Replan conflict: the route has already been updated to a newer version. Please refresh.",
           );
         }
 
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
-          throw new Error(
-            errData.detail || `Replan submission failed: HTTP ${res.status}`
-          );
+          throw new Error(errData.detail || `Replan submission failed: HTTP ${res.status}`);
         }
 
         const data = await res.json();
         const newJobId = data.job_id;
         startPolling(newJobId);
         return newJobId;
-      } catch (err: any) {
+      } catch (err) {
         console.error("Replan exception:", err);
-        setError(err.message || "Failed to submit replan request.");
+        setError(err instanceof Error ? err.message : "Failed to submit replan request.");
         return null;
       } finally {
         setIsReplanning(false);
       }
     },
-    [apiBase, routeId, routeMap, startPolling]
+    [apiBase, routeId, routeMap, startPolling],
   );
 
   // Select and view an older or alternative version from the lineage tree
@@ -394,7 +378,7 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
       }
       await fetchRouteMap(versionRouteId);
     },
-    [fetchRouteMap]
+    [fetchRouteMap],
   );
 
   // Refresh recovery on mount
@@ -451,7 +435,6 @@ export function useRouteOptimization(options: UseRouteOptimizationOptions = {}) 
     startPolling,
     stopPolling,
     refetchMap: () => (routeId ? fetchRouteMap(routeId) : Promise.resolve(null)),
-    refetchVersions: () =>
-      routeId ? fetchVersionHistory(routeId) : Promise.resolve([]),
+    refetchVersions: () => (routeId ? fetchVersionHistory(routeId) : Promise.resolve([])),
   };
 }

@@ -7,57 +7,57 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  --paper: #F3EFE6;
-  --paper-secondary: #E8E1D4;
+  --paper: #f3efe6;
+  --paper-secondary: #e8e1d4;
   --ink: #142820;
-  --pale-sage: #BCC9AF;
-  --terracotta: #C56C4D;
-  --bg-forest: #0D1915;
-  --surface-forest: #15271F;
+  --pale-sage: #bcc9af;
+  --terracotta: #c56c4d;
+  --bg-forest: #0d1915;
+  --surface-forest: #15271f;
   --surface-hover: #1b3329;
   --card-forest: #162b22;
   --border-forest: #233e32;
   --border-subtle: rgba(183, 201, 173, 0.12);
-  --text-main: #F7F7F2;
-  --text-secondary: #A9B8AD;
-  --accent-sage: #B7C9AD;
+  --text-main: #f7f7f2;
+  --text-secondary: #a9b8ad;
+  --accent-sage: #b7c9ad;
   --accent-hover: #c9dbbe;
-  --btn-text: #102D25;
+  --btn-text: #102d25;
   /* Shadcn semantic mapping to SWENA 2.0 Forest Night */
-  --background: #0D1915;
-  --foreground: #F7F7F2;
-  --card: #15271F;
-  --card-foreground: #F7F7F2;
-  --popover: #15271F;
-  --popover-foreground: #F7F7F2;
-  --primary: #B7C9AD;
-  --primary-foreground: #102D25;
+  --background: #0d1915;
+  --foreground: #f7f7f2;
+  --card: #15271f;
+  --card-foreground: #f7f7f2;
+  --popover: #15271f;
+  --popover-foreground: #f7f7f2;
+  --primary: #b7c9ad;
+  --primary-foreground: #102d25;
   --secondary: #1b3329;
-  --secondary-foreground: #F7F7F2;
-  --muted: #15271F;
-  --muted-foreground: #A9B8AD;
+  --secondary-foreground: #f7f7f2;
+  --muted: #15271f;
+  --muted-foreground: #a9b8ad;
   --accent: #1b3329;
-  --accent-foreground: #B7C9AD;
+  --accent-foreground: #b7c9ad;
   --destructive: #ef4444;
-  --destructive-foreground: #F7F7F2;
+  --destructive-foreground: #f7f7f2;
   --border: #233e32;
   --input: #233e32;
-  --ring: #B7C9AD;
+  --ring: #b7c9ad;
   --radius: 0.625rem;
-  --sidebar: #0D1915;
-  --sidebar-foreground: #F7F7F2;
-  --sidebar-primary: #B7C9AD;
-  --sidebar-primary-foreground: #102D25;
-  --sidebar-accent: #15271F;
-  --sidebar-accent-foreground: #B7C9AD;
+  --sidebar: #0d1915;
+  --sidebar-foreground: #f7f7f2;
+  --sidebar-primary: #b7c9ad;
+  --sidebar-primary-foreground: #102d25;
+  --sidebar-accent: #15271f;
+  --sidebar-accent-foreground: #b7c9ad;
   --sidebar-border: #233e32;
-  --sidebar-ring: #B7C9AD;
+  --sidebar-ring: #b7c9ad;
 }
 
 html {
   background-color: var(--bg-forest);
   color: var(--text-main);
-  font-family: 'Manrope', sans-serif;
+  font-family: "Manrope", sans-serif;
   scroll-behavior: auto; /* Let Lenis handle smooth scrolling */
 }
 
@@ -119,7 +119,7 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: #0D1915;
+  background: #0d1915;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -128,27 +128,27 @@ body {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #B7C9AD;
+  background: #b7c9ad;
 }
 
 /* Custom dark styling for Leaflet elements */
 .leaflet-popup-content-wrapper {
-  background: #15271F !important;
-  color: #F7F7F2 !important;
+  background: #15271f !important;
+  color: #f7f7f2 !important;
   border: 1px solid rgba(183, 201, 173, 0.3) !important;
   border-radius: 12px !important;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
-  font-family: 'Manrope', sans-serif !important;
+  font-family: "Manrope", sans-serif !important;
 }
 
 .leaflet-popup-tip {
-  background: #15271F !important;
+  background: #15271f !important;
   border: 1px solid rgba(183, 201, 173, 0.3) !important;
 }
 
 .leaflet-container {
-  background: #0D1915 !important;
-  font-family: 'Manrope', sans-serif !important;
+  background: #0d1915 !important;
+  font-family: "Manrope", sans-serif !important;
 }
 
 @theme inline {
@@ -201,33 +201,33 @@ body {
 }
 
 .dark {
-  --background: #0D1915;
-  --foreground: #F7F7F2;
-  --card: #15271F;
-  --card-foreground: #F7F7F2;
-  --popover: #15271F;
-  --popover-foreground: #F7F7F2;
-  --primary: #B7C9AD;
-  --primary-foreground: #102D25;
+  --background: #0d1915;
+  --foreground: #f7f7f2;
+  --card: #15271f;
+  --card-foreground: #f7f7f2;
+  --popover: #15271f;
+  --popover-foreground: #f7f7f2;
+  --primary: #b7c9ad;
+  --primary-foreground: #102d25;
   --secondary: #1b3329;
-  --secondary-foreground: #F7F7F2;
-  --muted: #15271F;
-  --muted-foreground: #A9B8AD;
+  --secondary-foreground: #f7f7f2;
+  --muted: #15271f;
+  --muted-foreground: #a9b8ad;
   --accent: #1b3329;
-  --accent-foreground: #B7C9AD;
+  --accent-foreground: #b7c9ad;
   --destructive: #ef4444;
-  --destructive-foreground: #F7F7F2;
+  --destructive-foreground: #f7f7f2;
   --border: #233e32;
   --input: #233e32;
-  --ring: #B7C9AD;
-  --sidebar: #0D1915;
-  --sidebar-foreground: #F7F7F2;
-  --sidebar-primary: #B7C9AD;
-  --sidebar-primary-foreground: #102D25;
-  --sidebar-accent: #15271F;
-  --sidebar-accent-foreground: #B7C9AD;
+  --ring: #b7c9ad;
+  --sidebar: #0d1915;
+  --sidebar-foreground: #f7f7f2;
+  --sidebar-primary: #b7c9ad;
+  --sidebar-primary-foreground: #102d25;
+  --sidebar-accent: #15271f;
+  --sidebar-accent-foreground: #b7c9ad;
   --sidebar-border: #233e32;
-  --sidebar-ring: #B7C9AD;
+  --sidebar-ring: #b7c9ad;
 }
 
 @layer base {
@@ -243,11 +243,16 @@ body {
 }
 
 .font-serif {
-  font-family: var(--font-serif), 'Bodoni Moda', Georgia, serif;
+  font-family: var(--font-serif), "Bodoni Moda", Georgia, serif;
 }
 
 .font-sans {
-  font-family: var(--font-sans), 'Manrope', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family:
+    var(--font-sans),
+    "Manrope",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
 }
 
 .editorial-rule {

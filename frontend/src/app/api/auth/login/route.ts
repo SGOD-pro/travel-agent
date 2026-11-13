@@ -10,10 +10,7 @@ export async function GET(request: Request) {
   // Generate PKCE code_verifier (43-128 chars base64url)
   const codeVerifier = crypto.randomBytes(32).toString("base64url");
   // Calculate code_challenge = base64url(sha256(codeVerifier))
-  const codeChallenge = crypto
-    .createHash("sha256")
-    .update(codeVerifier)
-    .digest("base64url");
+  const codeChallenge = crypto.createHash("sha256").update(codeVerifier).digest("base64url");
 
   // Generate random state for CSRF mitigation
   const state = crypto.randomBytes(16).toString("hex");

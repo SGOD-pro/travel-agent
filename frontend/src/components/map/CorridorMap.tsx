@@ -44,7 +44,10 @@ export interface CorridorMapProps {
 /**
  * Constructs a DOM Element for stop popups with textContent escaping to prevent XSS.
  */
-function createSafeStopPopup(props: StopFeatureProperties, timezone: string = "Asia/Kolkata"): HTMLElement {
+function createSafeStopPopup(
+  props: StopFeatureProperties,
+  timezone: string = "Asia/Kolkata",
+): HTMLElement {
   const container = document.createElement("div");
   container.className = "swena-safe-stop-popup";
   container.style.cssText =
@@ -241,7 +244,7 @@ export default function CorridorMap({
               ring.map(([lon, lat]: number[]) => {
                 allCoords.push([lat, lon]);
                 return [lat, lon] as [number, number];
-              })
+              }),
             );
             const polygon = L.polygon(latLngRings, {
               color: props.stroke || "#b91c1c",
@@ -257,8 +260,8 @@ export default function CorridorMap({
                 ring.map(([lon, lat]: number[]) => {
                   allCoords.push([lat, lon]);
                   return [lat, lon] as [number, number];
-                })
-              )
+                }),
+              ),
             );
             const polygon = L.polygon(multiLatLngs, {
               color: props.stroke || "#b91c1c",
@@ -273,7 +276,7 @@ export default function CorridorMap({
       });
 
       // 2. Render Leg LineStrings (prevent drawing polylines when route is infeasible or routing is unavailable)
-      const routeProps = geoJson.properties as Record<string, any> | undefined;
+      const routeProps = geoJson.properties as Record<string, unknown> | undefined;
       const isRouteInfeasibleOrUnavailable =
         geoJson.status === "INFEASIBLE" ||
         routeProps?.status === "INFEASIBLE" ||
@@ -286,12 +289,10 @@ export default function CorridorMap({
             const geom = feat.geometry;
 
             if (geom.type === "LineString" && Array.isArray(geom.coordinates)) {
-              const latLngs: [number, number][] = geom.coordinates.map(
-                ([lon, lat]: number[]) => {
-                  allCoords.push([lat, lon]);
-                  return [lat, lon];
-                }
-              );
+              const latLngs: [number, number][] = geom.coordinates.map(([lon, lat]: number[]) => {
+                allCoords.push([lat, lon]);
+                return [lat, lon];
+              });
 
               if (latLngs.length >= 2) {
                 const strokeColor = props.stroke || "#3b82f6";
@@ -339,7 +340,9 @@ export default function CorridorMap({
 
             const markerColor = props["marker-color"] || "#2563eb";
             const rawSymbol = props["marker-symbol"] || String(props.stop_order);
-            const markerSymbol = String(rawSymbol).replace(/[^\w\s-]/g, "").slice(0, 8);
+            const markerSymbol = String(rawSymbol)
+              .replace(/[^\w\s-]/g, "")
+              .slice(0, 8);
             const isSkippedOrInfeasible = props.is_skipped;
 
             const stopIcon = L.divIcon({
@@ -388,7 +391,7 @@ export default function CorridorMap({
             [minLat, minLon],
             [maxLat, maxLon],
           ],
-          { padding: [40, 40], maxZoom: 14 }
+          { padding: [40, 40], maxZoom: 14 },
         );
       } else if (allCoords.length > 0) {
         map.fitBounds(L.latLngBounds(allCoords), { padding: [40, 40], maxZoom: 14 });
@@ -530,13 +533,10 @@ export default function CorridorMap({
 
   // Derive route summary metrics from GeoJSON
   const routeStatus = geoJson?.properties?.status || geoJson?.status;
-  const totalDistM =
-    geoJson?.properties?.total_distance_m ?? geoJson?.total_distance_m;
-  const totalTravelS =
-    geoJson?.properties?.total_travel_seconds ?? geoJson?.total_travel_seconds;
+  const totalDistM = geoJson?.properties?.total_distance_m ?? geoJson?.total_distance_m;
+  const totalTravelS = geoJson?.properties?.total_travel_seconds ?? geoJson?.total_travel_seconds;
   const fuelCost = geoJson?.properties?.fuel_cost ?? geoJson?.fuel_cost;
-  const diagnostics =
-    geoJson?.properties?.diagnostics || geoJson?.diagnostics || [];
+  const diagnostics = geoJson?.properties?.diagnostics || geoJson?.diagnostics || [];
 
   const statusBadgeStyle =
     routeStatus === "FEASIBLE" || routeStatus === "OPTIMAL"
@@ -570,17 +570,12 @@ export default function CorridorMap({
 
           {totalTravelS !== undefined && (
             <div className="text-[11px] text-[#F7F7F2] font-semibold">
-              {Math.floor(totalTravelS / 3600) > 0 &&
-                `${Math.floor(totalTravelS / 3600)}h `}
+              {Math.floor(totalTravelS / 3600) > 0 && `${Math.floor(totalTravelS / 3600)}h `}
               {Math.round((totalTravelS % 3600) / 60)}m
             </div>
           )}
 
-          {fuelCost && (
-            <div className="text-[11px] text-[#B7C9AD] font-semibold">
-              ₹{fuelCost}
-            </div>
-          )}
+          {fuelCost && <div className="text-[11px] text-[#B7C9AD] font-semibold">₹{fuelCost}</div>}
         </div>
       )}
 

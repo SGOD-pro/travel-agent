@@ -1,0 +1,25 @@
+# Build outputs
+.next/
+out/
+build/
+next-env.d.ts
+
+# Dependencies
+node_modules/
+
+# Lockfiles (managed by npm)
+package-lock.json
+
+# Generated shadcn/ui components are hand-tuned after generation
+# (remove the line below if you want Prettier to own them too)
+# src/components/ui/
+
+# Playwright artifacts
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+frontend/AGENTS.md
+AGENTS.md
+

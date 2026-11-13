@@ -2,16 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import {
-  ArrowRight,
-  Clock,
-  Compass,
-  Calendar,
-  Sparkles,
-  CheckCircle2,
-  AlertCircle,
-  HelpCircle,
-} from "lucide-react";
+import { ArrowRight, Clock, Sparkles, AlertCircle } from "lucide-react";
 
 type PaceMode = "unhurried" | "balanced" | "indepth";
 
@@ -170,7 +161,8 @@ export function TripExample() {
   const [selectedDay, setSelectedDay] = useState<number>(1);
 
   const currentFixture = PACE_FIXTURES[selectedPace];
-  const activeStop = currentFixture.stops.find((s) => s.day === selectedDay) || currentFixture.stops[0];
+  const activeStop =
+    currentFixture.stops.find((s) => s.day === selectedDay) || currentFixture.stops[0];
 
   const fuelCost = 2323.0;
   const tollCost = 320.0;
@@ -196,7 +188,8 @@ export function TripExample() {
             See a journey take shape.
           </h2>
           <p className="text-base sm:text-lg text-[#A9B8AD] max-w-xl font-normal leading-relaxed">
-            From initial parameters to an itemized, daylight-balanced daily schedule. Test how rhythm and budget update dynamically.
+            From initial parameters to an itemized, daylight-balanced daily schedule. Test how
+            rhythm and budget update dynamically.
           </p>
         </div>
 
@@ -251,7 +244,8 @@ export function TripExample() {
           <div className="flex items-center gap-3 p-4 rounded-xl bg-[#0D1915]/60 border border-[#233E32] text-xs text-[#A9B8AD]">
             <Clock className="h-4 w-4 text-[#B7C9AD] shrink-0" />
             <span>
-              <strong className="text-[#F7F7F2]">Daylight Guidance:</strong> {currentFixture.daylightGuidance}
+              <strong className="text-[#F7F7F2]">Daylight Guidance:</strong>{" "}
+              {currentFixture.daylightGuidance}
             </span>
           </div>
 
@@ -293,16 +287,17 @@ export function TripExample() {
                   <span className="font-mono text-[#6E8274]">{activeStop.distance}</span>
                 </div>
 
-                <h3 className="font-bold text-base text-[#F7F7F2]">
-                  {activeStop.location}
-                </h3>
+                <h3 className="font-bold text-base text-[#F7F7F2]">{activeStop.location}</h3>
 
                 <p className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed">
                   {activeStop.activity}
                 </p>
 
                 <div className="pt-2 flex items-center gap-4 text-xs text-[#6E8274] border-t border-[#233E32]/60">
-                  <span>Planned Start: <strong className="text-[#F7F7F2] font-mono">{activeStop.time}</strong></span>
+                  <span>
+                    Planned Start:{" "}
+                    <strong className="text-[#F7F7F2] font-mono">{activeStop.time}</strong>
+                  </span>
                   <span>•</span>
                   <span>{activeStop.dwell}</span>
                 </div>
@@ -336,7 +331,9 @@ export function TripExample() {
                 <div className="flex justify-between items-center py-1 border-t border-[#233E32]/40">
                   <div>
                     <span className="text-[#F7F7F2] font-medium block">Highway Tolls</span>
-                    <span className="text-[11px] text-[#6E8274]">Fastag Toll Plazas (Verified)</span>
+                    <span className="text-[11px] text-[#6E8274]">
+                      Fastag Toll Plazas (Verified)
+                    </span>
                   </div>
                   <span className="font-mono font-semibold text-[#F7F7F2]">
                     ₹{tollCost.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -346,7 +343,9 @@ export function TripExample() {
                 <div className="flex justify-between items-center py-1 border-t border-[#233E32]/40">
                   <div>
                     <span className="text-[#F7F7F2] font-medium block">Lodging Estimate</span>
-                    <span className="text-[11px] text-[#6E8274]">{currentFixture.nights} Nights (1 Room)</span>
+                    <span className="text-[11px] text-[#6E8274]">
+                      {currentFixture.nights} Nights (1 Room)
+                    </span>
                   </div>
                   <span className="font-mono font-semibold text-[#F7F7F2]">
                     ₹{lodgingCost.toLocaleString("en-IN", { minimumFractionDigits: 2 })}
@@ -361,7 +360,8 @@ export function TripExample() {
                       Ghat Corridor Entry Permit
                     </span>
                     <p className="text-[11px] text-amber-200/80 leading-relaxed">
-                      Unknown fee (seasonal permit). Explicitly left uncalculated rather than coerced to ₹0.
+                      Unknown fee (seasonal permit). Explicitly left uncalculated rather than
+                      coerced to ₹0.
                     </p>
                   </div>
                 </div>

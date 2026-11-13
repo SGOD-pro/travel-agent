@@ -44,7 +44,6 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
     submitReplan,
     selectVersion,
     startPolling,
-    refetchMap,
   } = useRouteOptimization({ autoRecover: true });
 
   // Replan form state
@@ -70,7 +69,7 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
         (err) => {
           console.warn("Geolocation query denied or failed:", err);
           alert("Could not access device GPS. Please enter coordinates manually.");
-        }
+        },
       );
     }
   };
@@ -78,7 +77,7 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
   // Toggle completed stop in replan form
   const toggleStopCompleted = (stopId: string) => {
     setCompletedStops((prev) =>
-      prev.includes(stopId) ? prev.filter((id) => id !== stopId) : [...prev, stopId]
+      prev.includes(stopId) ? prev.filter((id) => id !== stopId) : [...prev, stopId],
     );
   };
 
@@ -149,9 +148,7 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
       : null;
 
   const totalDurationStr = (() => {
-    const s =
-      routeMap?.properties?.total_travel_seconds ??
-      routeMap?.total_travel_seconds;
+    const s = routeMap?.properties?.total_travel_seconds ?? routeMap?.total_travel_seconds;
     if (s === undefined) return null;
     const hours = Math.floor(s / 3600);
     const mins = Math.round((s % 3600) / 60);
@@ -159,10 +156,8 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
   })();
 
   const fuelCost = routeMap?.properties?.fuel_cost ?? routeMap?.fuel_cost;
-  const diagnostics =
-    routeMap?.properties?.diagnostics || routeMap?.diagnostics || [];
-  const currentVersion =
-    routeMap?.properties?.route_version ?? routeMap?.route_version;
+  const diagnostics = routeMap?.properties?.diagnostics || routeMap?.diagnostics || [];
+  const currentVersion = routeMap?.properties?.route_version ?? routeMap?.route_version;
 
   return (
     <div className="min-h-screen bg-[#0A1410] text-[#F7F7F2] flex flex-col font-sans">
@@ -202,9 +197,9 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
                   <option key={v.route_id} value={v.route_id}>
                     v{v.route_version} (
                     {v.distance_delta_m !== null && v.distance_delta_m !== 0
-                      ? `${v.distance_delta_m > 0 ? "+" : ""}${(
-                          v.distance_delta_m / 1000
-                        ).toFixed(1)}km`
+                      ? `${v.distance_delta_m > 0 ? "+" : ""}${(v.distance_delta_m / 1000).toFixed(
+                          1,
+                        )}km`
                       : "Base"}
                     ) • {v.status}
                   </option>
@@ -379,8 +374,8 @@ export default function RouteOptimizationPage({ params }: RouteOptimizationPageP
               </div>
 
               <p className="text-[11px] text-[#A9B8AD] mb-4">
-                Encountered a road closure or schedule delay? Submit your current GPS position
-                and check off completed stops to recalculate an updated detour route.
+                Encountered a road closure or schedule delay? Submit your current GPS position and
+                check off completed stops to recalculate an updated detour route.
               </p>
 
               <form onSubmit={handleReplanSubmit} className="space-y-4">

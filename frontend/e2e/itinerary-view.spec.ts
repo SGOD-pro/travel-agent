@@ -164,9 +164,7 @@ const MOCK_TRIP = {
     origin_name: "Bengaluru",
     origin_lat: 12.9716,
     origin_lng: 77.5946,
-    destinations: [
-      { name: "Mysuru Palace", latitude: 12.3051, longitude: 76.6551, stay_days: 1 },
-    ],
+    destinations: [{ name: "Mysuru Palace", latitude: 12.3051, longitude: 76.6551, stay_days: 1 }],
     start_date: "2026-11-14",
     end_date: "2026-11-16",
     timezone: "Asia/Kolkata",
@@ -249,7 +247,9 @@ test.describe("Itinerary Proposal Mocked UI Acceptance (Spec 0007 Slice 6)", () 
     await page.goto(`/trips/${SAMPLE_TRIP_ID}`);
 
     await expect(page.locator("h2")).toContainText("Access Forbidden");
-    await expect(page.locator("body")).toContainText("Strict tenant isolation protects this travel proposal");
+    await expect(page.locator("body")).toContainText(
+      "Strict tenant isolation protects this travel proposal",
+    );
   });
 
   test("Scenario 4: Renders proposal not found (404 Not Found) state", async ({ page }) => {
@@ -300,10 +300,10 @@ test.describe("Itinerary Proposal Mocked UI Acceptance (Spec 0007 Slice 6)", () 
     await page.goto(`/trips/${SAMPLE_TRIP_ID}`);
 
     await expect(
-      page.getByRole("heading", { name: "Road Routing Engine Unavailable" })
+      page.getByRole("heading", { name: "Road Routing Engine Unavailable" }),
     ).toBeVisible();
     await expect(page.locator("body")).toContainText(
-      "In conformance with our fail-closed routing guarantee, straight-line distance guesses or fabricated travel times are never generated"
+      "In conformance with our fail-closed routing guarantee, straight-line distance guesses or fabricated travel times are never generated",
     );
   });
 });

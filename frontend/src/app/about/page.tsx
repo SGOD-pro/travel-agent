@@ -1,22 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import Image from "next/image";
-import {
-  ShieldCheck,
-  Cpu,
-  Lock,
-  ArrowRight,
-  Database,
-  Layers,
-  Compass,
-  MapPin,
-  Clock,
-  Sparkles,
-  Mountain,
-  Eye,
-  CheckCircle2,
-  FileSearch,
-} from "lucide-react";
+import { ShieldCheck, Cpu, Lock, ArrowRight, Database, Compass, Mountain, Eye } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "About Our Philosophy & Architecture",
@@ -98,11 +83,14 @@ export default function AboutPage() {
           </h1>
 
           <p className="text-base sm:text-xl text-[#A9B8AD] leading-relaxed max-w-2xl mx-auto font-normal">
-            Indian travel planning has long been trapped between rigid tour packages, deceptive aggregator countdowns, and AI tools that treat mountain ghats as straight lines on a map.
+            Indian travel planning has long been trapped between rigid tour packages, deceptive
+            aggregator countdowns, and AI tools that treat mountain ghats as straight lines on a
+            map.
           </p>
 
           <p className="text-sm sm:text-base text-[#6E8274] leading-relaxed max-w-xl mx-auto">
-            SWENA was built to restore mathematical honesty, topographic realism, and calm focus to your journeys.
+            SWENA was built to restore mathematical honesty, topographic realism, and calm focus to
+            your journeys.
           </p>
         </div>
       </section>
@@ -126,11 +114,11 @@ export default function AboutPage() {
               <div className="h-10 w-10 rounded-xl bg-[#0D1915] border border-[#B7C9AD]/20 flex items-center justify-center text-[#B7C9AD]">
                 <Eye className="h-5 w-5" />
               </div>
-              <h3 className="text-lg font-bold text-[#F7F7F2]">
-                1. The Aggregator Illusion
-              </h3>
+              <h3 className="text-lg font-bold text-[#F7F7F2]">1. The Aggregator Illusion</h3>
               <p className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed">
-                Online travel agencies optimize for commission, creating artificial urgency, hidden mandatory resort fees, and toll plazas falsely zeroed out to make packages look cheap.
+                Online travel agencies optimize for commission, creating artificial urgency, hidden
+                mandatory resort fees, and toll plazas falsely zeroed out to make packages look
+                cheap.
               </p>
             </div>
 
@@ -138,11 +126,11 @@ export default function AboutPage() {
               <div className="h-10 w-10 rounded-xl bg-[#0D1915] border border-[#B7C9AD]/20 flex items-center justify-center text-[#B7C9AD]">
                 <Mountain className="h-5 w-5" />
               </div>
-              <h3 className="text-lg font-bold text-[#F7F7F2]">
-                2. The Topographic Blindspot
-              </h3>
+              <h3 className="text-lg font-bold text-[#F7F7F2]">2. The Topographic Blindspot</h3>
               <p className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed">
-                Generic mapping apps and LLMs calculate distance using Euclidean geometry, promising 3-hour trips through monsoon-slick ghats that actually require 7 hours of cautious daylight navigation.
+                Generic mapping apps and LLMs calculate distance using Euclidean geometry, promising
+                3-hour trips through monsoon-slick ghats that actually require 7 hours of cautious
+                daylight navigation.
               </p>
             </div>
 
@@ -150,11 +138,11 @@ export default function AboutPage() {
               <div className="h-10 w-10 rounded-xl bg-[#0D1915] border border-[#B7C9AD]/20 flex items-center justify-center text-[#B7C9AD]">
                 <Lock className="h-5 w-5" />
               </div>
-              <h3 className="text-lg font-bold text-[#F7F7F2]">
-                3. The Middleman Lock-In
-              </h3>
+              <h3 className="text-lg font-bold text-[#F7F7F2]">3. The Middleman Lock-In</h3>
               <p className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed">
-                Intermediary portals hold your bookings hostage, charging hefty cancellation markups and making direct communication with station masters, homestays, or drivers impossible.
+                Intermediary portals hold your bookings hostage, charging hefty cancellation markups
+                and making direct communication with station masters, homestays, or drivers
+                impossible.
               </p>
             </div>
           </div>
@@ -180,11 +168,14 @@ export default function AboutPage() {
               <div className="h-12 w-12 rounded-xl bg-[#0D1915] border border-[#B7C9AD]/30 flex items-center justify-center text-[#B7C9AD]">
                 <ShieldCheck className="h-6 w-6" />
               </div>
-              <h3 className="text-xl font-bold text-[#F7F7F2]">
-                The Zero-Hallucination Standard
-              </h3>
+              <h3 className="text-xl font-bold text-[#F7F7F2]">The Zero-Hallucination Standard</h3>
               <p className="text-sm text-[#A9B8AD] leading-relaxed">
-                Zero fabricated room rates, invented train quotas, synthetic reviews, or fake booking IDs. Every number presented in SWENA belongs to one of four strict evidence classes: <span className="text-[#B7C9AD]">LIVE_OFFER</span>, <span className="text-[#B7C9AD]">INDICATIVE_SEARCH</span>, <span className="text-[#B7C9AD]">EDITORIAL_DISCOVERY</span>, or <span className="text-[#B7C9AD]">ESTIMATED_MODEL</span>.
+                Zero fabricated room rates, invented train quotas, synthetic reviews, or fake
+                booking IDs. Every number presented in SWENA belongs to one of four strict evidence
+                classes: <span className="text-[#B7C9AD]">LIVE_OFFER</span>,{" "}
+                <span className="text-[#B7C9AD]">INDICATIVE_SEARCH</span>,{" "}
+                <span className="text-[#B7C9AD]">EDITORIAL_DISCOVERY</span>, or{" "}
+                <span className="text-[#B7C9AD]">ESTIMATED_MODEL</span>.
               </p>
             </div>
 
@@ -192,11 +183,11 @@ export default function AboutPage() {
               <div className="h-12 w-12 rounded-xl bg-[#0D1915] border border-[#B7C9AD]/30 flex items-center justify-center text-[#B7C9AD]">
                 <Database className="h-6 w-6" />
               </div>
-              <h3 className="text-xl font-bold text-[#F7F7F2]">
-                Non-Coercion of Unknown Costs
-              </h3>
+              <h3 className="text-xl font-bold text-[#F7F7F2]">Non-Coercion of Unknown Costs</h3>
               <p className="text-sm text-[#A9B8AD] leading-relaxed">
-                Unknown costs are never zero. If highway toll plazas, ghat corridor permits, or seasonal park safari fees are unverified, our budget arithmetic preserves them as explicit unknowns rather than fabricating compliance.
+                Unknown costs are never zero. If highway toll plazas, ghat corridor permits, or
+                seasonal park safari fees are unverified, our budget arithmetic preserves them as
+                explicit unknowns rather than fabricating compliance.
               </p>
             </div>
 
@@ -208,7 +199,9 @@ export default function AboutPage() {
                 Constraint Solvers Over Guesswork
               </h3>
               <p className="text-sm text-[#A9B8AD] leading-relaxed">
-                Itineraries are formulated using Google OR-Tools solving the Traveling Salesperson Problem with Time Windows (TSPTW). Stop opening hours, geographic sequence, and daylight driving boundaries are enforced mathematically.
+                Itineraries are formulated using Google OR-Tools solving the Traveling Salesperson
+                Problem with Time Windows (TSPTW). Stop opening hours, geographic sequence, and
+                daylight driving boundaries are enforced mathematically.
               </p>
             </div>
 
@@ -216,11 +209,11 @@ export default function AboutPage() {
               <div className="h-12 w-12 rounded-xl bg-[#0D1915] border border-[#B7C9AD]/30 flex items-center justify-center text-[#B7C9AD]">
                 <Lock className="h-6 w-6" />
               </div>
-              <h3 className="text-xl font-bold text-[#F7F7F2]">
-                Direct Official Supplier Handoff
-              </h3>
+              <h3 className="text-xl font-bold text-[#F7F7F2]">Direct Official Supplier Handoff</h3>
               <p className="text-sm text-[#A9B8AD] leading-relaxed">
-                SWENA is strictly non-custodial. We hold zero traveler funds, capture zero card numbers, and create zero vouchers. When you are ready to book, we hand you directly to official merchant portals (IRCTC, airlines, registered heritage homestays).
+                SWENA is strictly non-custodial. We hold zero traveler funds, capture zero card
+                numbers, and create zero vouchers. When you are ready to book, we hand you directly
+                to official merchant portals (IRCTC, airlines, registered heritage homestays).
               </p>
             </div>
           </div>
@@ -240,7 +233,8 @@ export default function AboutPage() {
               Grounded in the geography of the subcontinent.
             </h2>
             <p className="text-base sm:text-lg text-[#142820]/80 leading-relaxed font-normal">
-              India cannot be planned with generic North American grid assumptions. We model ghat road elevations, seasonal monsoon road conditions, and authentic dwell paces.
+              India cannot be planned with generic North American grid assumptions. We model ghat
+              road elevations, seasonal monsoon road conditions, and authentic dwell paces.
             </p>
           </div>
 
@@ -257,7 +251,9 @@ export default function AboutPage() {
               </div>
               <h3 className="font-serif text-xl font-bold text-[#142820]">Western Ghats</h3>
               <p className="text-xs sm:text-sm text-[#142820]/75 leading-relaxed">
-                Elevation profiles from 900m to 2,240m across Madikeri, Wayanad, and Munnar. Real daylight driving limits ensure mountain hairpins are navigated before evening mist rolls in.
+                Elevation profiles from 900m to 2,240m across Madikeri, Wayanad, and Munnar. Real
+                daylight driving limits ensure mountain hairpins are navigated before evening mist
+                rolls in.
               </p>
             </div>
 
@@ -273,7 +269,8 @@ export default function AboutPage() {
               </div>
               <h3 className="font-serif text-xl font-bold text-[#142820]">Rajasthan Circuits</h3>
               <p className="text-xs sm:text-sm text-[#142820]/75 leading-relaxed">
-                Historic Aravalli highways connecting Delhi, Jaipur, Pushkar, and Jodhpur. Stop durations account for high-noon desert temperatures and morning courtyard visits.
+                Historic Aravalli highways connecting Delhi, Jaipur, Pushkar, and Jodhpur. Stop
+                durations account for high-noon desert temperatures and morning courtyard visits.
               </p>
             </div>
 
@@ -289,7 +286,8 @@ export default function AboutPage() {
               </div>
               <h3 className="font-serif text-xl font-bold text-[#142820]">Konkan Coastline</h3>
               <p className="text-xs sm:text-sm text-[#142820]/75 leading-relaxed">
-                Coastal ferry crossings, red dirt highways, and Arabian Sea headlands from Mumbai down to Goa. Calibrated for unhurried seafood lunches and coastal sunset viewpoints.
+                Coastal ferry crossings, red dirt highways, and Arabian Sea headlands from Mumbai
+                down to Goa. Calibrated for unhurried seafood lunches and coastal sunset viewpoints.
               </p>
             </div>
           </div>
@@ -313,32 +311,49 @@ export default function AboutPage() {
           <div className="rounded-2xl bg-[#15271F] border border-[#233E32] p-8 sm:p-10 space-y-6">
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 text-xs">
               <div className="p-4 rounded-xl bg-[#0D1915] border border-[#233E32] space-y-1">
-                <span className="text-[#6E8274] block uppercase font-bold text-[10px]">Orchestration</span>
+                <span className="text-[#6E8274] block uppercase font-bold text-[10px]">
+                  Orchestration
+                </span>
                 <span className="font-bold text-[#F7F7F2] text-sm block">LangGraph</span>
-                <p className="text-[#A9B8AD]">Human-in-the-loop workflow state machine and proposal checkpoints.</p>
+                <p className="text-[#A9B8AD]">
+                  Human-in-the-loop workflow state machine and proposal checkpoints.
+                </p>
               </div>
 
               <div className="p-4 rounded-xl bg-[#0D1915] border border-[#233E32] space-y-1">
-                <span className="text-[#6E8274] block uppercase font-bold text-[10px]">Optimization</span>
+                <span className="text-[#6E8274] block uppercase font-bold text-[10px]">
+                  Optimization
+                </span>
                 <span className="font-bold text-[#F7F7F2] text-sm block">Google OR-Tools</span>
-                <p className="text-[#A9B8AD]">Constraint-based TSPTW solver for mathematically optimal sequencing.</p>
+                <p className="text-[#A9B8AD]">
+                  Constraint-based TSPTW solver for mathematically optimal sequencing.
+                </p>
               </div>
 
               <div className="p-4 rounded-xl bg-[#0D1915] border border-[#233E32] space-y-1">
-                <span className="text-[#6E8274] block uppercase font-bold text-[10px]">Web Extraction</span>
+                <span className="text-[#6E8274] block uppercase font-bold text-[10px]">
+                  Web Extraction
+                </span>
                 <span className="font-bold text-[#F7F7F2] text-sm block">Scrapling Engine</span>
-                <p className="text-[#A9B8AD]">Resilient, typed indicative search extraction without synthetic hallucinations.</p>
+                <p className="text-[#A9B8AD]">
+                  Resilient, typed indicative search extraction without synthetic hallucinations.
+                </p>
               </div>
 
               <div className="p-4 rounded-xl bg-[#0D1915] border border-[#233E32] space-y-1">
-                <span className="text-[#6E8274] block uppercase font-bold text-[10px]">Persistence</span>
+                <span className="text-[#6E8274] block uppercase font-bold text-[10px]">
+                  Persistence
+                </span>
                 <span className="font-bold text-[#F7F7F2] text-sm block">PostgreSQL + PostGIS</span>
-                <p className="text-[#A9B8AD]">Authoritative spatial corridor querying with Upstash Redis ephemeral caching.</p>
+                <p className="text-[#A9B8AD]">
+                  Authoritative spatial corridor querying with Upstash Redis ephemeral caching.
+                </p>
               </div>
             </div>
 
             <p className="text-xs text-[#6E8274] text-center pt-2">
-              Identity governed by SWYRA OAuth 2.1 • Zero client-supplied owner IDs • Fail-closed authorization boundaries
+              Identity governed by SWYRA OAuth 2.1 • Zero client-supplied owner IDs • Fail-closed
+              authorization boundaries
             </p>
           </div>
         </div>

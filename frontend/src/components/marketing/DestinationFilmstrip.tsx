@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, ChevronLeft, ChevronRight, Compass, MapPin } from "lucide-react";
+import { ArrowRight, ChevronLeft, ChevronRight, Compass } from "lucide-react";
 
 interface CorridorSpread {
   id: string;
@@ -122,7 +122,8 @@ export function DestinationFilmstrip() {
               Find your kind of away.
             </h2>
             <p className="text-base sm:text-lg text-[#A9B8AD] max-w-xl font-normal leading-relaxed">
-              Three distinct Indian landscapes, each with its own character, driving rhythm, and morning light.
+              Three distinct Indian landscapes, each with its own character, driving rhythm, and
+              morning light.
             </p>
           </div>
 
@@ -158,7 +159,7 @@ export function DestinationFilmstrip() {
           aria-label="Corridor filmstrip carousel"
           tabIndex={0}
         >
-          {CORRIDORS.map((c, idx) => (
+          {CORRIDORS.map((c) => (
             <article
               key={c.id}
               className="flex-shrink-0 w-[85vw] sm:w-[75vw] lg:w-[68vw] max-w-4xl snap-start rounded-3xl bg-[#15271F] border border-[#233E32] overflow-hidden shadow-2xl flex flex-col justify-between group transition-all duration-300 hover:border-[#B7C9AD]/40"

@@ -32,11 +32,15 @@ function LoginContent() {
             <span>Identity Provider Notice: {error}</span>
           </div>
           <p className="text-[#A9B8AD] leading-relaxed">
-            {details || message || "Authentication request was not completed by the authorization server."}
+            {details ||
+              message ||
+              "Authentication request was not completed by the authorization server."}
           </p>
           {error === "oauth_unconfigured" && (
             <div className="bg-[#0D1915] p-3 rounded-xl border border-[#233E32] space-y-1 font-mono text-[11px] text-[#B7C9AD]">
-              <div className="text-[10px] uppercase text-[#A9B8AD] font-sans font-semibold">Required Setup (.env.local):</div>
+              <div className="text-[10px] uppercase text-[#A9B8AD] font-sans font-semibold">
+                Required Setup (.env.local):
+              </div>
               <div>AUTH_ISSUER=https://auth.swyra.internal</div>
               <div>CLIENT_ID=your_client_id</div>
               <div>CLIENT_SECRET=your_client_secret</div>
@@ -84,7 +88,9 @@ export default function LoginPage() {
     <div className="min-h-screen bg-[#0D1915] text-[#F7F7F2] flex flex-col font-sans">
       <Navbar />
       <main className="flex-1 flex items-center justify-center px-4 py-32">
-        <Suspense fallback={<div className="text-xs text-[#A9B8AD]">Loading authentication view...</div>}>
+        <Suspense
+          fallback={<div className="text-xs text-[#A9B8AD]">Loading authentication view...</div>}
+        >
           <LoginContent />
         </Suspense>
       </main>

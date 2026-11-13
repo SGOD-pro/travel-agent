@@ -1,14 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import {
-  Send,
-  CheckCircle2,
-  AlertCircle,
-  Clock,
-  ShieldCheck,
-  RefreshCw,
-} from "lucide-react";
+import { Send, CheckCircle2, AlertCircle, Clock, ShieldCheck, RefreshCw } from "lucide-react";
 
 interface FormState {
   name: string;
@@ -75,10 +68,14 @@ export function ContactForm() {
       } else {
         const errorData = await res.json().catch(() => ({}));
         const detail = errorData.detail || errorData.error || "Server rejected request";
-        setErrorMsg(`Unable to submit inquiry (${res.status}): ${detail}. Please contact concierge@swena.travel directly.`);
+        setErrorMsg(
+          `Unable to submit inquiry (${res.status}): ${detail}. Please contact concierge@swena.travel directly.`,
+        );
       }
     } catch {
-      setErrorMsg("Network error connecting to concierge server. Please verify your connection or email concierge@swena.travel directly.");
+      setErrorMsg(
+        "Network error connecting to concierge server. Please verify your connection or email concierge@swena.travel directly.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -99,7 +96,9 @@ export function ContactForm() {
             We have received your message.
           </h3>
           <p className="text-sm text-[#A9B8AD] max-w-md mx-auto leading-relaxed font-sans">
-            Thank you, {form.name}. A senior itinerary concierge will review your corridor parameters and follow up at <span className="text-[#F7F7F2] font-semibold">{form.email}</span>.
+            Thank you, {form.name}. A senior itinerary concierge will review your corridor
+            parameters and follow up at{" "}
+            <span className="text-[#F7F7F2] font-semibold">{form.email}</span>.
           </p>
         </div>
 

@@ -142,4 +142,3 @@ export interface TripResponse {
   brief?: TripBrief | null;
   current_route_id?: string | null;
 }
-

@@ -336,20 +336,25 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
       });
     });
 
-    await page.route(`**/api/v1/optimization/routes/${INFEASIBLE_ROUTE_ID}/versions`, async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          root_route_id: INFEASIBLE_ROUTE_ID,
-          current_route_id: INFEASIBLE_ROUTE_ID,
-          versions: [],
-        }),
-      });
-    });
+    await page.route(
+      `**/api/v1/optimization/routes/${INFEASIBLE_ROUTE_ID}/versions`,
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            root_route_id: INFEASIBLE_ROUTE_ID,
+            current_route_id: INFEASIBLE_ROUTE_ID,
+            versions: [],
+          }),
+        });
+      },
+    );
   });
 
-  test("1. Renders Route Optimizer layout, breadcrumb link, and page elements", async ({ page }) => {
+  test("1. Renders Route Optimizer layout, breadcrumb link, and page elements", async ({
+    page,
+  }) => {
     await page.goto(`/trips/${SAMPLE_TRIP_ID}/route`);
 
     // Verify main header
@@ -371,7 +376,9 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
     await expect(replanHeading).toBeVisible();
   });
 
-  test("2. Displays polling progress banner and status transitions during solver execution", async ({ page }) => {
+  test("2. Displays polling progress banner and status transitions during solver execution", async ({
+    page,
+  }) => {
     // Intercept active job polling
     let pollCount = 0;
     await page.route("**/api/v1/jobs/test-active-job-999", async (route) => {
@@ -417,7 +424,9 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
     await expect(page.locator("text=FEASIBLE (v1)")).toBeVisible({ timeout: 10000 });
   });
 
-  test("3. Consumes GeoJSON FeatureCollection rendering multi-color paths, pins, metrics, and attribution (AC-10)", async ({ page }) => {
+  test("3. Consumes GeoJSON FeatureCollection rendering multi-color paths, pins, metrics, and attribution (AC-10)", async ({
+    page,
+  }) => {
     await page.goto(`/trips/${SAMPLE_TRIP_ID}/route?route_id=${BASE_ROUTE_ID}`);
 
     // Verify status badge and metrics on trip card
@@ -478,7 +487,9 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
     await expect(popup).toContainText("Mysuru Palace Heritage");
   });
 
-  test("5. Mid-trip replanning form submission with completed stops checklist", async ({ page }) => {
+  test("5. Mid-trip replanning form submission with completed stops checklist", async ({
+    page,
+  }) => {
     // Intercept replan submission endpoint
     await page.route(`**/api/v1/optimization/routes/${BASE_ROUTE_ID}/replans`, async (route) => {
       const payload = JSON.parse(route.request().postData() || "{}");
@@ -515,7 +526,9 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
     await expect(flashMsg).toBeVisible();
   });
 
-  test("6. Version lineage dropdown selection updates active route view (AC-7)", async ({ page }) => {
+  test("6. Version lineage dropdown selection updates active route view (AC-7)", async ({
+    page,
+  }) => {
     await page.goto(`/trips/${SAMPLE_TRIP_ID}/route?route_id=${BASE_ROUTE_ID}`);
 
     // Verify version selector dropdown exists with both versions
@@ -532,7 +545,9 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
     await expect(page).toHaveURL(new RegExp(`route_id=${REPLAN_ROUTE_ID}`));
   });
 
-  test("7. Infeasible route renders failure pins, skip reasons, and bottom diagnostics banner (AC-8)", async ({ page }) => {
+  test("7. Infeasible route renders failure pins, skip reasons, and bottom diagnostics banner (AC-8)", async ({
+    page,
+  }) => {
     await page.goto(`/trips/${SAMPLE_TRIP_ID}/route?route_id=${INFEASIBLE_ROUTE_ID}`);
 
     // Status badge reflects INFEASIBLE with red styling
@@ -543,13 +558,11 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
     const noticeHeader = page.locator("text=Notice:");
     await expect(noticeHeader).toBeVisible();
     await expect(
-      page.locator("text=Mandatory venue 'Mysuru Heritage Museum' closes at 11:00").first()
+      page.locator("text=Mandatory venue 'Mysuru Heritage Museum' closes at 11:00").first(),
     ).toBeVisible();
 
     // Verify right column diagnostics box
-    await expect(
-      page.locator("text=Mathematical Hard Constraint Infeasibility")
-    ).toBeVisible();
+    await expect(page.locator("text=Mathematical Hard Constraint Infeasibility")).toBeVisible();
 
     // Verify stop pin 2 has red skipped styling
     const failureMarker = page.locator(".custom-geojson-stop-marker").nth(1);
@@ -563,7 +576,9 @@ test.describe("Route Optimization and CorridorMap E2E (Spec 0006)", () => {
     await expect(popup).toContainText("Skip Reason: MANDATORY_TIME_WINDOW_VIOLATION");
   });
 
-  test("8. Clean browser execution without uncaught page errors or exceptions", async ({ page }) => {
+  test("8. Clean browser execution without uncaught page errors or exceptions", async ({
+    page,
+  }) => {
     const errorLogs: string[] = [];
     page.on("pageerror", (err) => errorLogs.push(err.message));
 

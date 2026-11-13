@@ -150,7 +150,7 @@ export default function BenchmarksPage() {
   });
   const [isRunning, setIsRunning] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
-  const [apiError, setApiError] = useState<string | null>(null);
+  const [_apiError, setApiError] = useState<string | null>(null);
 
   const runLiveBenchmarks = async () => {
     setIsRunning(true);
@@ -162,7 +162,7 @@ export default function BenchmarksPage() {
       }
       const data: BenchmarkReport = await res.json();
       setReport(data);
-    } catch (err) {
+    } catch (_err) {
       // If local backend is offline during client test, simulate instant high-speed verification
       setApiError("Backend live stream connecting... displaying verified suite report.");
       // Ensure all 50 cases are populated in mock if needed
@@ -199,7 +199,8 @@ export default function BenchmarksPage() {
             </h1>
             <p className="text-sm text-[#A9B8AD] mt-2 max-w-2xl leading-relaxed">
               Deterministic verification suite executing across 50 real-world Indian travel cases.
-              Enforces zero price coercion (unquoted tolls never become ₹0), strict temporal feasibility, and zero fabricated inventory.
+              Enforces zero price coercion (unquoted tolls never become ₹0), strict temporal
+              feasibility, and zero fabricated inventory.
             </p>
           </div>
 
@@ -227,31 +228,43 @@ export default function BenchmarksPage() {
         {/* Metrics Grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 my-8">
           <div className="bg-[#15271F] p-5 rounded-2xl border border-[#233E32]">
-            <span className="text-xs uppercase tracking-wider text-[#A9B8AD] font-semibold">Total Cases</span>
+            <span className="text-xs uppercase tracking-wider text-[#A9B8AD] font-semibold">
+              Total Cases
+            </span>
             <div className="text-3xl font-bold text-[#F7F7F2] mt-2">{report.total_cases}</div>
             <span className="text-[11px] text-[#A9B8AD] mt-1 block">Standardized test suite</span>
           </div>
 
           <div className="bg-[#15271F] p-5 rounded-2xl border border-[#233E32]">
-            <span className="text-xs uppercase tracking-wider text-[#A9B8AD] font-semibold">Pass Rate</span>
+            <span className="text-xs uppercase tracking-wider text-[#A9B8AD] font-semibold">
+              Pass Rate
+            </span>
             <div className="text-3xl font-bold text-[#B7C9AD] mt-2 flex items-center gap-2">
               {report.pass_rate_percent}%
               <CheckCircle2 className="w-6 h-6 text-[#B7C9AD]" />
             </div>
-            <span className="text-[11px] text-[#B7C9AD] mt-1 block">50 / 50 Verified Invariants</span>
+            <span className="text-[11px] text-[#B7C9AD] mt-1 block">
+              50 / 50 Verified Invariants
+            </span>
           </div>
 
           <div className="bg-[#15271F] p-5 rounded-2xl border border-[#233E32]">
-            <span className="text-xs uppercase tracking-wider text-[#A9B8AD] font-semibold">Total Execution</span>
+            <span className="text-xs uppercase tracking-wider text-[#A9B8AD] font-semibold">
+              Total Execution
+            </span>
             <div className="text-3xl font-bold text-[#F7F7F2] mt-2 flex items-center gap-1.5">
               <Clock className="w-5 h-5 text-[#B7C9AD]" />
               {(report.total_duration_seconds * 1000).toFixed(0)} ms
             </div>
-            <span className="text-[11px] text-[#A9B8AD] mt-1 block">Deterministic pure computation</span>
+            <span className="text-[11px] text-[#A9B8AD] mt-1 block">
+              Deterministic pure computation
+            </span>
           </div>
 
           <div className="bg-[#15271F] p-5 rounded-2xl border border-[#233E32]">
-            <span className="text-xs uppercase tracking-wider text-[#A9B8AD] font-semibold">Average Latency</span>
+            <span className="text-xs uppercase tracking-wider text-[#A9B8AD] font-semibold">
+              Average Latency
+            </span>
             <div className="text-3xl font-bold text-[#F7F7F2] mt-2 flex items-center gap-1.5">
               <Zap className="w-5 h-5 text-amber-400" />
               {report.average_case_ms} ms
@@ -286,7 +299,9 @@ export default function BenchmarksPage() {
             <span className="text-xs uppercase tracking-wider font-semibold text-[#B7C9AD]">
               Evaluation Cases ({filteredResults.length})
             </span>
-            <span className="text-xs text-[#A9B8AD]">Zero Coercion & Anti-Hallucination Enforced</span>
+            <span className="text-xs text-[#A9B8AD]">
+              Zero Coercion & Anti-Hallucination Enforced
+            </span>
           </div>
 
           <div className="divide-y divide-[#233E32]/60">

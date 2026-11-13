@@ -46,9 +46,10 @@ export function EditorialPause() {
 
             {/* Exact 48-word text */}
             <p className="font-sans text-lg sm:text-xl text-[#142820]/85 leading-relaxed font-normal max-w-2xl">
-              Most travel tools force a choice between rigid tour packages and dozens of disconnected browser tabs.
-              SWENA brings your driving corridors, daily stops, and budget assumptions into one clear, editable plan—so
-              you spend less time coordinating and more time taking in the morning light.
+              Most travel tools force a choice between rigid tour packages and dozens of
+              disconnected browser tabs. SWENA brings your driving corridors, daily stops, and
+              budget assumptions into one clear, editable plan—so you spend less time coordinating
+              and more time taking in the morning light.
             </p>
 
             {/* Representative Corridor Capsule */}
@@ -58,7 +59,9 @@ export function EditorialPause() {
                   <Compass className="h-4 w-4 text-[#C56C4D]" />
                   <span>Representative Corridor</span>
                 </div>
-                <span className="text-xs font-semibold text-[#142820]/70 font-mono">Karnataka & Kerala</span>
+                <span className="text-xs font-semibold text-[#142820]/70 font-mono">
+                  Karnataka & Kerala
+                </span>
               </div>
 
               <p className="font-serif text-lg font-bold text-[#142820]">

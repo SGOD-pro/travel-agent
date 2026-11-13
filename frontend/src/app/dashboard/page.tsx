@@ -6,25 +6,19 @@ import { useSearchParams } from "next/navigation";
 import {
   Compass,
   MapPin,
-  Calendar,
-  Users,
   Car,
   Bike,
   Plus,
   Trash2,
   Sparkles,
-  ArrowRight,
   ShieldCheck,
   AlertTriangle,
   Clock,
   ExternalLink,
-  ChevronRight,
   Route,
   Receipt,
   CheckCircle2,
-  Building2,
   RefreshCw,
-  Server,
   Download,
   Share2,
   Map as MapIcon,
@@ -93,7 +87,9 @@ function DashboardContent() {
   // Solver / Workflow execution state
   const [isPlanning, setIsPlanning] = useState(false);
   const [plannedVersion, setPlannedVersion] = useState(1);
-  const [activeTab, setActiveTab] = useState<"itinerary" | "map" | "budget" | "recommendations" | "evidence">("itinerary");
+  const [activeTab, setActiveTab] = useState<
+    "itinerary" | "map" | "budget" | "recommendations" | "evidence"
+  >("itinerary");
   const [evidenceModalOpen, setEvidenceModalOpen] = useState(false);
   const [apiStatus, setApiStatus] = useState<"offline" | "connected" | "checking">("checking");
   const [serverTripId, setServerTripId] = useState<string>("urn:swena:trip:karnataka-circuit-2026");
@@ -105,7 +101,7 @@ function DashboardContent() {
     if (corridorParam === "rajasthan") {
       setOrigin("Delhi");
       setOriginLat(28.6139);
-      setOriginLng(77.2090);
+      setOriginLng(77.209);
       setDestinations([
         { id: "1", name: "Jaipur", lat: 26.9124, lng: 75.7873, stayDays: 2 },
         { id: "2", name: "Pushkar", lat: 26.4899, lng: 74.5511, stayDays: 1 },
@@ -114,12 +110,12 @@ function DashboardContent() {
       setServerTripId("urn:swena:trip:rajasthan-circuit-2026");
     } else if (corridorParam === "konkan" || corridorParam === "konkan-coast") {
       setOrigin("Mumbai");
-      setOriginLat(19.0760);
+      setOriginLat(19.076);
       setOriginLng(72.8777);
       setDestinations([
-        { id: "1", name: "Alibaug", lat: 18.6534, lng: 72.8770, stayDays: 1 },
-        { id: "2", name: "Ratnagiri", lat: 16.9902, lng: 73.3120, stayDays: 2 },
-        { id: "3", name: "Goa", lat: 15.2993, lng: 74.1240, stayDays: 2 },
+        { id: "1", name: "Alibaug", lat: 18.6534, lng: 72.877, stayDays: 1 },
+        { id: "2", name: "Ratnagiri", lat: 16.9902, lng: 73.312, stayDays: 2 },
+        { id: "3", name: "Goa", lat: 15.2993, lng: 74.124, stayDays: 2 },
       ]);
       setServerTripId("urn:swena:trip:konkan-coast-2026");
     } else if (corridorParam === "western-ghats") {
@@ -129,7 +125,7 @@ function DashboardContent() {
       setDestinations([
         { id: "1", name: "Mysuru", lat: 12.2958, lng: 76.6394, stayDays: 2 },
         { id: "2", name: "Coorg (Madikeri)", lat: 12.4244, lng: 75.7382, stayDays: 2 },
-        { id: "3", name: "Wayanad", lat: 11.6854, lng: 76.1320, stayDays: 2 },
+        { id: "3", name: "Wayanad", lat: 11.6854, lng: 76.132, stayDays: 2 },
       ]);
       setServerTripId("urn:swena:trip:western-ghats-2026");
     }
@@ -157,20 +153,25 @@ function DashboardContent() {
   // Derived calendar days
   const start = new Date(startDate);
   const end = new Date(endDate);
-  const diffDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / (1000 * 3600 * 24)) + 1);
+  const diffDays = Math.max(
+    1,
+    Math.round((end.getTime() - start.getTime()) / (1000 * 3600 * 24)) + 1,
+  );
 
   // Dynamic itinerary generation
   const avgSpeed = mode === "car" ? 45 : 40;
 
   // Build points: origin -> destinations
-  const points = [
-    { name: origin, lat: originLat, lng: originLng, stayDays: 0 },
-    ...destinations,
-  ];
+  const points = [{ name: origin, lat: originLat, lng: originLng, stayDays: 0 }, ...destinations];
 
   const scheduledLegs: ScheduledLeg[] = [];
   for (let i = 0; i < points.length - 1; i++) {
-    const dist = computeDistanceKm(points[i].lat, points[i].lng, points[i + 1].lat, points[i + 1].lng);
+    const dist = computeDistanceKm(
+      points[i].lat,
+      points[i].lng,
+      points[i + 1].lat,
+      points[i + 1].lng,
+    );
     const durationMins = Math.round((dist / avgSpeed) * 60);
     scheduledLegs.push({
       from: points[i].name,
@@ -277,15 +278,10 @@ function DashboardContent() {
       stopName: d.name,
       temperatureC: d.name.toLowerCase().includes("coorg") ? 19 : 27,
       condition: (d.name.toLowerCase().includes("coorg") ? "foggy" : "cloudy") as
-        | "sunny"
-        | "cloudy"
-        | "rainy"
-        | "foggy",
+        "sunny" | "cloudy" | "rainy" | "foggy",
       humidityPercent: d.name.toLowerCase().includes("coorg") ? 88 : 60,
       monsoonRisk: (d.name.toLowerCase().includes("coorg") ? "moderate" : "low") as
-        | "low"
-        | "moderate"
-        | "severe",
+        "low" | "moderate" | "severe",
       ghatCaution: d.name.toLowerCase().includes("coorg")
         ? "Misty mountain passes; maintain low-beam headlights on ghat curves."
         : undefined,
@@ -306,7 +302,13 @@ function DashboardContent() {
       if (!destinations.some((d) => d.name.toLowerCase().includes("coorg"))) {
         setDestinations((prev) => [
           ...prev,
-          { id: String(Date.now() + 1), name: "Coorg (Madikeri)", lat: 12.4244, lng: 75.7382, stayDays: 2 },
+          {
+            id: String(Date.now() + 1),
+            name: "Coorg (Madikeri)",
+            lat: 12.4244,
+            lng: 75.7382,
+            stayDays: 2,
+          },
         ]);
       }
     }
@@ -325,9 +327,8 @@ function DashboardContent() {
   const narrativeScript = `Your personalized travel itinerary begins in ${origin}, connecting to ${destinations
     .map((d) => d.name)
     .join(" and ")} across ${totalDistanceKm} kilometers. Estimated travel time is ${Math.round(
-    totalTravelMins / 60
+    totalTravelMins / 60,
   )} hours. Fuel requirement is calculated at ${fuelLiters} liters with strict preservation of unknown tolls.`;
-
 
   const addDestination = () => {
     const newId = String(destinations.length + 1);
@@ -342,10 +343,12 @@ function DashboardContent() {
     setDestinations(destinations.filter((d) => d.id !== id));
   };
 
-  const updateDestination = (id: string, field: keyof DestinationItem, value: any) => {
-    setDestinations(
-      destinations.map((d) => (d.id === id ? { ...d, [field]: value } : d))
-    );
+  const updateDestination = (
+    id: string,
+    field: keyof DestinationItem,
+    value: DestinationItem[keyof DestinationItem],
+  ) => {
+    setDestinations(destinations.map((d) => (d.id === id ? { ...d, [field]: value } : d)));
   };
 
   const triggerPlanning = async () => {
@@ -436,9 +439,7 @@ function DashboardContent() {
             <Compass className="h-3.5 w-3.5" />
             <span>Active Aggregate: Karnataka Corridor Odyssey</span>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-bold text-[#F7F7F2]">
-            Trip Planning Console
-          </h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-[#F7F7F2]">Trip Planning Console</h1>
         </div>
 
         <div className="flex items-center flex-wrap gap-3">
@@ -525,7 +526,8 @@ function DashboardContent() {
               </div>
 
               <div className="text-right text-[11px] text-[#A9B8AD]">
-                Total Duration: <span className="text-[#B7C9AD] font-semibold">{diffDays} calendar days</span>
+                Total Duration:{" "}
+                <span className="text-[#B7C9AD] font-semibold">{diffDays} calendar days</span>
               </div>
 
               {/* Passengers & Rooms */}
@@ -571,9 +573,7 @@ function DashboardContent() {
                       setMileage(15.0);
                     }}
                     className={`flex items-center justify-center gap-2 py-2 rounded-lg font-semibold transition-all ${
-                      mode === "car"
-                        ? "bg-[#15271F] text-[#B7C9AD] shadow-sm"
-                        : "text-[#A9B8AD]"
+                      mode === "car" ? "bg-[#15271F] text-[#B7C9AD] shadow-sm" : "text-[#A9B8AD]"
                     }`}
                   >
                     <Car className="h-3.5 w-3.5" />
@@ -598,9 +598,7 @@ function DashboardContent() {
                 {/* Editable Mileage & Fuel Price with Units */}
                 <div className="grid grid-cols-2 gap-3 mt-3 pt-3 border-t border-[#233e32]/60">
                   <div>
-                    <label className="block text-[11px] text-[#A9B8AD] mb-1">
-                      Mileage (km/L)
-                    </label>
+                    <label className="block text-[11px] text-[#A9B8AD] mb-1">Mileage (km/L)</label>
                     <input
                       type="number"
                       step="0.5"
@@ -621,14 +619,18 @@ function DashboardContent() {
                       min="50"
                       max="200"
                       value={fuelPricePerLiter}
-                      onChange={(e) => setFuelPricePerLiter(Math.max(1, parseFloat(e.target.value) || 102.5))}
+                      onChange={(e) =>
+                        setFuelPricePerLiter(Math.max(1, parseFloat(e.target.value) || 102.5))
+                      }
                       className="w-full bg-[#0D1915] border border-[#233e32] rounded-xl px-2.5 py-1.5 text-xs text-[#F7F7F2] font-mono focus:outline-none focus:border-[#B7C9AD]"
                     />
                   </div>
                 </div>
 
                 <p className="text-[10px] text-[#A9B8AD]/80 mt-2 leading-tight">
-                  <span className="text-[#B7C9AD] font-semibold">Boundary Note:</span> EV energy/range modeling is unavailable per architectural decision D010. Modes strictly cover petrol vehicles and walking/bicycles.
+                  <span className="text-[#B7C9AD] font-semibold">Boundary Note:</span> EV
+                  energy/range modeling is unavailable per architectural decision D010. Modes
+                  strictly cover petrol vehicles and walking/bicycles.
                 </p>
               </div>
 
@@ -648,7 +650,7 @@ function DashboardContent() {
                 </div>
 
                 <div className="space-y-2.5">
-                  {destinations.map((dest, idx) => (
+                  {destinations.map((dest) => (
                     <div
                       key={dest.id}
                       className="bg-[#0D1915] p-3 rounded-xl border border-[#233e32] flex items-center justify-between gap-2"
@@ -657,9 +659,7 @@ function DashboardContent() {
                         <input
                           type="text"
                           value={dest.name}
-                          onChange={(e) =>
-                            updateDestination(dest.id, "name", e.target.value)
-                          }
+                          onChange={(e) => updateDestination(dest.id, "name", e.target.value)}
                           className="w-full bg-transparent font-semibold text-[#F7F7F2] focus:outline-none"
                         />
                         <div className="flex items-center gap-2 text-[11px] text-[#A9B8AD] mt-1">
@@ -670,11 +670,7 @@ function DashboardContent() {
                             max={10}
                             value={dest.stayDays}
                             onChange={(e) =>
-                              updateDestination(
-                                dest.id,
-                                "stayDays",
-                                Number(e.target.value)
-                              )
+                              updateDestination(dest.id, "stayDays", Number(e.target.value))
                             }
                             className="w-10 bg-[#15271F] px-1 py-0.5 rounded text-center text-[#B7C9AD] focus:outline-none"
                           />
@@ -847,13 +843,11 @@ function DashboardContent() {
                             <span className="text-xs font-mono text-[#B7C9AD]">
                               Stop #{stop.position}
                             </span>
-                            <h4 className="text-base font-bold text-[#F7F7F2]">
-                              {stop.name}
-                            </h4>
+                            <h4 className="text-base font-bold text-[#F7F7F2]">{stop.name}</h4>
                           </div>
                           <p className="text-xs text-[#A9B8AD] mt-1">
-                            Arrival: <span className="text-[#F7F7F2]">{stop.arrival}</span> • Departure:{" "}
-                            <span className="text-[#F7F7F2]">{stop.departure}</span>
+                            Arrival: <span className="text-[#F7F7F2]">{stop.arrival}</span> •
+                            Departure: <span className="text-[#F7F7F2]">{stop.departure}</span>
                           </p>
                         </div>
 
@@ -861,7 +855,9 @@ function DashboardContent() {
                           <div className="bg-[#0D1915] px-3 py-1.5 rounded-xl border border-[#233e32] text-xs">
                             <span className="text-[#A9B8AD]">Transit Leg: </span>
                             <span className="font-semibold text-[#B7C9AD]">
-                              {scheduledLegs[idx - 1].distanceKm} km ({Math.floor(scheduledLegs[idx - 1].durationMins / 60)}h {scheduledLegs[idx - 1].durationMins % 60}m)
+                              {scheduledLegs[idx - 1].distanceKm} km (
+                              {Math.floor(scheduledLegs[idx - 1].durationMins / 60)}h{" "}
+                              {scheduledLegs[idx - 1].durationMins % 60}m)
                             </span>
                           </div>
                         )}
@@ -908,10 +904,11 @@ function DashboardContent() {
                     Budget Completeness: Incomplete (Preserved)
                   </h4>
                   <p className="text-[#A9B8AD] leading-relaxed">
-                    Per UI/UX Design Brief & Rule 3: Toll charges on the Mysuru-Coorg corridor
-                    are unverified in the registry. This unknown cost has{" "}
+                    Per UI/UX Design Brief & Rule 3: Toll charges on the Mysuru-Coorg corridor are
+                    unverified in the registry. This unknown cost has{" "}
                     <span className="text-[#D4A373] font-semibold">NOT been coerced to ₹0</span>.
-                    The total explicitly notes missing tolls rather than claiming &ldquo;Within budget&rdquo;.
+                    The total explicitly notes missing tolls rather than claiming &ldquo;Within
+                    budget&rdquo;.
                   </p>
                 </div>
               </div>
@@ -936,7 +933,8 @@ function DashboardContent() {
                         </span>
                       </div>
                       <span className="text-[#A9B8AD]">
-                        Calculated {fuelLiters}L × ₹{fuelPricePerLiter}/L based on editable vehicle parameters
+                        Calculated {fuelLiters}L × ₹{fuelPricePerLiter}/L based on editable vehicle
+                        parameters
                       </span>
                     </div>
                     <span className="font-mono font-bold text-[#F7F7F2]">
@@ -949,14 +947,16 @@ function DashboardContent() {
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-[#F7F7F2]">
-                          Accommodation ({rooms} room, {destinations.reduce((acc, d) => acc + d.stayDays, 0)} total nights)
+                          Accommodation ({rooms} room,{" "}
+                          {destinations.reduce((acc, d) => acc + d.stayDays, 0)} total nights)
                         </span>
                         <span className="px-1.5 py-0.5 rounded bg-[#15271F] text-[#B7C9AD] text-[10px]">
                           Observed Price
                         </span>
                       </div>
                       <span className="text-[#A9B8AD]">
-                        Indicative benchmark ₹3,500/room/night across {destinations.map((d) => d.name).join(", ")}
+                        Indicative benchmark ₹3,500/room/night across{" "}
+                        {destinations.map((d) => d.name).join(", ")}
                       </span>
                     </div>
                     <span className="font-mono font-bold text-[#F7F7F2]">
@@ -979,9 +979,7 @@ function DashboardContent() {
                         Mysuru Palace entry, Chamundi parking, Dubare sanctuary passes
                       </span>
                     </div>
-                    <span className="font-mono font-bold text-[#F7F7F2]">
-                      ₹400
-                    </span>
+                    <span className="font-mono font-bold text-[#F7F7F2]">₹400</span>
                   </div>
 
                   {/* Unverified Tolls */}
@@ -999,9 +997,7 @@ function DashboardContent() {
                         Unverified toll plaza rates for vehicle class; payable on FASTag at plaza
                       </span>
                     </div>
-                    <span className="font-mono font-semibold text-[#D4A373]">
-                      UNKNOWN
-                    </span>
+                    <span className="font-mono font-semibold text-[#D4A373]">UNKNOWN</span>
                   </div>
                 </div>
 
@@ -1027,9 +1023,13 @@ function DashboardContent() {
                   <div className="p-3 rounded-xl bg-[#0D1915] border border-[#233e32] text-xs text-[#A9B8AD]">
                     <span className="text-[#B7C9AD] font-semibold">Per-person known share: </span>
                     <span className="font-mono text-[#F7F7F2]">
-                      ₹{Math.round((fuelTotalCost + hotelEstimatedTotal + 400) / adults).toLocaleString("en-IN")}
+                      ₹
+                      {Math.round(
+                        (fuelTotalCost + hotelEstimatedTotal + 400) / adults,
+                      ).toLocaleString("en-IN")}
                     </span>{" "}
-                    (based on {adults} adults sharing 1 vehicle & {rooms} room; infants excluded per carrier rules).
+                    (based on {adults} adults sharing 1 vehicle & {rooms} room; infants excluded per
+                    carrier rules).
                   </div>
                 </div>
               </div>
@@ -1041,7 +1041,8 @@ function DashboardContent() {
             <div className="space-y-4">
               <div className="glass-panel p-4 rounded-2xl border border-[#233e32] text-xs text-[#A9B8AD]">
                 <span className="text-[#B7C9AD] font-semibold">Attribution & Ethos: </span>
-                Recommended places are explained editorial selections with explicit detour and visit times. They are not paid placements or algorithmic guarantees.
+                Recommended places are explained editorial selections with explicit detour and visit
+                times. They are not paid placements or algorithmic guarantees.
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1053,11 +1054,10 @@ function DashboardContent() {
                     </span>
                     <span className="text-[10px] font-mono text-[#A9B8AD]">+18m detour</span>
                   </div>
-                  <h4 className="font-bold text-[#F7F7F2] text-sm">
-                    Ranganathittu Sanctuary
-                  </h4>
+                  <h4 className="font-bold text-[#F7F7F2] text-sm">Ranganathittu Sanctuary</h4>
                   <p className="text-xs text-[#A9B8AD] leading-relaxed">
-                    Directly on NH-275 corridor near Srirangapatna. Ideal morning bird-watching stop before Mysuru hotel check-in.
+                    Directly on NH-275 corridor near Srirangapatna. Ideal morning bird-watching stop
+                    before Mysuru hotel check-in.
                   </p>
                   <div className="text-[11px] space-y-1 pt-2 border-t border-[#233e32]">
                     <div className="flex justify-between text-[#A9B8AD]">
@@ -1082,11 +1082,10 @@ function DashboardContent() {
                     </span>
                     <span className="text-[10px] font-mono text-[#A9B8AD]">+25m detour</span>
                   </div>
-                  <h4 className="font-bold text-[#F7F7F2] text-sm">
-                    Chamundi Hill Viewpoint
-                  </h4>
+                  <h4 className="font-bold text-[#F7F7F2] text-sm">Chamundi Hill Viewpoint</h4>
                   <p className="text-xs text-[#A9B8AD] leading-relaxed">
-                    Panoramic elevation looking across the palace plateau. Accessible via paved highway switchbacks.
+                    Panoramic elevation looking across the palace plateau. Accessible via paved
+                    highway switchbacks.
                   </p>
                   <div className="text-[11px] space-y-1 pt-2 border-t border-[#233e32]">
                     <div className="flex justify-between text-[#A9B8AD]">
@@ -1111,11 +1110,10 @@ function DashboardContent() {
                     </span>
                     <span className="text-[10px] font-mono text-[#A9B8AD]">+12m detour</span>
                   </div>
-                  <h4 className="font-bold text-[#F7F7F2] text-sm">
-                    Dubare Elephant Reserve
-                  </h4>
+                  <h4 className="font-bold text-[#F7F7F2] text-sm">Dubare Elephant Reserve</h4>
                   <p className="text-xs text-[#A9B8AD] leading-relaxed">
-                    Kaveri river crossing on the approach into Coorg. Natural transition point between plain and western ghats.
+                    Kaveri river crossing on the approach into Coorg. Natural transition point
+                    between plain and western ghats.
                   </p>
                   <div className="text-[11px] space-y-1 pt-2 border-t border-[#233e32]">
                     <div className="flex justify-between text-[#A9B8AD]">
@@ -1169,28 +1167,31 @@ function DashboardContent() {
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-3 px-3 font-mono font-bold text-[#F7F7F2]">INDICATIVE_SEARCH</td>
+                        <td className="py-3 px-3 font-mono font-bold text-[#F7F7F2]">
+                          INDICATIVE_SEARCH
+                        </td>
                         <td className="py-3 px-3 text-[#F7F7F2]">
                           Observed price; verify on provider
                         </td>
                         <td className="py-3 px-3 text-[#A9B8AD]">
-                          Hotel benchmark (₹3,500/night); room inclusions unverified until supplier view.
+                          Hotel benchmark (₹3,500/night); room inclusions unverified until supplier
+                          view.
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-3 px-3 font-mono font-bold text-[#A9B8AD]">EDITORIAL_DISCOVERY</td>
-                        <td className="py-3 px-3 text-[#F7F7F2]">
-                          Source information
+                        <td className="py-3 px-3 font-mono font-bold text-[#A9B8AD]">
+                          EDITORIAL_DISCOVERY
                         </td>
+                        <td className="py-3 px-3 text-[#F7F7F2]">Source information</td>
                         <td className="py-3 px-3 text-[#A9B8AD]">
                           Karnataka Forest Dept hours and seasonal ghat permit advisories.
                         </td>
                       </tr>
                       <tr>
-                        <td className="py-3 px-3 font-mono font-bold text-[#D4A373]">UNAVAILABLE</td>
-                        <td className="py-3 px-3 text-[#D4A373]">
-                          Could not verify
+                        <td className="py-3 px-3 font-mono font-bold text-[#D4A373]">
+                          UNAVAILABLE
                         </td>
+                        <td className="py-3 px-3 text-[#D4A373]">Could not verify</td>
                         <td className="py-3 px-3 text-[#A9B8AD]">
                           Toll plaza tariff for vehicle class; preserved as explicit unknown.
                         </td>
@@ -1210,11 +1211,18 @@ function DashboardContent() {
                   Official Merchant Handoff
                 </span>
                 <p className="text-[#A9B8AD]">
-                  Direct deep-links to verified supplier portals. No markups, no checkout lock-in, no fake price holds.
+                  Direct deep-links to verified supplier portals. No markups, no checkout lock-in,
+                  no fake price holds.
                 </p>
                 <p className="text-[11px] text-[#A9B8AD]/70">
-                  Dates: <span className="text-[#F7F7F2]">{startDate} – {endDate}</span> | Party:{" "}
-                  <span className="text-[#F7F7F2]">{adults} Adults, {rooms} Room</span>
+                  Dates:{" "}
+                  <span className="text-[#F7F7F2]">
+                    {startDate} – {endDate}
+                  </span>{" "}
+                  | Party:{" "}
+                  <span className="text-[#F7F7F2]">
+                    {adults} Adults, {rooms} Room
+                  </span>
                 </p>
               </div>
 
@@ -1242,7 +1250,8 @@ function DashboardContent() {
             </div>
 
             <p className="text-[10px] text-[#A9B8AD]/60 pt-2 border-t border-[#15271F]">
-              * Notice: No &ldquo;booking confirmed&rdquo; status is issued by SWENA upon redirect. Final reservation and ticket issuance occur entirely on the official merchant site.
+              * Notice: No &ldquo;booking confirmed&rdquo; status is issued by SWENA upon redirect.
+              Final reservation and ticket issuance occur entirely on the official merchant site.
             </p>
           </div>
         </div>
@@ -1255,9 +1264,7 @@ function DashboardContent() {
             <div className="flex items-center justify-between border-b border-[#233e32] pb-4">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="h-5 w-5 text-[#B7C9AD]" />
-                <h3 className="text-lg font-bold text-[#F7F7F2]">
-                  Verifiable Evidence Record
-                </h3>
+                <h3 className="text-lg font-bold text-[#F7F7F2]">Verifiable Evidence Record</h3>
               </div>
               <button
                 onClick={() => setEvidenceModalOpen(false)}
@@ -1287,9 +1294,8 @@ function DashboardContent() {
             </div>
 
             <div className="text-xs text-[#A9B8AD] leading-relaxed">
-              In adherence to our strict product boundaries, this evidence is
-              persisted in Aiven PostgreSQL with PostGIS points. All merchant links
-              pass through to official partners.
+              In adherence to our strict product boundaries, this evidence is persisted in Aiven
+              PostgreSQL with PostGIS points. All merchant links pass through to official partners.
             </div>
 
             <button
@@ -1311,7 +1317,9 @@ export default function DashboardPage() {
       fallback={
         <div className="min-h-screen bg-[#0D1915] flex flex-col items-center justify-center text-[#B7C9AD] gap-3">
           <div className="h-8 w-8 rounded-full border-2 border-[#B7C9AD] border-t-transparent animate-spin" />
-          <span className="text-xs font-mono tracking-wider uppercase">Loading SWENA planner...</span>
+          <span className="text-xs font-mono tracking-wider uppercase">
+            Loading SWENA planner...
+          </span>
         </div>
       }
     >

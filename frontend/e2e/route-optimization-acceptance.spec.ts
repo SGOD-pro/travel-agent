@@ -22,7 +22,7 @@ const PARTIAL_ROUTE_ID = "55555555-5555-5555-5555-555555555555";
 const INFEASIBLE_ROUTE_ID = "66666666-6666-6666-6666-666666666666";
 
 // Controlled test principals
-const USER_A_ID = "00000000-0000-0000-0000-000000000001"; // Dev default principal
+const _USER_A_ID = "00000000-0000-0000-0000-000000000001"; // Dev default principal
 const USER_B_ID = "99999999-9999-9999-9999-999999999999"; // Foreign unauthorized tenant
 
 function createBearerToken(sub: string, email: string): string {
@@ -55,7 +55,7 @@ function segmentsIntersect(
   p1: [number, number],
   p2: [number, number],
   q1: [number, number],
-  q2: [number, number]
+  q2: [number, number],
 ): boolean {
   const o1 = orientation(p1, p2, q1);
   const o2 = orientation(p1, p2, q2);
@@ -84,8 +84,7 @@ function pointInPolygon(pt: [number, number], ring: [number, number][]): boolean
     const xj = ring[j][0];
     const yj = ring[j][1];
     const intersect =
-      yi > pt[1] !== yj > pt[1] &&
-      pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi;
+      yi > pt[1] !== yj > pt[1] && pt[0] < ((xj - xi) * (pt[1] - yi)) / (yj - yi) + xi;
     if (intersect) inside = !inside;
   }
   return inside;
@@ -103,9 +102,7 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     }
   });
 
-  test("Scenario 1: Live Submission, Real Polling, and Map Retrieval", async ({
-    page,
-  }) => {
+  test("Scenario 1: Live Submission, Real Polling, and Map Retrieval", async ({ page }) => {
     // Navigate to trip route optimization page without mocking application APIs
     await page.goto(`/trips/${SAMPLE_TRIP_ID}/route`);
 
@@ -118,17 +115,17 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
       await generateBtn.click();
 
       // Verify polling progress banner appears with real solver status
-      await expect(
-        page.getByText("Solving Vehicle Routing Problem with Time Windows")
-      ).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText("Solving Vehicle Routing Problem with Time Windows")).toBeVisible(
+        { timeout: 15000 },
+      );
 
       // Verify URL has been updated with active job_id
       await expect(page).toHaveURL(/job_id=/);
 
       // Wait for real background execution, worker solving, and completion reconciliation
-      await expect(
-        page.getByText("Solving Vehicle Routing Problem with Time Windows")
-      ).toBeHidden({ timeout: 120000 });
+      await expect(page.getByText("Solving Vehicle Routing Problem with Time Windows")).toBeHidden({
+        timeout: 120000,
+      });
     }
 
     // Verify status changes to FEASIBLE or OPTIMAL
@@ -208,7 +205,7 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
 
     // Verify replan submission initiated
     await expect(
-      page.getByText(/Replan initiated|Solving Vehicle Routing Problem/i).first()
+      page.getByText(/Replan initiated|Solving Vehicle Routing Problem/i).first(),
     ).toBeVisible({ timeout: 15000 });
 
     // Wait for replan job to resolve and complete
@@ -251,12 +248,14 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
 
     // 4. Assert geometry avoids the changed-road closure polygon (full line-polygon intersection test)
     const closureFeatures = mapGeoJson.features.filter(
-      (f: any) => f.properties?.feature_type === "restriction"
+      (f: any) => f.properties?.feature_type === "restriction",
     );
     expect(closureFeatures.length).toBeGreaterThanOrEqual(1);
     const closureRing: [number, number][] = closureFeatures[0].geometry.coordinates[0];
 
-    const legFeatures = mapGeoJson.features.filter((f: any) => f.properties?.feature_type === "leg");
+    const legFeatures = mapGeoJson.features.filter(
+      (f: any) => f.properties?.feature_type === "leg",
+    );
     for (const leg of legFeatures) {
       const coords: [number, number][] = leg.geometry.coordinates;
 
@@ -279,12 +278,16 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
 
     // 5. Demonstrate that the closure changes the route
     // Fetch v1 route map GeoJSON for geometry comparison
-    const v1Res = await request.get(`${API_BASE}/api/v1/optimization/routes/${MULTIMODAL_ROUTE_ID}/map`);
+    const v1Res = await request.get(
+      `${API_BASE}/api/v1/optimization/routes/${MULTIMODAL_ROUTE_ID}/map`,
+    );
     expect(v1Res.status()).toBe(200);
     const v1GeoJson = await v1Res.json();
 
     // Query version history endpoint for v2
-    const versionsRes = await request.get(`${API_BASE}/api/v1/optimization/routes/${v2RouteId}/versions`);
+    const versionsRes = await request.get(
+      `${API_BASE}/api/v1/optimization/routes/${v2RouteId}/versions`,
+    );
     expect(versionsRes.status()).toBe(200);
     const versionsData = await versionsRes.json();
     expect(versionsData.versions.length).toBeGreaterThanOrEqual(2);
@@ -296,7 +299,9 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     expect(v2History.replan_origin).not.toBeNull();
 
     // Check driving legs in v2 have detour intermediate vertices adapting around the closure
-    const drivingLegs = legFeatures.filter((l: any) => l.properties?.transport_mode === "car_petrol");
+    const drivingLegs = legFeatures.filter(
+      (l: any) => l.properties?.transport_mode === "car_petrol",
+    );
     expect(drivingLegs.length).toBeGreaterThanOrEqual(1);
     expect(drivingLegs[0].geometry.coordinates.length).toBeGreaterThanOrEqual(3);
 
@@ -321,8 +326,8 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
         [ringP1[0] - 0.02, ringP1[1]],
         [ringP1[0] - 0.01, ringP1[1]],
         ringP1,
-        ringP2
-      )
+        ringP2,
+      ),
     ).toBe(false);
 
     expect(mapGeoJson.properties.total_distance_m).toBeGreaterThan(0);
@@ -387,9 +392,7 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
     await expect(page.getByText("Route Optimization Advisory")).toBeVisible();
 
     // Verify diagnostic explains dropped stop
-    await expect(
-      page.getByText(/Optional stop 'Tiger Hill Summit' dropped/i)
-    ).toBeVisible();
+    await expect(page.getByText(/Optional stop 'Tiger Hill Summit' dropped/i)).toBeVisible();
 
     // Verify surviving feasible legs are still rendered on map
     const map = page.locator(".leaflet-container");
@@ -410,13 +413,11 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
 
     // Verify Mathematical Hard Constraint Infeasibility diagnostics banner is displayed
     await expect(
-      page.getByText("Mathematical Hard Constraint Infeasibility").first()
+      page.getByText("Mathematical Hard Constraint Infeasibility").first(),
     ).toBeVisible();
 
     // Verify failure diagnostic explanation
-    await expect(
-      page.getByText(/NO_VERIFIED_PARKING_HUB/i).first()
-    ).toBeVisible();
+    await expect(page.getByText(/NO_VERIFIED_PARKING_HUB/i).first()).toBeVisible();
 
     // Verify zero legs are rendered on map canvas
     const paths = page.locator(".leaflet-pane svg path");
@@ -440,7 +441,7 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
         headers: {
           Authorization: `Bearer ${userBToken}`,
         },
-      }
+      },
     );
     expect(forbiddenMapRes.status()).toBe(403);
     const forbiddenMapData = await forbiddenMapRes.json();
@@ -459,7 +460,7 @@ test.describe("Route Optimization Full-Stack Browser Acceptance", () => {
           replan_at: new Date().toISOString(),
           completed_stop_ids: [],
         },
-      }
+      },
     );
     expect(forbiddenReplanRes.status()).toBe(403);
     const forbiddenReplanData = await forbiddenReplanRes.json();

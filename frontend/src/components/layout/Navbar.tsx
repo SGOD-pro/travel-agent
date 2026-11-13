@@ -5,13 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Compass, Menu, User, LogIn, LogOut } from "lucide-react";
 import { useAuth } from "@/components/providers/AuthProvider";
-import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export function Navbar() {
   const pathname = usePathname();
@@ -66,16 +60,11 @@ export function Navbar() {
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#15271F] border border-[#B7C9AD]/25 text-[#B7C9AD] group-hover:border-[#B7C9AD]/60 transition-colors">
               <Compass className="h-4 w-4" />
             </div>
-            <span className="text-lg font-bold tracking-tight text-[#F7F7F2]">
-              SWENA
-            </span>
+            <span className="text-lg font-bold tracking-tight text-[#F7F7F2]">SWENA</span>
           </Link>
 
           {/* Desktop Navigation Links (≥ 1024px) */}
-          <nav
-            className="hidden lg:flex items-center gap-7"
-            aria-label="Primary Navigation"
-          >
+          <nav className="hidden lg:flex items-center gap-7" aria-label="Primary Navigation">
             {navLinks.map((link) => {
               const isActive = pathname === link.href;
               return (

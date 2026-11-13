@@ -62,7 +62,7 @@ nHgZj5xosx4hbPtwQ++4wQ==
 function createSignedJwt(
   sub: string,
   email: string = "traveler@swena.internal",
-  signingKeyPem: string = TRUSTED_PRIVATE_KEY_PEM
+  signingKeyPem: string = TRUSTED_PRIVATE_KEY_PEM,
 ): string {
   const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
   const payload = Buffer.from(
@@ -74,7 +74,7 @@ function createSignedJwt(
       aud: "swena_travel_agent_client",
       exp: Math.floor(Date.now() / 1000) + 7200,
       iat: Math.floor(Date.now() / 1000),
-    })
+    }),
   ).toString("base64url");
 
   const signer = crypto.createSign("RSA-SHA256");
@@ -157,20 +157,17 @@ test.describe("Itinerary Proposal Live Backend Integration (Isolated PostgreSQL 
     // 3. Verify HTTP 403 Forbidden state rendered
     await expect(page.getByRole("heading", { name: "Access Forbidden" })).toBeVisible();
     await expect(
-      page.getByText("Strict tenant isolation protects this travel proposal.")
+      page.getByText("Strict tenant isolation protects this travel proposal."),
     ).toBeVisible();
     await expect(page.getByRole("link", { name: "Back to My Dashboard" })).toBeVisible();
   });
 
-  test("rejects forged token signature with HTTP 401 unauthorized", async ({
-    page,
-    context,
-  }) => {
+  test("rejects forged token signature with HTTP 401 unauthorized", async ({ page, context }) => {
     // 1. Authenticate with forged token signed by attacker key
     const forgedToken = createSignedJwt(
       USER_A_ID,
       "traveler@swena.internal",
-      ATTACKER_PRIVATE_KEY_PEM
+      ATTACKER_PRIVATE_KEY_PEM,
     );
     await context.addCookies([
       {
@@ -190,10 +187,7 @@ test.describe("Itinerary Proposal Live Backend Integration (Isolated PostgreSQL 
     await expect(page.getByRole("heading", { name: "Access Forbidden" })).toBeVisible();
   });
 
-  test("rejects missing authorization credentials in protected mode", async ({
-    page,
-    context,
-  }) => {
+  test("rejects missing authorization credentials in protected mode", async ({ page, context }) => {
     // 1. Clear any cookies
     await context.clearCookies();
 
@@ -204,4 +198,3 @@ test.describe("Itinerary Proposal Live Backend Integration (Isolated PostgreSQL 
     await expect(page.getByRole("heading", { name: "Access Forbidden" })).toBeVisible();
   });
 });
-

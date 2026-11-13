@@ -1,13 +1,5 @@
 import type { Metadata } from "next";
-import {
-  MessageSquare,
-  MapPin,
-  Mail,
-  ShieldCheck,
-  Clock,
-  Compass,
-  CheckCircle2,
-} from "lucide-react";
+import { MessageSquare, MapPin, Mail, ShieldCheck, Clock } from "lucide-react";
 import { ContactForm } from "@/components/marketing/ContactForm";
 
 export const metadata: Metadata = {
@@ -88,7 +80,8 @@ export default function ContactPage() {
           </h1>
 
           <p className="text-base sm:text-lg text-[#A9B8AD] leading-relaxed max-w-2xl mx-auto font-normal">
-            Whether you are designing a complex Western Ghats road circuit, verifying estate accommodation rates, or submitting toll plaza feedback, our team is here.
+            Whether you are designing a complex Western Ghats road circuit, verifying estate
+            accommodation rates, or submitting toll plaza feedback, our team is here.
           </p>
         </div>
       </section>
@@ -123,14 +116,24 @@ export default function ContactPage() {
               </div>
               <div className="space-y-2 text-sm text-[#A9B8AD]">
                 <div>
-                  <span className="text-xs text-[#6E8274] block">Traveler & Journey Concierge:</span>
-                  <a href="mailto:concierge@swena.travel" className="text-[#B7C9AD] hover:underline font-mono">
+                  <span className="text-xs text-[#6E8274] block">
+                    Traveler & Journey Concierge:
+                  </span>
+                  <a
+                    href="mailto:concierge@swena.travel"
+                    className="text-[#B7C9AD] hover:underline font-mono"
+                  >
                     concierge@swena.travel
                   </a>
                 </div>
                 <div>
-                  <span className="text-xs text-[#6E8274] block">Supplier Registry & Partnerships:</span>
-                  <a href="mailto:registry@swena.travel" className="text-[#B7C9AD] hover:underline font-mono">
+                  <span className="text-xs text-[#6E8274] block">
+                    Supplier Registry & Partnerships:
+                  </span>
+                  <a
+                    href="mailto:registry@swena.travel"
+                    className="text-[#B7C9AD] hover:underline font-mono"
+                  >
                     registry@swena.travel
                   </a>
                 </div>
@@ -145,7 +148,9 @@ export default function ContactPage() {
                 </h3>
               </div>
               <p className="text-xs sm:text-sm text-[#A9B8AD] leading-relaxed">
-                Are you a registered heritage homestay, licensed transport operator, or tourism authority? We verify all partner records through our typed evidence pipeline without charging listing fees.
+                Are you a registered heritage homestay, licensed transport operator, or tourism
+                authority? We verify all partner records through our typed evidence pipeline without
+                charging listing fees.
               </p>
             </div>
 
@@ -155,7 +160,8 @@ export default function ContactPage() {
                 <span>Response Commitment</span>
               </div>
               <p className="leading-relaxed">
-                We do not use synthetic AI chatbots that fabricate promises. Inquiries are handled directly by our engineering and concierge team within 24 to 48 business hours.
+                We do not use synthetic AI chatbots that fabricate promises. Inquiries are handled
+                directly by our engineering and concierge team within 24 to 48 business hours.
               </p>
             </div>
           </div>

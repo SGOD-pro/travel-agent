@@ -3,21 +3,11 @@
  * Conforms to spec 0006 (AC-5, AC-7, AC-8, AC-10).
  */
 
-export type RouteStatus =
-  | "OPTIMAL"
-  | "FEASIBLE"
-  | "PARTIAL"
-  | "INFEASIBLE"
-  | "UNAVAILABLE";
+export type RouteStatus = "OPTIMAL" | "FEASIBLE" | "PARTIAL" | "INFEASIBLE" | "UNAVAILABLE";
 
 export type TransportMode = "DRIVE" | "WALK" | "BICYCLE" | "TRANSIT";
 
-export type StopType =
-  | "ORIGIN"
-  | "DESTINATION"
-  | "WAYPOINT"
-  | "PARKING_HUB"
-  | "RETURN_ORIGIN";
+export type StopType = "ORIGIN" | "DESTINATION" | "WAYPOINT" | "PARKING_HUB" | "RETURN_ORIGIN";
 
 export interface GeoJsonGeometry {
   type: "Point" | "LineString" | "Polygon" | "MultiPolygon";

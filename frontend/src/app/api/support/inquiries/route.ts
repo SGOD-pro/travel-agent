@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     const errorMessage = err instanceof Error ? err.message : "Unknown network error";
     return NextResponse.json(
       { error: "Concierge backend unreachable", detail: errorMessage },
-      { status: 503 }
+      { status: 503 },
     );
   }
 }

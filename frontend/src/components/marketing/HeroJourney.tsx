@@ -13,9 +13,30 @@ gsap.registerPlugin(ScrollTrigger);
 
 const ROUTE_STOPS = [
   { name: "Bengaluru", distance: "0 km", elevation: "920m", role: "Origin Hub", x: 40, y: 40 },
-  { name: "Mysuru", distance: "145 km", elevation: "763m", role: "Palace & Heritage", x: 100, y: 120 },
-  { name: "Coorg (Madikeri)", distance: "260 km", elevation: "1,150m", role: "Coffee Country", x: 190, y: 200 },
-  { name: "Wayanad", distance: "340 km", elevation: "950m", role: "Western Ghats Pass", x: 260, y: 290 },
+  {
+    name: "Mysuru",
+    distance: "145 km",
+    elevation: "763m",
+    role: "Palace & Heritage",
+    x: 100,
+    y: 120,
+  },
+  {
+    name: "Coorg (Madikeri)",
+    distance: "260 km",
+    elevation: "1,150m",
+    role: "Coffee Country",
+    x: 190,
+    y: 200,
+  },
+  {
+    name: "Wayanad",
+    distance: "340 km",
+    elevation: "950m",
+    role: "Western Ghats Pass",
+    x: 260,
+    y: 290,
+  },
 ];
 
 export function HeroJourney() {
@@ -37,7 +58,8 @@ export function HeroJourney() {
       const routeCard = routeCardRef.current;
       const svgPath = svgPathRef.current;
 
-      if (!container || !stickyStage || !heroImageWrap || !heroContent || !paperBg || !routeCard) return;
+      if (!container || !stickyStage || !heroImageWrap || !heroContent || !paperBg || !routeCard)
+        return;
 
       const mm = gsap.matchMedia();
 
@@ -76,7 +98,7 @@ export function HeroJourney() {
             duration: 0.25,
             ease: "power1.inOut",
           },
-          0.08
+          0.08,
         );
 
         tl.to(
@@ -86,7 +108,7 @@ export function HeroJourney() {
             duration: 0.35,
             ease: "power1.inOut",
           },
-          0.15
+          0.15,
         );
 
         // 0.20 -> 0.60: Image transitions from full-bleed to framed card on left
@@ -102,7 +124,7 @@ export function HeroJourney() {
             duration: 0.45,
             ease: "power2.inOut",
           },
-          0.18
+          0.18,
         );
 
         // 0.45 -> 0.75: Route card enters from the right
@@ -114,7 +136,7 @@ export function HeroJourney() {
             duration: 0.3,
             ease: "power2.out",
           },
-          0.45
+          0.45,
         );
 
         // 0.50 -> 0.85: SVG path draws through the stops
@@ -126,7 +148,7 @@ export function HeroJourney() {
               duration: 0.35,
               ease: "none",
             },
-            0.5
+            0.5,
           );
         }
 
@@ -135,7 +157,7 @@ export function HeroJourney() {
           ".route-stop-node",
           { autoAlpha: 0, scale: 0.7 },
           { autoAlpha: 1, scale: 1, stagger: 0.08, duration: 0.25, ease: "back.out(1.5)" },
-          0.65
+          0.65,
         );
 
         return () => {
@@ -145,7 +167,7 @@ export function HeroJourney() {
 
       return () => mm.revert();
     },
-    { scope: containerRef }
+    { scope: containerRef },
   );
 
   return (
@@ -215,7 +237,8 @@ export function HeroJourney() {
 
             {/* Supporting Copy */}
             <p className="text-base sm:text-xl text-[#A9B8AD] max-w-xl font-normal leading-relaxed mb-8">
-              Bring your driving route, daily stops, and transparent budget assumptions into one editable trip plan.
+              Bring your driving route, daily stops, and transparent budget assumptions into one
+              editable trip plan.
             </p>
 
             {/* Actions */}
@@ -263,7 +286,8 @@ export function HeroJourney() {
               Bengaluru to Wayanad
             </h2>
             <p className="text-xs text-[#142820]/80 leading-relaxed max-w-sm font-sans">
-              From the Deccan plateau down through Mysore’s heritage boulevards, ascending into the spice ridges and cool mist of Coorg and Wayanad.
+              From the Deccan plateau down through Mysore’s heritage boulevards, ascending into the
+              spice ridges and cool mist of Coorg and Wayanad.
             </p>
           </div>
 
@@ -293,9 +317,16 @@ export function HeroJourney() {
               />
 
               {/* Stops Nodes */}
-              {ROUTE_STOPS.map((stop, idx) => (
+              {ROUTE_STOPS.map((stop) => (
                 <g key={stop.name} className="route-stop-node">
-                  <circle cx={stop.x} cy={stop.y} r="8" fill="#F3EFE6" stroke="#C56C4D" strokeWidth="3" />
+                  <circle
+                    cx={stop.x}
+                    cy={stop.y}
+                    r="8"
+                    fill="#F3EFE6"
+                    stroke="#C56C4D"
+                    strokeWidth="3"
+                  />
                   <circle cx={stop.x} cy={stop.y} r="3" fill="#142820" />
                   <text
                     x={stop.x + 14}
@@ -344,15 +375,14 @@ export function HeroJourney() {
             <Sparkles className="h-4 w-4" />
             <span>Featured Corridor</span>
           </div>
-          <h2 className="font-serif text-3xl font-bold text-[#142820]">
-            Bengaluru to Wayanad
-          </h2>
+          <h2 className="font-serif text-3xl font-bold text-[#142820]">Bengaluru to Wayanad</h2>
           <p className="text-sm text-[#142820]/80 leading-relaxed font-sans">
-            340 km through the Western Ghats. Elevation climbs from 920m in Bengaluru to 1,150m across the coffee ridges of Coorg.
+            340 km through the Western Ghats. Elevation climbs from 920m in Bengaluru to 1,150m
+            across the coffee ridges of Coorg.
           </p>
 
           <div className="space-y-2 pt-2">
-            {ROUTE_STOPS.map((s, idx) => (
+            {ROUTE_STOPS.map((s) => (
               <div
                 key={s.name}
                 className="flex items-center justify-between p-3 rounded-xl bg-white border border-[#E8E1D4] text-xs"
@@ -361,7 +391,9 @@ export function HeroJourney() {
                   <span className="h-2 w-2 rounded-full bg-[#C56C4D]" />
                   <span className="font-bold text-[#142820]">{s.name}</span>
                 </div>
-                <span className="font-mono text-[#142820]/70">{s.distance} • {s.elevation}</span>
+                <span className="font-mono text-[#142820]/70">
+                  {s.distance} • {s.elevation}
+                </span>
               </div>
             ))}
           </div>

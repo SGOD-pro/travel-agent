@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-export function proxy(request: NextRequest) {
-  const { pathname, search } = request.nextUrl;
-
+export function proxy(_request: NextRequest) {
   // Temporarily disabled auth protection for local development (using static user and ID)
   // const isProtectedRoute = pathname.startsWith("/dashboard");
   // if (isProtectedRoute) {
@@ -21,8 +19,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    "/dashboard",
-    "/dashboard/:path*",
-  ],
+  matcher: ["/dashboard", "/dashboard/:path*"],
 };

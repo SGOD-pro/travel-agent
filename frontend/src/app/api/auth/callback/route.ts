@@ -12,14 +12,12 @@ export async function GET(request: Request) {
   if (error) {
     const message = errorDescription || error;
     return NextResponse.redirect(
-      new URL(`/login?error=${encodeURIComponent(message)}`, request.url)
+      new URL(`/login?error=${encodeURIComponent(message)}`, request.url),
     );
   }
 
   if (!code) {
-    return NextResponse.redirect(
-      new URL("/login?error=missing_authorization_code", request.url)
-    );
+    return NextResponse.redirect(new URL("/login?error=missing_authorization_code", request.url));
   }
 
   // Retrieve PKCE verifier from cookies
@@ -34,9 +32,7 @@ export async function GET(request: Request) {
 
   // Verify CSRF state
   if (storedState && state !== storedState) {
-    return NextResponse.redirect(
-      new URL("/login?error=state_mismatch_csrf_detected", request.url)
-    );
+    return NextResponse.redirect(new URL("/login?error=state_mismatch_csrf_detected", request.url));
   }
 
   const authIssuer = process.env.AUTH_ISSUER;
@@ -49,8 +45,8 @@ export async function GET(request: Request) {
     return NextResponse.redirect(
       new URL(
         "/login?error=oauth_unconfigured&message=AUTH_ISSUER+or+CLIENT_ID+not+set+in+env",
-        request.url
-      )
+        request.url,
+      ),
     );
   }
 
@@ -60,7 +56,8 @@ export async function GET(request: Request) {
     };
 
     if (clientSecret) {
-      headers["Authorization"] = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
+      headers["Authorization"] =
+        `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
     }
 
     const bodyParams = new URLSearchParams({
@@ -90,7 +87,10 @@ export async function GET(request: Request) {
         // use raw text
       }
       return NextResponse.redirect(
-        new URL(`/login?error=token_exchange_failed&details=${encodeURIComponent(errorMsg)}`, request.url)
+        new URL(
+          `/login?error=token_exchange_failed&details=${encodeURIComponent(errorMsg)}`,
+          request.url,
+        ),
       );
     }
 
@@ -98,9 +98,7 @@ export async function GET(request: Request) {
     const accessToken = tokens.access_token;
 
     if (!accessToken) {
-      return NextResponse.redirect(
-        new URL("/login?error=no_access_token_returned", request.url)
-      );
+      return NextResponse.redirect(new URL("/login?error=no_access_token_returned", request.url));
     }
 
     const response = NextResponse.redirect(new URL("/dashboard", request.url));
@@ -124,8 +122,8 @@ export async function GET(request: Request) {
     return NextResponse.redirect(
       new URL(
         `/login?error=idp_connection_error&details=${encodeURIComponent(errorMsg)}`,
-        request.url
-      )
+        request.url,
+      ),
     );
   }
 }
