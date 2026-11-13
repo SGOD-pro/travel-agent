@@ -163,7 +163,7 @@ uv run alembic upgrade head
 
 ## Gotchas
 
-- The startup command in `start.sh` references `travel.runtime.fastapi.app:app`, which does not exist in `src`. Use `functions.api.app:app` or `main.py`.
+- The API server is `functions.api.app:app` in `src` (start via `./start.sh backend`, `make backend-dev`, or `main.py`).
 - Budget summaries marked complete require all line items to have known amounts. A single unknown item marks the whole budget incomplete.
 - Do not import worker implementations across different function folders.
 

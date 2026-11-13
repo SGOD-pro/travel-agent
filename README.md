@@ -1,9 +1,9 @@
 # SWENA — Sovereign Travel Intelligence Platform
 
-> **Status:** Active Development & Stabilization (Milestone C1).  
+> **Status:** Active Development (spec 0007 — trip planner end-to-end).  
 > **Tagline:** *"We gave you memory."*  
 > **Repository:** `SGOD-pro/travel-agent`  
-> **Architecture:** Next.js 16 (App Router) + FastAPI (Modular Monolith) + PostgreSQL 16 / PostGIS (Aiven) + Upstash Redis
+> **Architecture:** Next.js 16 (App Router) + FastAPI (Modular Monolith) + PostgreSQL 16 / PostGIS + Redis
 
 ---
 
@@ -13,10 +13,10 @@ SWENA is a deterministic, India-first travel planning, comparison, discovery, an
 
 ### Core Boundaries & Invariants
 1. **Zero Hallucination:** Zero fabricated prices, fake seat availability, fictitious flight schedules, or synthetic booking confirmations.
-2. **Deterministic Financial Math:** All money uses `Decimal`. Unknown highway tolls and entry permits are preserved as explicit unknowns; they are never coerced to ₹0 to claim false budget compliance.
+2. **Deterministic Financial Math:** All money uses Decimal. Unknown highway tolls and entry permits are preserved as explicit unknowns; they are never coerced to ₹0 to claim false budget compliance.
 3. **Canonical Authority:** PostgreSQL is the single source of truth for trips, versions, and jobs. The backend server holds mathematical and scheduling authority; frontend consumes server plans directly.
 4. **Non-Custodial Handoff:** SWENA operates zero internal checkout, holds zero customer payments, and creates zero bookings. Fulfillment transfers travelers directly to official merchant portals.
-5. **Fail-Closed Security:** User authorization is derived strictly from cryptographically verified Bearer tokens issued by [SWYRA Auth](https://github.com/SGOD-pro/OAuth2.1). Client-supplied `owner_id` fields are rejected.
+5. **Fail-Closed Security:** User authorization is derived strictly from cryptographically verified Bearer tokens issued by [SWYRA Auth](https://github.com/SGOD-pro/OAuth2.1). Client-supplied owner_id fields are rejected.
 
 ---
 
@@ -24,26 +24,28 @@ SWENA is a deterministic, India-first travel planning, comparison, discovery, an
 
 | Subsystem / Capability | Implementation Reality | Evidence & Test Verification | Audit Status |
 | :--- | :--- | :--- | :--- |
-| **Financial Arithmetic** | Strict Decimal math, currency checking, zero-coercion unquoted toll preservation. | `backend/tests/unit/test_money.py` (8 passing unit tests). | `VERIFIED_LOCAL` |
-| **Road Transit Math** | Fuel volume/cost formulas based on distance, mileage, and fuel price. | `backend/tests/unit/test_routing.py` (2 passing unit tests). | `VERIFIED_LOCAL` |
-| **PDF Itinerary Export** | ReportLab publication generator with versioning, disclaimers, and S3 artifact tracking. | `backend/tests/unit/test_pdf_export.py`, `test_export_api.py`. | `VERIFIED_LOCAL` |
-| **Constraint Solver** | OR-Tools TSP scheduler with monotonic timestamp sequencing. | `backend/tests/unit/test_scheduler.py` (Passes sequencing; time windows in progress). | `PARTIAL` |
-| **Next.js Frontend & UI** | Next.js 16 (Turbopack), Tailwind v4, SWENA 2.0 Forest Night theme, GSAP 3D corridor cards. | `frontend/e2e/app.spec.ts` (Playwright suite passes). | `VERIFIED_LOCAL` |
-| **Route Protection Proxy** | Next.js 16 `src/proxy.ts` intercepting `/dashboard` routes when session cookie is absent. | `frontend/e2e/app.spec.ts` (Test 2 passes). | `VERIFIED_LOCAL` |
-| **OAuth 2.1 BFF Flow** | Next.js BFF handlers (`/api/auth/*`), PKCE S256, HttpOnly cookies, fail-closed diagnostics. | Handlers implemented; cryptographic JWKS signature validation in progress (`C1-T01`). | `PARTIAL` |
-| **Server Ownership Gate** | Deriving user ID from token; multi-tenant trip isolation. | Endpoints currently accept client `owner_id`; authorization enforcement underway (`C1-T02`). | `PARTIAL` |
-| **Public Itinerary Sharing** | Dynamic route `/trips/[id]` and mobile QR code generation. | Route currently renders static Coorg fixture; dynamic database projection underway (`C5-T01`). | `DEMO_ONLY` |
-| **Benchmark Suite (50 Cases)**| 50-scenario runner in `backend/src/travel/benchmarks/runner.py`. | Currently runs single synthetic trip loop; scenario-specific invariant assertions underway (`C3-T04`).| `PARTIAL` |
-| **External Live Providers** | Adapters for IRCTC, Mapbox, Google Places, SerpAPI. | All external providers disabled in `docs/PROVIDER-REGISTRY.json` pending live licensing. | `DISABLED_UNVERIFIED` |
+| **Durable Execution Engine** | PostgreSQL persistence, worker lease fencing, transactional outbox relay, crash recovery, and background daemon supervision. | `backend/tests/unit/test_daemon_supervision.py`, integration suite (spec 0001). | `VERIFIED_LOCAL` |
+| **Evidence Collection** | SerpAPI search, permitted page extraction, SSRF defense, canonical place resolution, deterministic claim policy engine. | `backend/tests/unit/test_serpapi_adapter.py`, `backend/tests/unit/test_ssrf_protection.py`, `backend/tests/unit/test_claim_policy_engine_unit.py`, `backend/tests/unit/test_places_resolution_unit.py`. | `VERIFIED_LOCAL` |
+| **Browser Escalation** | Fenced dynamic rendering for JS-heavy pages with immutable observation persistence. | `backend/tests/unit/test_browser_escalation_slice2.py`, `backend/tests/unit/test_browser_network_and_driver_mocked.py`. | `VERIFIED_LOCAL` |
+| **Constraint Solver** | OR-Tools stop-order solving inside the route optimizer state machine. | `backend/tests/unit/test_route_optimizer_slice1.py` and slice 3–7 suites. | `VERIFIED_LOCAL` |
+| **Multi-modal Route Math** | Fuel volume/cost, rail/bus/air leg costing, restriction-aware polygons (PostGIS). | `backend/tests/unit/test_route_optimizer_slice5.py`, `backend/tests/integration/test_canonical_places_spatial.py`. | `VERIFIED_LOCAL` |
+| **PDF Itinerary Export** | ReportLab publication generator with versioning and disclaimers. | `backend/tests/unit/test_route_optimizer_slice7.py`. | `VERIFIED_LOCAL` |
+| **Itinerary API & Ownership** | Owner-authorized itinerary endpoints and Next.js proposal view (spec 0007 slice 6). | `backend/tests/unit/test_trip_itinerary_api_slice6.py`, `frontend/e2e/itinerary-view.spec.ts`. | `VERIFIED_LOCAL` |
+| **Next.js Frontend & UI** | Next.js 16 (Turbopack), Tailwind v4, GSAP scroll choreography, Leaflet route maps. | `frontend/e2e/route-optimization-e2e.spec.ts` and itinerary suites. | `VERIFIED_LOCAL` |
+| **Route Protection Proxy** | frontend/src/proxy.ts intercepts /dashboard routes when session cookie is absent. | Covered by the frontend E2E suite. | `VERIFIED_LOCAL` |
+| **OAuth 2.1 BFF Flow** | Next.js BFF handlers (frontend/src/app/api/auth/*), PKCE S256, HttpOnly cookies. | `backend/tests/unit/test_auth_real.py`; JWKS signature validation in progress. | `PARTIAL` |
+| **Public Itinerary Sharing** | Dynamic route /trips/[id] and mobile QR code generation. | Route renders fixture-backed data; database projection in progress. | `DEMO_ONLY` |
+| **Benchmark Suite** | Scenario runner at backend/src/functions/api/benchmarks/runner.py driven by tests/evaluations/cases.json. | Currently runs a synthetic trip loop; per-scenario assertions underway. | `PARTIAL` |
+| **External Live Providers** | Adapters for SerpAPI, Open-Meteo, AWS Bedrock, and official booking portals. | Fixture-backed adapters tested; live credentials not provisioned. | `DISABLED_UNVERIFIED` |
 
 ---
 
 ## 3. Quick Start & Setup Instructions
 
 ### 3.1 Prerequisites
-* **Python:** 3.12+ with [`uv`](https://github.com/astral-sh/uv) package manager installed.
-* **Node.js:** 20+ with `npm` installed.
-* **Database (Optional for pure unit tests; required for integration):** Docker with PostgreSQL 16 (PostGIS) and Redis.
+- **Python:** 3.12+ with [uv](https://github.com/astral-sh/uv) package manager installed.
+- **Node.js:** 20+ with npm installed.
+- **Database (Optional for pure unit tests; required for integration):** Docker with PostgreSQL 16 (PostGIS) and Redis 7.
 
 ### 3.2 Environment Configuration
 ```bash
@@ -62,14 +64,19 @@ cp frontend/.env.example frontend/.env.local
 make run-all
 
 # Option 2: Run servers individually:
-./start.sh backend    # FastAPI at http://localhost:8000 (Swagger: /docs)
-./start.sh frontend   # Next.js at http://localhost:3000
+./start.sh backend # FastAPI at http://localhost:8000 (Swagger: /docs)
+./start.sh frontend # Next.js at http://localhost:3000
+```
+
+### 3.4 Local Infrastructure
+```bash
+make local-up # PostgreSQL 16 (PostGIS) + Redis 7 via deployment/local/docker-compose.yml
+make backend-migrate
 ```
 
 ---
 
 ## 4. Verification & Testing Commands
-
 ```bash
 # 1. Run the master verification pipeline (Lint + Mypy + Pytest + Next.js Build + Playwright)
 ./verify.sh
@@ -83,24 +90,40 @@ cd frontend && npm run build && npx playwright test
 
 ---
 
-## 5. Documentation Directory & Source Precedence
+## 5. Documentation Directory
+All documentation lives under [docs/](docs/). Read in this order:
 
-Follow the documentation hierarchy in sequence:
-1. **Audit & Reality:** [`docs/IMPLEMENTATION-AUDIT.md`](docs/IMPLEMENTATION-AUDIT.md) — Current code reality, defects, and traceability.
-2. **Product Requirements:** [`docs/PRD.md`](docs/PRD.md) — User requirements P01–P18, launch boundaries, and non-goals.
-3. **End-to-End Journeys:** [`docs/END-TO-END-JOURNEYS.md`](docs/END-TO-END-JOURNEYS.md) — Screen-to-server contracts for J01 through J15.
-4. **Completion Plan:** [`docs/PRODUCTION-COMPLETION-PLAN.md`](docs/PRODUCTION-COMPLETION-PLAN.md) — Atomic vertical backlog (Milestones C0–C8).
-5. **Visual & Motion Spec:** [`docs/VISUALIZATION-AND-MOTION-SPEC.md`](docs/VISUALIZATION-AND-MOTION-SPEC.md) — GSAP motion, responsive matrix, accessibility.
-6. **Testing & Release:** [`docs/TEST-AND-RELEASE-PLAN.md`](docs/TEST-AND-RELEASE-PLAN.md) — Invariants, 50 benchmark cases, release gates.
-7. **Operations & Incident Response:** [`docs/OPERATIONS-RUNBOOK.md`](docs/OPERATIONS-RUNBOOK.md) — Triage, recovery protocols, and support pipelines.
-8. **Agent Protocol:** [`GEMINI.md`](GEMINI.md) and [`.agent/RULES.md`](.agent/RULES.md) — Rules of engagement for AI coding assistants.
+| Document | Purpose |
+| :--- | :--- |
+| [docs/PROJECT.md](docs/PROJECT.md) | Project baseline and current positioning. |
+| [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md) | User behavior and acceptance requirements. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Component ownership, module boundaries, folder layout. |
+| [docs/TECHNICAL_SPEC.md](docs/TECHNICAL_SPEC.md) | Implementation-level technical specification. |
+| [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | How to build, test, and operate one vertical slice. |
+| [docs/DIAGRAMS.md](docs/DIAGRAMS.md) | Workflow diagrams and development debug map. |
+| [docs/UI-UX-DESIGN-BRIEF.md](docs/UI-UX-DESIGN-BRIEF.md) | SWENA sensory design system and motion spec. |
+| [docs/reference/API.md](docs/reference/API.md) | Public HTTP contract. |
+| [docs/reference/DATABASE.md](docs/reference/DATABASE.md) | Persistence and schema reference. |
+| [docs/scope/scope.md](docs/scope/scope.md) | Launch scope and non-goals. |
+
+### Numbered Specs
+Vertical slice specifications, each with index, rationale, and verification notes:
+- [docs/specs/0001-orchestrator-execution-engine.md](docs/specs/0001-orchestrator-execution-engine.md) — durable execution engine
+- [docs/specs/0002-evidence-collection-and-verification.md](docs/specs/0002-evidence-collection-and-verification.md) — evidence collection & claim verification
+- [docs/specs/0003-browser-escalation.md](docs/specs/0003-browser-escalation.md) — browser escalation worker
+- [docs/specs/0004-remote-laya-decision-router.md](docs/specs/0004-remote-laya-decision-router.md) — LAYA decision router
+- [docs/specs/0005-route-optimizer.md](docs/specs/0005-route-optimizer.md) — multi-modal route optimizer
+- [docs/specs/0006-route-graph-and-map-e2e.md](docs/specs/0006-route-graph-and-map-e2e.md) — route graph & map end-to-end
+- [docs/specs/0007-trip-planner-e2e/index.md](docs/specs/0007-trip-planner-e2e/index.md) — trip planner end-to-end (in progress)
+
+Dated slice reviews live in [docs/reviews/](docs/reviews/); superseded historical documents are in [docs/archive/](docs/archive/) and [archive/](archive/) (see [archive/MANIFEST.md](archive/MANIFEST.md)).
 
 ### Source Precedence
-Explicit user decisions in [`.agent/DECISIONS.md`](.agent/DECISIONS.md) supersede all historical documents (including the historical `multi_agent_travel_planner_docs.pdf`). Supabase, Stripe, internal checkout, and universal price locks are explicitly superseded.
+Explicit user decisions recorded in reviews supersede older historical documents (including the historical `multi_agent_travel_planner_docs.pdf`). Supabase, Stripe, internal checkout, and universal price locks are explicitly superseded.
 
 ---
 
-## 6. Current Implementation Task
-
-* **Current Milestone:** **Milestone C1 — Identity, Ownership & Data Integrity**
-* **Active Task:** **`C1-T01`** (Cryptographically Validated Identity & Fail-Closed Session Boundary).
+## 6. Current Implementation Focus
+- **Active spec:** [docs/specs/0007-trip-planner-e2e/index.md](docs/specs/0007-trip-planner-e2e/index.md) — trip planner end-to-end (itinerary API, proposal view, invariant badges).
+- **Changelog:** See [CHANGELOG.md](CHANGELOG.md) for the complete, dated delivery log per spec.
+- **AI assistant rules of engagement:** [AGENTS.md](AGENTS.md) (loaded by [CLAUDE.md](CLAUDE.md)).
