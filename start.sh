@@ -26,7 +26,7 @@ NC='\033[0m' # No Color
 run_backend() {
     echo -e "${CYAN}[SWENA Backend]${NC} Initializing FastAPI on http://0.0.0.0:8000 (uv + uvicorn)..."
     cd "$SCRIPT_DIR/backend"
-    exec uv run uvicorn travel.runtime.fastapi.app:app --host 0.0.0.0 --port 8000 --reload
+    exec uv run uvicorn functions.api.app:app --host 0.0.0.0 --port 8000 --reload
 }
 
 run_frontend() {
@@ -57,7 +57,7 @@ case "$MODE" in
         # Run backend in background
         (
             cd "$SCRIPT_DIR/backend"
-            uv run uvicorn travel.runtime.fastapi.app:app --host 0.0.0.0 --port 8000 --reload
+            uv run uvicorn functions.api.app:app --host 0.0.0.0 --port 8000 --reload
         ) &
 
         # Run frontend in background

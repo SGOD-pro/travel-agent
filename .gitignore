@@ -1,14 +1,52 @@
-.mypy_cache
-.venv
-.pytest_cache
-.ruff_cache
-.vscode
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.eslintcache
+.prettier-cache
+
+# --- Playwright ---
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# --- Environment & secrets ---
 .env
-node_modules
-.next
-.agents
-dist
-*.pyc
-__pycache__
-.aws-sam
-build
+.env.*
+!.env.example
+!.env.local.example
+
+# --- Build & deploy artifacts ---
+dist/
+build/
+.aws-sam/
+terraform/.terraform/
+
+# --- Runtime outputs & traces ---
+live_e2e_trace.json
+*.log
+
+# --- Editors & OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- AI assistant local state ---
+.agents/
+.claude/
