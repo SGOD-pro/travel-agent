@@ -233,7 +233,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 6 REST API updates and Next.js frontend itinerary view integration: [2026-11-03-main.md](../reviews/2026-11-03-main.md) · [2026-11-04-main.md](../reviews/2026-11-04-main.md) (Approve)
    - [x] Live provider wiring for Bedrock LLM research and ranking and Open Meteo weather graph integration: [2026-11-05-main.md](../reviews/2026-11-05-main.md) (Approve)
    - [x] Slice 8A bounded search backed vertical slice: [2026-11-07-main.md](../reviews/2026-11-07-main.md) (Approve)
-   - [x] Non-hallucinatory search query planning, place discovery via SerpAPI with real geolocation coordinates, multi-site consensus ranking, and API timing middleware: [2026-11-14-main.md](../reviews/2026-11-14-main.md) (Changes requested)
+   - [x] Non-hallucinatory search query planning, place discovery via SerpAPI with real geolocation coordinates, multi-site consensus ranking, and API timing middleware: [2026-11-14-main.md](../reviews/2026-11-14-main.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 
