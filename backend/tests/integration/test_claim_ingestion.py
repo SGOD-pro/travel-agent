@@ -1,4 +1,17 @@
-"""Integration tests for claim ingestion service conforming to spec 0007 AC-13 and AC-14."""
+"""Integration tests for claim ingestion service conforming to spec 0007 AC-13 and AC-14.
+
+Verifies:
+1. Genuine supporting evidence with independent coordinates promotes to VERIFIED existence.
+2. Name in URL only does not match or promote candidate existence.
+3. Unrelated nearby coordinates with different place name do not match.
+4. Same-name places located far apart (> 1.0 km) do not match.
+5. Casual passing mentions without coordinates or structured metadata do not match.
+6. Observations without independent coordinates do not use candidate's own coordinates as proof,
+   keeping the candidate UNVERIFIED in editorial recommendations.
+7. Unavailable, blocked, or error observations are skipped.
+8. Accommodation extractions strictly preserve INDICATIVE_SEARCH classification.
+9. Claim ingestion is idempotent across repeated invocations.
+"""
 
 from __future__ import annotations
 
@@ -70,34 +83,41 @@ class TestClaimIngestionIntegration:
     """Tests that claims are correctly derived from collected observations and verified by the eligibility gate."""
 
     async def test_ingest_claims_from_matching_observations(self, session_factory: Any) -> None:
+        """Genuine supporting observation with independent coordinates promotes to VERIFIED existence."""
         async with session_factory() as session:
             exec_id, owner_id = await _create_test_execution(session)
             now = datetime.now(UTC)
 
-            # Insert a genuine collected source observation
+            # Insert a genuine collected source observation with independent coordinates
             obs_id = uuid.uuid4()
             obs = SourceObservationModel(
                 id=obs_id,
                 execution_id=exec_id,
-                source_url="https://wbtourism.gov.in/victoria-memorial",
-                canonical_url="https://wbtourism.gov.in/victoria-memorial",
+                source_url="https://wbtourism.gov.in/belur-math",
+                canonical_url="https://wbtourism.gov.in/belur-math",
                 publisher="West Bengal Tourism",
                 content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
                 retrieved_at=now,
                 published_at=now - timedelta(days=10),
-                excerpt_text="Victoria Memorial is a grand marble building in Kolkata open daily from 10:00 to 17:00.",
+                excerpt_text="Belur Math is a historic temple and monastery in Kolkata open daily from 10:00 to 17:00.",
                 excerpt_locator="p.details",
                 extraction_method="STATIC_SCRAPLING",
-                artifact_ref={"category": "attraction", "status": "AVAILABLE"},
+                artifact_ref={
+                    "category": "attraction",
+                    "status": "AVAILABLE",
+                    "title": "Belur Math",
+                    "latitude": 22.6322,
+                    "longitude": 88.3564,
+                },
                 created_at=now,
             )
             session.add(obs)
             await session.commit()
 
             candidate = RegisteredCandidate(
-                primary_name="Victoria Memorial",
+                primary_name="Belur Math",
                 category="attraction",
-                point=CoordinatePoint(lat=22.5448, lng=88.3426),
+                point=CoordinatePoint(lat=22.6322, lng=88.3564),
             )
 
             # Ingest claims from observation
@@ -111,9 +131,11 @@ class TestClaimIngestionIntegration:
 
             assert len(claims) == 1
             claim = claims[0]
-            assert claim.subject_id == "victoria memorial"
+            assert claim.subject_id == "belur math"
             assert claim.category == ClaimCategory.ATTRACTION.value
             assert claim.verification == VerificationStatus.VERIFIED
+            # Verified coordinates derived from observation, not candidate
+            assert claim.geographic_scope == {"lat": 22.6322, "lng": 88.3564}
 
             # Assert claim-evidence link
             link_stmt = select(ClaimEvidenceModel).where(ClaimEvidenceModel.claim_id == claim.id)
@@ -131,13 +153,312 @@ class TestClaimIngestionIntegration:
             )
 
             assert len(report.eligible_stops) == 1
-            assert report.eligible_stops[0].primary_name == "Victoria Memorial"
+            assert report.eligible_stops[0].primary_name == "Belur Math"
             assert report.eligible_stops[0].existence_status == CandidateExistenceStatus.VERIFIED
             assert len(report.editorial_recommendations) == 0
+
+    async def test_same_name_places_far_apart_stays_unverified(self, session_factory: Any) -> None:
+        """Observation with matching name but coordinates far apart (> 1.0 km) must not verify candidate."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Observation for a Kali Temple located in Chennai (13.0827, 80.2707)
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://tamilnadutourism.tn.gov.in/kali-temple",
+                canonical_url="https://tamilnadutourism.tn.gov.in/kali-temple",
+                publisher="Tamil Nadu Tourism",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Kali Temple is a peaceful place of worship in Chennai.",
+                excerpt_locator="div.content",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "attraction",
+                    "status": "AVAILABLE",
+                    "title": "Kali Temple",
+                    "latitude": 13.0827,
+                    "longitude": 80.2707,
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            # Candidate is in Kolkata (22.5000, 88.3000), over 1300 km away
+            candidate = RegisteredCandidate(
+                primary_name="Kali Temple",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Must NOT create a claim or support link for the Kolkata candidate
+            assert len(claims) == 0
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
+
+    async def test_nearby_unrelated_places_stays_unverified(self, session_factory: Any) -> None:
+        """Observation with coordinates nearby (< 1.0 km) but different name must not verify candidate."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Observation for Sharma Sweets located near Victoria Memorial (~30m away)
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://kolkatafoodies.com/sharma-sweets",
+                canonical_url="https://kolkatafoodies.com/sharma-sweets",
+                publisher="Kolkata Foodies",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Place: Sharma Sweets | Authentic Bengali sweets and hot samosas.",
+                excerpt_locator="serpapi:places[0]",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={
+                    "category": "restaurant",
+                    "status": "AVAILABLE",
+                    "title": "Sharma Sweets",
+                    "latitude": 22.5450,
+                    "longitude": 88.3428,
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            # Candidate is Victoria Memorial
+            candidate = RegisteredCandidate(
+                primary_name="Victoria Memorial",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5448, lng=88.3426),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Unrelated nearby place coordinates must not create an existence claim for candidate
+            assert len(claims) == 0
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
+
+    async def test_casual_name_mention_stays_unverified(self, session_factory: Any) -> None:
+        """A casual passing mention in travel prose without coordinates must not verify existence."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Observation merely mentions name casually in passing
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://travel-blog.com/kolkata-walk",
+                canonical_url="https://travel-blog.com/kolkata-walk",
+                publisher="Travel Blog",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="We walked past Casual Name Mention Spot on our way to the hotel.",
+                excerpt_locator="p.travelogue",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={"category": "attraction", "status": "AVAILABLE"},
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            candidate = RegisteredCandidate(
+                primary_name="Casual Name Mention Spot",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Casual mention does not promote to a SUPPORTS existence claim
+            assert len(claims) == 0
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
+
+    async def test_url_name_mention_only_stays_unverified(self, session_factory: Any) -> None:
+        """A candidate name in a URL or domain without substantive content does not verify existence."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # URL contains name, but content is generic travel prose without place entity
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://example.com/urlmatchplace/details",
+                canonical_url="https://example.com/urlmatchplace/details",
+                publisher="Example Publisher",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Generic travel article containing general travel recommendations.",
+                excerpt_locator="body",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={"category": "attraction", "status": "AVAILABLE"},
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            candidate = RegisteredCandidate(
+                primary_name="Url Match Place",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Name in URL alone must never match or create claims
+            assert len(claims) == 0
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
+
+    async def test_text_only_observation_does_not_use_candidate_coords(
+        self, session_factory: Any
+    ) -> None:
+        """Candidate's own coordinates are never used as proof; text-only claims stay unverified location."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Text observation describing the place but lacking independent GPS coordinates
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtourism.gov.in/historic-gate",
+                canonical_url="https://wbtourism.gov.in/historic-gate",
+                publisher="West Bengal Tourism",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Historic Gate is an ancient stone monument constructed during the seventeenth century with decorative arches.",
+                excerpt_locator="p.history",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={"category": "attraction", "status": "AVAILABLE"},
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            candidate = RegisteredCandidate(
+                primary_name="Historic Gate",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5000, lng=88.3000),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Claim is ingested from detailed text, but geographic_scope is None (not candidate's point)
+            assert len(claims) == 1
+            assert claims[0].geographic_scope is None
+
+            # Because no independent coordinates corroborate the candidate location, gate keeps it unverified
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
 
     async def test_ingest_claims_preserves_indicative_search_for_lodging(
         self, session_factory: Any
     ) -> None:
+        """Accommodation extractions strictly preserve INDICATIVE_SEARCH and are never promoted to LIVE_OFFER."""
         async with session_factory() as session:
             exec_id, owner_id = await _create_test_execution(session)
             now = datetime.now(UTC)
@@ -185,6 +506,7 @@ class TestClaimIngestionIntegration:
             assert stay_claim.typed_value.get("evidence_class") != EvidenceClass.LIVE_OFFER.value
 
     async def test_ingest_claims_skips_needs_browser_and_errors(self, session_factory: Any) -> None:
+        """NEEDS_BROWSER placeholders and error/unavailable observations are never promoted to claims."""
         async with session_factory() as session:
             exec_id, owner_id = await _create_test_execution(session)
             now = datetime.now(UTC)
@@ -248,6 +570,7 @@ class TestClaimIngestionIntegration:
             assert len(claims) == 0
 
     async def test_ingest_claims_idempotent(self, session_factory: Any) -> None:
+        """Ingesting claims multiple times from the same observations produces zero duplicates."""
         async with session_factory() as session:
             exec_id, owner_id = await _create_test_execution(session)
             now = datetime.now(UTC)
@@ -264,7 +587,13 @@ class TestClaimIngestionIntegration:
                 excerpt_text="Darjeeling Mall is a pedestrian square in Chowrasta.",
                 excerpt_locator="div.center",
                 extraction_method="STATIC_SCRAPLING",
-                artifact_ref={"category": "attraction", "status": "AVAILABLE"},
+                artifact_ref={
+                    "category": "attraction",
+                    "status": "AVAILABLE",
+                    "title": "Darjeeling Mall",
+                    "latitude": 27.0435,
+                    "longitude": 88.2673,
+                },
                 created_at=now,
             )
             session.add(obs)

@@ -412,7 +412,14 @@ class TestTripPlannerEvidenceRunnerLifecycle:
                 excerpt_text="Darjeeling Mall is a historic pedestrian promenade in Darjeeling.",
                 excerpt_locator="div.tourist-spot",
                 extraction_method="STATIC_SCRAPLING",
-                artifact_ref={"category": "attraction", "status": "AVAILABLE"},
+                artifact_ref={
+                    "category": "attraction",
+                    "status": "AVAILABLE",
+                    "title": "Darjeeling Mall",
+                    "latitude": 27.0435,
+                    "longitude": 88.2673,
+                    "fixture_backed": True,
+                },
                 created_at=now,
             )
             session.add(obs)
