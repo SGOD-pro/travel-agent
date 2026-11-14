@@ -46,7 +46,9 @@ def _extract_json_payload(text: str) -> dict[str, Any]:
     try:
         return cast(dict[str, Any], json.loads(cleaned))
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Failed to parse valid JSON payload from Bedrock response: {exc}") from exc
+        raise ValueError(
+            f"Failed to parse valid JSON payload from Bedrock response: {exc}"
+        ) from exc
 
 
 class BedrockLlmClient(HostedLlmClientPort):
@@ -79,9 +81,7 @@ class BedrockLlmClient(HostedLlmClientPort):
             else effective_settings.LLM_TIMEOUT_SECONDS
         )
         self.max_retries = (
-            max_retries
-            if max_retries is not None
-            else effective_settings.LLM_MAX_RETRIES
+            max_retries if max_retries is not None else effective_settings.LLM_MAX_RETRIES
         )
 
         if boto3_client is not None:
@@ -161,7 +161,9 @@ class BedrockLlmClient(HostedLlmClientPort):
                 and not model_id.startswith(("apac.", "us.", "eu.", "global."))
             ):
                 prefixed_model_id = f"apac.{model_id}"
-                logger.info("Retrying Bedrock converse call with inference profile %s", prefixed_model_id)
+                logger.info(
+                    "Retrying Bedrock converse call with inference profile %s", prefixed_model_id
+                )
                 kwargs["modelId"] = prefixed_model_id
                 response = self._client.converse(**kwargs)
                 text_val = response["output"]["message"]["content"][0]["text"]
@@ -186,7 +188,9 @@ class BedrockLlmClient(HostedLlmClientPort):
             )
         except TimeoutError as exc:
             logger.warning("Bedrock LLM request timed out after %.1f seconds", self.timeout_seconds)
-            raise TimeoutError(f"Bedrock LLM request timed out after {self.timeout_seconds}s") from exc
+            raise TimeoutError(
+                f"Bedrock LLM request timed out after {self.timeout_seconds}s"
+            ) from exc
 
     async def generate_search_queries(
         self,
@@ -211,7 +215,7 @@ class BedrockLlmClient(HostedLlmClientPort):
             f"- Preferences: {', '.join(request.traveler_preferences) if request.traveler_preferences else 'General sights, scenic stops'}\n"
             f"- Budget Tier: {request.budget_tier}\n"
             f"- Transport Mode: {request.transport_mode}\n\n"
-            "Return JSON matching: {\"search_queries\": [\"...\"]}"
+            'Return JSON matching: {"search_queries": ["..."]}'
         )
 
         messages = [{"role": "user", "content": [{"text": user_content}]}]
@@ -228,7 +232,9 @@ class BedrockLlmClient(HostedLlmClientPort):
             queries = []
 
         if not queries:
-            primary_dest = request.destination_names[0] if request.destination_names else "Destination"
+            primary_dest = (
+                request.destination_names[0] if request.destination_names else "Destination"
+            )
             pref_tag = f" {request.traveler_preferences[0]}" if request.traveler_preferences else ""
             queries = [
                 f"{primary_dest}{pref_tag} top sights attractions places to visit",
@@ -342,7 +348,10 @@ class BedrockLlmClient(HostedLlmClientPort):
         except TimeoutError:
             raise
         except Exception as exc:
-            logger.warning("Bedrock candidate ranking converse failed: %s; falling back to consensus order", exc)
+            logger.warning(
+                "Bedrock candidate ranking converse failed: %s; falling back to consensus order",
+                exc,
+            )
             return _build_fallback_response("inference fallback")
 
         candidate_map = {p.name.strip().lower(): p for p in request.candidate_places}
@@ -382,7 +391,9 @@ class BedrockLlmClient(HostedLlmClientPort):
                     eliminated_list.append(
                         {
                             "name": str(item["name"]).strip(),
-                            "reason": str(item.get("reason", "Excluded by pacing or budget limits")).strip(),
+                            "reason": str(
+                                item.get("reason", "Excluded by pacing or budget limits")
+                            ).strip(),
                         }
                     )
 
@@ -400,7 +411,9 @@ class BedrockLlmClient(HostedLlmClientPort):
                 )
 
         pacing_eval = str(
-            parsed.get("overall_pacing_evaluation", f"Selected {len(ranked_list)} candidate places.")
+            parsed.get(
+                "overall_pacing_evaluation", f"Selected {len(ranked_list)} candidate places."
+            )
         ).strip()
 
         return RankingResponse(

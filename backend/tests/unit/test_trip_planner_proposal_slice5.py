@@ -275,7 +275,9 @@ async def test_compute_budget_unverified_proposal_prices_remain_unknown() -> Non
         }
     ]
     res = await compute_budget_node(state)
-    activity_lines = [line for line in res["budget_lines"] if line["category"] == BudgetCategory.ACTIVITIES.value]
+    activity_lines = [
+        line for line in res["budget_lines"] if line["category"] == BudgetCategory.ACTIVITIES.value
+    ]
     assert len(activity_lines) == 1
     line = activity_lines[0]
     assert line["amount"] is None
@@ -283,7 +285,9 @@ async def test_compute_budget_unverified_proposal_prices_remain_unknown() -> Non
 
 
 @pytest.mark.asyncio
-async def test_compute_budget_when_routing_unavailable_preserves_accommodation_without_fuel() -> None:
+async def test_compute_budget_when_routing_unavailable_preserves_accommodation_without_fuel() -> (
+    None
+):
     """Verifies fail-closed routing does not fabricate road segments or fuel expenses."""
     state = _make_sample_state()
     state["route_id"] = None
@@ -962,7 +966,9 @@ async def test_compute_budget_cross_execution_claim_rejected() -> None:
         ]
     }
     res = await compute_budget_node(state)
-    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    activity_lines = [
+        item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value
+    ]
     digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
     assert digha_line["amount"] is None
     assert "Entrance fee unverified" in digha_line["unknown_reason"]
@@ -991,7 +997,9 @@ async def test_compute_budget_unrelated_place_claim_rejected() -> None:
         ]
     }
     res = await compute_budget_node(state)
-    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    activity_lines = [
+        item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value
+    ]
     digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
     assert digha_line["amount"] is None
     assert "Entrance fee unverified" in digha_line["unknown_reason"]
@@ -1022,7 +1030,11 @@ async def test_compute_budget_refuted_or_stale_claim_rejected() -> None:
         ]
     }
     res_refuted = await compute_budget_node(state)
-    activity_lines = [item for item in res_refuted["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    activity_lines = [
+        item
+        for item in res_refuted["budget_lines"]
+        if item["category"] == BudgetCategory.ACTIVITIES.value
+    ]
     digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
     assert digha_line["amount"] is None
     assert "Entrance fee unverified" in digha_line["unknown_reason"]
@@ -1045,7 +1057,11 @@ async def test_compute_budget_refuted_or_stale_claim_rejected() -> None:
         ]
     }
     res_stale = await compute_budget_node(state)
-    activity_lines = [item for item in res_stale["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    activity_lines = [
+        item
+        for item in res_stale["budget_lines"]
+        if item["category"] == BudgetCategory.ACTIVITIES.value
+    ]
     digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
     assert digha_line["amount"] is None
     assert "Entrance fee unverified" in digha_line["unknown_reason"]
@@ -1062,7 +1078,9 @@ async def test_compute_budget_candidate_verified_price_alone_not_proof() -> None
     state["validated_candidates"][1]["verified_price_inr"] = 50.0
 
     res = await compute_budget_node(state)
-    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    activity_lines = [
+        item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value
+    ]
     digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
     assert digha_line["amount"] is None
     assert "Entrance fee unverified" in digha_line["unknown_reason"]
@@ -1090,7 +1108,9 @@ async def test_compute_budget_production_rejects_raw_claim_with_fabricated_evide
         ]
     }
     res = await compute_budget_node(state)
-    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    activity_lines = [
+        item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value
+    ]
     digha_line = [item for item in activity_lines if item["basis"] == "entry_fee_Digha Beach"][0]
     assert digha_line["amount"] is None
     assert "Entrance fee unverified" in digha_line["unknown_reason"]
@@ -1104,7 +1124,9 @@ async def test_compute_budget_production_missing_execution_id() -> None:
     state["execution_id"] = None
 
     res = await compute_budget_node(state)
-    activity_lines = [item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value]
+    activity_lines = [
+        item for item in res["budget_lines"] if item["category"] == BudgetCategory.ACTIVITIES.value
+    ]
     for line in activity_lines:
         assert line["amount"] is None
         assert "Entrance fee unverified" in line["unknown_reason"]
@@ -1168,4 +1190,3 @@ async def test_publish_proposal_missing_runner_lease_fails_closed() -> None:
     assert res["status"] == "FAILED"
     assert res["proposal_status"] == "FAILED"
     assert "runner lease" in res["errors"][0]
-

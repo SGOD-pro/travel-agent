@@ -680,11 +680,17 @@ async def test_concurrent_same_key_replan_returns_same_job(
                 ),
             )
 
-            assert resp_a.status_code == 202, f"resp_a failed with {resp_a.status_code}: {resp_a.text}"
-            assert resp_b.status_code == 202, f"resp_b failed with {resp_b.status_code}: {resp_b.text}"
+            assert resp_a.status_code == 202, (
+                f"resp_a failed with {resp_a.status_code}: {resp_a.text}"
+            )
+            assert resp_b.status_code == 202, (
+                f"resp_b failed with {resp_b.status_code}: {resp_b.text}"
+            )
             job_a = resp_a.json()["job_id"]
             job_b = resp_b.json()["job_id"]
-            assert job_a == job_b, f"Expected identical job_id for concurrent same-key replay, got {job_a} vs {job_b}"
+            assert job_a == job_b, (
+                f"Expected identical job_id for concurrent same-key replay, got {job_a} vs {job_b}"
+            )
     finally:
         app.dependency_overrides.clear()
 
@@ -794,6 +800,3 @@ async def test_concurrent_same_key_different_parent_replan_conflicts(
             assert "idempotency conflict" in conflict_resp.json()["detail"].lower()
     finally:
         app.dependency_overrides.clear()
-
-
-

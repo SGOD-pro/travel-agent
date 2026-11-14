@@ -239,7 +239,10 @@ class TestRouteReplanIntegration:
         replan_request = RouteReplanRequest(
             current_location=current_gps,
             replan_at=replan_time,
-            completed_stop_ids=[v1_stop_ids["Start Hotel"], v1_stop_ids["Stop 1 Completed Landmark"]],
+            completed_stop_ids=[
+                v1_stop_ids["Start Hotel"],
+                v1_stop_ids["Stop 1 Completed Landmark"],
+            ],
             expected_previous_version=1,
         )
 
@@ -326,7 +329,9 @@ class TestRouteReplanIntegration:
         async with session_factory() as session:
             async with session.begin():
                 repo = RouteRepository(session)
-                saved = await repo.save_route(route_v1, owner_id=owner_a, trip_id=trip_id, route_version=1)
+                saved = await repo.save_route(
+                    route_v1, owner_id=owner_a, trip_id=trip_id, route_version=1
+                )
                 saved_id = saved.id
 
         replan_request = RouteReplanRequest(

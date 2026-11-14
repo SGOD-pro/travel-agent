@@ -286,7 +286,9 @@ class ClosureAvoidanceService:
                         logger.error(msg)
                         violations.append(msg)
                 except Exception as exc:
-                    logger.error("Error evaluating intersection with restriction %s: %s", restr.id, exc)
+                    logger.error(
+                        "Error evaluating intersection with restriction %s: %s", restr.id, exc
+                    )
 
         return violations
 
@@ -313,7 +315,8 @@ class ClosureAvoidanceService:
                     "solver_status": SolverStatus.INFEASIBLE,
                     "restrictions": restriction_records,
                     "diagnostics": route.diagnostics + unapplied_diagnostics,
-                    "warnings": route.warnings + ["Route failed closed due to unsupported restriction formats"],
+                    "warnings": route.warnings
+                    + ["Route failed closed due to unsupported restriction formats"],
                 }
             )
 

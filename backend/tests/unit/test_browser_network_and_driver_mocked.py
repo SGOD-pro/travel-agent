@@ -308,7 +308,9 @@ class TestRouteSecurityInterceptor:
     @pytest.mark.asyncio
     async def test_route_interceptor_offloads_dns_resolution_via_asyncio_to_thread(self) -> None:
         """Verifies RouteSecurityInterceptor uses asyncio.to_thread for non blocking DNS calls."""
-        interceptor = RouteSecurityInterceptor(dns_resolver=_mock_dns_resolver_for_ips("93.184.216.34"))
+        interceptor = RouteSecurityInterceptor(
+            dns_resolver=_mock_dns_resolver_for_ips("93.184.216.34")
+        )
 
         route = MagicMock()
         route.request = MagicMock(
@@ -319,7 +321,9 @@ class TestRouteSecurityInterceptor:
         route.abort = AsyncMock()
         route.continue_ = AsyncMock()
 
-        with patch("functions.browser.network.asyncio.to_thread", wraps=asyncio.to_thread) as mock_to_thread:
+        with patch(
+            "functions.browser.network.asyncio.to_thread", wraps=asyncio.to_thread
+        ) as mock_to_thread:
             await interceptor(route)
             mock_to_thread.assert_awaited_once()
 
@@ -625,7 +629,9 @@ class TestSecureEgressProxy:
         try:
             # 1. Request to metadata endpoint
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(b"GET http://169.254.169.254/latest/meta-data/ HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n")
+            writer.write(
+                b"GET http://169.254.169.254/latest/meta-data/ HTTP/1.1\r\nHost: 169.254.169.254\r\n\r\n"
+            )
             await writer.drain()
 
             resp = await reader.read(4096)
@@ -662,7 +668,9 @@ class TestSecureEgressProxy:
 
         try:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(b"GET http://rebind.attacker.com/data HTTP/1.1\r\nHost: rebind.attacker.com\r\n\r\n")
+            writer.write(
+                b"GET http://rebind.attacker.com/data HTTP/1.1\r\nHost: rebind.attacker.com\r\n\r\n"
+            )
             await writer.drain()
 
             resp = await reader.read(4096)
@@ -727,7 +735,9 @@ class TestSecureEgressProxy:
 
         try:
             reader, writer = await asyncio.open_connection("127.0.0.1", proxy_port)
-            req = f"GET http://127.0.0.1:{target_port}/test-path HTTP/1.1\r\nHost: 127.0.0.1:{target_port}\r\n\r\n".encode("latin1")
+            req = f"GET http://127.0.0.1:{target_port}/test-path HTTP/1.1\r\nHost: 127.0.0.1:{target_port}\r\n\r\n".encode(
+                "latin1"
+            )
             writer.write(req)
             await writer.drain()
 
@@ -753,7 +763,9 @@ class TestSecureEgressProxy:
         async def handle_target(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
             line = await r.readline()
             received_requests.append(line.decode("latin1"))
-            w.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nSECONDARY")
+            w.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nSECONDARY"
+            )
             await w.drain()
             w.close()
             await w.wait_closed()
@@ -774,7 +786,9 @@ class TestSecureEgressProxy:
 
         try:
             reader, writer = await asyncio.open_connection("127.0.0.1", proxy_port)
-            req = f"GET http://multihomed.example.com:{target_port}/resilient HTTP/1.1\r\nHost: multihomed.example.com:{target_port}\r\n\r\n".encode("latin1")
+            req = f"GET http://multihomed.example.com:{target_port}/resilient HTTP/1.1\r\nHost: multihomed.example.com:{target_port}\r\n\r\n".encode(
+                "latin1"
+            )
             writer.write(req)
             await writer.drain()
 
@@ -791,4 +805,3 @@ class TestSecureEgressProxy:
             await proxy.stop()
             target_server.close()
             await target_server.wait_closed()
-

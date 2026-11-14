@@ -60,7 +60,12 @@ def parse_rendered_entities(
     category_lower = category.lower().strip()
     if "lodging" in category_lower or "hotel" in category_lower:
         return _parse_lodging_entities(page, canonical_url)
-    elif "transit" in category_lower or "fare" in category_lower or "train" in category_lower or "bus" in category_lower:
+    elif (
+        "transit" in category_lower
+        or "fare" in category_lower
+        or "train" in category_lower
+        or "bus" in category_lower
+    ):
         return _parse_transit_entities(page, canonical_url)
     else:
         return _parse_general_entities(page, canonical_url)
@@ -69,12 +74,16 @@ def parse_rendered_entities(
 def _parse_lodging_entities(page: Selector, canonical_url: str) -> list[dict[str, Any]]:
     """Parses hotel and lodging observation entities."""
     observations: list[dict[str, Any]] = []
-    cards = page.css(".hotel-card, .property-card, .listing, .resort-card, [data-testid='hotel-card'], .card")
+    cards = page.css(
+        ".hotel-card, .property-card, .listing, .resort-card, [data-testid='hotel-card'], .card"
+    )
     if not cards:
         cards = page.css("article, section.property, .item")
 
     for card in cards:
-        title_elem = card.css(".hotel-name, .property-name, .hotel-title, .title, h2, h3, .name").first
+        title_elem = card.css(
+            ".hotel-name, .property-name, .hotel-title, .title, h2, h3, .name"
+        ).first
         name: str | None = None
         if title_elem:
             raw_title = getattr(title_elem, "text", str(title_elem))
@@ -118,12 +127,16 @@ def _parse_lodging_entities(page: Selector, canonical_url: str) -> list[dict[str
 def _parse_transit_entities(page: Selector, canonical_url: str) -> list[dict[str, Any]]:
     """Parses transit and fare observation entities."""
     observations: list[dict[str, Any]] = []
-    cards = page.css(".fare-row, .bus-item, .train-item, .schedule-card, .trip-card, [data-testid='bus-card'], tr.fare-entry")
+    cards = page.css(
+        ".fare-row, .bus-item, .train-item, .schedule-card, .trip-card, [data-testid='bus-card'], tr.fare-entry"
+    )
     if not cards:
         cards = page.css(".card, .row")
 
     for card in cards:
-        op_elem = card.css(".operator, .carrier, .travels, .carrier-name, .bus-name, .train-name").first
+        op_elem = card.css(
+            ".operator, .carrier, .travels, .carrier-name, .bus-name, .train-name"
+        ).first
         operator: str | None = None
         if op_elem:
             raw_op = getattr(op_elem, "text", str(op_elem))

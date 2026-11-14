@@ -174,13 +174,21 @@ class BrowserWorkerService:
         try:
             return await self._port.render_page(payload)
         except Exception as exc:
-            logger.warning("Browser rendering encountered exception for %s: %s", payload.canonical_url, exc)
+            logger.warning(
+                "Browser rendering encountered exception for %s: %s", payload.canonical_url, exc
+            )
             exc_str = str(exc)
             is_timeout = "timeout" in exc_str.lower()
-            is_blocked = "blocked" in exc_str.lower() or "403" in exc_str or "captcha" in exc_str.lower()
+            is_blocked = (
+                "blocked" in exc_str.lower() or "403" in exc_str or "captcha" in exc_str.lower()
+            )
 
-            status = BrowserRenderStatus.TIMED_OUT if is_timeout else (
-                BrowserRenderStatus.BLOCKED if is_blocked else BrowserRenderStatus.UNAVAILABLE
+            status = (
+                BrowserRenderStatus.TIMED_OUT
+                if is_timeout
+                else (
+                    BrowserRenderStatus.BLOCKED if is_blocked else BrowserRenderStatus.UNAVAILABLE
+                )
             )
             reason = exc_str[:500] if exc_str.strip() else f"Browser render failed: {status}"
 
@@ -194,7 +202,9 @@ class BrowserWorkerService:
                 rendered_html_snippet=None,
                 render_duration_ms=payload.timeout_seconds * 1000,
                 unavailable_reason=reason,
-                usage=BrowserResourceUsage(duration_ms=payload.timeout_seconds * 1000, memory_mb=512),
+                usage=BrowserResourceUsage(
+                    duration_ms=payload.timeout_seconds * 1000, memory_mb=512
+                ),
                 parsed_lodging_observations=[],
                 parsed_transit_observations=[],
             )
@@ -234,7 +244,9 @@ class BrowserWorkerService:
         }
         if payload.placeholder_observation_id:
             artifact_ref["placeholder_observation_id"] = str(payload.placeholder_observation_id)
-            artifact_ref["original_placeholder_observation_id"] = str(payload.placeholder_observation_id)
+            artifact_ref["original_placeholder_observation_id"] = str(
+                payload.placeholder_observation_id
+            )
         if render_result.rendered_html_snippet:
             artifact_ref["rendered_html_snippet"] = render_result.rendered_html_snippet
         if parsed_observations:
@@ -310,7 +322,10 @@ class BrowserWorkerService:
         render_result: BrowserRenderResult,
     ) -> tuple[uuid.UUID, BrowserWorkerOutput]:
         """Completes task under lease fencing recording unavailable source entry without fabricating content."""
-        reason = render_result.unavailable_reason or f"Browser render ended with status {render_result.status}"
+        reason = (
+            render_result.unavailable_reason
+            or f"Browser render ended with status {render_result.status}"
+        )
         unavailable_sources = [
             {
                 "url": payload.canonical_url,

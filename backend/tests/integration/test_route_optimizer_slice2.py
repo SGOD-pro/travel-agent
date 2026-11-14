@@ -94,8 +94,6 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
 socket.getaddrinfo = _resilient_getaddrinfo
 
 
-
-
 async def _create_test_trip(
     session_factory: async_sessionmaker[AsyncSession],
     trip_id: uuid.UUID,
@@ -406,8 +404,12 @@ class TestRouteOptimizationMigrationAndRepository:
         trip_id = uuid.uuid4()
         await _create_test_trip(session_factory, trip_id, owner_id)
 
-        route_v1 = _build_sample_optimized_route(owner_id=owner_id, trip_id=trip_id, route_version=1)
-        route_v2 = _build_sample_optimized_route(owner_id=owner_id, trip_id=trip_id, route_version=2)
+        route_v1 = _build_sample_optimized_route(
+            owner_id=owner_id, trip_id=trip_id, route_version=1
+        )
+        route_v2 = _build_sample_optimized_route(
+            owner_id=owner_id, trip_id=trip_id, route_version=2
+        )
 
         async with session_factory() as session:
             async with session.begin():

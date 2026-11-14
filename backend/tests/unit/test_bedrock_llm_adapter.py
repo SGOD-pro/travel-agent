@@ -273,6 +273,7 @@ class TestBedrockLlmClient:
 
         def slow_converse(**kwargs: object) -> object:
             import time
+
             time.sleep(0.3)
             return {"output": {"message": {"content": [{"text": "{}"}]}}}
 
@@ -339,6 +340,7 @@ class TestBedrockLlmClient:
     @pytest.mark.asyncio
     async def test_live_bedrock_connected_smoke(self) -> None:
         import os
+
         if not os.environ.get("RUN_CONNECTED_LLM_TESTS"):
             pytest.skip("RUN_CONNECTED_LLM_TESTS not set; skipping connected Bedrock live test")
 
@@ -374,4 +376,3 @@ async def test_fixture_llm_client_generate_search_queries() -> None:
     queries = await client.generate_search_queries(req, max_queries=2)
     assert len(queries) == 2
     assert "Kolkata" in queries[0]
-

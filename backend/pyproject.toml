@@ -56,6 +56,14 @@ line-length = 100
 select = ["E", "F", "I", "B", "W", "UP"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# Script-style entrypoints that intentionally control import order:
+# sys.path bootstrapping, DNS monkeypatching before settings load, and
+# test-fixture imports that must run after conftest environment setup.
+"src/acceptance_database.py" = ["E402"]
+"src/acceptance_worker.py" = ["E402"]
+"tests/integration/verify_e2e_trace.py" = ["E402"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

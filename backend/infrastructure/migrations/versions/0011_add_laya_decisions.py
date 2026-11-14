@@ -56,11 +56,17 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.UniqueConstraint("execution_id", "idempotency_key", name="uq_laya_execution_idempotency"),
+        sa.UniqueConstraint(
+            "execution_id", "idempotency_key", name="uq_laya_execution_idempotency"
+        ),
     )
 
-    op.create_index("ix_laya_decisions_execution_id", "laya_decisions", ["execution_id"], unique=False)
-    op.create_index("ix_laya_decisions_decision_id", "laya_decisions", ["decision_id"], unique=False)
+    op.create_index(
+        "ix_laya_decisions_execution_id", "laya_decisions", ["execution_id"], unique=False
+    )
+    op.create_index(
+        "ix_laya_decisions_decision_id", "laya_decisions", ["decision_id"], unique=False
+    )
 
 
 def downgrade() -> None:

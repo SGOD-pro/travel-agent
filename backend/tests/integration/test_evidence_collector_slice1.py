@@ -243,7 +243,9 @@ async def test_fenced_atomic_completion_boundary(session_factory) -> None:
     async with session_factory() as session:
         # 1. Observations persisted
         obs_res = await session.execute(
-            select(SourceObservationModel).where(SourceObservationModel.execution_id == execution_id)
+            select(SourceObservationModel).where(
+                SourceObservationModel.execution_id == execution_id
+            )
         )
         observations = obs_res.scalars().all()
         assert len(observations) == len(obs_ids)
@@ -350,7 +352,9 @@ async def test_observation_rollback_on_cancelled_parent(session_factory) -> None
 
     # Cancel execution behind the worker's back in a separate transaction
     async with session_factory() as session:
-        exec_row = (await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))).scalar_one()
+        exec_row = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
+        ).scalar_one()
         exec_row.status = "CANCELLED"
         exec_row.cancelled_at = datetime.now(UTC)
         await session.commit()
@@ -404,7 +408,9 @@ async def test_observation_rollback_on_passed_deadline(session_factory) -> None:
 
     # Expire task deadline in database
     async with session_factory() as session:
-        task_row = (await session.execute(select(TaskModel).where(TaskModel.id == task_id))).scalar_one()
+        task_row = (
+            await session.execute(select(TaskModel).where(TaskModel.id == task_id))
+        ).scalar_one()
         task_row.deadline_at = datetime.now(UTC) - timedelta(seconds=10)
         await session.commit()
 
@@ -485,13 +491,17 @@ async def test_unchanged_replay_snapshot_reuse_returns_existing_id(session_facto
 
     async with session_factory() as session:
         rows = (
-            await session.execute(
-                select(SourceObservationModel).where(
-                    SourceObservationModel.execution_id == execution_id,
-                    SourceObservationModel.canonical_url == test_obs.canonical_url,
+            (
+                await session.execute(
+                    select(SourceObservationModel).where(
+                        SourceObservationModel.execution_id == execution_id,
+                        SourceObservationModel.canonical_url == test_obs.canonical_url,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(rows) == 1
         assert rows[0].id == original_obs_id
 
@@ -550,13 +560,17 @@ async def test_changed_content_preserves_both_snapshots(session_factory) -> None
 
     async with session_factory() as session:
         rows = (
-            await session.execute(
-                select(SourceObservationModel).where(
-                    SourceObservationModel.execution_id == execution_id,
-                    SourceObservationModel.canonical_url == obs_version_1.canonical_url,
+            (
+                await session.execute(
+                    select(SourceObservationModel).where(
+                        SourceObservationModel.execution_id == execution_id,
+                        SourceObservationModel.canonical_url == obs_version_1.canonical_url,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(rows) == 2
         hashes = {r.content_hash for r in rows}
         assert obs_version_1.content_hash in hashes
@@ -604,13 +618,17 @@ async def test_distinct_url_attribution_with_identical_content(session_factory) 
     # Verify both URLs are distinct rows in PostgreSQL with the shared hash
     async with session_factory() as session:
         rows = (
-            await session.execute(
-                select(SourceObservationModel).where(
-                    SourceObservationModel.execution_id == execution_id,
-                    SourceObservationModel.content_hash == shared_hash,
+            (
+                await session.execute(
+                    select(SourceObservationModel).where(
+                        SourceObservationModel.execution_id == execution_id,
+                        SourceObservationModel.content_hash == shared_hash,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(rows) == 2
         urls = {r.canonical_url for r in rows}
         assert obs_source_a.canonical_url in urls
@@ -656,7 +674,11 @@ async def test_local_budget_iteration_limit(session_factory) -> None:
     assert adapter.call_count == 1
 
     async with session_factory() as session:
-        wr = (await session.execute(select(WorkerResultModel).where(WorkerResultModel.id == result_id))).scalar_one()
+        wr = (
+            await session.execute(
+                select(WorkerResultModel).where(WorkerResultModel.id == result_id)
+            )
+        ).scalar_one()
         assert wr.output_ref["budget_exhausted"] is True
         assert wr.usage["tool_calls_made"] == 1
 
@@ -703,7 +725,9 @@ async def test_consumer_sqs_batch_processing(session_factory) -> None:
 
     # Verify task completed
     async with session_factory() as session:
-        task = (await session.execute(select(TaskModel).where(TaskModel.id == task_id))).scalar_one()
+        task = (
+            await session.execute(select(TaskModel).where(TaskModel.id == task_id))
+        ).scalar_one()
         assert task.status == "COMPLETED"
         assert task.result_id is not None
 
@@ -894,12 +918,16 @@ async def test_local_budget_iteration_limit_persists_observations(session_factor
 
     async with session_factory() as session:
         obs_rows = (
-            await session.execute(
-                select(SourceObservationModel).where(
-                    SourceObservationModel.execution_id == execution_id
+            (
+                await session.execute(
+                    select(SourceObservationModel).where(
+                        SourceObservationModel.execution_id == execution_id
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(obs_rows) == len(obs_ids), (
             "Persisted row count must match the IDs returned by execute_collection_task"
         )

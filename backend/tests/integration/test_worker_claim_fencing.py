@@ -534,7 +534,9 @@ async def test_fenced_completion_success(session_factory) -> None:
 
         # Verify worker_result record
         worker_res = (
-            await session.execute(select(WorkerResultModel).where(WorkerResultModel.id == result_id))
+            await session.execute(
+                select(WorkerResultModel).where(WorkerResultModel.id == result_id)
+            )
         ).scalar_one()
         assert worker_res.status == "SUCCESS"
         assert worker_res.output_ref == output_data
@@ -883,7 +885,9 @@ async def test_consistent_lock_ordering_cancellation_and_worker_mutations(sessio
     async def cancel_execution_action() -> None:
         async with session_factory() as session:
             # Consistent lock order: Parent execution locked FOR UPDATE
-            exec_stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
+            exec_stmt = (
+                select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
+            )
             execution = (await session.execute(exec_stmt)).scalar_one()
             lock_acquired.set()
             await asyncio.sleep(0.2)
@@ -951,7 +955,9 @@ async def test_atomic_rollback_on_worker_completion_and_failure(session_factory)
     # Verify zero records persisted in PostgreSQL
     async with session_factory() as session:
         wr_check = (
-            await session.execute(select(WorkerResultModel).where(WorkerResultModel.id == worker_res_id))
+            await session.execute(
+                select(WorkerResultModel).where(WorkerResultModel.id == worker_res_id)
+            )
         ).scalar_one_or_none()
         assert wr_check is None
 
@@ -1017,7 +1023,9 @@ async def test_retry_task_dispatch_payload_conforms_to_worker_contract(session_f
 
 
 @pytest.mark.asyncio
-async def test_rejected_completion_leaves_no_orphan_results_and_session_usable(session_factory) -> None:
+async def test_rejected_completion_leaves_no_orphan_results_and_session_usable(
+    session_factory,
+) -> None:
     """Verifies that rejected complete_task leaves zero worker results in DB and the session remains usable."""
     execution_id, task_id = await create_test_execution_and_task(session_factory)
 
@@ -1045,10 +1053,14 @@ async def test_rejected_completion_leaves_no_orphan_results_and_session_usable(s
 
         # Verify zero worker_results exist in DB or pending in session
         results_count = (
-            await session.execute(
-                select(WorkerResultModel).where(WorkerResultModel.task_id == task_id)
+            (
+                await session.execute(
+                    select(WorkerResultModel).where(WorkerResultModel.task_id == task_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(results_count) == 0
 
         # Session remains fully usable: perform valid completion in the SAME session!
@@ -1063,10 +1075,14 @@ async def test_rejected_completion_leaves_no_orphan_results_and_session_usable(s
     # Verify final persisted state
     async with session_factory() as session:
         final_results = (
-            await session.execute(
-                select(WorkerResultModel).where(WorkerResultModel.task_id == task_id)
+            (
+                await session.execute(
+                    select(WorkerResultModel).where(WorkerResultModel.task_id == task_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(final_results) == 1
         assert final_results[0].id == res_id
         assert final_results[0].output_ref == {"good": "output"}
@@ -1085,7 +1101,9 @@ async def test_rejected_completion_leaves_no_orphan_results_and_session_usable(s
 
 
 @pytest.mark.asyncio
-async def test_rejected_failure_leaves_no_orphan_results_and_session_usable(session_factory) -> None:
+async def test_rejected_failure_leaves_no_orphan_results_and_session_usable(
+    session_factory,
+) -> None:
     """Verifies that rejected fail_task leaves zero worker results in DB and the session remains usable."""
     execution_id, task_id = await create_test_execution_and_task(session_factory)
 
@@ -1114,10 +1132,14 @@ async def test_rejected_failure_leaves_no_orphan_results_and_session_usable(sess
 
         # Verify zero worker_results exist
         results_count = (
-            await session.execute(
-                select(WorkerResultModel).where(WorkerResultModel.task_id == task_id)
+            (
+                await session.execute(
+                    select(WorkerResultModel).where(WorkerResultModel.task_id == task_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(results_count) == 0
 
         # Session remains fully usable: perform valid fail in the SAME session!
@@ -1132,11 +1154,14 @@ async def test_rejected_failure_leaves_no_orphan_results_and_session_usable(sess
 
     async with session_factory() as session:
         final_results = (
-            await session.execute(
-                select(WorkerResultModel).where(WorkerResultModel.task_id == task_id)
+            (
+                await session.execute(
+                    select(WorkerResultModel).where(WorkerResultModel.task_id == task_id)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(final_results) == 1
         assert final_results[0].id == res_id
         assert final_results[0].error == {"good": "error"}
-

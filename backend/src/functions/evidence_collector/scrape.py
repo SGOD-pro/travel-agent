@@ -131,9 +131,7 @@ def detect_dynamic_rendering_needed(html_content: str) -> tuple[bool, str | None
     #   a) The presence of an identifiable SPA root element container
     #   b) Total body text below 150 characters
     #   c) The absence of substantive narrative elements (<p>, <article>, <section>) with real text
-    has_spa_root = bool(
-        page.css("#root, #app, #__next, div[data-reactroot], app-root")
-    )
+    has_spa_root = bool(page.css("#root, #app, #__next, div[data-reactroot], app-root"))
     if has_spa_root:
         body_elem = page.css("body").first
         body_text = getattr(body_elem, "text", "").strip() if body_elem else ""
@@ -187,7 +185,9 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         try:
             page = Selector(html_content)
 
-            cards = page.css(".hotel-card, .listing-card, [data-testid='hotel-card'], .hotelListingCard")
+            cards = page.css(
+                ".hotel-card, .listing-card, [data-testid='hotel-card'], .hotelListingCard"
+            )
             if not cards:
                 cards = page.css(".card, .property-card")
 
@@ -232,7 +232,9 @@ class ScraplingExtractionAdapter(WebExtractionPort):
                 if link_elem and hasattr(link_elem, "attrib"):
                     href = link_elem.attrib.get("href")
                     if href:
-                        deep_link = href if href.startswith("http") else f"https://www.makemytrip.com{href}"
+                        deep_link = (
+                            href if href.startswith("http") else f"https://www.makemytrip.com{href}"
+                        )
 
                 observations.append(
                     HotelObservation(
@@ -301,7 +303,9 @@ class ScraplingExtractionAdapter(WebExtractionPort):
                 if link_elem and hasattr(link_elem, "attrib"):
                     href = link_elem.attrib.get("href")
                     if href:
-                        deep_link = href if href.startswith("http") else f"https://www.redbus.in{href}"
+                        deep_link = (
+                            href if href.startswith("http") else f"https://www.redbus.in{href}"
+                        )
 
                 observations.append(
                     FareObservation(
@@ -514,9 +518,7 @@ class ScraplingExtractionAdapter(WebExtractionPort):
             self.browser_requests.append(browser_request)
 
             # Record placeholder observation flagged for browser execution
-            placeholder_text = (
-                f"[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED] Dynamic rendering required for {url} ({browser_reason})"
-            )
+            placeholder_text = f"[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED] Dynamic rendering required for {url} ({browser_reason})"
             placeholder_hash = compute_content_hash(placeholder_text)
             placeholder_obs = RawObservation(
                 source_url=effective_url,
@@ -573,7 +575,9 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         rooms: int = 1,
     ) -> list[HotelObservation]:
         """Queries permitted web target using Scrapling fetcher or falls back cleanly."""
-        url = f"https://www.makemytrip.com/hotels/{destination.lower().replace(' ', '-')}-hotels.html"
+        url = (
+            f"https://www.makemytrip.com/hotels/{destination.lower().replace(' ', '-')}-hotels.html"
+        )
         try:
             # Perform safe SSRF fetch
             html_content, effective_url, _ = await safe_fetch_page(

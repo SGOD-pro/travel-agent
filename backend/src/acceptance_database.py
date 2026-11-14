@@ -269,14 +269,10 @@ def validate_isolated_database_url(
         )
     norm_target = normalize_db_connection_target(target_url)
     if norm_target is None:
-        raise RuntimeError(
-            f"{env_name} is invalid or its target cannot be determined safely."
-        )
+        raise RuntimeError(f"{env_name} is invalid or its target cannot be determined safely.")
     norm_app = normalize_db_connection_target(app_url)
     if norm_app is None:
-        raise RuntimeError(
-            "DATABASE_URL is invalid or its target cannot be determined safely."
-        )
+        raise RuntimeError("DATABASE_URL is invalid or its target cannot be determined safely.")
     if are_db_urls_equivalent(target_url, app_url):
         raise RuntimeError(
             f"{env_name} cannot point to the same database as DATABASE_URL. "
@@ -343,7 +339,8 @@ async def ensure_acceptance_schema(session_factory: async_sessionmaker[AsyncSess
     from sqlalchemy import text
 
     async with session_factory() as session:
-        await session.execute(text("""
+        await session.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS checkpoints (
                 thread_id TEXT NOT NULL,
                 checkpoint_ns TEXT NOT NULL DEFAULT '',
@@ -354,8 +351,10 @@ async def ensure_acceptance_schema(session_factory: async_sessionmaker[AsyncSess
                 metadata BYTEA NOT NULL,
                 PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
             );
-        """))
-        await session.execute(text("""
+        """)
+        )
+        await session.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS checkpoint_writes (
                 thread_id TEXT NOT NULL,
                 checkpoint_ns TEXT NOT NULL DEFAULT '',
@@ -367,6 +366,6 @@ async def ensure_acceptance_schema(session_factory: async_sessionmaker[AsyncSess
                 value BYTEA NOT NULL,
                 PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
             );
-        """))
+        """)
+        )
         await session.commit()
-

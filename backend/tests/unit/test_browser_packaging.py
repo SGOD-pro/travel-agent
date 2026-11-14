@@ -202,7 +202,9 @@ def test_browser_dependency_inclusive_package_size_and_isolated_artifact() -> No
     for mod_path in FORBIDDEN_APP_MODULES:
         rel_parts = mod_path.split(".")
         target_path = output_dir.joinpath(*rel_parts)
-        assert not target_path.exists(), f"Forbidden app module {mod_path} found in artifact: {target_path}"
+        assert not target_path.exists(), (
+            f"Forbidden app module {mod_path} found in artifact: {target_path}"
+        )
 
     # Strict isolation: forbidden heavy third-party packages must be excluded
     for pkg in FORBIDDEN_HEAVY_PACKAGES:
@@ -275,7 +277,10 @@ def test_ensure_sparticuz_chromium_bootstrap() -> None:
 
     # When layer is not present, returns None safely without error
     non_existent = Path("/nonexistent/directory")
-    assert ensure_sparticuz_chromium(layer_dir=non_existent, target_path="/tmp/nonexistent_chromium") is None
+    assert (
+        ensure_sparticuz_chromium(layer_dir=non_existent, target_path="/tmp/nonexistent_chromium")
+        is None
+    )
 
     # When layer archive exists, bootstraps successfully from extracted layer
     layer_archive = BACKEND_DIR / "build" / "layers" / SPARTICUZ_CHROMIUM_LAYER_FILENAME
@@ -333,7 +338,9 @@ def test_cached_browser_artifact_build_avoids_reinstallation() -> None:
     assert elapsed < 12.0, f"Cached build took too long ({elapsed:.2f}s); dependency caching failed"
 
 
-def test_resolve_python_runtime_binary_fails_when_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_python_runtime_binary_fails_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Verifies that runtime resolution fails explicitly when Python 3.12 is unavailable."""
     from unittest.mock import MagicMock
 

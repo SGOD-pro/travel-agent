@@ -476,10 +476,20 @@ class SecureEgressProxy:
                     break
                 except Exception as exc:
                     last_conn_exc = exc
-                    logger.debug("Failed connecting to validated candidate IP %s:%d: %s", candidate_ip, port, exc)
+                    logger.debug(
+                        "Failed connecting to validated candidate IP %s:%d: %s",
+                        candidate_ip,
+                        port,
+                        exc,
+                    )
 
             if remote_reader is None or remote_writer is None:
-                logger.debug("Failed connecting to all validated IPs %s:%d: %s", allowed_ips, port, last_conn_exc)
+                logger.debug(
+                    "Failed connecting to all validated IPs %s:%d: %s",
+                    allowed_ips,
+                    port,
+                    last_conn_exc,
+                )
                 client_writer.write(b"HTTP/1.1 504 Gateway Timeout\r\n\r\n")
                 await client_writer.drain()
                 client_writer.close()
@@ -517,4 +527,3 @@ class SecureEgressProxy:
                 client_writer.close()
             except Exception:
                 pass
-

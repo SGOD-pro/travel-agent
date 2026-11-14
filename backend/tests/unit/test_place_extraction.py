@@ -16,7 +16,9 @@ def test_extract_candidates_from_serpapi_local_results() -> None:
         "address": "Park Street, Kolkata",
         "gps_coordinates": {"latitude": 22.5532, "longitude": 88.3518},
     }
-    obs1.excerpt_text = "Famous historic tearoom and bakery on Park Street serving English breakfast."
+    obs1.excerpt_text = (
+        "Famous historic tearoom and bakery on Park Street serving English breakfast."
+    )
 
     obs2 = MagicMock()
     obs2.publisher = "zomato.com"
@@ -62,9 +64,13 @@ def test_extract_ignores_unlocated_places() -> None:
     obs.publisher = "somewhere.com"
     obs.source_url = "https://somewhere.com"
     obs.artifact_ref = None
-    obs.excerpt_text = "Some random text with Capitalized Words like Victoria Memorial but no coordinates."
+    obs.excerpt_text = (
+        "Some random text with Capitalized Words like Victoria Memorial but no coordinates."
+    )
 
-    proposals = PlaceExtractionService.extract_candidates_from_observations([obs], default_destination_lat=None)
+    proposals = PlaceExtractionService.extract_candidates_from_observations(
+        [obs], default_destination_lat=None
+    )
     # With no valid GPS coordinates, candidates without coordinates are excluded
     assert len(proposals) == 0
 
@@ -121,4 +127,3 @@ def test_text_mentions_increment_geolocated_consensus() -> None:
     assert proposals[0].fit_score == min(1.0, 0.40 + (2 * 0.20))
     assert proposals[0].estimated_latitude == 22.5510
     assert proposals[0].estimated_longitude == 88.3520
-

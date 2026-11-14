@@ -178,4 +178,3 @@ async def download_artifact(
         media_type=artifact.content_type,
         filename=f"SWENA_Itinerary_Trip_{artifact.trip_id}_v{artifact.trip_version}.pdf",
     )
-

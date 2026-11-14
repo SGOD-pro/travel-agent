@@ -87,7 +87,9 @@ def test_parse_rendered_entities_lodging_cards() -> None:
       </body>
     </html>
     """
-    entities = parse_rendered_entities(html, category="lodging", canonical_url="https://example.com/hotels")
+    entities = parse_rendered_entities(
+        html, category="lodging", canonical_url="https://example.com/hotels"
+    )
     assert len(entities) == 2
     assert entities[0]["property_name"] == "Seaside Luxury Resort"
     assert entities[0]["price_per_night"] == "6800"
@@ -118,7 +120,9 @@ def test_parse_rendered_entities_transit_fares() -> None:
       </body>
     </html>
     """
-    entities = parse_rendered_entities(html, category="transit", canonical_url="https://example.com/transit")
+    entities = parse_rendered_entities(
+        html, category="transit", canonical_url="https://example.com/transit"
+    )
     assert len(entities) == 2
     assert entities[0]["operator_name"] == "Bengal Express"
     assert entities[0]["price"] == "450"
@@ -131,9 +135,19 @@ def test_parse_rendered_entities_transit_fares() -> None:
 
 def test_parse_rendered_entities_empty_or_malformed() -> None:
     """Verifies that empty or invalid HTML returns empty list safely."""
-    assert parse_rendered_entities("", category="lodging", canonical_url="https://example.com") == []
-    assert parse_rendered_entities("   ", category="transit", canonical_url="https://example.com") == []
-    assert parse_rendered_entities("<div>Just plain text</div>", category="lodging", canonical_url="https://example.com") == []
+    assert (
+        parse_rendered_entities("", category="lodging", canonical_url="https://example.com") == []
+    )
+    assert (
+        parse_rendered_entities("   ", category="transit", canonical_url="https://example.com")
+        == []
+    )
+    assert (
+        parse_rendered_entities(
+            "<div>Just plain text</div>", category="lodging", canonical_url="https://example.com"
+        )
+        == []
+    )
 
 
 # ============================================================================
@@ -206,14 +220,21 @@ async def test_worker_fencing_rejects_cancelled_parent_before_browser_automation
     mock_fencing.claim_task.side_effect = ParentCancelledError("Execution was cancelled")
 
     mock_port = AsyncMock(spec=BrowserExtractionPort)
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
     msg = {
         "task_id": str(uuid.uuid4()),
         "execution_id": str(uuid.uuid4()),
         "worker": "BROWSER",
         "action": "render",
-        "payload": {"url": "https://example.com", "canonical_url": "https://example.com", "category": "lodging", "reason": "TEST"},
+        "payload": {
+            "url": "https://example.com",
+            "canonical_url": "https://example.com",
+            "category": "lodging",
+            "reason": "TEST",
+        },
     }
 
     with pytest.raises(ParentCancelledError):
@@ -231,12 +252,19 @@ async def test_worker_fencing_rejects_terminal_parent_before_browser_automation(
     mock_fencing.claim_task.side_effect = ParentTerminalError("Execution already succeeded")
 
     mock_port = AsyncMock(spec=BrowserExtractionPort)
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
     msg = {
         "task_id": str(uuid.uuid4()),
         "execution_id": str(uuid.uuid4()),
-        "payload": {"url": "https://example.com", "canonical_url": "https://example.com", "category": "lodging", "reason": "TEST"},
+        "payload": {
+            "url": "https://example.com",
+            "canonical_url": "https://example.com",
+            "category": "lodging",
+            "reason": "TEST",
+        },
     }
 
     with pytest.raises(ParentTerminalError):
@@ -253,13 +281,20 @@ async def test_worker_fencing_rejects_stale_context_version() -> None:
     mock_fencing.claim_task.side_effect = StaleContextError("Context version mismatch")
 
     mock_port = AsyncMock(spec=BrowserExtractionPort)
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
     msg = {
         "task_id": str(uuid.uuid4()),
         "execution_id": str(uuid.uuid4()),
         "context_version": 1,
-        "payload": {"url": "https://example.com", "canonical_url": "https://example.com", "category": "lodging", "reason": "TEST"},
+        "payload": {
+            "url": "https://example.com",
+            "canonical_url": "https://example.com",
+            "category": "lodging",
+            "reason": "TEST",
+        },
     }
 
     with pytest.raises(StaleContextError):
@@ -276,13 +311,20 @@ async def test_worker_fencing_rejects_attempts_exhausted() -> None:
     mock_fencing.claim_task.side_effect = AttemptsExhaustedError("Attempts exhausted (3/3)")
 
     mock_port = AsyncMock(spec=BrowserExtractionPort)
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
     msg = {
         "task_id": str(uuid.uuid4()),
         "execution_id": str(uuid.uuid4()),
         "attempt": 3,
-        "payload": {"url": "https://example.com", "canonical_url": "https://example.com", "category": "lodging", "reason": "TEST"},
+        "payload": {
+            "url": "https://example.com",
+            "canonical_url": "https://example.com",
+            "category": "lodging",
+            "reason": "TEST",
+        },
     }
 
     with pytest.raises(AttemptsExhaustedError):
@@ -354,12 +396,16 @@ async def test_execute_render_task_success_persists_immutable_observation_and_co
     mock_port = AsyncMock(spec=BrowserExtractionPort)
     mock_port.render_page.return_value = canned_result
 
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
-    res_id, output = await service.execute_render_task({
-        "task_id": str(task_id),
-        "execution_id": str(exec_id),
-    })
+    res_id, output = await service.execute_render_task(
+        {
+            "task_id": str(task_id),
+            "execution_id": str(exec_id),
+        }
+    )
 
     assert res_id == result_id
     assert output.status == BrowserRenderStatus.SUCCESS
@@ -434,12 +480,16 @@ async def test_execute_render_task_success_fallback_to_obs_id_when_lookup_none()
     mock_port = AsyncMock(spec=BrowserExtractionPort)
     mock_port.render_page.return_value = canned_result
 
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
-    res_id, output = await service.execute_render_task({
-        "task_id": str(task_id),
-        "execution_id": str(exec_id),
-    })
+    res_id, output = await service.execute_render_task(
+        {
+            "task_id": str(task_id),
+            "execution_id": str(exec_id),
+        }
+    )
 
     assert res_id == result_id
     assert output.status == BrowserRenderStatus.SUCCESS
@@ -502,12 +552,16 @@ async def test_execute_render_task_timed_out_degrades_gracefully() -> None:
     mock_port = AsyncMock(spec=BrowserExtractionPort)
     mock_port.render_page.return_value = timed_out_result
 
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
-    res_id, output = await service.execute_render_task({
-        "task_id": str(task_id),
-        "execution_id": str(exec_id),
-    })
+    res_id, output = await service.execute_render_task(
+        {
+            "task_id": str(task_id),
+            "execution_id": str(exec_id),
+        }
+    )
 
     assert res_id == result_id
     assert output.status == BrowserRenderStatus.TIMED_OUT
@@ -575,12 +629,16 @@ async def test_execute_render_task_blocked_by_bot_challenge_degrades_gracefully(
     mock_port = AsyncMock(spec=BrowserExtractionPort)
     mock_port.render_page.return_value = blocked_result
 
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
-    res_id, output = await service.execute_render_task({
-        "task_id": str(task_id),
-        "execution_id": str(exec_id),
-    })
+    res_id, output = await service.execute_render_task(
+        {
+            "task_id": str(task_id),
+            "execution_id": str(exec_id),
+        }
+    )
 
     assert output.status == BrowserRenderStatus.BLOCKED
     assert output.observation_id is None
@@ -621,12 +679,16 @@ async def test_execute_render_task_driver_exception_converts_to_degraded_outcome
     mock_port = AsyncMock(spec=BrowserExtractionPort)
     mock_port.render_page.side_effect = TimeoutError("Page navigation timeout exceeded")
 
-    service = BrowserWorkerService(mock_session, extraction_port=mock_port, fencing_service=mock_fencing)
+    service = BrowserWorkerService(
+        mock_session, extraction_port=mock_port, fencing_service=mock_fencing
+    )
 
-    res_id, output = await service.execute_render_task({
-        "task_id": str(task_id),
-        "execution_id": str(exec_id),
-    })
+    res_id, output = await service.execute_render_task(
+        {
+            "task_id": str(task_id),
+            "execution_id": str(exec_id),
+        }
+    )
 
     assert output.status == BrowserRenderStatus.TIMED_OUT
     assert output.observation_id is None

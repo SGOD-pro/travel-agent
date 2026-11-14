@@ -260,11 +260,15 @@ async def test_route_optimization_worker_e2e_lifecycle(
             published_queues: list[str] = []
 
             class MockSqsClient:
-                def send_message(self, QueueUrl: str, MessageBody: str, **kwargs: Any) -> dict[str, str]:
+                def send_message(
+                    self, QueueUrl: str, MessageBody: str, **kwargs: Any
+                ) -> dict[str, str]:
                     published_queues.append(QueueUrl)
                     return {"MessageId": f"mock-msg-{uuid.uuid4()}"}
 
-            optimizer_queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/route-optimizer-queue"
+            optimizer_queue_url = (
+                "https://sqs.us-east-1.amazonaws.com/123456789012/route-optimizer-queue"
+            )
             transport_adapter = SqsTransportAdapter(
                 queue_url="https://sqs.us-east-1.amazonaws.com/123456789012/default-queue",
                 sqs_client=MockSqsClient(),
@@ -296,7 +300,9 @@ async def test_route_optimization_worker_e2e_lifecycle(
             async with session_factory() as session:
                 task_completed = (await session.execute(task_stmt)).scalar_one()
                 assert task_completed.status == "COMPLETED"
-                result_stmt = select(WorkerResultModel).where(WorkerResultModel.id == task_completed.result_id)
+                result_stmt = select(WorkerResultModel).where(
+                    WorkerResultModel.id == task_completed.result_id
+                )
                 worker_result = (await session.execute(result_stmt)).scalar_one()
                 assert worker_result.output_ref is not None
                 route_id_str = worker_result.output_ref["route_id"]
@@ -322,7 +328,9 @@ async def test_route_optimization_worker_e2e_lifecycle(
                 event_type="TASK_COMPLETED",
                 result_id=worker_result.id,
             )
-            reconcile_result = await reconciliation_service.reconcile_task_event(event=completion_event)
+            reconcile_result = await reconciliation_service.reconcile_task_event(
+                event=completion_event
+            )
             assert reconcile_result.status == "APPLIED"
 
             # Resume execution to terminal SUCCEEDED via graph runner
@@ -412,9 +420,7 @@ async def test_route_optimization_worker_e2e_lifecycle(
 
             # 14. Verify replanned route version 2 created and reconcile completion
             async with session_factory() as session:
-                replan_task_stmt = select(TaskModel).where(
-                    TaskModel.execution_id == replan_job_id
-                )
+                replan_task_stmt = select(TaskModel).where(TaskModel.execution_id == replan_job_id)
                 replan_task_completed = (await session.execute(replan_task_stmt)).scalar_one()
                 assert replan_task_completed.status == "COMPLETED"
                 replan_res_stmt = select(WorkerResultModel).where(
@@ -549,7 +555,9 @@ async def test_route_optimization_worker_fails_explicitly_without_provider(
 
             # Calling process_record with no injected provider and no VALHALLA_ENDPOINT_URL must fail explicitly
             monkeypatch.setattr(settings, "VALHALLA_ENDPOINT_URL", None)
-            with pytest.raises(ValhallaConnectionError, match="VALHALLA_ENDPOINT_URL is not configured"):
+            with pytest.raises(
+                ValhallaConnectionError, match="VALHALLA_ENDPOINT_URL is not configured"
+            ):
                 await process_record(dispatch_record, session_factory)
     finally:
         app.dependency_overrides.clear()

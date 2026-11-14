@@ -181,9 +181,7 @@ def sample_proposal(test_owner_id: uuid.UUID) -> dict[str, Any]:
         "route_status": "OPTIMAL",
         "routing_status": "OPTIMAL",
         "route_diagnostics": [],
-        "provider_diagnostics": {
-            "weather": {"provider": "open_meteo", "horizon_days": 16}
-        },
+        "provider_diagnostics": {"weather": {"provider": "open_meteo", "horizon_days": 16}},
         "generated_at": datetime.now(UTC).isoformat(),
     }
 
@@ -335,8 +333,13 @@ async def test_get_trip_itinerary_happy_path(
     )
 
     with (
-        patch("functions.orchestrator.routing.repository.RouteRepository.get_route_by_id", new_callable=AsyncMock) as mock_get_route,
-        patch("functions.api.routes.trips.assemble_route_map_geojson", return_value=mock_geojson) as mock_assemble,
+        patch(
+            "functions.orchestrator.routing.repository.RouteRepository.get_route_by_id",
+            new_callable=AsyncMock,
+        ) as mock_get_route,
+        patch(
+            "functions.api.routes.trips.assemble_route_map_geojson", return_value=mock_geojson
+        ) as mock_assemble,
     ):
         mock_get_route.return_value = mock_route
 
@@ -407,7 +410,9 @@ async def test_get_trip_itinerary_returns_409_when_planning_in_progress(
     mock_session = AsyncMock()
     # First query returns trip_model, second query returns active execution id
     trip_exec_res = MagicMock(scalar_one_or_none=MagicMock(return_value=trip_model))
-    active_exec_res = MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=uuid.uuid4()))))
+    active_exec_res = MagicMock(
+        scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=uuid.uuid4())))
+    )
     mock_session.execute.side_effect = [trip_exec_res, active_exec_res]
 
     with pytest.raises(HTTPException) as exc_info:
@@ -435,7 +440,9 @@ async def test_get_trip_itinerary_returns_404_when_draft_without_proposal(
     )
     mock_session = AsyncMock()
     trip_exec_res = MagicMock(scalar_one_or_none=MagicMock(return_value=trip_model))
-    active_exec_res = MagicMock(scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None))))
+    active_exec_res = MagicMock(
+        scalars=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+    )
     mock_session.execute.side_effect = [trip_exec_res, active_exec_res]
 
     with pytest.raises(HTTPException) as exc_info:

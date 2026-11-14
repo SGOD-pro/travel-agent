@@ -63,7 +63,9 @@ class LayaDecisionRequest(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    decision_id: UUID = Field(default_factory=uuid4, description="Unique decision request identifier")
+    decision_id: UUID = Field(
+        default_factory=uuid4, description="Unique decision request identifier"
+    )
     decision_type: DecisionType = Field(
         default=DecisionType.EVIDENCE_ROUTING,
         description="Type of routing decision requested",
@@ -74,17 +76,27 @@ class LayaDecisionRequest(BaseModel):
     )
     execution_id: UUID = Field(..., description="Active trip execution identifier")
     trip_id: UUID | None = Field(default=None, description="Optional trip identifier")
-    context_version: int = Field(default=1, ge=1, description="Optimistic concurrency context version")
-    policy_version: str = Field(default="laya-policy-v1", description="Active policy version identifier")
-    question_version: str = Field(default="evidence_routing:v1", description="Active question template version")
+    context_version: int = Field(
+        default=1, ge=1, description="Optimistic concurrency context version"
+    )
+    policy_version: str = Field(
+        default="laya-policy-v1", description="Active policy version identifier"
+    )
+    question_version: str = Field(
+        default="evidence_routing:v1", description="Active question template version"
+    )
     policy_derived_eligible_choices: list[DecisionAction] = Field(
         ...,
         min_length=1,
         description="Prerequisite filtered choices eligible for selection",
     )
     budget_remaining: int = Field(ge=0, description="Remaining execution task budget")
-    context: dict[str, Any] = Field(..., description="Sanitized contextual state for decision evaluation")
-    idempotency_key: str = Field(..., min_length=1, description="Deterministic idempotency key for replay safety")
+    context: dict[str, Any] = Field(
+        ..., description="Sanitized contextual state for decision evaluation"
+    )
+    idempotency_key: str = Field(
+        ..., min_length=1, description="Deterministic idempotency key for replay safety"
+    )
 
 
 class DecisionEnvelope(BaseModel):
@@ -108,11 +120,17 @@ class DecisionEnvelope(BaseModel):
         default=None,
         description="Probability assigned to the top choice; null for deterministic singletons",
     )
-    model_version: str | None = Field(default=None, description="Model identifier or deterministic source")
+    model_version: str | None = Field(
+        default=None, description="Model identifier or deterministic source"
+    )
     policy_version: str = Field(..., min_length=1, description="Evaluator policy version")
-    rationale: str | None = Field(default=None, max_length=1000, description="Structured policy rationale")
+    rationale: str | None = Field(
+        default=None, max_length=1000, description="Structured policy rationale"
+    )
     latency_ms: int = Field(..., ge=0, description="Elapsed routing latency in milliseconds")
-    request_digest: str = Field(..., min_length=1, description="Canonical SHA256 digest of request inputs")
+    request_digest: str = Field(
+        ..., min_length=1, description="Canonical SHA256 digest of request inputs"
+    )
     created_at: str = Field(..., min_length=1, description="ISO 8601 creation timestamp string")
 
     @model_validator(mode="after")
@@ -126,7 +144,9 @@ class DecisionEnvelope(BaseModel):
             if not math.isfinite(self.confidence) or not (0.0 <= self.confidence <= 1.0):
                 raise ValueError("confidence must be a finite float between 0.0 and 1.0")
         if self.answer_confidence is not None:
-            if not math.isfinite(self.answer_confidence) or not (0.0 <= self.answer_confidence <= 1.0):
+            if not math.isfinite(self.answer_confidence) or not (
+                0.0 <= self.answer_confidence <= 1.0
+            ):
                 raise ValueError("answer_confidence must be a finite float between 0.0 and 1.0")
         return self
 

@@ -6,6 +6,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Repository hygiene pass (no behavioral changes, verified against the pre-change test baseline): relocated AI-assistant artifacts from the repository root to tools/ai/; expanded .gitignore (Python, Node/Next.js, Playwright, environment, editor entries); fixed broken dev commands in start.sh and the Makefile that referenced the nonexistent travel.runtime.fastapi.app:app module (now functions.api.app:app); rewrote the root and backend READMEs to match the actual repository layout and documentation tree; removed a stale duplicated downgrade() definition in migration 628f8a83fe95 that was silently shadowed by Python.
+- Backend lint brought to zero findings: ruff auto-fixes (import ordering, unused imports) plus formatting across the codebase, explicit exception chaining on idempotency-conflict raises, StrEnum migration for the daemon WorkerState, ambiguous variable renames, and documented per-file E402 ignores for script-style entrypoints. mypy error count unchanged (all pre-existing).
+- Frontend tooling added: ESLint 9 flat config (eslint-config-next core-web-vitals + typescript) and Prettier with a pre-commit hook covering both stacks; dependency versions pinned to the lockfile-resolved versions instead of latest; all ESLint errors fixed (unused imports, exception typing, ref handling during render) with react-hooks v6 static-check findings downgraded to warnings pending behavior-sensitive refactors.
+
 ### Added
 - Core execution engine components for asynchronous travel planning workflows (see spec 0001). This includes PostgreSQL persistence migrations for executions, tasks, outbox events, worker results, completion receipts, job events, and API idempotency records.
 - API job acceptance with idempotency reservations, owner isolated job timeline polling, and job cancellation endpoints (see spec 0001).

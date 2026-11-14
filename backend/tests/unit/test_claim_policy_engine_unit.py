@@ -30,19 +30,31 @@ def policy() -> ClaimVerificationPolicy:
 def test_domain_authority_whitelist(policy: ClaimVerificationPolicy) -> None:
     """Verifies that government and police domains are recognized while blogs are rejected."""
     # Official government and police domains
-    assert policy.is_authoritative_domain("https://kolkatatrafficpolice.gov.in/advisory.html") is True
+    assert (
+        policy.is_authoritative_domain("https://kolkatatrafficpolice.gov.in/advisory.html") is True
+    )
     assert policy.is_authoritative_domain("kolkatatrafficpolice.gov.in") is True
     assert policy.is_authoritative_domain("https://wb.gov.in/portal/web/guest/home") is True
     assert policy.is_authoritative_domain("https://delhitrafficpolice.nic.in/notices") is True
-    assert policy.is_authoritative_domain("https://subdomain.kolkatapolice.gov.in:8443/route") is True
+    assert (
+        policy.is_authoritative_domain("https://subdomain.kolkatapolice.gov.in:8443/route") is True
+    )
     assert policy.is_authoritative_domain("https://transport.wb.gov.in/routes") is True
 
     # URL domain stripping with userinfo and port credentials (Minor 2)
-    assert policy.is_authoritative_domain("https://user:password@kolkatatrafficpolice.gov.in/notice") is True
-    assert policy.extract_domain("https://admin:secret123@kolkatatrafficpolice.gov.in:8080/advisory") == "kolkatatrafficpolice.gov.in"
+    assert (
+        policy.is_authoritative_domain("https://user:password@kolkatatrafficpolice.gov.in/notice")
+        is True
+    )
+    assert (
+        policy.extract_domain("https://admin:secret123@kolkatatrafficpolice.gov.in:8080/advisory")
+        == "kolkatatrafficpolice.gov.in"
+    )
 
     # Secondary news blogs and travel aggregators
-    assert policy.is_authoritative_domain("https://timesofindia.indiatimes.com/city/kolkata") is False
+    assert (
+        policy.is_authoritative_domain("https://timesofindia.indiatimes.com/city/kolkata") is False
+    )
     assert policy.is_authoritative_domain("https://travelblog.example.com/kolkata-puja") is False
     assert policy.is_authoritative_domain("https://makemytrip.com/hotels") is False
     assert policy.is_authoritative_domain("https://reddit.com/r/kolkata") is False
@@ -65,7 +77,6 @@ def test_custom_critical_categories_configurable() -> None:
     status, _ = custom_policy.evaluate_verification(claim, observations=[blog_obs])
     # Remains UNVERIFIED because category is in critical categories
     assert status == VerificationStatus.UNVERIFIED
-
 
 
 def test_deterministic_verification_unverified_without_observations(
@@ -159,7 +170,10 @@ def test_category_freshness_evaluation(policy: ClaimVerificationPolicy) -> None:
         category=ClaimCategory.HOURS,
         typed_value={"open": "09:00"},
     )
-    assert policy.evaluate_freshness(claim_no_date, published_at=None, as_of=as_of) == FreshnessStatus.UNKNOWN
+    assert (
+        policy.evaluate_freshness(claim_no_date, published_at=None, as_of=as_of)
+        == FreshnessStatus.UNKNOWN
+    )
 
     # 2. Weather category validity window is 6 hours
     weather_claim = ClaimBase(
@@ -169,10 +183,16 @@ def test_category_freshness_evaluation(policy: ClaimVerificationPolicy) -> None:
     )
     # Published 2 hours ago -> FRESH
     pub_2h = as_of - timedelta(hours=2)
-    assert policy.evaluate_freshness(weather_claim, published_at=pub_2h, as_of=as_of) == FreshnessStatus.FRESH
+    assert (
+        policy.evaluate_freshness(weather_claim, published_at=pub_2h, as_of=as_of)
+        == FreshnessStatus.FRESH
+    )
     # Published 8 hours ago -> STALE
     pub_8h = as_of - timedelta(hours=8)
-    assert policy.evaluate_freshness(weather_claim, published_at=pub_8h, as_of=as_of) == FreshnessStatus.STALE
+    assert (
+        policy.evaluate_freshness(weather_claim, published_at=pub_8h, as_of=as_of)
+        == FreshnessStatus.STALE
+    )
 
     # 3. Restriction category validity window is 24 hours
     road_claim = ClaimBase(
@@ -181,9 +201,15 @@ def test_category_freshness_evaluation(policy: ClaimVerificationPolicy) -> None:
         typed_value={"status": "CLOSED"},
     )
     pub_12h = as_of - timedelta(hours=12)
-    assert policy.evaluate_freshness(road_claim, published_at=pub_12h, as_of=as_of) == FreshnessStatus.FRESH
+    assert (
+        policy.evaluate_freshness(road_claim, published_at=pub_12h, as_of=as_of)
+        == FreshnessStatus.FRESH
+    )
     pub_30h = as_of - timedelta(hours=30)
-    assert policy.evaluate_freshness(road_claim, published_at=pub_30h, as_of=as_of) == FreshnessStatus.STALE
+    assert (
+        policy.evaluate_freshness(road_claim, published_at=pub_30h, as_of=as_of)
+        == FreshnessStatus.STALE
+    )
 
     # 4. Explicit valid until in past -> STALE
     expired_claim = ClaimBase(

@@ -143,7 +143,9 @@ class TestTripPlannerLlmWiring:
         assert "bengali" in req.traveler_preferences
 
     @pytest.mark.asyncio
-    async def test_discover_candidates_provider_failure_falls_back_to_brief_destinations(self) -> None:
+    async def test_discover_candidates_provider_failure_falls_back_to_brief_destinations(
+        self,
+    ) -> None:
         brief = _make_brief()
         mock_llm = MagicMock(spec=HostedLlmClientPort)
         mock_llm.research_places = AsyncMock(side_effect=TimeoutError("Bedrock socket timeout"))

@@ -54,11 +54,7 @@ async def process_record(record: dict[str, Any], session_factory: Any) -> None:
     worker_role = payload.get("worker", "EVIDENCE")
     action = payload.get("action", "collect")
 
-    message = TaskQueueMessage(
-        task_id=task_id,
-        execution_id=execution_id,
-        attempt=attempt
-    )
+    message = TaskQueueMessage(task_id=task_id, execution_id=execution_id, attempt=attempt)
 
     async with session_factory() as session:
         fencing_service = WorkerFencingService(session)
@@ -71,7 +67,12 @@ async def process_record(record: dict[str, Any], session_factory: Any) -> None:
                 expected_context_version=context_version,
                 lease_seconds=30,
             )
-        except (TaskClaimConflictError, TaskLeaseActiveError, TaskAlreadyTerminalError, StaleQueueMessageError) as e:
+        except (
+            TaskClaimConflictError,
+            TaskLeaseActiveError,
+            TaskAlreadyTerminalError,
+            StaleQueueMessageError,
+        ) as e:
             logger.info(f"Discarding task dispatch for {task_id}: {e}")
             return  # Do not fail batch, safely discard
         except ExecutionEngineError as e:

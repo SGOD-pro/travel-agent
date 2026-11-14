@@ -257,12 +257,14 @@ async def test_consumer_process_batch_partial_failures_on_deadline() -> None:
         "Records": [
             {
                 "messageId": "msg-12345",
-                "body": json.dumps({
-                    "task_id": str(uuid.uuid4()),
-                    "execution_id": str(uuid.uuid4()),
-                    "worker": "OPTIMIZER",
-                    "action": "solve",
-                }),
+                "body": json.dumps(
+                    {
+                        "task_id": str(uuid.uuid4()),
+                        "execution_id": str(uuid.uuid4()),
+                        "worker": "OPTIMIZER",
+                        "action": "solve",
+                    }
+                ),
             }
         ]
     }
@@ -309,6 +311,7 @@ async def test_api_submit_route_optimization_validation_and_acceptance() -> None
         yield mock_session
 
     from config.db import get_session
+
     app.dependency_overrides[get_session] = _get_test_session
 
     try:
@@ -352,6 +355,7 @@ async def test_api_get_route_tenant_isolation_forbidden() -> None:
     route_id = uuid.uuid4()
 
     auth_user = AuthenticatedUser(id=caller_id, email="caller@test.local")
+
     async def _get_auth_user():
         return auth_user
 
@@ -367,10 +371,13 @@ async def test_api_get_route_tenant_isolation_forbidden() -> None:
 
     from config.db import get_session
     from functions.orchestrator.routing.repository import RouteRepository
+
     app.dependency_overrides[get_session] = _get_test_session
 
     try:
-        with patch.object(RouteRepository, "get_route_by_id", new_callable=AsyncMock, return_value=None):
+        with patch.object(
+            RouteRepository, "get_route_by_id", new_callable=AsyncMock, return_value=None
+        ):
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as client:
                 resp = await client.get(f"/api/v1/optimization/routes/{route_id}")
@@ -388,7 +395,9 @@ async def test_sqs_transport_routes_optimizer_worker_to_dedicated_queue_via_work
     mock_sqs = MagicMock()
     mock_sqs.send_message = MagicMock(return_value={"MessageId": "sqs-msg-123"})
 
-    dedicated_queue = "https://sqs.ap-south-1.amazonaws.com/123456789012/route-optimizer-task-dispatch-staging"
+    dedicated_queue = (
+        "https://sqs.ap-south-1.amazonaws.com/123456789012/route-optimizer-task-dispatch-staging"
+    )
     generic_queue = "https://sqs.ap-south-1.amazonaws.com/123456789012/generic-outbox-queue"
 
     transport = SqsTransportAdapter(
@@ -414,7 +423,9 @@ async def test_sqs_transport_routes_optimizer_worker_to_dedicated_queue_via_work
 
 
 @pytest.mark.asyncio
-async def test_sqs_transport_routes_optimizer_worker_fallback_to_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_sqs_transport_routes_optimizer_worker_fallback_to_env_var(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Verifies that SqsTransportAdapter falls back to ROUTE_OPTIMIZER_QUEUE_URL in os.environ."""
     from functions.orchestrator.execution.transport import OutboxMessage, SqsTransportAdapter
 
@@ -463,5 +474,3 @@ def test_build_sqs_transport_populates_optimizer_queue_from_env() -> None:
         assert isinstance(transport, SqsTransportAdapter)
         assert transport.worker_queues.get("OPTIMIZER") == env_queue
         assert transport.worker_queues.get("ROUTE_OPTIMIZER") == env_queue
-
-

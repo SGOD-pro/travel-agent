@@ -27,9 +27,6 @@ def assemble_route_map_geojson(route: RouteModel) -> RouteMapGeoJsonResponse:
     """Assembles a standards-compliant GeoJSON FeatureCollection from a persistent RouteModel entity."""
     features: list[GeoJsonFeature] = []
 
-    # Determine detour provenance
-    has_applied_closure = any(r.was_applied for r in (route.restrictions or []))
-
     all_lons: list[float] = []
     all_lats: list[float] = []
 
@@ -41,9 +38,8 @@ def assemble_route_map_geojson(route: RouteModel) -> RouteMapGeoJsonResponse:
         all_lons.append(lon)
         all_lats.append(lat)
 
-        is_infeasible_or_skipped = (
-            stop.is_skipped
-            or (route.status == RouteStatus.INFEASIBLE.value and not stop.is_completed)
+        is_infeasible_or_skipped = stop.is_skipped or (
+            route.status == RouteStatus.INFEASIBLE.value and not stop.is_completed
         )
 
         if is_infeasible_or_skipped:
@@ -63,9 +59,7 @@ def assemble_route_map_geojson(route: RouteModel) -> RouteMapGeoJsonResponse:
             else None
         )
         effective_skip_reason = (
-            (stop.skip_reason or fallback_infeasible_reason)
-            if is_infeasible_or_skipped
-            else None
+            (stop.skip_reason or fallback_infeasible_reason) if is_infeasible_or_skipped else None
         )
 
         stop_props: dict[str, Any] = {
@@ -184,7 +178,7 @@ def assemble_route_map_geojson(route: RouteModel) -> RouteMapGeoJsonResponse:
         bbox = [min(all_lons), min(all_lats), max(all_lons), max(all_lats)]
 
     diagnostics_list = list(route.assumptions or [])
-    for s in (route.stops or []):
+    for s in route.stops or []:
         if getattr(s, "is_skipped", False):
             reason_text = f": {s.skip_reason}" if getattr(s, "skip_reason", None) else ""
             dropped_msg = f"Optional stop '{s.name}' dropped{reason_text}"
@@ -194,7 +188,6 @@ def assemble_route_map_geojson(route: RouteModel) -> RouteMapGeoJsonResponse:
         for w in route.warnings:
             if w not in diagnostics_list:
                 diagnostics_list.append(w)
-
 
     top_level_props: dict[str, Any] = {
         "route_id": str(route.id),

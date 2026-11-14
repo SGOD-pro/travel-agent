@@ -17,7 +17,6 @@ Conforming to spec 0001:
 from __future__ import annotations
 
 import asyncio
-import re
 import socket
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -25,11 +24,8 @@ from typing import Any
 
 import pytest
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy import select
 
-from config.config import settings
 from functions.api.models import TripModel
 from functions.orchestrator.execution import (
     CompletionReceiptModel,
@@ -41,7 +37,6 @@ from functions.orchestrator.execution import (
     TaskModel,
     WorkerResultModel,
 )
-from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
 
 # Resilient DNS lookup for WSL/Aiven forwarder stability
 _orig_getaddrinfo = socket.getaddrinfo
@@ -54,6 +49,7 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
         return _dns_cache[key]
     last_err: Exception | None = None
     import time
+
     for _ in range(5):
         try:
             res = _orig_getaddrinfo(host, port, *args, **kwargs)
@@ -78,6 +74,7 @@ socket.getaddrinfo = _resilient_getaddrinfo
 
 def build_test_execution_graph(checkpointer: Any):
     """Builds a test state graph with worker and join nodes using checkpointer."""
+
     def worker_node(state: ExecutionState) -> dict[str, Any]:
         return {"current_step": "worker_processed"}
 
@@ -302,13 +299,17 @@ async def test_receipt_deduplication_already_applied(
     # Check outbox events count: exactly 1 EXECUTION_RESUME event
     async with session_factory() as session:
         events = (
-            await session.execute(
-                select(OutboxEventModel).where(
-                    OutboxEventModel.execution_id == exec_id,
-                    OutboxEventModel.kind == "EXECUTION_RESUME",
+            (
+                await session.execute(
+                    select(OutboxEventModel).where(
+                        OutboxEventModel.execution_id == exec_id,
+                        OutboxEventModel.kind == "EXECUTION_RESUME",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(events) == 1
 
 
@@ -505,13 +506,17 @@ async def test_concurrent_results_merge_outputs_without_overwriting(
     # Exactly one resume outbox event emitted
     async with session_factory() as session:
         events = (
-            await session.execute(
-                select(OutboxEventModel).where(
-                    OutboxEventModel.execution_id == exec_id,
-                    OutboxEventModel.kind == "EXECUTION_RESUME",
+            (
+                await session.execute(
+                    select(OutboxEventModel).where(
+                        OutboxEventModel.execution_id == exec_id,
+                        OutboxEventModel.kind == "EXECUTION_RESUME",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(events) == 1
 
 
@@ -563,13 +568,17 @@ async def test_cancellation_barrier_skips_checkpoint_update(
 
         # Zero EXECUTION_RESUME events
         resume_events = (
-            await session.execute(
-                select(OutboxEventModel).where(
-                    OutboxEventModel.execution_id == exec_id,
-                    OutboxEventModel.kind == "EXECUTION_RESUME",
+            (
+                await session.execute(
+                    select(OutboxEventModel).where(
+                        OutboxEventModel.execution_id == exec_id,
+                        OutboxEventModel.kind == "EXECUTION_RESUME",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(resume_events) == 0
 
     # Checkpoint was not modified
@@ -578,9 +587,7 @@ async def test_cancellation_barrier_skips_checkpoint_update(
 
 
 @pytest.mark.asyncio
-async def test_deadline_barrier_blocks_graph_resume(
-    session_factory, postgres_checkpointer
-) -> None:
+async def test_deadline_barrier_blocks_graph_resume(session_factory, postgres_checkpointer) -> None:
     """Verifies that an expired deadline blocks graph resume and marks execution FAILED."""
     graph = build_test_execution_graph(postgres_checkpointer)
     exec_id, task_id, result_id = await create_execution_with_task_and_result(
@@ -612,9 +619,7 @@ async def test_deadline_barrier_blocks_graph_resume(
 
 
 @pytest.mark.asyncio
-async def test_stale_context_version_rejected(
-    session_factory, postgres_checkpointer
-) -> None:
+async def test_stale_context_version_rejected(session_factory, postgres_checkpointer) -> None:
     """Verifies that mismatched context version is rejected from checkpoint update."""
     graph = build_test_execution_graph(postgres_checkpointer)
     exec_id, task_id, result_id = await create_execution_with_task_and_result(
@@ -648,9 +653,7 @@ async def test_stale_context_version_rejected(
 
 
 @pytest.mark.asyncio
-async def test_stale_attempt_rejected(
-    session_factory, postgres_checkpointer
-) -> None:
+async def test_stale_attempt_rejected(session_factory, postgres_checkpointer) -> None:
     """Verifies that an older attempt number is rejected as stale."""
     graph = build_test_execution_graph(postgres_checkpointer)
     exec_id, task_id, result_id = await create_execution_with_task_and_result(

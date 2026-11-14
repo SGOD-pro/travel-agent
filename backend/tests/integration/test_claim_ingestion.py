@@ -69,9 +69,7 @@ async def _create_test_execution(session: Any) -> tuple[uuid.UUID, uuid.UUID]:
 class TestClaimIngestionIntegration:
     """Tests that claims are correctly derived from collected observations and verified by the eligibility gate."""
 
-    async def test_ingest_claims_from_matching_observations(
-        self, session_factory: Any
-    ) -> None:
+    async def test_ingest_claims_from_matching_observations(self, session_factory: Any) -> None:
         async with session_factory() as session:
             exec_id, owner_id = await _create_test_execution(session)
             now = datetime.now(UTC)
@@ -180,12 +178,13 @@ class TestClaimIngestionIntegration:
             lodging_claims = [c for c in claims if c.category == "LODGING"]
             assert len(lodging_claims) == 1
             stay_claim = lodging_claims[0]
-            assert stay_claim.typed_value.get("evidence_class") == EvidenceClass.INDICATIVE_SEARCH.value
+            assert (
+                stay_claim.typed_value.get("evidence_class")
+                == EvidenceClass.INDICATIVE_SEARCH.value
+            )
             assert stay_claim.typed_value.get("evidence_class") != EvidenceClass.LIVE_OFFER.value
 
-    async def test_ingest_claims_skips_needs_browser_and_errors(
-        self, session_factory: Any
-    ) -> None:
+    async def test_ingest_claims_skips_needs_browser_and_errors(self, session_factory: Any) -> None:
         async with session_factory() as session:
             exec_id, owner_id = await _create_test_execution(session)
             now = datetime.now(UTC)
@@ -203,7 +202,10 @@ class TestClaimIngestionIntegration:
                 excerpt_text="[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED]",
                 excerpt_locator="body",
                 extraction_method="NEEDS_BROWSER",
-                artifact_ref={"category": "lodging", "browser_reason": "DYNAMIC_JAVASCRIPT_REQUIRED"},
+                artifact_ref={
+                    "category": "lodging",
+                    "browser_reason": "DYNAMIC_JAVASCRIPT_REQUIRED",
+                },
                 created_at=now,
             )
             # Error / unavailable observation
@@ -219,7 +221,11 @@ class TestClaimIngestionIntegration:
                 excerpt_text="Failed loading site",
                 excerpt_locator="body",
                 extraction_method="SCRAPLING_HTTP",
-                artifact_ref={"category": "attraction", "status": "UNAVAILABLE", "error": "HTTP 503"},
+                artifact_ref={
+                    "category": "attraction",
+                    "status": "UNAVAILABLE",
+                    "error": "HTTP 503",
+                },
                 created_at=now,
             )
             session.add_all([obs_browser, obs_error])
@@ -290,4 +296,3 @@ class TestClaimIngestionIntegration:
             await session.commit()
             # Does not duplicate or error
             assert len(second_run) == 0
-

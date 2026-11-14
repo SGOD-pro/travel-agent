@@ -90,7 +90,8 @@ class FixtureBrowserAdapter(BrowserExtractionPort):
         effective_url: str | None = None,
         excerpt_text: str | None = None,
         excerpt_locator: str = "main#rendered-content",
-        rendered_html_snippet: str | None = "<html><body><main id='rendered-content'>Dynamic Content</main></body></html>",
+        rendered_html_snippet: str
+        | None = "<html><body><main id='rendered-content'>Dynamic Content</main></body></html>",
         render_duration_ms: int = 420,
         usage: BrowserResourceUsage | None = None,
         parsed_lodging_observations: list[HotelObservation] | None = None,

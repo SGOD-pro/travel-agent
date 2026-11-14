@@ -1203,9 +1203,7 @@ async def test_trip_planner_route_optimizer_production_fail_closed_on_missing_ro
         persisted_route_id, worker_output = await worker_service.execute_task(dispatch_payload)
         # Intentionally remove execution_id from persisted route in PostgreSQL to simulate broken lineage
         await session.execute(
-            update(RouteModel)
-            .where(RouteModel.id == persisted_route_id)
-            .values(execution_id=None)
+            update(RouteModel).where(RouteModel.id == persisted_route_id).values(execution_id=None)
         )
         await session.commit()
 

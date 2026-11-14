@@ -192,7 +192,10 @@ def test_deterministic_singleton_enforces_null_confidences() -> None:
     assert valid_singleton.status == DecisionStatus.DETERMINISTIC_SINGLETON
 
     # Rejected when answer_confidence is not None
-    with pytest.raises(ValidationError, match="Deterministic singleton decisions must have confidence=null and answer_confidence=null"):
+    with pytest.raises(
+        ValidationError,
+        match="Deterministic singleton decisions must have confidence=null and answer_confidence=null",
+    ):
         DecisionEnvelope(
             decision_id=uuid4(),
             decision_type=DecisionType.EVIDENCE_ROUTING,
@@ -212,7 +215,10 @@ def test_deterministic_singleton_enforces_null_confidences() -> None:
         )
 
     # Rejected when confidence is not None
-    with pytest.raises(ValidationError, match="Deterministic singleton decisions must have confidence=null and answer_confidence=null"):
+    with pytest.raises(
+        ValidationError,
+        match="Deterministic singleton decisions must have confidence=null and answer_confidence=null",
+    ):
         DecisionEnvelope(
             decision_id=uuid4(),
             decision_type=DecisionType.EVIDENCE_ROUTING,
@@ -236,7 +242,9 @@ def test_confidence_finite_value_bounds() -> None:
     """Verifies that non-finite or out-of-range confidence scores raise ValidationError."""
     digest = "abcdef1234567890"
 
-    with pytest.raises(ValidationError, match="answer_confidence must be a finite float between 0.0 and 1.0"):
+    with pytest.raises(
+        ValidationError, match="answer_confidence must be a finite float between 0.0 and 1.0"
+    ):
         DecisionEnvelope(
             decision_id=uuid4(),
             decision_type=DecisionType.EVIDENCE_ROUTING,
@@ -253,7 +261,9 @@ def test_confidence_finite_value_bounds() -> None:
             created_at="2026-10-17T16:00:00Z",
         )
 
-    with pytest.raises(ValidationError, match="confidence must be a finite float between 0.0 and 1.0"):
+    with pytest.raises(
+        ValidationError, match="confidence must be a finite float between 0.0 and 1.0"
+    ):
         DecisionEnvelope(
             decision_id=uuid4(),
             decision_type=DecisionType.EVIDENCE_ROUTING,
@@ -525,7 +535,10 @@ def test_laya_settings_deadline_validation() -> None:
     assert valid_settings.LAYA_TOTAL_DEADLINE_SECONDS == 5.0
 
     # Rejected when deadline < timeout
-    with pytest.raises(ValidationError, match="LAYA_TOTAL_DEADLINE_SECONDS must be greater than or equal to LAYA_REQUEST_TIMEOUT_SECONDS"):
+    with pytest.raises(
+        ValidationError,
+        match="LAYA_TOTAL_DEADLINE_SECONDS must be greater than or equal to LAYA_REQUEST_TIMEOUT_SECONDS",
+    ):
         Settings(
             LAYA_REQUEST_TIMEOUT_SECONDS=4.0,
             LAYA_TOTAL_DEADLINE_SECONDS=2.0,

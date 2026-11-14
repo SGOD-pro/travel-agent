@@ -17,12 +17,11 @@ import json
 import logging
 import time
 import uuid
-from datetime import UTC, date, datetime, timedelta
-from decimal import Decimal
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from acceptance_database import get_acceptance_session_factory
 from acceptance_keys import generate_jwt
@@ -32,24 +31,7 @@ from contracts.decision import (
     DecisionPhase,
     LayaDecisionRequest,
 )
-from contracts.llm import (
-    PlaceProposal,
-    RankingRequest,
-    ResearchRequest,
-)
-from contracts.routing import (
-    Point,
-    RouteOptimizerWorkerOutput,
-    RouteRequest,
-    RouteStatus,
-    RouteStopInput,
-    StopType,
-    TransportMode,
-)
-from contracts.weather import (
-    CorridorWeatherRequest,
-    WeatherStopInput,
-)
+from functions.api.models import TripDeltaModel, TripModel
 from functions.decision_router.client import RemoteLayaDecisionAdapter
 from functions.evidence_collector.models import SourceObservationModel
 from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
@@ -57,11 +39,9 @@ from functions.orchestrator.execution.models import (
     ExecutionModel,
     JobEventModel,
     TaskModel,
-    WorkerResultModel,
 )
 from functions.orchestrator.graphs.trip_planner.graph import (
     TripPlanningState,
-    compile_trip_planning_workflow,
     compute_budget_node,
     consume_route_result_node,
     discover_candidates_node,
@@ -74,7 +54,6 @@ from functions.orchestrator.graphs.trip_planner.graph import (
     synthesize_proposal_node,
 )
 from functions.orchestrator.llm.adapters.bedrock import BedrockLlmClient
-from functions.orchestrator.places.models import CanonicalPlaceModel
 from functions.orchestrator.routing.repository import RouteRepository
 from functions.orchestrator.weather.adapters.open_meteo import OpenMeteoWeatherClient
 from functions.route_optimizer.service import (
@@ -82,7 +61,6 @@ from functions.route_optimizer.service import (
     parse_optimizer_dispatch_message,
 )
 from functions.route_optimizer.valhalla import ValhallaClient
-from functions.api.models import TripDeltaModel, TripModel
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("live_e2e_runner")
@@ -104,7 +82,8 @@ async def run_live_e2e() -> dict[str, Any]:
         "bedrock_model_id": settings.BEDROCK_MODEL_ID,
         "aws_region": settings.AWS_REGION,
         "aws_profile": settings.AWS_PROFILE or "aws",
-        "laya_endpoint_host": urlsplit(settings.LAYA_ENDPOINT_URL or "").netloc or "cloudflare-laya",
+        "laya_endpoint_host": urlsplit(settings.LAYA_ENDPOINT_URL or "").netloc
+        or "cloudflare-laya",
         "valhalla_endpoint_host": "valhalla1.openstreetmap.de",
         "weather_endpoint_host": "api.open-meteo.com",
         "acceptance_db_host": "pg-070905-cloud-postgress-db.d.aivencloud.com:20266",
@@ -286,7 +265,9 @@ async def run_live_e2e() -> dict[str, Any]:
     }
     print(f"          Discovered {len(discovered)} places in {t_stage1:.2f}s.")
     for p in discovered:
-        print(f"          - {p.get('name')} ({p.get('category')}) coords=({p.get('lat')}, {p.get('lng')}), uncertainty={p.get('uncertainty')}")
+        print(
+            f"          - {p.get('name')} ({p.get('category')}) coords=({p.get('lat')}, {p.get('lng')}), uncertainty={p.get('uncertainty')}"
+        )
 
     # -------------------------------------------------------------
     # STAGE 2: Remote LAYA Decision Evaluation
@@ -306,7 +287,9 @@ async def run_live_e2e() -> dict[str, Any]:
     }
     print(f"          Decision action: {state.get('evidence_routing_action')} in {t_stage2:.2f}s")
     if laya_decisions:
-        print(f"          Envelope status: {laya_decisions[-1].get('status')}, rationale: {laya_decisions[-1].get('rationale')}")
+        print(
+            f"          Envelope status: {laya_decisions[-1].get('status')}, rationale: {laya_decisions[-1].get('rationale')}"
+        )
 
     # Stage 2b: Dedicated Multi-Choice LAYA Live Inference Probe
     # To demonstrate genuine model inference when multiple choices are eligible
@@ -333,10 +316,12 @@ async def run_live_e2e() -> dict[str, Any]:
         "latency_ms": laya_probe_envelope.latency_ms,
         "rationale": laya_probe_envelope.rationale,
     }
-    print(f"          Multi-choice probe: choice={laya_probe_envelope.allowed_choice.value}, "
-          f"status={laya_probe_envelope.status.value}, "
-          f"ans_conf={laya_probe_envelope.answer_confidence}, "
-          f"latency={laya_probe_envelope.latency_ms}ms")
+    print(
+        f"          Multi-choice probe: choice={laya_probe_envelope.allowed_choice.value}, "
+        f"status={laya_probe_envelope.status.value}, "
+        f"ans_conf={laya_probe_envelope.answer_confidence}, "
+        f"latency={laya_probe_envelope.latency_ms}ms"
+    )
 
     # -------------------------------------------------------------
     # STAGE 3: Deterministic Candidate Eligibility Gate (PostGIS)
@@ -357,8 +342,12 @@ async def run_live_e2e() -> dict[str, Any]:
         "eligible_stops": [s.get("primary_name") for s in eligible],
         "editorial_places": [e.get("name") for e in editorial],
     }
-    print(f"          Eligible solver stops ({len(eligible)}): {[s.get('primary_name') for s in eligible]}")
-    print(f"          Unverified editorial recommendations ({len(editorial)}): {[e.get('name') for e in editorial]}")
+    print(
+        f"          Eligible solver stops ({len(eligible)}): {[s.get('primary_name') for s in eligible]}"
+    )
+    print(
+        f"          Unverified editorial recommendations ({len(editorial)}): {[e.get('name') for e in editorial]}"
+    )
 
     # -------------------------------------------------------------
     # STAGE 4: Real Bedrock LLM Candidate Ranking
@@ -375,13 +364,19 @@ async def run_live_e2e() -> dict[str, Any]:
         "duration_seconds": round(t_stage4, 2),
         "ranked_places_count": len(ranked_places),
         "ranked_order": [
-            {"rank": rp.get("rank"), "name": rp.get("place", {}).get("name"), "fit_score": rp.get("place", {}).get("fit_score")}
+            {
+                "rank": rp.get("rank"),
+                "name": rp.get("place", {}).get("name"),
+                "fit_score": rp.get("place", {}).get("fit_score"),
+            }
             for rp in ranked_places
         ],
     }
     print(f"          Ranked {len(ranked_places)} places in {t_stage4:.2f}s:")
     for rp in ranked_places:
-        print(f"          - Rank {rp.get('rank')}: {rp.get('place', {}).get('name')} (fit={rp.get('place', {}).get('fit_score')})")
+        print(
+            f"          - Rank {rp.get('rank')}: {rp.get('place', {}).get('name')} (fit={rp.get('place', {}).get('fit_score')})"
+        )
 
     # -------------------------------------------------------------
     # STAGE 5: Real Valhalla Route Optimization via Asynchronous Worker
@@ -398,7 +393,9 @@ async def run_live_e2e() -> dict[str, Any]:
 
     # Persist pending task in acceptance_db under parent execution fence
     now_task = datetime.now(UTC)
-    input_hash = hashlib.sha256(json.dumps(task_spec.get("payload", {}), sort_keys=True).encode()).hexdigest()
+    input_hash = hashlib.sha256(
+        json.dumps(task_spec.get("payload", {}), sort_keys=True).encode()
+    ).hexdigest()
     async with session_factory() as session:
         t_model = TaskModel(
             id=opt_task_id,
@@ -446,7 +443,9 @@ async def run_live_e2e() -> dict[str, Any]:
         "provider": "OpenStreetMap Valhalla (valhalla1.openstreetmap.de)",
         "duration_seconds": round(t_stage5, 2),
         "route_id": str(persisted_route_id),
-        "status": worker_output.status.value if hasattr(worker_output.status, "value") else str(worker_output.status),
+        "status": worker_output.status.value
+        if hasattr(worker_output.status, "value")
+        else str(worker_output.status),
         "total_distance_meters": worker_output.total_distance_m,
         "total_travel_seconds": worker_output.total_travel_seconds,
         "legs_count": worker_output.legs_count,
@@ -454,7 +453,9 @@ async def run_live_e2e() -> dict[str, Any]:
     }
     print(f"          Valhalla solved route {persisted_route_id} in {t_stage5:.2f}s:")
     print(f"          - Distance: {worker_output.total_distance_m / 1000.0:.1f} km")
-    print(f"          - Duration: {worker_output.total_travel_seconds // 3600}h {(worker_output.total_travel_seconds % 3600) // 60}m")
+    print(
+        f"          - Duration: {worker_output.total_travel_seconds // 3600}h {(worker_output.total_travel_seconds % 3600) // 60}m"
+    )
     print(f"          - Geometry coordinates count: {len(coords)}")
 
     # -------------------------------------------------------------
@@ -480,7 +481,9 @@ async def run_live_e2e() -> dict[str, Any]:
     }
     print(f"          Formulated {len(sched_stops)} scheduled stops:")
     for s in sched_stops:
-        print(f"          - {s.get('name')}: arr={s.get('arrival_time')}, dep={s.get('departure_time')}")
+        print(
+            f"          - {s.get('name')}: arr={s.get('arrival_time')}, dep={s.get('departure_time')}"
+        )
 
     # -------------------------------------------------------------
     # STAGE 7: Real Open-Meteo Weather Integration
@@ -514,7 +517,9 @@ async def run_live_e2e() -> dict[str, Any]:
     print(f"          Attribution: {weather_diag.get('attribution')}")
     print(f"          Caution: {weather_diag.get('overall_caution')}")
     for a in weather_advisories:
-        print(f"          - {a.get('stop_name')}: {a.get('temperature_celsius')}°C, {a.get('condition')}, monsoon={a.get('monsoon_risk')}")
+        print(
+            f"          - {a.get('stop_name')}: {a.get('temperature_celsius')}°C, {a.get('condition')}, monsoon={a.get('monsoon_risk')}"
+        )
 
     # -------------------------------------------------------------
     # STAGE 8: Compute Budget Math
@@ -531,18 +536,28 @@ async def run_live_e2e() -> dict[str, Any]:
         "lines_count": len(lines),
         "lines": [
             {
-                "category": l.get("category"),
-                "amount": l.get("amount"),
-                "estimated": l.get("estimated"),
-                "unknown_reason": l.get("unknown_reason"),
+                "category": line.get("category"),
+                "amount": line.get("amount"),
+                "estimated": line.get("estimated"),
+                "unknown_reason": line.get("unknown_reason"),
             }
-            for l in lines
+            for line in lines
         ],
     }
-    print(f"          Total budget: {summary.get('total_amount')} INR (is_complete={summary.get('is_complete')})")
-    for l in lines:
-        status_tag = f"ESTIMATED {l.get('amount')}" if l.get('estimated') else (f"QUOTED {l.get('amount')}" if l.get('amount') is not None else f"UNKNOWN ({l.get('unknown_reason')})")
-        print(f"          - {l.get('category')}: {status_tag}")
+    print(
+        f"          Total budget: {summary.get('total_amount')} INR (is_complete={summary.get('is_complete')})"
+    )
+    for line in lines:
+        status_tag = (
+            f"ESTIMATED {line.get('amount')}"
+            if line.get("estimated")
+            else (
+                f"QUOTED {line.get('amount')}"
+                if line.get("amount") is not None
+                else f"UNKNOWN ({line.get('unknown_reason')})"
+            )
+        )
+        print(f"          - {line.get('category')}: {status_tag}")
 
     # -------------------------------------------------------------
     # STAGE 9: Synthesize and Atomically Publish Proposal
@@ -558,9 +573,20 @@ async def run_live_e2e() -> dict[str, Any]:
 
     # Verify database persistence
     async with session_factory() as session:
-        trip_row = (await session.execute(select(TripModel).where(TripModel.id == trip_id))).scalar_one()
-        delta_row = (await session.execute(select(TripDeltaModel).where(TripDeltaModel.trip_id == trip_id))).scalar_one()
-        event_row = (await session.execute(select(JobEventModel).where(JobEventModel.execution_id == execution_id, JobEventModel.event_type == "PROPOSAL_PUBLISHED"))).scalar_one_or_none()
+        trip_row = (
+            await session.execute(select(TripModel).where(TripModel.id == trip_id))
+        ).scalar_one()
+        delta_row = (
+            await session.execute(select(TripDeltaModel).where(TripDeltaModel.trip_id == trip_id))
+        ).scalar_one()
+        event_row = (
+            await session.execute(
+                select(JobEventModel).where(
+                    JobEventModel.execution_id == execution_id,
+                    JobEventModel.event_type == "PROPOSAL_PUBLISHED",
+                )
+            )
+        ).scalar_one_or_none()
 
     trace_log["stages"]["stage_9_proposal_publication"] = {
         "trip_state": trip_row.state,
@@ -569,20 +595,26 @@ async def run_live_e2e() -> dict[str, Any]:
         "delta_present": delta_row is not None,
         "event_published": event_row is not None,
     }
-    print(f"          Trip published in acceptance_db: state={trip_row.state}, route_id={trip_row.current_route_id}")
-    print(f"          TripDelta version {delta_row.base_version} saved with {len(delta_row.proposal_json.get('schedule', {}).get('stops', []))} stops.")
+    print(
+        f"          Trip published in acceptance_db: state={trip_row.state}, route_id={trip_row.current_route_id}"
+    )
+    print(
+        f"          TripDelta version {delta_row.base_version} saved with {len(delta_row.proposal_json.get('schedule', {}).get('stops', []))} stops."
+    )
 
     # -------------------------------------------------------------
     # STAGE 10: Authenticated API and Frontend Check
     # -------------------------------------------------------------
     print("\n[STAGE 10] Testing API and token authorization...")
-    from acceptance_keys import TEST_PUBLIC_KEY_PEM, generate_jwt
+    from acceptance_keys import TEST_PUBLIC_KEY_PEM
+
     settings.AUTH_PUBLIC_KEY = TEST_PUBLIC_KEY_PEM
     auth_token = generate_jwt(sub=owner_id)
 
     from fastapi.testclient import TestClient
-    from functions.api.app import create_app
+
     from config.db import get_session
+    from functions.api.app import create_app
 
     app = create_app()
 
@@ -641,7 +673,9 @@ async def run_live_e2e() -> dict[str, Any]:
             "origin": sched_stops[0].get("name") if sched_stops else None,
             "origin_departure": sched_stops[0].get("departure_time") if sched_stops else None,
             "destination": sched_stops[1].get("name") if len(sched_stops) > 1 else None,
-            "destination_arrival": sched_stops[1].get("arrival_time") if len(sched_stops) > 1 else None,
+            "destination_arrival": sched_stops[1].get("arrival_time")
+            if len(sched_stops) > 1
+            else None,
         },
         "weather_inspection": {
             "status": state.get("weather_status"),
@@ -649,9 +683,13 @@ async def run_live_e2e() -> dict[str, Any]:
             "stops_queried": [a.get("stop_name") for a in weather_advisories],
         },
         "budget_uncertainty_inspection": {
-            "estimated_fuel_inr": [l.get("amount") for l in lines if l.get("category") == "transport"],
-            "unknown_toll_preserved": any(l.get("amount") is None for l in lines),
-            "unknown_reasons": [l.get("unknown_reason") for l in lines if l.get("unknown_reason")],
+            "estimated_fuel_inr": [
+                line.get("amount") for line in lines if line.get("category") == "transport"
+            ],
+            "unknown_toll_preserved": any(line.get("amount") is None for line in lines),
+            "unknown_reasons": [
+                line.get("unknown_reason") for line in lines if line.get("unknown_reason")
+            ],
         },
     }
 

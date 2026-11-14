@@ -2,26 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import re
 import socket
-import time
-from typing import Any
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from config.config import settings
-from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
-
-import os
-
 from acceptance_database import (
     _resilient_getaddrinfo,
     are_db_urls_equivalent,
     validate_isolated_database_url,
 )
+from config.config import settings
+from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
 
 socket.getaddrinfo = _resilient_getaddrinfo
 
@@ -81,7 +77,8 @@ async def postgres_checkpointer(session_factory):
     async with session_factory() as session:
         await session.execute(text("DROP TABLE IF EXISTS checkpoint_writes;"))
         await session.execute(text("DROP TABLE IF EXISTS checkpoints;"))
-        await session.execute(text("""
+        await session.execute(
+            text("""
             CREATE TABLE checkpoints (
                 thread_id TEXT NOT NULL,
                 checkpoint_ns TEXT NOT NULL DEFAULT '',
@@ -92,8 +89,10 @@ async def postgres_checkpointer(session_factory):
                 metadata BYTEA NOT NULL,
                 PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
             );
-        """))
-        await session.execute(text("""
+        """)
+        )
+        await session.execute(
+            text("""
             CREATE TABLE checkpoint_writes (
                 thread_id TEXT NOT NULL,
                 checkpoint_ns TEXT NOT NULL DEFAULT '',
@@ -105,7 +104,8 @@ async def postgres_checkpointer(session_factory):
                 value BYTEA NOT NULL,
                 PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
             );
-        """))
+        """)
+        )
         await session.commit()
 
     checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)

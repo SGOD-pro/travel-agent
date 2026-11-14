@@ -85,9 +85,20 @@ async def ingest_claims_from_observations(
         art_ref = obs.artifact_ref or {}
         if isinstance(art_ref, dict):
             status_val = str(art_ref.get("status") or "").upper().strip()
-            if status_val in ("UNAVAILABLE", "BLOCKED", "TIMED_OUT", "FAILED", "ERROR", "NOT_FOUND"):
+            if status_val in (
+                "UNAVAILABLE",
+                "BLOCKED",
+                "TIMED_OUT",
+                "FAILED",
+                "ERROR",
+                "NOT_FOUND",
+            ):
                 continue
-            if art_ref.get("error") or art_ref.get("unavailable_reason") or art_ref.get("unavailable_sources"):
+            if (
+                art_ref.get("error")
+                or art_ref.get("unavailable_reason")
+                or art_ref.get("unavailable_sources")
+            ):
                 continue
         excerpt = obs.excerpt_text or ""
         if "[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED]" in excerpt:
@@ -95,7 +106,10 @@ async def ingest_claims_from_observations(
         valid_observations.append(obs)
 
     if not valid_observations:
-        logger.info("No valid source observations found for execution %s during claim ingestion", execution_id)
+        logger.info(
+            "No valid source observations found for execution %s during claim ingestion",
+            execution_id,
+        )
         return []
 
     claim_service = ClaimVerificationService(session=session)
@@ -198,7 +212,9 @@ async def ingest_claims_from_observations(
         art_ref = obs.artifact_ref or {}
         cat = str(art_ref.get("category") or "").lower() if isinstance(art_ref, dict) else ""
         if "lodging" in cat or "hotel" in cat or "stay" in cat:
-            hotel_name = str(art_ref.get("property_name") or art_ref.get("name") or "lodging").strip()
+            hotel_name = str(
+                art_ref.get("property_name") or art_ref.get("name") or "lodging"
+            ).strip()
             hotel_norm = hotel_name.lower()
             existing_stay_stmt = select(ClaimModel).where(
                 ClaimModel.execution_id == execution_id,
@@ -226,7 +242,9 @@ async def ingest_claims_from_observations(
             try:
                 created = await claim_service.submit_claim(
                     claim_data=stay_claim,
-                    observations_with_support=[(obs, EvidenceSupportType.SUPPORTS, obs.canonical_url)],
+                    observations_with_support=[
+                        (obs, EvidenceSupportType.SUPPORTS, obs.canonical_url)
+                    ],
                     as_of=now,
                 )
                 ingested_claims.append(created)
@@ -234,4 +252,3 @@ async def ingest_claims_from_observations(
                 logger.warning("Failed submitting lodging claim for '%s': %s", hotel_name, stay_exc)
 
     return ingested_claims
-

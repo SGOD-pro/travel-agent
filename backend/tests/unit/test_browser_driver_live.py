@@ -435,9 +435,7 @@ class TestLiveBrowserExecution:
         assert obs.rating == 4.9
 
     @pytest.mark.asyncio
-    async def test_live_egress_proxy_blocks_metadata_subresource(
-        self, live_server: str
-    ) -> None:
+    async def test_live_egress_proxy_blocks_metadata_subresource(self, live_server: str) -> None:
         """C3: Verifies that egress proxy blocks outbound subresources targeting metadata."""
 
         def local_test_ip_validator(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:

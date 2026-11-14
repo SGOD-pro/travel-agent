@@ -18,14 +18,9 @@ import pytest
 
 from contracts.routing import (
     Point,
-    RouteOptimizerWorkerOutput,
-    RouteReplanRequest,
-    RouteRequest,
     RouteStatus,
     RouteVersionHistoryResponse,
     RouteVersionItem,
-    SolverStatus,
-    TransportMode,
 )
 from functions.orchestrator.graphs.route_optimizer.graph import (
     RouteOptimizerNode,
@@ -184,7 +179,9 @@ async def test_finalize_route_node_missing_owner_id() -> None:
     """Verifies finalize_route_node enforces tenant fencing when owner cannot be resolved (AC-9)."""
     route_id = uuid.uuid4()
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+    mock_session.execute = AsyncMock(
+        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    )
 
     mock_session_factory = MagicMock()
     mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -264,7 +261,9 @@ async def test_finalize_route_node_success(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 @pytest.mark.asyncio
-async def test_finalize_route_node_preserves_infeasible_status(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_finalize_route_node_preserves_infeasible_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Verifies finalize_route_node preserves INFEASIBLE route status as SUCCEEDED execution (AC-8)."""
     route_id = uuid.uuid4()
     owner_id = uuid.uuid4()

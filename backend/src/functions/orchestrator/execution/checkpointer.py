@@ -396,16 +396,18 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
         _, b_meta = self.serde.dumps_typed(metadata)
 
         # Buffer for atomic flush
-        self._pending_flushes[thread_id].append({
-            "type": "checkpoint",
-            "thread_id": thread_id,
-            "checkpoint_ns": checkpoint_ns,
-            "checkpoint_id": checkpoint["id"],
-            "parent_checkpoint_id": config["configurable"].get("checkpoint_id"),
-            "checkpoint_type": t_chk,
-            "checkpoint_data": b_chk,
-            "metadata_data": b_meta,
-        })
+        self._pending_flushes[thread_id].append(
+            {
+                "type": "checkpoint",
+                "thread_id": thread_id,
+                "checkpoint_ns": checkpoint_ns,
+                "checkpoint_id": checkpoint["id"],
+                "parent_checkpoint_id": config["configurable"].get("checkpoint_id"),
+                "checkpoint_type": t_chk,
+                "checkpoint_data": b_chk,
+                "metadata_data": b_meta,
+            }
+        )
 
         return {
             "configurable": {
@@ -442,17 +444,19 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
             self._writes[thread_id][checkpoint_id].append((task_id, channel, value))
 
             t_val, b_val = self.serde.dumps_typed(value)
-            self._pending_flushes[thread_id].append({
-                "type": "write",
-                "thread_id": thread_id,
-                "checkpoint_ns": checkpoint_ns,
-                "checkpoint_id": checkpoint_id,
-                "task_id": task_id,
-                "idx": idx,
-                "channel": channel,
-                "write_type": t_val,
-                "value_data": b_val,
-            })
+            self._pending_flushes[thread_id].append(
+                {
+                    "type": "write",
+                    "thread_id": thread_id,
+                    "checkpoint_ns": checkpoint_ns,
+                    "checkpoint_id": checkpoint_id,
+                    "task_id": task_id,
+                    "idx": idx,
+                    "channel": channel,
+                    "write_type": t_val,
+                    "value_data": b_val,
+                }
+            )
 
     async def flush(self, session: AsyncSession, thread_id: str) -> None:
         """Flushes buffered writes for the given thread_id atomically via SQLAlchemy session.
@@ -544,7 +548,6 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
         self._checkpoints.pop(thread_id, None)
         self._metadata.pop(thread_id, None)
         self._writes.pop(thread_id, None)
-
 
 
 def get_checkpoint_id(config: Any) -> str | None:

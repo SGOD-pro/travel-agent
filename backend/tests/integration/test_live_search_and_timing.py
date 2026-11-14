@@ -64,6 +64,7 @@ async def test_live_search_extraction_ranking_and_timing() -> None:
     # If live search returned no places or provider quota expired, supplement with realistic search observations
     if not observations or not any(getattr(o, "artifact_ref", None) for o in observations):
         from unittest.mock import MagicMock
+
         obs_local1 = MagicMock()
         obs_local1.publisher = "google.com"
         obs_local1.source_url = "https://google.com/maps/place/Flurys"
@@ -72,7 +73,9 @@ async def test_live_search_extraction_ranking_and_timing() -> None:
             "address": "18A Park Street, Kolkata",
             "gps_coordinates": {"latitude": 22.5532, "longitude": 88.3518},
         }
-        obs_local1.excerpt_text = "Place: Flurys Tearoom | Historic Park Street bakery and confectionery."
+        obs_local1.excerpt_text = (
+            "Place: Flurys Tearoom | Historic Park Street bakery and confectionery."
+        )
 
         obs_local2 = MagicMock()
         obs_local2.publisher = "zomato.com"
@@ -88,7 +91,9 @@ async def test_live_search_extraction_ranking_and_timing() -> None:
         obs_scrape.publisher = "tripadvisor.com"
         obs_scrape.source_url = "https://tripadvisor.com/kolkata-flurys"
         obs_scrape.artifact_ref = {}
-        obs_scrape.excerpt_text = "Flurys Tearoom is an essential stop for heritage European breakfast."
+        obs_scrape.excerpt_text = (
+            "Flurys Tearoom is an essential stop for heritage European breakfast."
+        )
 
         observations = [obs_local1, obs_local2, obs_scrape]
 
@@ -123,9 +128,13 @@ async def test_live_search_extraction_ranking_and_timing() -> None:
     )
     rank_resp = await bedrock.rank_places(rank_req)
     assert len(rank_resp.ranked_places) > 0
-    print(f"Bedrock ranked {len(rank_resp.ranked_places)} places (pace: {rank_resp.overall_pacing_evaluation}):")
+    print(
+        f"Bedrock ranked {len(rank_resp.ranked_places)} places (pace: {rank_resp.overall_pacing_evaluation}):"
+    )
     for r in rank_resp.ranked_places:
-        print(f"  Rank #{r.rank}: {r.place.name} (fit: {r.fit_score:.2f}) - {r.selection_rationale}")
+        print(
+            f"  Rank #{r.rank}: {r.place.name} (fit: {r.fit_score:.2f}) - {r.selection_rationale}"
+        )
 
     # 5. Step E: API Timing Middleware
     print("\n--- Step 5: API Response Timing Middleware ---")
@@ -134,4 +143,6 @@ async def test_live_search_extraction_ranking_and_timing() -> None:
     assert response.status_code == 200
     assert "X-Process-Time-Ms" in response.headers
     process_time = response.headers["X-Process-Time-Ms"]
-    print(f"API /health responded with 200 OK in {process_time}ms (header: X-Process-Time-Ms={process_time})")
+    print(
+        f"API /health responded with 200 OK in {process_time}ms (header: X-Process-Time-Ms={process_time})"
+    )

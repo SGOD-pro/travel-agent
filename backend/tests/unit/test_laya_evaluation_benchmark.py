@@ -398,7 +398,9 @@ BENCHMARK_SCENARIOS: list[BenchmarkScenario] = [
 ]
 
 
-def _evaluate_scenario_offline(scenario: BenchmarkScenario) -> tuple[DecisionAction | None, DecisionStatus | None]:
+def _evaluate_scenario_offline(
+    scenario: BenchmarkScenario,
+) -> tuple[DecisionAction | None, DecisionStatus | None]:
     """Evaluates a benchmark scenario through the deterministic policy engine."""
     eligible_choices = LayaPolicyValidator.compute_eligible_choices(
         phase=scenario.phase,
@@ -424,7 +426,9 @@ def _evaluate_scenario_offline(scenario: BenchmarkScenario) -> tuple[DecisionAct
         context_version=1,
         policy_version=LayaPolicyValidator.POLICY_VERSION,
         question_version="evidence_routing:v1",
-        eligible_actions=eligible_choices if eligible_choices else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
+        eligible_actions=eligible_choices
+        if eligible_choices
+        else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
         sanitized_context=context,
     )
 
@@ -436,7 +440,9 @@ def _evaluate_scenario_offline(scenario: BenchmarkScenario) -> tuple[DecisionAct
         context_version=1,
         policy_version=LayaPolicyValidator.POLICY_VERSION,
         question_version="evidence_routing:v1",
-        policy_derived_eligible_choices=eligible_choices if eligible_choices else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
+        policy_derived_eligible_choices=eligible_choices
+        if eligible_choices
+        else [DecisionAction.PROCEED_DETERMINISTIC_EVALUATION],
         budget_remaining=scenario.remaining_browser_slots,
         context=context,
         idempotency_key=idempotency_key,
@@ -483,7 +489,9 @@ def _evaluate_scenario_offline(scenario: BenchmarkScenario) -> tuple[DecisionAct
 
 def test_benchmark_suite_composition() -> None:
     """Verifies that the benchmark suite contains exactly 25 labeled scenarios."""
-    assert len(BENCHMARK_SCENARIOS) == 25, f"Expected exactly 25 benchmark scenarios; got {len(BENCHMARK_SCENARIOS)}"
+    assert len(BENCHMARK_SCENARIOS) == 25, (
+        f"Expected exactly 25 benchmark scenarios; got {len(BENCHMARK_SCENARIOS)}"
+    )
     scenario_ids = [s.scenario_id for s in BENCHMARK_SCENARIOS]
     assert scenario_ids == list(range(1, 26)), "Scenario IDs must form contiguous 1..25 sequence"
 
@@ -521,9 +529,15 @@ def test_benchmark_suite_accuracy_and_abstention_offline() -> None:
     accuracy = correct_actions / total_evaluated
     abstention_rate = abstention_count / total_evaluated
 
-    assert accuracy >= 0.85, f"Policy validation rule conformance {accuracy:.1%} fell below target 85.0%"
-    assert abstention_rate <= 0.10, f"Simulated abstention rate {abstention_rate:.1%} exceeded maximum 10.0%"
-    assert accuracy == 1.0, f"Expected 100% precision on deterministic policy regression set; got {accuracy:.1%}"
+    assert accuracy >= 0.85, (
+        f"Policy validation rule conformance {accuracy:.1%} fell below target 85.0%"
+    )
+    assert abstention_rate <= 0.10, (
+        f"Simulated abstention rate {abstention_rate:.1%} exceeded maximum 10.0%"
+    )
+    assert accuracy == 1.0, (
+        f"Expected 100% precision on deterministic policy regression set; got {accuracy:.1%}"
+    )
 
 
 @pytest.mark.asyncio
@@ -531,7 +545,9 @@ async def test_benchmark_suite_connected_live_sample() -> None:
     """Evaluates multi-choice scenarios against live Kaggle Cloudflare tunnel if configured."""
     flag = os.getenv("RUN_CONNECTED_LAYA_BENCHMARK", "0").strip().lower()
     if flag not in ("1", "true", "yes"):
-        pytest.skip("Connected benchmark evaluation skipped (set RUN_CONNECTED_LAYA_BENCHMARK=1 to run)")
+        pytest.skip(
+            "Connected benchmark evaluation skipped (set RUN_CONNECTED_LAYA_BENCHMARK=1 to run)"
+        )
 
     settings = Settings()
     if not settings.LAYA_ENDPOINT_URL:

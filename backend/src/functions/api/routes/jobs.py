@@ -74,7 +74,9 @@ async def get_job_status(
     job_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    cursor: Annotated[int | None, Query(description="Sequence cursor for timeline pagination")] = None,
+    cursor: Annotated[
+        int | None, Query(description="Sequence cursor for timeline pagination")
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="Max timeline events to return")] = 50,
 ) -> JobStatusResponse:
     """Retrieves owner-scoped job status, progress, and initial timeline events."""
@@ -88,13 +90,11 @@ async def get_job_status(
         )
 
     # Compute task progress counts
-    task_counts_stmt = (
-        select(
-            sa.func.count(TaskModel.id).label("total"),
-            sa.func.count(TaskModel.id).filter(TaskModel.status == "COMPLETED").label("completed"),
-            sa.func.count(TaskModel.id).filter(TaskModel.status == "FAILED").label("failed"),
-        ).where(TaskModel.execution_id == job_id)
-    )
+    task_counts_stmt = select(
+        sa.func.count(TaskModel.id).label("total"),
+        sa.func.count(TaskModel.id).filter(TaskModel.status == "COMPLETED").label("completed"),
+        sa.func.count(TaskModel.id).filter(TaskModel.status == "FAILED").label("failed"),
+    ).where(TaskModel.execution_id == job_id)
     counts = (await session.execute(task_counts_stmt)).first()
     total_tasks = counts.total if counts else 0
     completed_tasks = counts.completed if counts else 0
@@ -108,7 +108,9 @@ async def get_job_status(
     }
 
     # Fetch timeline events
-    events, next_seq = await get_job_events(session, execution_id=job_id, cursor=cursor, limit=limit)
+    events, next_seq = await get_job_events(
+        session, execution_id=job_id, cursor=cursor, limit=limit
+    )
     event_dtos = [
         JobEventDTO(
             id=e.id,
@@ -171,7 +173,9 @@ async def get_job_timeline_events(
     job_id: uuid.UUID,
     session: Annotated[AsyncSession, Depends(get_session)],
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    cursor: Annotated[int | None, Query(description="Sequence cursor for timeline pagination")] = None,
+    cursor: Annotated[
+        int | None, Query(description="Sequence cursor for timeline pagination")
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=100, description="Max timeline events to return")] = 50,
 ) -> JobEventsPageResponse:
     """Retrieves paginated timeline events for an execution."""
@@ -184,7 +188,9 @@ async def get_job_timeline_events(
             detail=f"Job {job_id} not found",
         )
 
-    events, next_seq = await get_job_events(session, execution_id=job_id, cursor=cursor, limit=limit)
+    events, next_seq = await get_job_events(
+        session, execution_id=job_id, cursor=cursor, limit=limit
+    )
     event_dtos = [
         JobEventDTO(
             id=e.id,

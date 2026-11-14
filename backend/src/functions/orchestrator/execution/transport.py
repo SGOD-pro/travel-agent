@@ -57,7 +57,6 @@ class TransportAdapter(ABC):
         pass
 
 
-
 class NullTransportAdapter(TransportAdapter):
     """No-op transport for local development and tests without a real SQS queue.
 
@@ -212,9 +211,7 @@ def build_sqs_transport() -> TransportAdapter:
     try:
         import boto3
 
-        sqs_client = boto3.client(
-            "sqs", region_name=os.environ.get("AWS_REGION", "us-east-1")
-        )
+        sqs_client = boto3.client("sqs", region_name=os.environ.get("AWS_REGION", "us-east-1"))
         return SqsTransportAdapter(
             queue_url=queue_url,
             sqs_client=sqs_client,
@@ -227,4 +224,3 @@ def build_sqs_transport() -> TransportAdapter:
             "Install boto3 to enable SQS publishing."
         )
         return NullTransportAdapter()
-

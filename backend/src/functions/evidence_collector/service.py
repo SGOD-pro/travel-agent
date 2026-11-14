@@ -136,11 +136,7 @@ class EvidenceCollectorService:
         initial_budget: dict[str, Any],
     ) -> None:
         """Initializes executions.budget from task parameters if not already present."""
-        stmt = (
-            select(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .with_for_update()
-        )
+        stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
         res = await self._session.execute(stmt)
         execution = res.scalar_one_or_none()
         if execution and execution.budget is None and initial_budget:
@@ -165,11 +161,7 @@ class EvidenceCollectorService:
         Guarantees safe budget bounds across concurrent tasks prior to external dispatch.
         Returns True if reservation succeeded, or False if limits are reached.
         """
-        stmt = (
-            select(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .with_for_update()
-        )
+        stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
         res = await self._session.execute(stmt)
         execution = res.scalar_one_or_none()
         if not execution:
@@ -182,8 +174,16 @@ class EvidenceCollectorService:
             return False
 
         budget = dict(execution.budget or {})
-        remaining_calls = 999999 if budget.get("remaining_tool_calls") is None else int(budget["remaining_tool_calls"])
-        remaining_cost = 999999999 if budget.get("remaining_cost_minor") is None else int(budget["remaining_cost_minor"])
+        remaining_calls = (
+            999999
+            if budget.get("remaining_tool_calls") is None
+            else int(budget["remaining_tool_calls"])
+        )
+        remaining_cost = (
+            999999999
+            if budget.get("remaining_cost_minor") is None
+            else int(budget["remaining_cost_minor"])
+        )
 
         reserved_calls = int(budget.get("reserved_tool_calls", 0))
         reserved_cost = int(budget.get("reserved_cost_minor", 0))
@@ -212,11 +212,7 @@ class EvidenceCollectorService:
             logger.warning("Session inactive; skipping budget reconciliation for %s", execution_id)
             return
 
-        stmt = (
-            select(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .with_for_update()
-        )
+        stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
         res = await self._session.execute(stmt)
         execution = res.scalar_one_or_none()
         if not execution or not execution.budget:
@@ -238,7 +234,9 @@ class EvidenceCollectorService:
             if "remaining_tool_calls" in budget:
                 budget["remaining_tool_calls"] = max(0, int(budget["remaining_tool_calls"]) - 1)
             if "remaining_cost_minor" in budget:
-                budget["remaining_cost_minor"] = max(0, int(budget["remaining_cost_minor"]) - cost_minor)
+                budget["remaining_cost_minor"] = max(
+                    0, int(budget["remaining_cost_minor"]) - cost_minor
+                )
 
         execution.budget = budget
         await self._session.commit()
@@ -299,19 +297,22 @@ class EvidenceCollectorService:
                 SourceObservationModel.id,
                 SourceObservationModel.canonical_url,
                 SourceObservationModel.content_hash,
-            ).where(
-                SourceObservationModel.content_hash.in_(incoming_hashes)
-            )
+            ).where(SourceObservationModel.content_hash.in_(incoming_hashes))
             existing_res = await self._session.execute(existing_obs_stmt)
             existing_by_hash: dict[str, list[tuple[uuid.UUID, str]]] = {}
             for row in existing_res:
-                existing_by_hash.setdefault(row.content_hash, []).append((row.id, row.canonical_url))
+                existing_by_hash.setdefault(row.content_hash, []).append(
+                    (row.id, row.canonical_url)
+                )
 
             for obs in deduped_observations:
                 existing_matches = existing_by_hash.get(obs.content_hash, [])
                 for match_id, match_url in existing_matches:
                     if match_url != obs.canonical_url:
-                        syndication_map[(obs.canonical_url, obs.content_hash)] = (match_id, match_url)
+                        syndication_map[(obs.canonical_url, obs.content_hash)] = (
+                            match_id,
+                            match_url,
+                        )
                         break
 
         id_map: dict[tuple[str, str], uuid.UUID] = {}
@@ -485,7 +486,8 @@ class EvidenceCollectorService:
                         break
                     if (
                         exec_model.deadline_at
-                        and (now + timedelta(seconds=DEADLINE_ADVANCE_GUARD_SECONDS)) >= exec_model.deadline_at
+                        and (now + timedelta(seconds=DEADLINE_ADVANCE_GUARD_SECONDS))
+                        >= exec_model.deadline_at
                     ):
                         logger.warning("Execution deadline approaching; halting collection loop")
                         break
@@ -496,19 +498,23 @@ class EvidenceCollectorService:
                         "SERPAPI_API_KEY is not configured; search provider unavailable for query '%s'",
                         q,
                     )
-                    unavailable_sources.append({
-                        "source_type": "SEARCH",
-                        "query": q,
-                        "status": "UNAVAILABLE",
-                        "error": "SERPAPI_API_KEY is not configured; live search requires valid credentials",
-                    })
+                    unavailable_sources.append(
+                        {
+                            "source_type": "SEARCH",
+                            "query": q,
+                            "status": "UNAVAILABLE",
+                            "error": "SERPAPI_API_KEY is not configured; live search requires valid credentials",
+                        }
+                    )
                     continue
 
                 # Atomically reserve budget in executions.budget
                 has_budget = await self.reserve_budget(envelope.execution_id, cost_per_call)
                 if not has_budget:
                     budget_exhausted = True
-                    logger.info("Budget exhausted for execution %s; stopping queries", envelope.execution_id)
+                    logger.info(
+                        "Budget exhausted for execution %s; stopping queries", envelope.execution_id
+                    )
                     break
 
                 # Execute provider call outside database transaction
@@ -521,12 +527,14 @@ class EvidenceCollectorService:
                     call_success = True
                 except SerpApiAdapterError as e:
                     logger.warning("SerpApi search failed for query '%s': %s", q, e)
-                    unavailable_sources.append({
-                        "source_type": "SEARCH",
-                        "query": q,
-                        "status": "UNAVAILABLE",
-                        "error": str(e),
-                    })
+                    unavailable_sources.append(
+                        {
+                            "source_type": "SEARCH",
+                            "query": q,
+                            "status": "UNAVAILABLE",
+                            "error": str(e),
+                        }
+                    )
                 finally:
                     await self._safe_reconcile_budget(
                         envelope.execution_id,
@@ -569,12 +577,14 @@ class EvidenceCollectorService:
                         call_success = True
                     except Exception as e:
                         logger.warning("Extraction failed for URL '%s': %s", page_url, e)
-                        unavailable_sources.append({
-                            "source_type": "WEB_EXTRACTION",
-                            "url": page_url,
-                            "status": "UNAVAILABLE",
-                            "error": str(e),
-                        })
+                        unavailable_sources.append(
+                            {
+                                "source_type": "WEB_EXTRACTION",
+                                "url": page_url,
+                                "status": "UNAVAILABLE",
+                                "error": str(e),
+                            }
+                        )
                     finally:
                         await self._safe_reconcile_budget(
                             envelope.execution_id,
@@ -598,7 +608,9 @@ class EvidenceCollectorService:
                 budget_exhausted=budget_exhausted,
             )
         except Exception as e:
-            logger.exception("Evidence collection execution failed for task %s: %s", envelope.task_id, e)
+            logger.exception(
+                "Evidence collection execution failed for task %s: %s", envelope.task_id, e
+            )
             try:
                 await self._fencing_service.fail_task(
                     task_id=envelope.task_id,

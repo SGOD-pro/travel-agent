@@ -55,12 +55,8 @@ class RouteModel(Base):
 
     __tablename__ = "routes"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    owner_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False, index=True
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     execution_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("executions.id", ondelete="SET NULL"),
@@ -81,7 +77,9 @@ class RouteModel(Base):
     objective: Mapped[str] = mapped_column(String(32), nullable=False)
     departure_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     return_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    actual_return_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_return_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     total_distance_m: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=sa.text("0")
     )
@@ -229,9 +227,7 @@ class RouteStopModel(Base):
 
     __tablename__ = "route_stops"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     route_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("routes.id", ondelete="CASCADE"),
@@ -266,8 +262,12 @@ class RouteStopModel(Base):
     dwell_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=sa.text("0")
     )
-    planned_arrival_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    planned_departure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    planned_arrival_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    planned_departure_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     wait_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=sa.text("0")
     )
@@ -324,9 +324,7 @@ class RouteLegModel(Base):
 
     __tablename__ = "route_legs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     route_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("routes.id", ondelete="CASCADE"),
@@ -389,9 +387,7 @@ class RouteLegModel(Base):
         "RouteStopModel", foreign_keys=[parking_hub_id], lazy="joined"
     )
 
-    __table_args__ = (
-        UniqueConstraint("route_id", "leg_order", name="uq_route_legs_route_order"),
-    )
+    __table_args__ = (UniqueConstraint("route_id", "leg_order", name="uq_route_legs_route_order"),)
 
     def to_route_leg_output(self) -> RouteLegOutput:
         """Converts persistent leg model to domain RouteLegOutput."""
@@ -442,9 +438,7 @@ class RouteRestrictionModel(Base):
 
     __tablename__ = "route_restrictions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     route_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("routes.id", ondelete="CASCADE"),

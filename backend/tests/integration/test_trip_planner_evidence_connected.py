@@ -109,7 +109,9 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
                 f"SerpAPI executed live query '{planned_queries[0]}' returning {len(live_results)} results"
             )
         except Exception as exc:
-            execution_manifest["notes"].append(f"SerpAPI live query failed ({type(exc).__name__}): {exc}")
+            execution_manifest["notes"].append(
+                f"SerpAPI live query failed ({type(exc).__name__}): {exc}"
+            )
     else:
         execution_manifest["notes"].append(
             "SERPAPI_API_KEY not configured; live search skipped honestly without fabricated results"
@@ -119,16 +121,24 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     scrapling_adapter = ScraplingExtractionAdapter()
     test_target_url = "https://en.wikipedia.org/wiki/Darjeeling"
     try:
-        page_obs, browser_reqs = await scrapling_adapter.extract_page(test_target_url, category="attraction")
+        page_obs, browser_reqs = await scrapling_adapter.extract_page(
+            test_target_url, category="attraction"
+        )
         execution_manifest["static_extraction_ran"] = True
         execution_manifest["observations_collected_count"] += len(page_obs)
         if browser_reqs:
             execution_manifest["browser_fallback_ran"] = True
-            execution_manifest["notes"].append(f"Scrapling detected dynamic page requiring browser: {test_target_url}")
+            execution_manifest["notes"].append(
+                f"Scrapling detected dynamic page requiring browser: {test_target_url}"
+            )
         else:
-            execution_manifest["notes"].append(f"Scrapling extracted {len(page_obs)} static observations from {test_target_url}")
+            execution_manifest["notes"].append(
+                f"Scrapling extracted {len(page_obs)} static observations from {test_target_url}"
+            )
     except Exception as exc:
-        execution_manifest["notes"].append(f"Static extraction attempt encountered ({type(exc).__name__}): {exc}")
+        execution_manifest["notes"].append(
+            f"Static extraction attempt encountered ({type(exc).__name__}): {exc}"
+        )
 
     # 4. Runner Resume and Claim Ingestion Lifecycle
     owner_id = uuid.uuid4()
@@ -209,4 +219,3 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     # Guaranteed invariant: fabricated evidence was never counted as live collection
     if not execution_manifest["serpapi_ran"]:
         assert execution_manifest["live_collection_proven"] is False
-

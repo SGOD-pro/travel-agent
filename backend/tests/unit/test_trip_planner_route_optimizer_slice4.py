@@ -1235,9 +1235,7 @@ class TestTripPlannerConsumeRouteResult:
 
         assert res["route_id"] is None
         assert res["route_status"] == "ROUTING_UNAVAILABLE"
-        assert (
-            "Execution ID and Trip ID missing from state" in res["route_diagnostics"][0]
-        )
+        assert "Execution ID and Trip ID missing from state" in res["route_diagnostics"][0]
 
     @pytest.mark.asyncio
     async def test_consume_recovers_task_output_from_worker_result_model(self) -> None:

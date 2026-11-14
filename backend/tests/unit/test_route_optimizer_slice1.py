@@ -121,7 +121,9 @@ class TestOrToolsRoutingSolverCore:
 
     def test_asymmetric_matrix_direction_is_respected(self, solver: OrToolsRoutingSolver) -> None:
         """Asymmetric matrices produce legs reflecting forward direction, not reverse."""
-        req = create_fixed_5x5_request(is_round_trip=False, stop_3_must_visit=False, stop_4_must_visit=False)
+        req = create_fixed_5x5_request(
+            is_round_trip=False, stop_3_must_visit=False, stop_4_must_visit=False
+        )
         # Only stops 0, 1, 2 are mandatory
         res = solver.solve(req, FIXED_5X5_DURATIONS_S, FIXED_5X5_DISTANCES_M)
 
@@ -141,9 +143,14 @@ class TestOrToolsRoutingSolverCore:
             # Verify forward != reverse for asymmetric pair (e.g. 0->1 is 900s, 1->0 is 1200s)
             reverse_dur = FIXED_5X5_DURATIONS_S[to_idx][from_idx]
             if from_idx != to_idx:
-                assert expected_dur != reverse_dur or expected_dist != FIXED_5X5_DISTANCES_M[to_idx][from_idx]
+                assert (
+                    expected_dur != reverse_dur
+                    or expected_dist != FIXED_5X5_DISTANCES_M[to_idx][from_idx]
+                )
 
-    def test_unreachable_arc_is_forbidden_never_traversed(self, solver: OrToolsRoutingSolver) -> None:
+    def test_unreachable_arc_is_forbidden_never_traversed(
+        self, solver: OrToolsRoutingSolver
+    ) -> None:
         """Unreachable arc (1 -> 3) is strictly forbidden and never traversed directly."""
         req = create_fixed_5x5_request(
             is_round_trip=True,
@@ -159,9 +166,9 @@ class TestOrToolsRoutingSolverCore:
         stop_3_id = FIXED_STOP_IDS[3]
 
         for leg in res.legs:
-            assert not (
-                leg.from_stop_id == stop_1_id and leg.to_stop_id == stop_3_id
-            ), "Unreachable arc 1 -> 3 was illegally traversed!"
+            assert not (leg.from_stop_id == stop_1_id and leg.to_stop_id == stop_3_id), (
+                "Unreachable arc 1 -> 3 was illegally traversed!"
+            )
 
         # Warning was recorded
         assert any("forbidden unreachable transitions" in w for w in res.warnings)
@@ -246,9 +253,9 @@ class TestOrToolsRoutingSolverCore:
                 location=Point(latitude=27.1, longitude=88.1),
                 stop_type=StopType.DESTINATION,
                 is_must_visit=True,
-                window_start=t0 + timedelta(hours=1),   # 10:00
-                window_end=t0 + timedelta(hours=2),     # 11:00 closing
-                dwell_seconds=7200,                     # Dwell 2 hours (requires 10:00 to 12:00, impossible!)
+                window_start=t0 + timedelta(hours=1),  # 10:00
+                window_end=t0 + timedelta(hours=2),  # 11:00 closing
+                dwell_seconds=7200,  # Dwell 2 hours (requires 10:00 to 12:00, impossible!)
             ),
         ]
         req = RouteRequest(
@@ -375,7 +382,9 @@ class TestOrToolsRoutingSolverCore:
         self, solver: OrToolsRoutingSolver
     ) -> None:
         """Finding a local search solution alone yields FEASIBLE; OPTIMAL requires proof."""
-        req = create_fixed_5x5_request(is_round_trip=False, stop_3_must_visit=False, stop_4_must_visit=False)
+        req = create_fixed_5x5_request(
+            is_round_trip=False, stop_3_must_visit=False, stop_4_must_visit=False
+        )
         res = solver.solve(req, FIXED_5X5_DURATIONS_S, FIXED_5X5_DISTANCES_M)
 
         assert res.status in (RouteStatus.FEASIBLE, RouteStatus.PARTIAL)
@@ -385,7 +394,9 @@ class TestOrToolsRoutingSolverCore:
     def test_explicit_start_and_end_semantics(self, solver: OrToolsRoutingSolver) -> None:
         """Supports round-trip circuit, fixed terminus, and open route."""
         # 1. Round trip
-        req_rt = create_fixed_5x5_request(is_round_trip=True, stop_3_must_visit=False, stop_4_must_visit=False)
+        req_rt = create_fixed_5x5_request(
+            is_round_trip=True, stop_3_must_visit=False, stop_4_must_visit=False
+        )
         res_rt = solver.solve(req_rt, FIXED_5X5_DURATIONS_S, FIXED_5X5_DISTANCES_M)
         assert res_rt.status in (RouteStatus.FEASIBLE, RouteStatus.PARTIAL)
         # Last leg returns to start depot

@@ -35,8 +35,12 @@ class LayaWireRequest(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     state: dict[str, Any] = Field(..., description="Contextual execution state dictionary")
-    questions: dict[str, LayaWireQuestion] = Field(..., min_length=1, description="Configured question schemas")
-    min_confidence: float | None = Field(default=None, ge=0.0, le=1.0, description="Minimum confidence cutoff")
+    questions: dict[str, LayaWireQuestion] = Field(
+        ..., min_length=1, description="Configured question schemas"
+    )
+    min_confidence: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Minimum confidence cutoff"
+    )
     model: str | None = Field(default=None, description="Requested checkpoint or routing key")
 
 
@@ -47,7 +51,9 @@ class LayaChoiceAnswer(BaseModel):
 
     type: str = Field(default="choice", description="Answer type")
     choice: str = Field(..., min_length=1, description="Selected option key")
-    probabilities: dict[str, float] = Field(default_factory=dict, description="Normalized probability distribution")
+    probabilities: dict[str, float] = Field(
+        default_factory=dict, description="Normalized probability distribution"
+    )
     answer_confidence: float | None = Field(
         default=None,
         description="Probability assigned to the top choice; derived from probabilities when omitted",
@@ -105,9 +111,13 @@ class LayaWireResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     model: str | None = Field(default=None, description="Model identifier returned by server")
-    answers: dict[str, LayaChoiceAnswer] = Field(default_factory=dict, description="Answers keyed by question ID")
+    answers: dict[str, LayaChoiceAnswer] = Field(
+        default_factory=dict, description="Answers keyed by question ID"
+    )
     usage: LayaWireUsage | None = Field(default=None, description="Optional resource usage metrics")
-    routing: LayaWireRouting | None = Field(default=None, description="Optional routing resolution details")
+    routing: LayaWireRouting | None = Field(
+        default=None, description="Optional routing resolution details"
+    )
 
 
 def validate_wire_probabilities(
@@ -140,11 +150,15 @@ def validate_wire_probabilities(
     total_prob = 0.0
     for key, prob in answer.probabilities.items():
         if not math.isfinite(prob) or prob < 0.0 or prob > 1.0:
-            raise ValueError(f"Probability for key '{key}' must be a finite float between 0.0 and 1.0; got {prob}")
+            raise ValueError(
+                f"Probability for key '{key}' must be a finite float between 0.0 and 1.0; got {prob}"
+            )
         total_prob += prob
 
     if abs(total_prob - 1.0) > 0.01:
-        raise ValueError(f"Probabilities must normalize to 1.0 within 0.01 tolerance; sum={total_prob:.4f}")
+        raise ValueError(
+            f"Probabilities must normalize to 1.0 within 0.01 tolerance; sum={total_prob:.4f}"
+        )
 
     max_key = max(answer.probabilities, key=lambda k: answer.probabilities[k])
     if answer.choice != max_key:

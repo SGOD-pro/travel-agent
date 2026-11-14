@@ -23,9 +23,11 @@ from functions.evidence_collector.ssrf import (
 
 def _mock_dns_resolver_for_ip(ip_str: str):
     """Returns a mock DNS resolver callable that returns the specified IP."""
+
     def _resolver(host: str, port: int):
         family = socket.AF_INET6 if ":" in ip_str else socket.AF_INET
         return [(family, socket.SOCK_STREAM, 6, "", (ip_str, port))]
+
     return _resolver
 
 
@@ -52,21 +54,21 @@ class TestSSRFValidator:
             "::1",
             "169.254.169.254",  # AWS EC2 metadata
             "169.254.1.1",
-            "fe80::1",          # IPv6 link local
-            "10.0.0.1",         # RFC 1918
+            "fe80::1",  # IPv6 link local
+            "10.0.0.1",  # RFC 1918
             "10.254.0.1",
-            "172.16.0.1",       # RFC 1918
+            "172.16.0.1",  # RFC 1918
             "172.31.255.255",
-            "192.168.0.1",      # RFC 1918
+            "192.168.0.1",  # RFC 1918
             "192.168.1.100",
-            "100.64.0.1",       # Carrier grade NAT (RFC 6598)
+            "100.64.0.1",  # Carrier grade NAT (RFC 6598)
             "100.127.255.255",
-            "0.0.0.0",          # Unspecified
+            "0.0.0.0",  # Unspecified
             "::",
-            "224.0.0.1",        # Multicast
-            "240.0.0.1",        # Reserved
-            "::ffff:127.0.0.1", # IPv4 mapped IPv6 loopback
-            "::ffff:169.254.169.254", # IPv4 mapped IPv6 metadata
+            "224.0.0.1",  # Multicast
+            "240.0.0.1",  # Reserved
+            "::ffff:127.0.0.1",  # IPv4 mapped IPv6 loopback
+            "::ffff:169.254.169.254",  # IPv4 mapped IPv6 metadata
         ],
     )
     def test_blocked_ips_rejected(self, blocked_ip: str) -> None:
@@ -118,6 +120,7 @@ class TestSafeFetchPage:
     @pytest.mark.asyncio
     async def test_redirect_to_private_ip_is_blocked(self) -> None:
         """Verifies that an HTTP redirect targeting a link local metadata address fails safely (AC 18)."""
+
         # Mock transport that redirects from public URL to link local address
         def handler(request: httpx.Request) -> httpx.Response:
             if "example.com" in request.url.host:
@@ -139,12 +142,15 @@ class TestSafeFetchPage:
                 client=client,
                 dns_resolver=resolver,
             )
-        assert "restricted" in str(exc_info.value).lower() or "169.254.169.254" in str(exc_info.value)
+        assert "restricted" in str(exc_info.value).lower() or "169.254.169.254" in str(
+            exc_info.value
+        )
         await client.aclose()
 
     @pytest.mark.asyncio
     async def test_redirect_to_loopback_is_blocked(self) -> None:
         """Verifies that an HTTP redirect targeting 127.0.0.1 fails safely (AC 18)."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             if "example.com" in request.url.host:
                 return httpx.Response(
@@ -218,6 +224,7 @@ class TestSafeFetchPage:
     @pytest.mark.asyncio
     async def test_valid_page_fetches_successfully(self) -> None:
         """Verifies that a valid public page with permitted status returns body text."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, text="<html><body><h1>Public Content</h1></body></html>")
 

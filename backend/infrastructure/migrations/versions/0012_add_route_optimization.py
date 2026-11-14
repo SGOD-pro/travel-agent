@@ -51,15 +51,34 @@ def upgrade() -> None:
             sa.Column("departure_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("return_deadline", sa.DateTime(timezone=True), nullable=True),
             sa.Column("actual_return_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("total_distance_m", sa.Integer(), nullable=False, server_default=sa.text("0")),
-            sa.Column("total_travel_seconds", sa.Integer(), nullable=False, server_default=sa.text("0")),
-            sa.Column("total_dwell_seconds", sa.Integer(), nullable=False, server_default=sa.text("0")),
-            sa.Column("total_wait_seconds", sa.Integer(), nullable=False, server_default=sa.text("0")),
-            sa.Column("total_elapsed_seconds", sa.Integer(), nullable=False, server_default=sa.text("0")),
-            sa.Column("driving_distance_m", sa.Integer(), nullable=False, server_default=sa.text("0")),
-            sa.Column("walking_distance_m", sa.Integer(), nullable=False, server_default=sa.text("0")),
+            sa.Column(
+                "total_distance_m", sa.Integer(), nullable=False, server_default=sa.text("0")
+            ),
+            sa.Column(
+                "total_travel_seconds", sa.Integer(), nullable=False, server_default=sa.text("0")
+            ),
+            sa.Column(
+                "total_dwell_seconds", sa.Integer(), nullable=False, server_default=sa.text("0")
+            ),
+            sa.Column(
+                "total_wait_seconds", sa.Integer(), nullable=False, server_default=sa.text("0")
+            ),
+            sa.Column(
+                "total_elapsed_seconds", sa.Integer(), nullable=False, server_default=sa.text("0")
+            ),
+            sa.Column(
+                "driving_distance_m", sa.Integer(), nullable=False, server_default=sa.text("0")
+            ),
+            sa.Column(
+                "walking_distance_m", sa.Integer(), nullable=False, server_default=sa.text("0")
+            ),
             sa.Column("fuel_amount", sa.Numeric(precision=20, scale=6), nullable=True),
-            sa.Column("fuel_currency", sa.String(length=3), nullable=False, server_default=sa.text("'INR'")),
+            sa.Column(
+                "fuel_currency",
+                sa.String(length=3),
+                nullable=False,
+                server_default=sa.text("'INR'"),
+            ),
             sa.Column("fuel_basis", sa.String(length=256), nullable=True),
             sa.Column(
                 "warnings",
@@ -124,8 +143,12 @@ def upgrade() -> None:
                 nullable=False,
             ),
             sa.Column("stop_type", sa.String(length=32), nullable=False),
-            sa.Column("is_must_visit", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-            sa.Column("is_completed", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+            sa.Column(
+                "is_must_visit", sa.Boolean(), nullable=False, server_default=sa.text("true")
+            ),
+            sa.Column(
+                "is_completed", sa.Boolean(), nullable=False, server_default=sa.text("false")
+            ),
             sa.Column("is_skipped", sa.Boolean(), nullable=False, server_default=sa.text("false")),
             sa.Column("skip_reason", sa.String(length=64), nullable=True),
             sa.Column("window_start", sa.DateTime(timezone=True), nullable=True),
@@ -195,7 +218,12 @@ def upgrade() -> None:
                 nullable=True,
             ),
             sa.Column("traffic_basis", sa.String(length=32), nullable=False),
-            sa.Column("provider", sa.String(length=64), nullable=False, server_default=sa.text("'valhalla'")),
+            sa.Column(
+                "provider",
+                sa.String(length=64),
+                nullable=False,
+                server_default=sa.text("'valhalla'"),
+            ),
             sa.Column("provider_version", sa.String(length=64), nullable=True),
             sa.Column("data_version", sa.String(length=64), nullable=True),
             sa.Column(
@@ -216,7 +244,9 @@ def upgrade() -> None:
         op.create_index("ix_route_legs_route_id", "route_legs", ["route_id"], unique=False)
         op.create_index("ix_route_legs_from_stop_id", "route_legs", ["from_stop_id"], unique=False)
         op.create_index("ix_route_legs_to_stop_id", "route_legs", ["to_stop_id"], unique=False)
-        op.create_index("ix_route_legs_parking_hub_id", "route_legs", ["parking_hub_id"], unique=False)
+        op.create_index(
+            "ix_route_legs_parking_hub_id", "route_legs", ["parking_hub_id"], unique=False
+        )
 
     # 4. route_restrictions table
     if "route_restrictions" not in existing_tables:
@@ -259,8 +289,12 @@ def upgrade() -> None:
             ),
         )
 
-        op.create_index("ix_route_restrictions_route_id", "route_restrictions", ["route_id"], unique=False)
-        op.create_index("ix_route_restrictions_claim_id", "route_restrictions", ["claim_id"], unique=False)
+        op.create_index(
+            "ix_route_restrictions_route_id", "route_restrictions", ["route_id"], unique=False
+        )
+        op.create_index(
+            "ix_route_restrictions_claim_id", "route_restrictions", ["claim_id"], unique=False
+        )
         op.execute(
             sa.text(
                 "CREATE INDEX IF NOT EXISTS idx_route_restrictions_geometry "

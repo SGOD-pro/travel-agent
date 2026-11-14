@@ -88,7 +88,9 @@ class QueryPlanningService:
         ]
 
         if origin:
-            query_candidates.append(f"{origin} to {primary_dest} road travel advisory route conditions")
+            query_candidates.append(
+                f"{origin} to {primary_dest} road travel advisory route conditions"
+            )
         else:
             query_candidates.append(f"{primary_dest} travel advisory weather road alerts")
 
@@ -132,8 +134,12 @@ class QueryPlanningService:
                             destinations.append(str(d.name))
                     if not destinations and brief.get("destination_name"):
                         destinations.append(str(brief["destination_name"]).strip())
-                    prefs = list(brief.get("dietary_preferences", [])) + list(brief.get("accessibility_requirements", []))
-                    if "traveler_preferences" in brief and isinstance(brief["traveler_preferences"], list):
+                    prefs = list(brief.get("dietary_preferences", [])) + list(
+                        brief.get("accessibility_requirements", [])
+                    )
+                    if "traveler_preferences" in brief and isinstance(
+                        brief["traveler_preferences"], list
+                    ):
                         prefs.extend(str(p) for p in brief["traveler_preferences"])
                     budget_tier = str(brief.get("budget_tier") or "MODERATE")
 
@@ -148,7 +154,7 @@ class QueryPlanningService:
                 queries = await llm_client.generate_search_queries(req)
                 if queries:
                     queries_list: list[str] = [str(q) for q in queries]
-                    return queries_list[:min(max_queries, DEFAULT_MAX_QUERIES)]
+                    return queries_list[: min(max_queries, DEFAULT_MAX_QUERIES)]
             except Exception as exc:
                 logger.warning("LLM query planning failed (%s); using deterministic fallback", exc)
 
@@ -176,4 +182,3 @@ class QueryPlanningService:
             "cost_per_call_minor": cost_per_call_minor,
             "currency": currency,
         }
-

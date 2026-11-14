@@ -118,9 +118,7 @@ class ClaimModel(Base):
         lazy="selectin",
     )
 
-    __table_args__ = (
-        Index("ix_claims_subject_category", "subject_id", "category"),
-    )
+    __table_args__ = (Index("ix_claims_subject_category", "subject_id", "category"),)
 
 
 class ClaimEvidenceModel(Base):

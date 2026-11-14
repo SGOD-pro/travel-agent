@@ -119,7 +119,9 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
                     id=verified_parking_id,
                     primary_name="New Market Verified Municipal Parking",
                     locality="Kolkata",
-                    point=WKTElement(f"POINT({target_lng + 0.003} {target_lat + 0.001})", srid=4326),
+                    point=WKTElement(
+                        f"POINT({target_lng + 0.003} {target_lat + 0.001})", srid=4326
+                    ),
                     provider_ids={"category": "parking", "amenity": "parking"},
                     access_status="PUBLIC",
                     is_candidate=False,
@@ -131,7 +133,9 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
                     id=candidate_parking_id,
                     primary_name="Unverified Street Parking Lot",
                     locality="Kolkata",
-                    point=WKTElement(f"POINT({target_lng + 0.001} {target_lat + 0.001})", srid=4326),
+                    point=WKTElement(
+                        f"POINT({target_lng + 0.001} {target_lat + 0.001})", srid=4326
+                    ),
                     provider_ids={"category": "parking"},
                     access_status="PUBLIC",
                     is_candidate=True,
@@ -143,7 +147,9 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
                     id=restricted_parking_id,
                     primary_name="Private Government Officer Parking",
                     locality="Kolkata",
-                    point=WKTElement(f"POINT({target_lng + 0.002} {target_lat + 0.001})", srid=4326),
+                    point=WKTElement(
+                        f"POINT({target_lng + 0.002} {target_lat + 0.001})", srid=4326
+                    ),
                     provider_ids={"category": "parking"},
                     access_status="RESTRICTED",
                     is_candidate=False,
@@ -155,7 +161,9 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
                     id=distant_parking_id,
                     primary_name="Distant Suburb Parking",
                     locality="Kolkata",
-                    point=WKTElement(f"POINT({target_lng + 0.030} {target_lat + 0.030})", srid=4326),
+                    point=WKTElement(
+                        f"POINT({target_lng + 0.030} {target_lat + 0.030})", srid=4326
+                    ),
                     provider_ids={"category": "parking"},
                     access_status="PUBLIC",
                     is_candidate=False,
@@ -167,7 +175,9 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
                     id=bicycle_parking_id,
                     primary_name="Metro Station Bicycle Stand Parking",
                     locality="Kolkata",
-                    point=WKTElement(f"POINT({target_lng + 0.002} {target_lat + 0.002})", srid=4326),
+                    point=WKTElement(
+                        f"POINT({target_lng + 0.002} {target_lat + 0.002})", srid=4326
+                    ),
                     provider_ids={"amenity": "bicycle_parking"},
                     access_status="PUBLIC",
                     is_candidate=False,
@@ -178,7 +188,9 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
             # Query using CanonicalPlacesRepository
             async with session_factory() as session:
                 repo = CanonicalPlacesRepository(session)
-                results = await repo.find_verified_parking_near(target_pt, max_distance_meters=1000.0)
+                results = await repo.find_verified_parking_near(
+                    target_pt, max_distance_meters=1000.0
+                )
 
                 result_ids = [place.id for place, _ in results]
                 assert verified_parking_id in result_ids
@@ -196,9 +208,7 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
             async with session_factory() as session:
                 async with session.begin():
                     await session.execute(
-                        delete(CanonicalPlaceModel).where(
-                            CanonicalPlaceModel.id.in_(inserted_ids)
-                        )
+                        delete(CanonicalPlaceModel).where(CanonicalPlaceModel.id.in_(inserted_ids))
                     )
 
     async def test_multimodal_transition_service_with_real_database(
@@ -218,7 +228,9 @@ class TestMultimodalVehicleContinuityAndParkingIntegration:
                     id=parking_id,
                     primary_name="Heritage Dedicated Gate Parking",
                     locality="IsolatedSector",
-                    point=WKTElement(f"POINT({heritage_lng + 0.002} {heritage_lat + 0.001})", srid=4326),
+                    point=WKTElement(
+                        f"POINT({heritage_lng + 0.002} {heritage_lat + 0.001})", srid=4326
+                    ),
                     provider_ids={"amenity": "parking"},
                     access_status="PUBLIC",
                     is_candidate=False,

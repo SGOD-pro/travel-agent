@@ -28,9 +28,7 @@ from functions.route_optimizer.packaging import (
     main as packaging_main,
 )
 
-OPTIMIZER_DIR = (
-    Path(__file__).resolve().parents[2] / "src" / "functions" / "route_optimizer"
-)
+OPTIMIZER_DIR = Path(__file__).resolve().parents[2] / "src" / "functions" / "route_optimizer"
 TEMPLATE_PATH = OPTIMIZER_DIR / "template.yaml"
 REQUIREMENTS_PATH = OPTIMIZER_DIR / "requirements.txt"
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -116,20 +114,30 @@ def test_requirements_lean_boundaries_and_exclusions() -> None:
 
     req_text = REQUIREMENTS_PATH.read_text(encoding="utf-8").lower()
     req_lines = [
-        line.strip()
-        for line in req_text.splitlines()
-        if line.strip() and not line.startswith("#")
+        line.strip() for line in req_text.splitlines() if line.strip() and not line.startswith("#")
     ]
 
     # Required solver dependencies
     required_packages = ["ortools", "pydantic", "sqlalchemy", "shapely", "httpx", "asyncpg"]
     for pkg in required_packages:
-        assert any(pkg in line for line in req_lines), f"Required package {pkg} missing from requirements.txt"
+        assert any(pkg in line for line in req_lines), (
+            f"Required package {pkg} missing from requirements.txt"
+        )
 
     # Forbidden heavy dependencies
-    forbidden = ["playwright", "scrapling", "fastapi", "uvicorn", "reportlab", "valhalla", "langgraph"]
+    forbidden = [
+        "playwright",
+        "scrapling",
+        "fastapi",
+        "uvicorn",
+        "reportlab",
+        "valhalla",
+        "langgraph",
+    ]
     for pkg in forbidden:
-        assert not any(pkg in line for line in req_lines), f"Forbidden package {pkg} present in requirements.txt"
+        assert not any(pkg in line for line in req_lines), (
+            f"Forbidden package {pkg} present in requirements.txt"
+        )
 
 
 def test_standalone_packaging_size_and_compliance(tmp_path: Path) -> None:
@@ -166,7 +174,9 @@ def test_standalone_packaging_size_and_compliance(tmp_path: Path) -> None:
     # Confirm forbidden app modules are NOT packaged
     for forbidden_mod in FORBIDDEN_APP_MODULES:
         forbidden_rel_path = forbidden_mod.replace(".", "/")
-        assert not (output_dir / forbidden_rel_path).exists(), f"Forbidden module {forbidden_rel_path} was packaged"
+        assert not (output_dir / forbidden_rel_path).exists(), (
+            f"Forbidden module {forbidden_rel_path} was packaged"
+        )
 
 
 def test_audit_package_contents_detects_forbidden_assets(tmp_path: Path) -> None:
@@ -176,7 +186,9 @@ def test_audit_package_contents_detects_forbidden_assets(tmp_path: Path) -> None
 
     # Clean package initially
     (fake_artifact / "functions" / "route_optimizer").mkdir(parents=True)
-    (fake_artifact / "functions" / "route_optimizer" / "valhalla.py").write_text("# client", encoding="utf-8")
+    (fake_artifact / "functions" / "route_optimizer" / "valhalla.py").write_text(
+        "# client", encoding="utf-8"
+    )
 
     initial_audit = audit_package_contents(fake_artifact)
     assert initial_audit["is_compliant"] is True
@@ -193,6 +205,7 @@ def test_audit_package_contents_detects_forbidden_assets(tmp_path: Path) -> None
 
     # Clean up fastapi
     import shutil
+
     shutil.rmtree(fake_fastapi)
 
     # Inject unbundled Valhalla graph tiles or binary
@@ -268,4 +281,3 @@ def test_dependency_inclusive_python312_linux_artifact(tmp_path: Path) -> None:
 
     # 3. Import verification and small solve in clean isolated runtime without repository files or dev site packages
     assert verify_isolated_environment_imports(output_dir, verify_solve=True) is True
-

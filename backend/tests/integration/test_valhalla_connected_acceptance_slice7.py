@@ -50,7 +50,10 @@ def _is_connected_valhalla_enabled() -> tuple[bool, str]:
     """Checks whether live Valhalla provider acceptance testing is enabled and configured."""
     flag = os.getenv("RUN_CONNECTED_VALHALLA_TESTS", "0").strip().lower()
     if flag not in ("1", "true", "yes"):
-        return False, "RUN_CONNECTED_VALHALLA_TESTS is not enabled (set RUN_CONNECTED_VALHALLA_TESTS=1)"
+        return (
+            False,
+            "RUN_CONNECTED_VALHALLA_TESTS is not enabled (set RUN_CONNECTED_VALHALLA_TESTS=1)",
+        )
 
     endpoint = settings.VALHALLA_ENDPOINT_URL
     if not endpoint or not endpoint.strip():
@@ -199,7 +202,9 @@ async def test_valhalla_connected_multimodal_costing_segregation(
     assert walk_dur is not None and walk_dur > 0
 
     # Walking duration between city stations must be significantly greater than driving duration
-    assert walk_dur > car_dur * 2, f"Walking duration ({walk_dur}s) should exceed driving duration ({car_dur}s)"
+    assert walk_dur > car_dur * 2, (
+        f"Walking duration ({walk_dur}s) should exceed driving duration ({car_dur}s)"
+    )
 
 
 @pytest.mark.asyncio

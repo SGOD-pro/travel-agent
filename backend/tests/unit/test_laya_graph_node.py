@@ -156,7 +156,10 @@ async def test_route_evidence_decision_phase2_browser_escalation_dispatch() -> N
             },
             "task-1": {
                 "browser_requests": [
-                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                    }
                 ]
             },
         },
@@ -238,7 +241,10 @@ async def test_route_evidence_decision_phase2_evaluation_bypass_to_solve_schedul
             },
             "task-1": {
                 "browser_requests": [
-                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                    }
                 ]
             },
         },
@@ -249,7 +255,9 @@ async def test_route_evidence_decision_phase2_evaluation_bypass_to_solve_schedul
     result = await route_evidence_decision_node(state)
 
     assert result["current_step"] == "deterministic_evaluation_routed"
-    assert result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    assert (
+        result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    )
     assert result["pending_tasks"] == []
 
     # Verify edge routing directs to evaluate_candidates before solve_schedule
@@ -332,7 +340,10 @@ async def test_route_evidence_decision_result_reuse_from_state() -> None:
             },
             "task-1": {
                 "browser_requests": [
-                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                    }
                 ]
             },
         },
@@ -354,7 +365,9 @@ async def test_route_evidence_decision_fallback_on_adapter_exception() -> None:
     exec_id = str(uuid.uuid4())
     failing_adapter = MagicMock(spec=LayaDecisionPort)
     failing_adapter.is_fixture = True
-    failing_adapter.query_decision = AsyncMock(side_effect=RuntimeError("Connection timeout to remote LAYA"))
+    failing_adapter.query_decision = AsyncMock(
+        side_effect=RuntimeError("Connection timeout to remote LAYA")
+    )
 
     state: TripPlanningState = {
         "execution_id": exec_id,
@@ -383,7 +396,10 @@ async def test_route_evidence_decision_fallback_on_adapter_exception() -> None:
             },
             "task-1": {
                 "browser_requests": [
-                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                    }
                 ]
             },
         },
@@ -394,7 +410,10 @@ async def test_route_evidence_decision_fallback_on_adapter_exception() -> None:
     result = await route_evidence_decision_node(state)
 
     # Workflow continues cleanly with fallback decision
-    assert result["current_step"] in ("browser_escalation_routed", "deterministic_evaluation_routed")
+    assert result["current_step"] in (
+        "browser_escalation_routed",
+        "deterministic_evaluation_routed",
+    )
     decisions = result["laya_decisions"]
     assert len(decisions) == 1
     assert decisions[0]["status"] == DecisionStatus.FALLBACK_ERROR.value
@@ -442,7 +461,10 @@ async def test_route_evidence_decision_persists_to_db_session() -> None:
             },
             "task-1": {
                 "browser_requests": [
-                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                    }
                 ]
             },
         },
@@ -475,7 +497,10 @@ async def test_escalate_dynamic_evidence_preserves_pending_tasks() -> None:
         "task_outputs": {
             "search-1": {
                 "browser_requests": [
-                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                    }
                 ]
             }
         },
@@ -514,7 +539,10 @@ async def test_evidence_sufficiency_rejects_js_placeholders() -> None:
                     }
                 ],
                 "browser_requests": [
-                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                    }
                 ],
             }
         },
@@ -555,7 +583,10 @@ async def test_evidence_sufficiency_rejects_irrelevant_destination_observations(
                     }
                 ],
                 "browser_requests": [
-                    {"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}
+                    {
+                        "url": "https://hotel.example.com/rates",
+                        "canonical_url": "https://hotel.example.com/rates",
+                    }
                 ],
             }
         },
@@ -604,7 +635,9 @@ async def test_evidence_sufficiency_accepts_valid_destination_evidence() -> None
 
     result = await route_evidence_decision_node(state)
     # Valid Digha observation satisfies required evidence -> singleton evaluation bypass
-    assert result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    assert (
+        result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    )
     assert result["current_step"] == "deterministic_evaluation_routed"
     assert len(result["laya_decisions"]) == 1
 
@@ -655,7 +688,9 @@ async def test_database_lookup_failure_with_in_memory_observations_fails_closed(
 
 
 @pytest.mark.asyncio
-async def test_stale_required_evidence_satisfied_flag_overridden_by_authoritative_validation() -> None:
+async def test_stale_required_evidence_satisfied_flag_overridden_by_authoritative_validation() -> (
+    None
+):
     """Verifies that a stale required_evidence_satisfied=True flag is overridden when authoritative evidence is missing."""
     exec_id = str(uuid.uuid4())
     mock_session = AsyncMock()
@@ -700,7 +735,10 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {},
     }
-    assert _is_valid_source_evidence_for_destination(dest_url_only_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(dest_url_only_obs, dest_name, dest_lat, dest_lng)
+        is False
+    )
 
     # 2. Destination-name-only text (excerpt text is just the destination name)
     dest_name_only_text_obs = {
@@ -710,7 +748,12 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {},
     }
-    assert _is_valid_source_evidence_for_destination(dest_name_only_text_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(
+            dest_name_only_text_obs, dest_name, dest_lat, dest_lng
+        )
+        is False
+    )
 
     # 3. NEEDS_BROWSER dynamic rendering placeholder
     needs_browser_obs = {
@@ -720,7 +763,10 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "NEEDS_BROWSER",
         "artifact_ref": {"browser_reason": "DYNAMIC_JAVASCRIPT_REQUIRED"},
     }
-    assert _is_valid_source_evidence_for_destination(needs_browser_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(needs_browser_obs, dest_name, dest_lat, dest_lng)
+        is False
+    )
 
     # 4. Conflicting coordinates (Mumbai coordinates for Digha destination, distance ~1600 km)
     mumbai_coords_obs = {
@@ -730,7 +776,10 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {"gps": {"lat": 19.0760, "lng": 72.8777}},
     }
-    assert _is_valid_source_evidence_for_destination(mumbai_coords_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(mumbai_coords_obs, dest_name, dest_lat, dest_lng)
+        is False
+    )
 
     # 5. Valid destination evidence with substantive excerpt and matching coordinates
     valid_obs = {
@@ -740,7 +789,9 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
     }
-    assert _is_valid_source_evidence_for_destination(valid_obs, dest_name, dest_lat, dest_lng) is True
+    assert (
+        _is_valid_source_evidence_for_destination(valid_obs, dest_name, dest_lat, dest_lng) is True
+    )
 
     # 6. Missing source coordinates (valid substantive text, but artifact_ref has no coordinates)
     missing_coords_obs = {
@@ -750,7 +801,10 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {},
     }
-    assert _is_valid_source_evidence_for_destination(missing_coords_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(missing_coords_obs, dest_name, dest_lat, dest_lng)
+        is False
+    )
 
     # 7. Malformed source coordinates (string conversion error)
     malformed_coords_obs = {
@@ -760,7 +814,12 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {"gps": {"lat": "malformed_lat", "lng": "invalid_lng"}},
     }
-    assert _is_valid_source_evidence_for_destination(malformed_coords_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(
+            malformed_coords_obs, dest_name, dest_lat, dest_lng
+        )
+        is False
+    )
 
     # 8. Out-of-bounds coordinates (lat 120.0 > 90.0)
     out_of_bounds_coords_obs = {
@@ -770,7 +829,12 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {"gps": {"lat": 120.0, "lng": 87.5074}},
     }
-    assert _is_valid_source_evidence_for_destination(out_of_bounds_coords_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(
+            out_of_bounds_coords_obs, dest_name, dest_lat, dest_lng
+        )
+        is False
+    )
 
     # 9. Unavailable destination information in excerpt text
     unavailable_text_obs = {
@@ -780,7 +844,12 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {"gps": {"lat": 21.6266, "lng": 87.5074}},
     }
-    assert _is_valid_source_evidence_for_destination(unavailable_text_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(
+            unavailable_text_obs, dest_name, dest_lat, dest_lng
+        )
+        is False
+    )
 
     # 10. Explicit unavailable status in artifact_ref
     unavailable_status_obs = {
@@ -790,7 +859,12 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "extraction_method": "SCRAPLING_HTTP",
         "artifact_ref": {"status": "UNAVAILABLE", "gps": {"lat": 21.6266, "lng": 87.5074}},
     }
-    assert _is_valid_source_evidence_for_destination(unavailable_status_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(
+            unavailable_status_obs, dest_name, dest_lat, dest_lng
+        )
+        is False
+    )
 
     # 11. Unavailable reason in artifact_ref
     unavailable_reason_obs = {
@@ -798,9 +872,17 @@ def test_destination_name_only_text_urls_and_needs_browser_placeholders_rejected
         "content_hash": "hash_reason_unavail",
         "excerpt_text": "Digha luxury coastal beach resort booking and guide",
         "extraction_method": "SCRAPLING_HTTP",
-        "artifact_ref": {"unavailable_reason": "Blocked by target server", "gps": {"lat": 21.6266, "lng": 87.5074}},
+        "artifact_ref": {
+            "unavailable_reason": "Blocked by target server",
+            "gps": {"lat": 21.6266, "lng": 87.5074},
+        },
     }
-    assert _is_valid_source_evidence_for_destination(unavailable_reason_obs, dest_name, dest_lat, dest_lng) is False
+    assert (
+        _is_valid_source_evidence_for_destination(
+            unavailable_reason_obs, dest_name, dest_lat, dest_lng
+        )
+        is False
+    )
 
 
 @pytest.mark.asyncio
@@ -838,11 +920,12 @@ async def test_valid_persisted_evidence_permits_evaluation() -> None:
     }
 
     result = await route_evidence_decision_node(state)
-    assert result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    assert (
+        result["evidence_routing_action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    )
     assert result["current_step"] == "deterministic_evaluation_routed"
     assert len(result["laya_decisions"]) == 1
-    assert result["laya_decisions"][0]["action"] == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
-
-
-
-
+    assert (
+        result["laya_decisions"][0]["action"]
+        == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value
+    )

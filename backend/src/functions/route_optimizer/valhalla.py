@@ -65,13 +65,9 @@ def validate_coordinates(point_or_lat: Point | float, lon: float | None = None) 
         lng = lon
 
     if not (-90.0 <= lat <= 90.0):
-        raise ValhallaSSRFError(
-            f"Invalid latitude {lat}: must be between -90.0 and 90.0"
-        )
+        raise ValhallaSSRFError(f"Invalid latitude {lat}: must be between -90.0 and 90.0")
     if not (-180.0 <= lng <= 180.0):
-        raise ValhallaSSRFError(
-            f"Invalid longitude {lng}: must be between -180.0 and 180.0"
-        )
+        raise ValhallaSSRFError(f"Invalid longitude {lng}: must be between -180.0 and 180.0")
 
 
 def decode_polyline6(encoded: str) -> list[tuple[float, float]]:
@@ -251,7 +247,9 @@ class ValhallaClient:
 
                 # 4xx Client Error: fast fail without retries
                 if 400 <= resp.status_code < 500:
-                    error_msg = f"Valhalla client error {resp.status_code} for {endpoint_path}: {resp.text}"
+                    error_msg = (
+                        f"Valhalla client error {resp.status_code} for {endpoint_path}: {resp.text}"
+                    )
                     logger.error(error_msg)
                     raise ValhallaRoutingError(error_msg)
 
@@ -401,9 +399,7 @@ class ValhallaClient:
         for p in locations:
             validate_coordinates(p)
 
-        locs_payload = [
-            {"lat": p.latitude, "lon": p.longitude, "type": "break"} for p in locations
-        ]
+        locs_payload = [{"lat": p.latitude, "lon": p.longitude, "type": "break"} for p in locations]
         costing = self._costing_for_mode(mode)
 
         payload: dict[str, Any] = {
@@ -435,11 +431,7 @@ class ValhallaClient:
             dur_s = int(round(float(summary.get("time", 0.0))))
 
             shape_encoded = leg_data.get("shape", "")
-            coords = (
-                polyline6_to_geojson_coordinates(shape_encoded)
-                if shape_encoded
-                else []
-            )
+            coords = polyline6_to_geojson_coordinates(shape_encoded) if shape_encoded else []
             all_coords.extend(coords)
 
             maneuvers = leg_data.get("maneuvers", [])

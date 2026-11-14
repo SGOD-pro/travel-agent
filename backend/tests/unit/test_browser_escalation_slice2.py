@@ -159,7 +159,12 @@ def test_build_sqs_transport_populates_browser_queue_from_env() -> None:
 
 def test_transport_has_zero_imports_from_browser_function() -> None:
     """Verifies strict architectural modularity: transport does not import functions.browser."""
-    assert "functions.browser" not in sys.modules.get("functions.orchestrator.execution.transport", {}).__class__.__module__
+    assert (
+        "functions.browser"
+        not in sys.modules.get(
+            "functions.orchestrator.execution.transport", {}
+        ).__class__.__module__
+    )
     import functions.orchestrator.execution.transport as t_mod
 
     # Inspect module globals
@@ -323,8 +328,14 @@ def test_escalate_dynamic_evidence_node_deduplicates_duplicate_urls_in_same_batc
     exec_id = str(uuid.uuid4())
     requests: list[dict[str, Any]] = [
         {"url": "https://example.com/hotel/dup", "canonical_url": "https://example.com/hotel/dup"},
-        {"url": "https://example.com/hotel/dup?src=1", "canonical_url": "https://example.com/hotel/dup"},
-        {"url": "https://example.com/hotel/unique", "canonical_url": "https://example.com/hotel/unique"},
+        {
+            "url": "https://example.com/hotel/dup?src=1",
+            "canonical_url": "https://example.com/hotel/dup",
+        },
+        {
+            "url": "https://example.com/hotel/unique",
+            "canonical_url": "https://example.com/hotel/unique",
+        },
     ]
 
     state: TripPlanningState = {
@@ -458,7 +469,10 @@ def test_escalate_dynamic_evidence_node_deterministic_fallback_when_execution_id
         "task_outputs": {
             "task-1": {
                 "browser_requests": [
-                    {"url": "https://example.com/resort", "canonical_url": "https://example.com/resort"}
+                    {
+                        "url": "https://example.com/resort",
+                        "canonical_url": "https://example.com/resort",
+                    }
                 ]
             }
         }
@@ -474,5 +488,6 @@ def test_escalate_dynamic_evidence_node_deterministic_fallback_when_execution_id
     key2 = result2["pending_tasks"][0]["idempotency_key"]
 
     assert key1.startswith("default-execution:render:")
-    assert key1 == key2, "Idempotency key must remain deterministic across evaluations even when execution_id is absent"
-
+    assert key1 == key2, (
+        "Idempotency key must remain deterministic across evaluations even when execution_id is absent"
+    )

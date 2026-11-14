@@ -185,14 +185,16 @@ class ClaimsRepository:
             claim_a.contradictions = contra_a
 
         history_a = list(claim_a.decision_history)
-        history_a.append({
-            "event": "CONTRADICTION_FLAGGED",
-            "from": old_status_a,
-            "to": VerificationStatus.CONFLICTED.value,
-            "conflicting_claim_id": str(claim_b.id),
-            "reason": reason,
-            "at": now_iso,
-        })
+        history_a.append(
+            {
+                "event": "CONTRADICTION_FLAGGED",
+                "from": old_status_a,
+                "to": VerificationStatus.CONFLICTED.value,
+                "conflicting_claim_id": str(claim_b.id),
+                "reason": reason,
+                "at": now_iso,
+            }
+        )
         claim_a.decision_history = history_a
 
         # Update claim B
@@ -205,14 +207,16 @@ class ClaimsRepository:
             claim_b.contradictions = contra_b
 
         history_b = list(claim_b.decision_history)
-        history_b.append({
-            "event": "CONTRADICTION_FLAGGED",
-            "from": old_status_b,
-            "to": VerificationStatus.CONFLICTED.value,
-            "conflicting_claim_id": str(claim_a.id),
-            "reason": reason,
-            "at": now_iso,
-        })
+        history_b.append(
+            {
+                "event": "CONTRADICTION_FLAGGED",
+                "from": old_status_b,
+                "to": VerificationStatus.CONFLICTED.value,
+                "conflicting_claim_id": str(claim_a.id),
+                "reason": reason,
+                "at": now_iso,
+            }
+        )
         claim_b.decision_history = history_b
 
         await self._session.flush()
@@ -240,18 +244,22 @@ class ClaimsRepository:
             contra_list = list(existing_c.contradictions)
             refs = {item.get("claim_id") for item in contra_list if isinstance(item, dict)}
             if new_claim_id_str not in refs:
-                contra_list.append({"claim_id": new_claim_id_str, "reason": reason, "detected_at": now_iso})
+                contra_list.append(
+                    {"claim_id": new_claim_id_str, "reason": reason, "detected_at": now_iso}
+                )
                 existing_c.contradictions = contra_list
 
             history = list(existing_c.decision_history)
-            history.append({
-                "event": "CONTRADICTION_FLAGGED",
-                "from": old_status,
-                "to": VerificationStatus.CONFLICTED.value,
-                "conflicting_claim_id": new_claim_id_str,
-                "reason": reason,
-                "at": now_iso,
-            })
+            history.append(
+                {
+                    "event": "CONTRADICTION_FLAGGED",
+                    "from": old_status,
+                    "to": VerificationStatus.CONFLICTED.value,
+                    "conflicting_claim_id": new_claim_id_str,
+                    "reason": reason,
+                    "at": now_iso,
+                }
+            )
             existing_c.decision_history = history
 
         await self._session.flush()

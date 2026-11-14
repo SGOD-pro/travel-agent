@@ -53,9 +53,9 @@ def _normalize_base_url(url: str) -> str:
     """Normalizes configured endpoint URL, stripping trailing /v1/systemone or /v1 paths."""
     cleaned = url.strip().rstrip("/")
     if cleaned.endswith("/v1/systemone"):
-        cleaned = cleaned[:-len("/v1/systemone")].rstrip("/")
+        cleaned = cleaned[: -len("/v1/systemone")].rstrip("/")
     elif cleaned.endswith("/v1"):
-        cleaned = cleaned[:-len("/v1")].rstrip("/")
+        cleaned = cleaned[: -len("/v1")].rstrip("/")
     return cleaned
 
 
@@ -271,9 +271,7 @@ class RemoteLayaDecisionAdapter(LayaDecisionPort):
                 remaining_deadline = total_deadline - elapsed
 
                 if remaining_deadline <= 0 or (attempt > 0 and remaining_deadline < 0.5):
-                    last_error_rationale = (
-                        f"Cumulative retry deadline ({total_deadline:.1f}s) exceeded before attempt {attempt + 1}"
-                    )
+                    last_error_rationale = f"Cumulative retry deadline ({total_deadline:.1f}s) exceeded before attempt {attempt + 1}"
                     last_error_status = DecisionStatus.FALLBACK_TIMEOUT
                     break
 
@@ -313,7 +311,9 @@ class RemoteLayaDecisionAdapter(LayaDecisionPort):
                         break
 
                 except httpx.TimeoutException:
-                    last_error_rationale = f"Socket timeout ({attempt_timeout:.1f}s) on attempt {attempt + 1}"
+                    last_error_rationale = (
+                        f"Socket timeout ({attempt_timeout:.1f}s) on attempt {attempt + 1}"
+                    )
                     last_error_status = DecisionStatus.FALLBACK_TIMEOUT
                     if attempt < max_retries:
                         rem = total_deadline - (time.monotonic() - start_time)
@@ -325,12 +325,18 @@ class RemoteLayaDecisionAdapter(LayaDecisionPort):
                             continue
                     break
 
-                except (httpx.ConnectError, httpx.RemoteProtocolError, httpx.NetworkError) as net_err:
+                except (
+                    httpx.ConnectError,
+                    httpx.RemoteProtocolError,
+                    httpx.NetworkError,
+                ) as net_err:
                     clean_msg = sanitize_text(
                         str(net_err),
                         [self.settings.LAYA_API_KEY, self.settings.CF_ACCESS_CLIENT_SECRET],
                     )
-                    last_error_rationale = f"Transient network error on attempt {attempt + 1}: {clean_msg}"
+                    last_error_rationale = (
+                        f"Transient network error on attempt {attempt + 1}: {clean_msg}"
+                    )
                     last_error_status = DecisionStatus.FALLBACK_ERROR
                     if attempt < max_retries:
                         rem = total_deadline - (time.monotonic() - start_time)
@@ -474,7 +480,10 @@ class RemoteLayaDecisionAdapter(LayaDecisionPort):
             )
 
         # Low confidence check
-        if answer.low_confidence is True or resolved_ans_conf < self.settings.LAYA_CONFIDENCE_THRESHOLD:
+        if (
+            answer.low_confidence is True
+            or resolved_ans_conf < self.settings.LAYA_CONFIDENCE_THRESHOLD
+        ):
             fallback_action = self._resolve_fallback_action(request)
             return self._create_envelope(
                 request=request,

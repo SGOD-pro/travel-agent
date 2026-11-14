@@ -310,11 +310,15 @@ async def test_route_graph_map_slice1_e2e_lifecycle(
             published_queues: list[str] = []
 
             class MockSqsClient:
-                def send_message(self, QueueUrl: str, MessageBody: str, **kwargs: Any) -> dict[str, str]:
+                def send_message(
+                    self, QueueUrl: str, MessageBody: str, **kwargs: Any
+                ) -> dict[str, str]:
                     published_queues.append(QueueUrl)
                     return {"MessageId": f"mock-msg-{uuid.uuid4()}"}
 
-            optimizer_queue_url = "https://sqs.us-east-1.amazonaws.com/123456789012/route-optimizer-queue"
+            optimizer_queue_url = (
+                "https://sqs.us-east-1.amazonaws.com/123456789012/route-optimizer-queue"
+            )
             transport_adapter = SqsTransportAdapter(
                 queue_url="https://sqs.us-east-1.amazonaws.com/123456789012/default-queue",
                 sqs_client=MockSqsClient(),
@@ -420,7 +424,9 @@ async def test_route_graph_map_slice1_e2e_lifecycle(
             assert job_data["result_available"] is True
             assert job_data["result_ref"] is not None
             assert job_data["result_ref"]["route_id"] == route_id_str
-            assert job_data["result_ref"]["map_url"] == f"/api/v1/optimization/routes/{route_id}/map"
+            assert (
+                job_data["result_ref"]["map_url"] == f"/api/v1/optimization/routes/{route_id}/map"
+            )
 
             # 14. Durable job-to-route discovery via GET /api/v1/optimization/routes/by-job/{job_id}
             by_job_resp = await client.get(f"/api/v1/optimization/routes/by-job/{job_id}")

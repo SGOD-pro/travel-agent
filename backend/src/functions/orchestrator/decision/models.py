@@ -42,9 +42,7 @@ class LayaDecisionModel(Base):
 
     __tablename__ = "laya_decisions"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     decision_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False, unique=True, index=True
     )
@@ -54,9 +52,7 @@ class LayaDecisionModel(Base):
         nullable=False,
         index=True,
     )
-    trip_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    trip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     context_version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default=sa.text("1")
     )
@@ -67,9 +63,7 @@ class LayaDecisionModel(Base):
     )
     chosen_action: Mapped[str] = mapped_column(String(64), nullable=False)
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
-    answer_confidence: Mapped[Decimal | None] = mapped_column(
-        Numeric(4, 3), nullable=True
-    )
+    answer_confidence: Mapped[Decimal | None] = mapped_column(Numeric(4, 3), nullable=True)
     model_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -84,9 +78,7 @@ class LayaDecisionModel(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "execution_id", "idempotency_key", name="uq_laya_execution_idempotency"
-        ),
+        UniqueConstraint("execution_id", "idempotency_key", name="uq_laya_execution_idempotency"),
         Index("ix_laya_decisions_execution_id", "execution_id"),
         Index("ix_laya_decisions_decision_id", "decision_id"),
     )

@@ -44,9 +44,7 @@ def test_relay_handler_invokes_bounded_loop() -> None:
     mock_summary.elapsed_seconds = 1.2
     mock_summary.terminated_by_timeout = False
 
-    with patch(
-        "functions.orchestrator.execution.scheduled.OutboxRelayService"
-    ) as mock_service_cls:
+    with patch("functions.orchestrator.execution.scheduled.OutboxRelayService") as mock_service_cls:
         mock_instance = mock_service_cls.return_value
         mock_instance.run_relay_loop = AsyncMock(return_value=mock_summary)
 

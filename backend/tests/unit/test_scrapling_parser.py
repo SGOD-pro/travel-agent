@@ -296,9 +296,12 @@ class TestDynamicBrowserEscalation:
         assert fares[0].departure_time == ""
         assert fares[0].arrival_time == ""
 
-    def test_hotel_parsing_logs_debug_on_skipped_unparseable_card(self, caplog: pytest.LogCaptureFixture) -> None:
+    def test_hotel_parsing_logs_debug_on_skipped_unparseable_card(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Verifies Minor 4: skipped hotel cards with unparseable prices produce debug logs."""
         import logging
+
         html = """
         <div class="hotel-card">
             <h3 class="hotel-name">Mystic Heritage</h3>

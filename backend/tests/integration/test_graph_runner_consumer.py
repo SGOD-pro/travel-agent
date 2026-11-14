@@ -19,9 +19,7 @@ from tests.integration.test_graph_runner import (
 def mock_create_graph(postgres_checkpointer):
     """Mocks the graph creation to use our test graph."""
     graph = build_test_runner_graph(postgres_checkpointer)
-    with patch(
-        "functions.orchestrator.execution.consumer.build_trip_planning_graph"
-    ) as mock:
+    with patch("functions.orchestrator.execution.consumer.build_trip_planning_graph") as mock:
         mock.return_value.compile.return_value = graph
         yield mock
 
@@ -90,25 +88,25 @@ async def test_consumer_handles_start_and_resume_batch(
     # Verify START worked
     async with session_factory() as session:
         execution = (
-            await session.execute(
-                select(ExecutionModel).where(ExecutionModel.id == exec_id_start)
-            )
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id_start))
         ).scalar_one_or_none()
         assert execution is not None
         assert execution.status == "WAITING_TASKS"
         tasks = (
-            await session.execute(
-                select(TaskModel).where(TaskModel.execution_id == exec_id_start)
+            (
+                await session.execute(
+                    select(TaskModel).where(TaskModel.execution_id == exec_id_start)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(tasks) == 1
 
         # Verify RESUME worked (note: our test graph requires task_outputs to advance,
         # but at least the execution shouldn't fail and should be processed)
         execution_resume = (
-            await session.execute(
-                select(ExecutionModel).where(ExecutionModel.id == exec_id_resume)
-            )
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id_resume))
         ).scalar_one_or_none()
         assert execution_resume is not None
 

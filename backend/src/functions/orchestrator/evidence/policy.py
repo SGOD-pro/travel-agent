@@ -81,7 +81,9 @@ class ClaimVerificationPolicy:
             if authoritative_domains is not None
             else OFFICIAL_AUTHORITY_DOMAINS
         )
-        self._compiled_patterns = [re.compile(p, re.IGNORECASE) for p in AUTHORITATIVE_DOMAIN_PATTERNS]
+        self._compiled_patterns = [
+            re.compile(p, re.IGNORECASE) for p in AUTHORITATIVE_DOMAIN_PATTERNS
+        ]
         self._freshness_windows = (
             dict(freshness_windows)
             if freshness_windows is not None
@@ -256,7 +258,12 @@ class ClaimVerificationPolicy:
         until_a = getattr(claim_a, "valid_until", None)
         from_b = getattr(claim_b, "valid_from", None)
         until_b = getattr(claim_b, "valid_until", None)
-        if from_a is not None and until_a is not None and from_b is not None and until_b is not None:
+        if (
+            from_a is not None
+            and until_a is not None
+            and from_b is not None
+            and until_b is not None
+        ):
             if until_a < from_b or until_b < from_a:
                 return False, None
 
@@ -305,7 +312,9 @@ class ClaimVerificationPolicy:
         for k in shared_keys - ignored_keys:
             v_a = val_a[k]
             v_b = val_b[k]
-            if isinstance(v_a, (str, int, float, bool)) and isinstance(v_b, (str, int, float, bool)):
+            if isinstance(v_a, (str, int, float, bool)) and isinstance(
+                v_b, (str, int, float, bool)
+            ):
                 if str(v_a).strip() != str(v_b).strip():
                     return True, f"Conflicting value for {k}: {v_a} vs {v_b}"
 

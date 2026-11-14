@@ -113,7 +113,9 @@ async def test_laya_connected_endpoint_acceptance() -> None:
         assert envelope.execution_id == exec_id
         assert envelope.idempotency_key == idempotency_key
         assert envelope.request_digest == request_digest
-        assert envelope.latency_ms > 0, f"Expected non-zero latency from live remote call; got {envelope.latency_ms}ms"
+        assert envelope.latency_ms > 0, (
+            f"Expected non-zero latency from live remote call; got {envelope.latency_ms}ms"
+        )
 
         # Action must belong to offered eligible choices
         assert envelope.allowed_choice in eligible_choices, (

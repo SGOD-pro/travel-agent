@@ -39,9 +39,7 @@ class ExecutionRecoveryResult:
     @property
     def total_recovered(self) -> int:
         return (
-            len(self.recovered_resumed)
-            + len(self.recovered_failed)
-            + len(self.recovered_cancelled)
+            len(self.recovered_resumed) + len(self.recovered_failed) + len(self.recovered_cancelled)
         )
 
 
@@ -57,9 +55,7 @@ class TaskRecoveryResult:
     @property
     def total_recovered(self) -> int:
         return (
-            len(self.recovered_retried)
-            + len(self.recovered_failed)
-            + len(self.recovered_cancelled)
+            len(self.recovered_retried) + len(self.recovered_failed) + len(self.recovered_cancelled)
         )
 
 
@@ -141,9 +137,7 @@ class TaskRecoveryService:
         batch_size: int | None = None,
         lock_timeout_seconds: float | None = None,
     ) -> ExecutionRecoveryResult:
-        effective_batch_size = max(
-            1, min(batch_size or self._batch_size, self._max_batch_size)
-        )
+        effective_batch_size = max(1, min(batch_size or self._batch_size, self._max_batch_size))
         now = datetime.now(UTC)
         result = ExecutionRecoveryResult()
 
@@ -176,9 +170,7 @@ class TaskRecoveryService:
                     )
 
                     exec_stmt = (
-                        select(ExecutionModel)
-                        .where(ExecutionModel.id == exec_id)
-                        .with_for_update()
+                        select(ExecutionModel).where(ExecutionModel.id == exec_id).with_for_update()
                     )
                     execution = (await session.execute(exec_stmt)).scalar_one_or_none()
                     if execution is None:
@@ -338,9 +330,7 @@ class TaskRecoveryService:
         exclude_task_ids: set[uuid.UUID] | None = None,
         lock_timeout_seconds: float | None = None,
     ) -> TaskRecoveryResult:
-        effective_batch_size = max(
-            1, min(batch_size or self._batch_size, self._max_batch_size)
-        )
+        effective_batch_size = max(1, min(batch_size or self._batch_size, self._max_batch_size))
         now = datetime.now(UTC)
         result = TaskRecoveryResult()
 
@@ -359,10 +349,7 @@ class TaskRecoveryService:
                         & TaskModel.lease_expiry.is_not(None)
                         & (TaskModel.lease_expiry <= now)
                     ),
-                    (
-                        (TaskModel.status == "PENDING")
-                        & (TaskModel.deadline_at <= now)
-                    ),
+                    ((TaskModel.status == "PENDING") & (TaskModel.deadline_at <= now)),
                     (
                         (TaskModel.status == "PENDING")
                         & (
@@ -405,9 +392,7 @@ class TaskRecoveryService:
 
                     # 1. Lock Parent Execution FIRST
                     exec_stmt = (
-                        select(ExecutionModel)
-                        .where(ExecutionModel.id == exec_id)
-                        .with_for_update()
+                        select(ExecutionModel).where(ExecutionModel.id == exec_id).with_for_update()
                     )
                     exec_res = await session.execute(exec_stmt)
                     execution = exec_res.scalar_one_or_none()
@@ -416,11 +401,7 @@ class TaskRecoveryService:
                         continue
 
                     # 2. Lock Child Task SECOND
-                    task_stmt = (
-                        select(TaskModel)
-                        .where(TaskModel.id == task_id)
-                        .with_for_update()
-                    )
+                    task_stmt = select(TaskModel).where(TaskModel.id == task_id).with_for_update()
                     task_res = await session.execute(task_stmt)
                     task = task_res.scalar_one_or_none()
                     if task is None:
@@ -470,10 +451,12 @@ class TaskRecoveryService:
                         continue
 
                     # 5. Parent Terminal / Ineligible check (COMPLETED, SUCCEEDED, FAILED, PARTIAL)
-                    if (
-                        execution.status in ("COMPLETED", "SUCCEEDED", "FAILED", "PARTIAL")
-                        or execution.status not in ("RUNNING", "WAITING_TASKS", "CREATED")
-                    ):
+                    if execution.status in (
+                        "COMPLETED",
+                        "SUCCEEDED",
+                        "FAILED",
+                        "PARTIAL",
+                    ) or execution.status not in ("RUNNING", "WAITING_TASKS", "CREATED"):
                         task.status = "FAILED"
                         task.lease_token = None
                         task.lease_expiry = None
@@ -760,7 +743,9 @@ class TaskRecoveryService:
             )
             summary.total_retried += len(batch_res.recovered_retried)
             summary.total_failed += len(batch_res.recovered_failed) + len(exec_res.recovered_failed)
-            summary.total_cancelled += len(batch_res.recovered_cancelled) + len(exec_res.recovered_cancelled)
+            summary.total_cancelled += len(batch_res.recovered_cancelled) + len(
+                exec_res.recovered_cancelled
+            )
             summary.total_skipped += len(batch_res.skipped_active) + len(exec_res.skipped_active)
 
             # Avoid tight loop spin if all items were skipped (e.g. concurrent updates)

@@ -24,21 +24,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from acceptance_database import (
     are_db_urls_equivalent,
-    are_hosts_equivalent,
-    normalize_db_connection_target,
     validate_acceptance_database_url,
     validate_isolated_database_url,
 )
 from acceptance_seeder import (
-    CANONICAL_ROUTE_IDS,
     DEMO_TRIP_A_ID,
-    MULTIMODAL_ROUTE_ID,
-    OWNED_TRIP_IDS,
     OWNED_USER_IDS,
     USER_A_ID,
 )
 from acceptance_worker import (
-    DEFAULT_ALLOWED_OWNER_IDS,
     DEFAULT_ALLOWED_TRIP_IDS,
     LocalAcceptanceWorker,
 )
@@ -89,7 +83,9 @@ def test_application_database_reuse_fails_closed() -> None:
     for equiv_url in identical_targets:
         with pytest.raises(RuntimeError) as exc_info:
             validate_acceptance_database_url(equiv_url, base_app_url)
-        assert "ACCEPTANCE_DATABASE_URL cannot point to the same database as DATABASE_URL" in str(exc_info.value)
+        assert "ACCEPTANCE_DATABASE_URL cannot point to the same database as DATABASE_URL" in str(
+            exc_info.value
+        )
 
 
 def test_isolated_acceptance_database_url_succeeds() -> None:
@@ -266,7 +262,15 @@ def test_dns_caching_preserves_requested_port_regression(monkeypatch: pytest.Mon
                     (mock_ip, target_port),
                 )
             ]
-        return [(socket.AddressFamily.AF_INET, socket.SocketKind.SOCK_STREAM, 6, "", ("127.0.0.1", int(port or 0)))]
+        return [
+            (
+                socket.AddressFamily.AF_INET,
+                socket.SocketKind.SOCK_STREAM,
+                6,
+                "",
+                ("127.0.0.1", int(port or 0)),
+            )
+        ]
 
     monkeypatch.setattr("acceptance_database._orig_getaddrinfo", mock_orig_getaddrinfo)
 
@@ -390,7 +394,7 @@ def test_conftest_checkpointer_isolation_guards_regression(monkeypatch: pytest.M
 @pytest.mark.asyncio
 async def test_acceptance_worker_filters_by_trip_id_and_owner() -> None:
     """Proves LocalAcceptanceWorker processes ONLY executions belonging to allowed trip IDs."""
-    now = datetime.now(UTC)
+    _now = datetime.now(UTC)
 
     # LocalAcceptanceWorker verifies acceptance db url on init
     # We pass explicit isolated settings to verify worker initialization and filtering
@@ -420,6 +424,7 @@ async def test_acceptance_worker_filters_by_trip_id_and_owner() -> None:
 async def session_factory() -> async_sessionmaker[AsyncSession]:
     """Provides an isolated session factory strictly targeting the dedicated acceptance database."""
     from acceptance_database import get_acceptance_session_factory
+
     return get_acceptance_session_factory()
 
 
@@ -718,7 +723,7 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
 
     try:
         # Run the cleanup logic simulating 2 successive seeder cleanup passes
-        for pass_num in (1, 2):
+        for _pass_num in (1, 2):
             async with session_factory() as session:
                 # 1. Target routes
                 r_stmt = select(RouteModel.id).where(
@@ -736,10 +741,16 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
                     )
                     route_exec_ids = list((await session.execute(route_exec_stmt)).scalars().all())
 
-                    await session.execute(delete(RouteLegModel).where(RouteLegModel.route_id.in_(target_rids)))
-                    await session.execute(delete(RouteStopModel).where(RouteStopModel.route_id.in_(target_rids)))
                     await session.execute(
-                        delete(RouteRestrictionModel).where(RouteRestrictionModel.route_id.in_(target_rids))
+                        delete(RouteLegModel).where(RouteLegModel.route_id.in_(target_rids))
+                    )
+                    await session.execute(
+                        delete(RouteStopModel).where(RouteStopModel.route_id.in_(target_rids))
+                    )
+                    await session.execute(
+                        delete(RouteRestrictionModel).where(
+                            RouteRestrictionModel.route_id.in_(target_rids)
+                        )
                     )
                     await session.execute(delete(RouteModel).where(RouteModel.id.in_(target_rids)))
 
@@ -758,13 +769,21 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
                         delete(JobEventModel).where(JobEventModel.execution_id.in_(target_eids))
                     )
                     await session.execute(
-                        delete(OutboxEventModel).where(OutboxEventModel.execution_id.in_(target_eids))
+                        delete(OutboxEventModel).where(
+                            OutboxEventModel.execution_id.in_(target_eids)
+                        )
                     )
-                    await session.execute(delete(TaskModel).where(TaskModel.execution_id.in_(target_eids)))
                     await session.execute(
-                        delete(WorkerResultModel).where(WorkerResultModel.execution_id.in_(target_eids))
+                        delete(TaskModel).where(TaskModel.execution_id.in_(target_eids))
                     )
-                    await session.execute(delete(ExecutionModel).where(ExecutionModel.id.in_(target_eids)))
+                    await session.execute(
+                        delete(WorkerResultModel).where(
+                            WorkerResultModel.execution_id.in_(target_eids)
+                        )
+                    )
+                    await session.execute(
+                        delete(ExecutionModel).where(ExecutionModel.id.in_(target_eids))
+                    )
 
                 # Clean only fixture idempotency keys
                 fixture_idemp_keys = [
@@ -786,15 +805,23 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
             assert await session.get(ExecutionModel, fixture_exec_id) is None
             assert await session.get(RouteModel, fixture_route_id) is None
             f_outbox = (
-                await session.execute(
-                    select(OutboxEventModel).where(OutboxEventModel.execution_id == fixture_exec_id)
+                (
+                    await session.execute(
+                        select(OutboxEventModel).where(
+                            OutboxEventModel.execution_id == fixture_exec_id
+                        )
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(f_outbox) == 0
 
             f_idemp = (
                 await session.execute(
-                    select(ApiIdempotencyModel).where(ApiIdempotencyModel.key == "seed-multimodal-route")
+                    select(ApiIdempotencyModel).where(
+                        ApiIdempotencyModel.key == "seed-multimodal-route"
+                    )
                 )
             ).scalar_one_or_none()
             assert f_idemp is None
@@ -809,36 +836,58 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
             assert unrelated_route_db.owner_id == unrelated_owner_id
 
             u_outbox = (
-                await session.execute(
-                    select(OutboxEventModel).where(OutboxEventModel.execution_id == unrelated_exec_id)
+                (
+                    await session.execute(
+                        select(OutboxEventModel).where(
+                            OutboxEventModel.execution_id == unrelated_exec_id
+                        )
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(u_outbox) == 1
 
             u_tasks = (
-                await session.execute(
-                    select(TaskModel).where(TaskModel.execution_id == unrelated_exec_id)
+                (
+                    await session.execute(
+                        select(TaskModel).where(TaskModel.execution_id == unrelated_exec_id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(u_tasks) == 1
 
             u_results = (
-                await session.execute(
-                    select(WorkerResultModel).where(WorkerResultModel.execution_id == unrelated_exec_id)
+                (
+                    await session.execute(
+                        select(WorkerResultModel).where(
+                            WorkerResultModel.execution_id == unrelated_exec_id
+                        )
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(u_results) == 1
 
             u_job_events = (
-                await session.execute(
-                    select(JobEventModel).where(JobEventModel.execution_id == unrelated_exec_id)
+                (
+                    await session.execute(
+                        select(JobEventModel).where(JobEventModel.execution_id == unrelated_exec_id)
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(u_job_events) == 1
 
             u_idemp = (
                 await session.execute(
-                    select(ApiIdempotencyModel).where(ApiIdempotencyModel.key == unrelated_idemp_key)
+                    select(ApiIdempotencyModel).where(
+                        ApiIdempotencyModel.key == unrelated_idemp_key
+                    )
                 )
             ).scalar_one_or_none()
             assert u_idemp is not None
@@ -846,7 +895,9 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
     finally:
         # Surgical teardown of unrelated test records
         async with session_factory() as session:
-            await session.execute(delete(RouteStopModel).where(RouteStopModel.route_id == unrelated_route_id))
+            await session.execute(
+                delete(RouteStopModel).where(RouteStopModel.route_id == unrelated_route_id)
+            )
             await session.execute(delete(RouteModel).where(RouteModel.id == unrelated_route_id))
             await session.execute(
                 delete(JobEventModel).where(JobEventModel.execution_id == unrelated_exec_id)
@@ -860,7 +911,9 @@ async def test_fixture_cleanup_ordering_and_unrelated_data_preservation(
             await session.execute(
                 delete(OutboxEventModel).where(OutboxEventModel.execution_id == unrelated_exec_id)
             )
-            await session.execute(delete(ExecutionModel).where(ExecutionModel.id == unrelated_exec_id))
+            await session.execute(
+                delete(ExecutionModel).where(ExecutionModel.id == unrelated_exec_id)
+            )
             await session.execute(
                 delete(ApiIdempotencyModel).where(ApiIdempotencyModel.key == unrelated_idemp_key)
             )

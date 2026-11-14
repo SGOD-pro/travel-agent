@@ -78,7 +78,6 @@ def compute_name_similarity(name1: str, name2: str) -> float:
     return dice
 
 
-
 @dataclass(frozen=True)
 class CandidatePlaceInput:
     """Incoming place candidate for resolution."""
@@ -158,11 +157,7 @@ class PlaceResolutionService:
 
         for place, dist in nearby:
             place_names = [place.primary_name] + list(place.names)
-            sim = max(
-                compute_name_similarity(cn, pn)
-                for cn in cand_names
-                for pn in place_names
-            )
+            sim = max(compute_name_similarity(cn, pn) for cn in cand_names for pn in place_names)
             if sim >= self._similarity_threshold:
                 spatial_matches.append((place, dist, sim))
 
@@ -183,11 +178,7 @@ class PlaceResolutionService:
 
         for p in name_candidates:
             p_names = [p.primary_name] + list(p.names)
-            sim = max(
-                compute_name_similarity(cn, pn)
-                for cn in cand_names
-                for pn in p_names
-            )
+            sim = max(compute_name_similarity(cn, pn) for cn in cand_names for pn in p_names)
             if sim >= self._similarity_threshold:
                 ambiguous_name_places.append((p, sim))
 

@@ -395,9 +395,7 @@ async def test_claim_evidence_junction_crud_and_composite_pk(session_factory: An
 
     # Query back through relationships
     async with session_factory() as session:
-        res = await session.execute(
-            select(ClaimModel).where(ClaimModel.id == claim_id)
-        )
+        res = await session.execute(select(ClaimModel).where(ClaimModel.id == claim_id))
         loaded_claim = res.scalar_one_or_none()
         assert loaded_claim is not None
         assert len(loaded_claim.evidence_links) == 1
@@ -521,7 +519,10 @@ async def test_contradictory_claims_preservation(session_factory: Any) -> None:
             typed_value={"road_open": True, "source": "travel-blog-2025"},
             verification=VerificationStatus.CONFLICTED,
             contradictions=[
-                {"conflicting_claim_id": str(claim2_id), "reason": "Official advisory asserts closure"}
+                {
+                    "conflicting_claim_id": str(claim2_id),
+                    "reason": "Official advisory asserts closure",
+                }
             ],
         )
 
@@ -534,7 +535,10 @@ async def test_contradictory_claims_preservation(session_factory: Any) -> None:
             typed_value={"road_open": False, "source": "kolkata-police-traffic-advisory-2026"},
             verification=VerificationStatus.CONFLICTED,
             contradictions=[
-                {"conflicting_claim_id": str(claim1_id), "reason": "Secondary blog asserts road is open"}
+                {
+                    "conflicting_claim_id": str(claim1_id),
+                    "reason": "Secondary blog asserts road is open",
+                }
             ],
         )
 
@@ -544,7 +548,9 @@ async def test_contradictory_claims_preservation(session_factory: Any) -> None:
     # Verify both rows coexist with distinct IDs and conflict annotations
     async with session_factory() as session:
         res = await session.execute(
-            select(ClaimModel).where(ClaimModel.subject_id == subject_id).order_by(ClaimModel.created_at)
+            select(ClaimModel)
+            .where(ClaimModel.subject_id == subject_id)
+            .order_by(ClaimModel.created_at)
         )
         conflicted_claims = res.scalars().all()
         assert len(conflicted_claims) == 2

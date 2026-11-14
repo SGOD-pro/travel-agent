@@ -47,7 +47,9 @@ def upgrade() -> None:
                 nullable=False,
                 server_default=sa.text("now()"),
             ),
-            sa.UniqueConstraint("execution_id", "sequence", name="uq_job_events_execution_sequence"),
+            sa.UniqueConstraint(
+                "execution_id", "sequence", name="uq_job_events_execution_sequence"
+            ),
         )
         op.create_index(
             "ix_job_events_execution_sequence",

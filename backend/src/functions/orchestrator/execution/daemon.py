@@ -8,7 +8,7 @@ import time
 import uuid
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from config.db import get_session_factory
@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class WorkerState(str, Enum):
+class WorkerState(StrEnum):
     """Lifecycle state of a supervised worker loop."""
 
     STOPPED = "STOPPED"
@@ -185,7 +185,9 @@ class BackgroundDaemon:
                 info.last_failed_at = time.monotonic()
                 backoff = min(
                     self.supervisor_config.initial_backoff_seconds
-                    * (self.supervisor_config.backoff_multiplier ** (info.consecutive_failures - 1)),
+                    * (
+                        self.supervisor_config.backoff_multiplier ** (info.consecutive_failures - 1)
+                    ),
                     self.supervisor_config.max_backoff_seconds,
                 )
                 self._next_restart_at[name] = time.monotonic() + backoff
@@ -214,7 +216,9 @@ class BackgroundDaemon:
                 info.state = WorkerState.RESTARTING
                 backoff = min(
                     self.supervisor_config.initial_backoff_seconds
-                    * (self.supervisor_config.backoff_multiplier ** (info.consecutive_failures - 1)),
+                    * (
+                        self.supervisor_config.backoff_multiplier ** (info.consecutive_failures - 1)
+                    ),
                     self.supervisor_config.max_backoff_seconds,
                 )
                 self._next_restart_at[name] = time.monotonic() + backoff
@@ -242,7 +246,11 @@ class BackgroundDaemon:
                 if info.state == WorkerState.RESTARTING:
                     restart_due = self._next_restart_at.get(name, 0.0)
                     if now >= restart_due:
-                        logger.info("Supervisor restarting worker '%s' (restart #%d)", name, info.restart_count)
+                        logger.info(
+                            "Supervisor restarting worker '%s' (restart #%d)",
+                            name,
+                            info.restart_count,
+                        )
                         info.state = WorkerState.STARTING
                         self._worker_tasks[name] = asyncio.create_task(
                             self._run_supervised_loop(name, target)
@@ -276,9 +284,7 @@ class BackgroundDaemon:
             self._worker_infos[name] = SupervisedWorkerInfo(name=name, state=WorkerState.STARTING)
 
         for name, target in workers.items():
-            self._worker_tasks[name] = asyncio.create_task(
-                self._run_supervised_loop(name, target)
-            )
+            self._worker_tasks[name] = asyncio.create_task(self._run_supervised_loop(name, target))
 
         try:
             await self._supervision_monitor(workers)

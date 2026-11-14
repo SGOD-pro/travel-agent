@@ -47,7 +47,9 @@ async def lifespan(app: Any) -> AsyncGenerator[None, None]:
     # Fails closed if ACCEPTANCE_DATABASE_URL is missing or reuses application database
     session_factory = get_acceptance_session_factory()
     if getattr(settings, "ENVIRONMENT", "local") == "production":
-        logger.warning("Acceptance server running in production environment; startup seeding disabled.")
+        logger.warning(
+            "Acceptance server running in production environment; startup seeding disabled."
+        )
     elif os.environ.get("SKIP_ACCEPTANCE_SEEDING", "").lower() in ("1", "true"):
         logger.info("SKIP_ACCEPTANCE_SEEDING is set; skipping acceptance fixture seeding.")
     else:
@@ -135,8 +137,12 @@ async def reset_replan_fixtures() -> dict[str, Any]:
             )
             child_exec_ids = list((await session.execute(exec_stmt)).scalars().all())
 
-            await session.execute(delete(RouteLegModel).where(RouteLegModel.route_id.in_(child_ids)))
-            await session.execute(delete(RouteStopModel).where(RouteStopModel.route_id.in_(child_ids)))
+            await session.execute(
+                delete(RouteLegModel).where(RouteLegModel.route_id.in_(child_ids))
+            )
+            await session.execute(
+                delete(RouteStopModel).where(RouteStopModel.route_id.in_(child_ids))
+            )
             await session.execute(
                 delete(RouteRestrictionModel).where(RouteRestrictionModel.route_id.in_(child_ids))
             )
@@ -149,11 +155,15 @@ async def reset_replan_fixtures() -> dict[str, Any]:
             await session.execute(
                 delete(OutboxEventModel).where(OutboxEventModel.execution_id.in_(child_exec_ids))
             )
-            await session.execute(delete(TaskModel).where(TaskModel.execution_id.in_(child_exec_ids)))
+            await session.execute(
+                delete(TaskModel).where(TaskModel.execution_id.in_(child_exec_ids))
+            )
             await session.execute(
                 delete(WorkerResultModel).where(WorkerResultModel.execution_id.in_(child_exec_ids))
             )
-            await session.execute(delete(ExecutionModel).where(ExecutionModel.id.in_(child_exec_ids)))
+            await session.execute(
+                delete(ExecutionModel).where(ExecutionModel.id.in_(child_exec_ids))
+            )
 
         await session.execute(
             delete(ApiIdempotencyModel).where(

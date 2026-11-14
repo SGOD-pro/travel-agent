@@ -92,12 +92,20 @@ def build_route_optimizer_artifact(
     # 1. Copy route optimizer source
     opt_dest = output_dir / "functions" / "route_optimizer"
     opt_dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src_dir / "functions" / "route_optimizer", opt_dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(
+        src_dir / "functions" / "route_optimizer",
+        opt_dest,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
 
     # 2. Copy orchestrator routing support
     orch_routing_dest = output_dir / "functions" / "orchestrator" / "routing"
     orch_routing_dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src_dir / "functions" / "orchestrator" / "routing", orch_routing_dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copytree(
+        src_dir / "functions" / "orchestrator" / "routing",
+        orch_routing_dest,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
 
     # 3. Copy permitted execution fencing and models
     orch_exec_dest = output_dir / "functions" / "orchestrator" / "execution"
@@ -180,9 +188,7 @@ def build_route_optimizer_artifact(
                     shutil.rmtree(tests_dir, ignore_errors=True)
 
     # 8. Measure uncompressed size
-    uncompressed_bytes = sum(
-        f.stat().st_size for f in output_dir.rglob("*") if f.is_file()
-    )
+    uncompressed_bytes = sum(f.stat().st_size for f in output_dir.rglob("*") if f.is_file())
 
     # 9. Audit package contents for forbidden modules and unbundled Valhalla assets
     audit_res = audit_package_contents(output_dir)
@@ -208,7 +214,8 @@ def build_route_optimizer_artifact(
         "compressed_mb": round(compressed_bytes / (1024 * 1024), 2),
         "is_uncompressed_within_limit": uncompressed_bytes <= MAX_UNCOMPRESSED_BYTES,
         "audit": audit_res,
-        "is_compliant": audit_res["is_compliant"] and (uncompressed_bytes <= MAX_UNCOMPRESSED_BYTES),
+        "is_compliant": audit_res["is_compliant"]
+        and (uncompressed_bytes <= MAX_UNCOMPRESSED_BYTES),
     }
 
 
@@ -244,7 +251,11 @@ def audit_package_contents(artifact_dir: Path) -> dict[str, Any]:
             or name_lower.endswith(".pbf")
             or name_lower.endswith(".osm")
             or "valhalla_tiles" in rel_path_str
-            or (item.is_dir() and item.name == "valhalla" and "functions/route_optimizer" not in rel_path_str)
+            or (
+                item.is_dir()
+                and item.name == "valhalla"
+                and "functions/route_optimizer" not in rel_path_str
+            )
         ):
             valhalla_detected = True
 

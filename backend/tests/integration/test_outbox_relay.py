@@ -180,9 +180,7 @@ async def test_successful_relay_claim_publish_and_delivery_confirmation(session_
     # Verify claim is durably committed in PostgreSQL before transport is called
     async with session_factory() as session:
         row = (
-            await session.execute(
-                select(OutboxEventModel).where(OutboxEventModel.id == event_id)
-            )
+            await session.execute(select(OutboxEventModel).where(OutboxEventModel.id == event_id))
         ).scalar_one()
         assert row.lease_token == relay_token
         assert row.lease_expiry is not None
@@ -199,9 +197,7 @@ async def test_successful_relay_claim_publish_and_delivery_confirmation(session_
     # 4. Verify delivered status in PostgreSQL
     async with session_factory() as session:
         row = (
-            await session.execute(
-                select(OutboxEventModel).where(OutboxEventModel.id == event_id)
-            )
+            await session.execute(select(OutboxEventModel).where(OutboxEventModel.id == event_id))
         ).scalar_one()
         assert row.delivered_at is not None
         assert row.attempts == 1
@@ -245,20 +241,26 @@ async def test_concurrent_relays_skip_locked(session_factory) -> None:
     # Verify all 15 events are delivered in database
     async with session_factory() as session:
         delivered_rows = (
-            await session.execute(
-                select(OutboxEventModel).where(
-                    OutboxEventModel.id.in_(event_ids),
-                    OutboxEventModel.delivered_at.is_not(None),
+            (
+                await session.execute(
+                    select(OutboxEventModel).where(
+                        OutboxEventModel.id.in_(event_ids),
+                        OutboxEventModel.delivered_at.is_not(None),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(delivered_rows) == total_events
 
 
 @pytest.mark.asyncio
 async def test_transport_failure_capped_exponential_backoff(session_factory) -> None:
     """Verifies that transport failure increments attempts and schedules retry with exponential backoff."""
-    execution_id, event_id = await create_test_execution_and_outbox_event(session_factory, attempts=0)
+    execution_id, event_id = await create_test_execution_and_outbox_event(
+        session_factory, attempts=0
+    )
 
     transport = ControlledTransportAdapter()
     transport.fail_event_ids.add(event_id)
@@ -283,9 +285,7 @@ async def test_transport_failure_capped_exponential_backoff(session_factory) -> 
     # Verify state in database
     async with session_factory() as session:
         row = (
-            await session.execute(
-                select(OutboxEventModel).where(OutboxEventModel.id == event_id)
-            )
+            await session.execute(select(OutboxEventModel).where(OutboxEventModel.id == event_id))
         ).scalar_one()
         assert row.delivered_at is None
         assert row.attempts == 1
@@ -300,7 +300,9 @@ async def test_transport_failure_capped_exponential_backoff(session_factory) -> 
 @pytest.mark.asyncio
 async def test_explicit_exhausted_delivery_policy(session_factory) -> None:
     """Verifies that an event reaching max_attempts is permanently marked failed_at and excluded from retries."""
-    execution_id, event_id = await create_test_execution_and_outbox_event(session_factory, attempts=4)
+    execution_id, event_id = await create_test_execution_and_outbox_event(
+        session_factory, attempts=4
+    )
 
     transport = ControlledTransportAdapter()
     transport.fail_event_ids.add(event_id)
@@ -323,9 +325,7 @@ async def test_explicit_exhausted_delivery_policy(session_factory) -> None:
     # Verify database state has failed_at set
     async with session_factory() as session:
         row = (
-            await session.execute(
-                select(OutboxEventModel).where(OutboxEventModel.id == event_id)
-            )
+            await session.execute(select(OutboxEventModel).where(OutboxEventModel.id == event_id))
         ).scalar_one()
         assert row.delivered_at is None
         assert row.failed_at is not None
@@ -382,9 +382,7 @@ async def test_expired_relay_ownership_stale_write_fenced(session_factory) -> No
 
     async with session_factory() as session:
         row = (
-            await session.execute(
-                select(OutboxEventModel).where(OutboxEventModel.id == event_id)
-            )
+            await session.execute(select(OutboxEventModel).where(OutboxEventModel.id == event_id))
         ).scalar_one()
         assert row.delivered_at is not None
         assert row.attempts == 1
@@ -422,7 +420,9 @@ async def test_crash_before_publishing_reclaim(session_factory) -> None:
 
 
 @pytest.mark.asyncio
-async def test_crash_after_publishing_before_confirmation_preserves_event_id(session_factory) -> None:
+async def test_crash_after_publishing_before_confirmation_preserves_event_id(
+    session_factory,
+) -> None:
     """Verifies that when a crash occurs after publish but before confirmation, re-delivery preserves exact event_id."""
     execution_id, event_id = await create_test_execution_and_outbox_event(session_factory)
 
@@ -445,9 +445,7 @@ async def test_crash_after_publishing_before_confirmation_preserves_event_id(ses
     # Artificially expire lease in database
     async with session_factory() as session:
         row = (
-            await session.execute(
-                select(OutboxEventModel).where(OutboxEventModel.id == event_id)
-            )
+            await session.execute(select(OutboxEventModel).where(OutboxEventModel.id == event_id))
         ).scalar_one()
         row.lease_expiry = datetime.now(UTC) - timedelta(seconds=5)
         await session.commit()
@@ -471,9 +469,7 @@ async def test_crash_after_publishing_before_confirmation_preserves_event_id(ses
     # Verify event is now delivered
     async with session_factory() as session:
         row = (
-            await session.execute(
-                select(OutboxEventModel).where(OutboxEventModel.id == event_id)
-            )
+            await session.execute(select(OutboxEventModel).where(OutboxEventModel.id == event_id))
         ).scalar_one()
         assert row.delivered_at is not None
 
@@ -539,9 +535,7 @@ async def test_provider_timeout_bounded(session_factory) -> None:
     # Verify error recorded in database
     async with session_factory() as session:
         row = (
-            await session.execute(
-                select(OutboxEventModel).where(OutboxEventModel.id == event_id)
-            )
+            await session.execute(select(OutboxEventModel).where(OutboxEventModel.id == event_id))
         ).scalar_one()
         assert row.delivered_at is None
         assert row.attempts == 1

@@ -428,12 +428,9 @@ async def test_trip_planner_proposal_publication_end_to_end(
         assert exec_row.status == "SUCCEEDED"
 
         # Timeline job event checks
-        events_stmt = (
-            select(JobEventModel)
-            .where(
-                JobEventModel.execution_id == execution_id,
-                JobEventModel.event_type == "PROPOSAL_PUBLISHED",
-            )
+        events_stmt = select(JobEventModel).where(
+            JobEventModel.execution_id == execution_id,
+            JobEventModel.event_type == "PROPOSAL_PUBLISHED",
         )
         published_event = (await session.execute(events_stmt)).scalar_one()
         payload = published_event.safe_payload
@@ -672,12 +669,9 @@ async def test_trip_planner_proposal_version_conflict_superseded(
         ).scalar_one()
         assert exec_after.status == "SUPERSEDED"
 
-        events_stmt = (
-            select(JobEventModel)
-            .where(
-                JobEventModel.execution_id == execution_id,
-                JobEventModel.event_type == "PROPOSAL_SUPERSEDED",
-            )
+        events_stmt = select(JobEventModel).where(
+            JobEventModel.execution_id == execution_id,
+            JobEventModel.event_type == "PROPOSAL_SUPERSEDED",
         )
         superseded_event = (await session.execute(events_stmt)).scalar_one()
         payload = superseded_event.safe_payload
@@ -1166,7 +1160,9 @@ async def test_trip_planner_proposal_crash_retry_reconciliation_on_postgres(
 
     runner1._apply_graph_outcome = simulated_crash_apply  # type: ignore[assignment]
 
-    with pytest.raises(RuntimeError, match="Simulated crash right before runner outcome completion"):
+    with pytest.raises(
+        RuntimeError, match="Simulated crash right before runner outcome completion"
+    ):
         await runner1.handle_execution_resume(event=resume_event)
 
     # In PostgreSQL: publication succeeded in node, but runner1 crashed before committing completion
@@ -1211,13 +1207,17 @@ async def test_trip_planner_proposal_crash_retry_reconciliation_on_postgres(
         assert trip_final.itinerary_json is not None
 
         deltas = (
-            await session.execute(
-                select(TripDeltaModel).where(
-                    TripDeltaModel.trip_id == trip_id,
-                    TripDeltaModel.base_version == 1,
+            (
+                await session.execute(
+                    select(TripDeltaModel).where(
+                        TripDeltaModel.trip_id == trip_id,
+                        TripDeltaModel.base_version == 1,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(deltas) == 1
         assert deltas[0].proposal_json is not None
 
@@ -1834,7 +1834,9 @@ async def test_trip_planner_budget_ac7_verified_versus_unverified_fees_on_postgr
     assert f"obs:{obs_fee.id}" in quoted_line["source_ref"]
 
     # Unverified museum entrance fee is explicit UNKNOWN (amount None), never 80.0
-    unknown_line = [item for item in activity_lines if item["basis"] == "entry_fee_Marine Aquarium"][0]
+    unknown_line = [
+        item for item in activity_lines if item["basis"] == "entry_fee_Marine Aquarium"
+    ][0]
     assert unknown_line["amount"] is None
     assert "Entrance fee unverified" in unknown_line["unknown_reason"]
     assert "osm:node/12345" in unknown_line["source_ref"]

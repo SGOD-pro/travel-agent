@@ -481,11 +481,7 @@ async def submit_route_replan(
         )
 
     # 3. Stale parent route check (AC-6 single-child replan policy)
-    child_stmt = (
-        select(RouteModel.id)
-        .where(RouteModel.parent_route_id == route_id)
-        .limit(1)
-    )
+    child_stmt = select(RouteModel.id).where(RouteModel.parent_route_id == route_id).limit(1)
     existing_child = (await session.execute(child_stmt)).scalar_one_or_none()
     if existing_child is not None:
         raise HTTPException(
@@ -647,11 +643,11 @@ async def submit_route_replan(
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=f"Idempotency conflict for key '{idemp_key}' with differing payload",
-                )
+                ) from exc
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Idempotency conflict for key '{idemp_key}' with differing payload",
-            )
+            ) from exc
         raise
 
     return AcceptedRouteResponse(

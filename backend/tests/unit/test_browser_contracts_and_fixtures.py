@@ -225,8 +225,14 @@ def test_browser_render_result_success_serialization() -> None:
     "status,reason",
     [
         (BrowserRenderStatus.UNAVAILABLE, "Target server returned HTTP 503 Service Unavailable"),
-        (BrowserRenderStatus.TIMED_OUT, "Navigation timed out after 20 seconds waiting for networkidle"),
-        (BrowserRenderStatus.BLOCKED, "Cloudflare Turnstile challenge intercepted; automation denied"),
+        (
+            BrowserRenderStatus.TIMED_OUT,
+            "Navigation timed out after 20 seconds waiting for networkidle",
+        ),
+        (
+            BrowserRenderStatus.BLOCKED,
+            "Cloudflare Turnstile challenge intercepted; automation denied",
+        ),
     ],
 )
 def test_browser_render_result_error_outcomes_serialization(
@@ -266,7 +272,9 @@ def test_browser_render_result_error_outcomes_serialization(
 
 def test_success_requires_content_hash() -> None:
     """Verifies SUCCESS status fails without content_hash."""
-    with pytest.raises(ValidationError, match="SUCCESS status requires a valid SHA256 content_hash"):
+    with pytest.raises(
+        ValidationError, match="SUCCESS status requires a valid SHA256 content_hash"
+    ):
         BrowserRenderResult(
             status=BrowserRenderStatus.SUCCESS,
             canonical_url="https://example.com",
@@ -307,7 +315,9 @@ def test_success_rejects_invalid_content_hash(bad_hash: str) -> None:
 @pytest.mark.parametrize("empty_excerpt", [None, "", "   ", "\n\t  "])
 def test_success_requires_substantive_excerpt_text(empty_excerpt: str | None) -> None:
     """Verifies SUCCESS status rejects empty or whitespace-only excerpt_text."""
-    with pytest.raises(ValidationError, match="SUCCESS status requires substantive non-empty excerpt_text"):
+    with pytest.raises(
+        ValidationError, match="SUCCESS status requires substantive non-empty excerpt_text"
+    ):
         BrowserRenderResult(
             status=BrowserRenderStatus.SUCCESS,
             canonical_url="https://example.com",
@@ -377,7 +387,9 @@ def test_error_outcomes_require_descriptive_reason(
     status: BrowserRenderStatus, empty_reason: str | None
 ) -> None:
     """Verifies error outcomes fail without a non-empty unavailable_reason."""
-    with pytest.raises(ValidationError, match="requires a descriptive non-empty unavailable_reason"):
+    with pytest.raises(
+        ValidationError, match="requires a descriptive non-empty unavailable_reason"
+    ):
         BrowserRenderResult(
             status=status,
             canonical_url="https://example.com",
@@ -509,7 +521,9 @@ def test_browser_worker_output_success_requires_content_hash() -> None:
     "status",
     [BrowserRenderStatus.UNAVAILABLE, BrowserRenderStatus.TIMED_OUT, BrowserRenderStatus.BLOCKED],
 )
-def test_browser_worker_output_error_requires_unavailable_sources(status: BrowserRenderStatus) -> None:
+def test_browser_worker_output_error_requires_unavailable_sources(
+    status: BrowserRenderStatus,
+) -> None:
     """Verifies error worker output requires unavailable_sources records."""
     with pytest.raises(ValidationError, match="requires non-empty unavailable_sources records"):
         BrowserWorkerOutput(
@@ -652,7 +666,10 @@ async def test_fixture_browser_adapter_canned_timed_out_outcome() -> None:
 
     result = await adapter.render_page(payload)
     assert result.status == BrowserRenderStatus.TIMED_OUT
-    assert result.unavailable_reason == "Navigation timeout of 20 seconds exceeded while awaiting networkidle"
+    assert (
+        result.unavailable_reason
+        == "Navigation timeout of 20 seconds exceeded while awaiting networkidle"
+    )
     assert result.content_hash is None
     assert result.excerpt_text is None
     assert result.excerpt_locator is None
@@ -696,7 +713,9 @@ async def test_fixture_execution_makes_zero_network_or_binary_calls() -> None:
     )
 
     # Patch socket and subprocess to guarantee zero live calls
-    with patch("socket.socket", side_effect=RuntimeError("Network access forbidden in offline tests")):
+    with patch(
+        "socket.socket", side_effect=RuntimeError("Network access forbidden in offline tests")
+    ):
         with patch("subprocess.Popen", side_effect=RuntimeError("Subprocess forbidden")):
             result = await adapter.render_page(payload)
 

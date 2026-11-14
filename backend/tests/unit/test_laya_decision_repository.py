@@ -273,7 +273,10 @@ def test_laya_decision_model_to_envelope_conversion() -> None:
     assert envelope.policy_version == "laya-policy-v1"
     assert envelope.rationale == "Policy validator accepted choice with answer_confidence 0.820"
     assert envelope.latency_ms == 185
-    assert envelope.request_digest == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    assert (
+        envelope.request_digest
+        == "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    )
     assert envelope.created_at == now.isoformat()
 
 
@@ -446,7 +449,9 @@ async def test_repository_find_reusable_decision_missing_record() -> None:
         context={},
     )
 
-    reused = await repo.find_reusable_decision(request=req, active_phase=DecisionPhase.SEARCH_COMPLETION)
+    reused = await repo.find_reusable_decision(
+        request=req, active_phase=DecisionPhase.SEARCH_COMPLETION
+    )
     assert reused is None
 
 
@@ -482,7 +487,9 @@ async def test_repository_find_reusable_decision_phase_mismatch_bypasses() -> No
     )
 
     # Calling with active_phase=SEARCH_COMPLETION
-    reused = await repo.find_reusable_decision(request=req, active_phase=DecisionPhase.SEARCH_COMPLETION)
+    reused = await repo.find_reusable_decision(
+        request=req, active_phase=DecisionPhase.SEARCH_COMPLETION
+    )
     assert reused is None
 
 
@@ -518,7 +525,9 @@ async def test_repository_find_reusable_decision_context_version_mismatch_bypass
         context={},
     )
 
-    reused = await repo.find_reusable_decision(request=req, active_phase=DecisionPhase.SEARCH_COMPLETION)
+    reused = await repo.find_reusable_decision(
+        request=req, active_phase=DecisionPhase.SEARCH_COMPLETION
+    )
     assert reused is None
 
 
@@ -553,12 +562,16 @@ async def test_repository_find_reusable_decision_policy_version_mismatch_bypasse
         context={},
     )
 
-    reused = await repo.find_reusable_decision(request=req, active_phase=DecisionPhase.SEARCH_COMPLETION)
+    reused = await repo.find_reusable_decision(
+        request=req, active_phase=DecisionPhase.SEARCH_COMPLETION
+    )
     assert reused is None
 
 
 @pytest.mark.asyncio
-async def test_repository_find_reusable_decision_chosen_action_no_longer_eligible_bypasses() -> None:
+async def test_repository_find_reusable_decision_chosen_action_no_longer_eligible_bypasses() -> (
+    None
+):
     """Revalidation Check 4: If previously chosen action is now exhausted/ineligible, bypass reuse."""
     exec_id = uuid.uuid4()
     # Stored record chose browser escalation
@@ -589,7 +602,9 @@ async def test_repository_find_reusable_decision_chosen_action_no_longer_eligibl
         context={},
     )
 
-    reused = await repo.find_reusable_decision(request=req, active_phase=DecisionPhase.SEARCH_COMPLETION)
+    reused = await repo.find_reusable_decision(
+        request=req, active_phase=DecisionPhase.SEARCH_COMPLETION
+    )
     assert reused is None
 
 
@@ -623,7 +638,9 @@ async def test_repository_find_reusable_decision_invalid_action_value_bypasses()
         context={},
     )
 
-    reused = await repo.find_reusable_decision(request=req, active_phase=DecisionPhase.SEARCH_COMPLETION)
+    reused = await repo.find_reusable_decision(
+        request=req, active_phase=DecisionPhase.SEARCH_COMPLETION
+    )
     assert reused is None
 
 

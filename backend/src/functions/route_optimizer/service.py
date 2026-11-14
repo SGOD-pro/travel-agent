@@ -311,17 +311,12 @@ class RouteOptimizerWorkerService:
                     )
                 )
                 existing_stops_by_name = {
-                    s.name: s
-                    for s in (list(solved_route.stops) + list(solved_route.dropped_stops))
+                    s.name: s for s in (list(solved_route.stops) + list(solved_route.dropped_stops))
                 }
                 infeasible_stops = []
                 for idx, s in enumerate(route_req.stops):
                     prev_s = existing_stops_by_name.get(s.name)
-                    s_id = (
-                        getattr(prev_s, "id", None)
-                        or getattr(s, "id", None)
-                        or uuid.uuid4()
-                    )
+                    s_id = getattr(prev_s, "id", None) or getattr(s, "id", None) or uuid.uuid4()
                     infeasible_stops.append(
                         ScheduledStopOutput(
                             id=s_id,

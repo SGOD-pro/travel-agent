@@ -187,9 +187,7 @@ class LayaDecisionRepository:
 
         # Insert with ON CONFLICT DO NOTHING to handle concurrent runners cleanly
         stmt = pg_insert(LayaDecisionModel).values(decision_row)
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=["execution_id", "idempotency_key"]
-        )
+        stmt = stmt.on_conflict_do_nothing(index_elements=["execution_id", "idempotency_key"])
         await self._session.execute(stmt)
         await self._session.flush()
 

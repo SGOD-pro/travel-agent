@@ -100,7 +100,10 @@ class TaskModel(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("executions.id", ondelete="CASCADE"), nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("executions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     parent_task_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
@@ -119,7 +122,12 @@ class TaskModel(Base):
     deadline_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     result_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("worker_results.id", ondelete="SET NULL", use_alter=True, name="fk_tasks_result_id_worker_results"),
+        ForeignKey(
+            "worker_results.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_tasks_result_id_worker_results",
+        ),
         nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -149,7 +157,10 @@ class WorkerResultModel(Base):
         UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
     )
     execution_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("executions.id", ondelete="CASCADE"), nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("executions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
     context_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -175,7 +186,10 @@ class CompletionReceiptModel(Base):
         UUID(as_uuid=True), ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
     )
     execution_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("executions.id", ondelete="CASCADE"), nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("executions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     attempt: Mapped[int] = mapped_column(Integer, nullable=False)
     event_type: Mapped[str] = mapped_column(String, nullable=False, default="TASK_COMPLETED")
@@ -204,7 +218,10 @@ class JobEventModel(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("executions.id", ondelete="CASCADE"), nullable=False, index=True
+        UUID(as_uuid=True),
+        ForeignKey("executions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -218,5 +235,3 @@ class JobEventModel(Base):
         Index("ix_job_events_execution_sequence", "execution_id", "sequence"),
         Index("ix_job_events_cursor", "execution_id", "sequence", "timestamp"),
     )
-
-

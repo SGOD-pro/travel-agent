@@ -254,11 +254,21 @@ async def test_timeline_ordering_pagination_and_rollback_consistency(session_fac
         await session.flush()
 
         # Record multiple events
-        await record_job_event(session, execution_id=job_id, event_type="JOB_ACCEPTED", safe_payload={"step": 1})
-        await record_job_event(session, execution_id=job_id, event_type="TASK_DISPATCHED", safe_payload={"step": 2})
-        await record_job_event(session, execution_id=job_id, event_type="TASK_COMPLETED", safe_payload={"step": 3})
-        await record_job_event(session, execution_id=job_id, event_type="STEP_COMPLETED", safe_payload={"step": 4})
-        await record_job_event(session, execution_id=job_id, event_type="GRAPH_RESUMED", safe_payload={"step": 5})
+        await record_job_event(
+            session, execution_id=job_id, event_type="JOB_ACCEPTED", safe_payload={"step": 1}
+        )
+        await record_job_event(
+            session, execution_id=job_id, event_type="TASK_DISPATCHED", safe_payload={"step": 2}
+        )
+        await record_job_event(
+            session, execution_id=job_id, event_type="TASK_COMPLETED", safe_payload={"step": 3}
+        )
+        await record_job_event(
+            session, execution_id=job_id, event_type="STEP_COMPLETED", safe_payload={"step": 4}
+        )
+        await record_job_event(
+            session, execution_id=job_id, event_type="GRAPH_RESUMED", safe_payload={"step": 5}
+        )
         await session.commit()
 
     # 1. Test pagination directly via repository
@@ -271,14 +281,18 @@ async def test_timeline_ordering_pagination_and_rollback_consistency(session_fac
         assert p1_cursor == 2
 
         # Page 2: cursor 2, limit 2
-        p2_events, p2_cursor = await get_job_events(session, execution_id=job_id, cursor=p1_cursor, limit=2)
+        p2_events, p2_cursor = await get_job_events(
+            session, execution_id=job_id, cursor=p1_cursor, limit=2
+        )
         assert len(p2_events) == 2
         assert p2_events[0].sequence == 3
         assert p2_events[1].sequence == 4
         assert p2_cursor == 4
 
         # Page 3: cursor 4, limit 2
-        p3_events, p3_cursor = await get_job_events(session, execution_id=job_id, cursor=p2_cursor, limit=2)
+        p3_events, p3_cursor = await get_job_events(
+            session, execution_id=job_id, cursor=p2_cursor, limit=2
+        )
         assert len(p3_events) == 1
         assert p3_events[0].sequence == 5
         assert p3_cursor is None
@@ -288,7 +302,10 @@ async def test_timeline_ordering_pagination_and_rollback_consistency(session_fac
         try:
             async with session.begin():
                 await record_job_event(
-                    session, execution_id=job_id, event_type="PHANTOM_EVENT", safe_payload={"failed": True}
+                    session,
+                    execution_id=job_id,
+                    event_type="PHANTOM_EVENT",
+                    safe_payload={"failed": True},
                 )
                 raise RuntimeError("Simulated transaction rollback")
         except RuntimeError:

@@ -258,7 +258,9 @@ async def discover_candidates_node(
     brief_dict = state.get("brief", {})
     budget_val = str(brief_dict.get("budget_tier", "MODERATE"))
     traveler_prefs = list(brief.dietary_preferences) + list(brief.accessibility_requirements)
-    if "traveler_preferences" in brief_dict and isinstance(brief_dict["traveler_preferences"], list):
+    if "traveler_preferences" in brief_dict and isinstance(
+        brief_dict["traveler_preferences"], list
+    ):
         traveler_prefs.extend(str(p) for p in brief_dict["traveler_preferences"])
 
     trip_title = str(brief_dict.get("trip_title") or brief_dict.get("title") or "").strip()
@@ -428,7 +430,9 @@ async def evaluate_candidates_node(
         try:
             from functions.evidence_collector.models import SourceObservationModel
 
-            obs_stmt = select(SourceObservationModel).where(SourceObservationModel.execution_id == exec_uuid)
+            obs_stmt = select(SourceObservationModel).where(
+                SourceObservationModel.execution_id == exec_uuid
+            )
             if db_session is not None:
                 obs_res = await db_session.execute(obs_stmt)
                 obs_for_extraction.extend(list(obs_res.scalars().all()))
@@ -618,7 +622,9 @@ async def rank_candidates_node(
                 description=str(s.get("description", "")).strip(),
                 fit_score=float(s.get("fit_score", 1.0)),
                 suggested_stay_minutes=int(s.get("suggested_stay_minutes", 60)),
-                price_estimate_inr=float(s["price_estimate_inr"]) if s.get("price_estimate_inr") is not None else None,
+                price_estimate_inr=float(s["price_estimate_inr"])
+                if s.get("price_estimate_inr") is not None
+                else None,
                 uncertainty=str(s.get("uncertainty", "EDITORIAL_DISCOVERY")),
                 is_candidate=bool(s.get("is_candidate", True)),
                 address=s.get("address"),
@@ -642,7 +648,9 @@ async def rank_candidates_node(
                 description=str(r.get("description", "")).strip(),
                 fit_score=float(r.get("fit_score", 1.0)),
                 suggested_stay_minutes=int(r.get("suggested_stay_minutes", 60)),
-                price_estimate_inr=float(r["price_estimate_inr"]) if r.get("price_estimate_inr") is not None else None,
+                price_estimate_inr=float(r["price_estimate_inr"])
+                if r.get("price_estimate_inr") is not None
+                else None,
                 uncertainty=str(r.get("uncertainty", "EDITORIAL_DISCOVERY")),
                 is_candidate=bool(r.get("is_candidate", True)),
                 address=r.get("address"),
@@ -679,13 +687,12 @@ async def rank_candidates_node(
         ranked_places_data = [rp.model_dump(mode="json") for rp in ranking_resp.ranked_places]
 
         # Reorder eligible_stops according to the ranking if candidates were ranked
-        rank_order = {
-            rp.place.name.strip().lower(): rp.rank
-            for rp in ranking_resp.ranked_places
-        }
+        rank_order = {rp.place.name.strip().lower(): rp.rank for rp in ranking_resp.ranked_places}
         if rank_order:
             eligible_stops.sort(
-                key=lambda s: rank_order.get((s.get("primary_name") or s.get("name", "")).strip().lower(), 999)
+                key=lambda s: rank_order.get(
+                    (s.get("primary_name") or s.get("name", "")).strip().lower(), 999
+                )
             )
     except Exception as exc:
         diag_msg = f"LLM ranking provider failed ({type(exc).__name__}). Preserved existing candidate order."
@@ -1090,14 +1097,10 @@ async def consume_route_result_node(
         try:
             target_uuid = uuid.UUID(str(target_task_id))
             expected_exec_uuid = (
-                uuid.UUID(str(state["execution_id"]))
-                if state.get("execution_id")
-                else None
+                uuid.UUID(str(state["execution_id"])) if state.get("execution_id") else None
             )
             expected_owner_uuid = (
-                uuid.UUID(str(state["owner_id"]))
-                if state.get("owner_id")
-                else None
+                uuid.UUID(str(state["owner_id"])) if state.get("owner_id") else None
             )
             async with session_factory() as session:
                 from functions.orchestrator.execution.models import (
@@ -1936,11 +1939,15 @@ async def fetch_weather_node(
 
     # 1. Resolve trip departure date and timezone
     brief_data = state.get("brief", {})
-    tz_str = state.get("timezone") or (
-        brief_data.get("timezone")
-        if isinstance(brief_data, dict)
-        else getattr(brief_data, "timezone", "Asia/Kolkata")
-    ) or "Asia/Kolkata"
+    tz_str = (
+        state.get("timezone")
+        or (
+            brief_data.get("timezone")
+            if isinstance(brief_data, dict)
+            else getattr(brief_data, "timezone", "Asia/Kolkata")
+        )
+        or "Asia/Kolkata"
+    )
 
     dep_date_raw = (
         brief_data.get("start_date")
@@ -1972,21 +1979,19 @@ async def fetch_weather_node(
     if scheduled_stops:
         for s in scheduled_stops:
             s_name = str(s.get("name") if isinstance(s, dict) else getattr(s, "name", "Stop"))
-            raw_lat = (
-                s.get("latitude")
-                if isinstance(s, dict)
-                else getattr(s, "latitude", None)
-            )
+            raw_lat = s.get("latitude") if isinstance(s, dict) else getattr(s, "latitude", None)
             s_lat = float(raw_lat) if raw_lat is not None else 0.0
 
-            raw_lng = (
-                s.get("longitude")
-                if isinstance(s, dict)
-                else getattr(s, "longitude", None)
-            )
+            raw_lng = s.get("longitude") if isinstance(s, dict) else getattr(s, "longitude", None)
             s_lng = float(raw_lng) if raw_lng is not None else 0.0
-            arr_raw = s.get("arrival_time") if isinstance(s, dict) else getattr(s, "arrival_time", None)
-            dep_raw = s.get("departure_time") if isinstance(s, dict) else getattr(s, "departure_time", None)
+            arr_raw = (
+                s.get("arrival_time") if isinstance(s, dict) else getattr(s, "arrival_time", None)
+            )
+            dep_raw = (
+                s.get("departure_time")
+                if isinstance(s, dict)
+                else getattr(s, "departure_time", None)
+            )
 
             arr_dt: datetime | None = None
             if isinstance(arr_raw, datetime):
@@ -2089,14 +2094,10 @@ async def fetch_weather_node(
                     else getattr(d, "name", "Destination")
                 )
                 d_lat = float(
-                    d.get("latitude", 0.0)
-                    if isinstance(d, dict)
-                    else getattr(d, "latitude", 0.0)
+                    d.get("latitude", 0.0) if isinstance(d, dict) else getattr(d, "latitude", 0.0)
                 )
                 d_lng = float(
-                    d.get("longitude", 0.0)
-                    if isinstance(d, dict)
-                    else getattr(d, "longitude", 0.0)
+                    d.get("longitude", 0.0) if isinstance(d, dict) else getattr(d, "longitude", 0.0)
                 )
                 if d_lat != 0.0 and d_lng != 0.0:
                     weather_stops.append(
@@ -2299,6 +2300,7 @@ async def compute_budget_node(
         if not claim_coordinates or not target_coordinates:
             return False
         from functions.orchestrator.places.corridor import haversine_distance_km
+
         dist = haversine_distance_km(
             target_coordinates[0],
             target_coordinates[1],
@@ -2310,8 +2312,7 @@ async def compute_budget_node(
     configurable = config.get("configurable", {}) if config else {}
     session_factory = configurable.get("session_factory") or state.get("_session_factory")
     is_offline_fixture = bool(
-        state.get("_offline_fixture_mode", False)
-        or configurable.get("offline_fixture_mode", False)
+        state.get("_offline_fixture_mode", False) or configurable.get("offline_fixture_mode", False)
     )
 
     execution_id_raw = state.get("execution_id")
@@ -2345,7 +2346,11 @@ async def compute_budget_node(
                     if freshness == "STALE":
                         continue
                     valid_until = cl.get("valid_until")
-                    if valid_until and isinstance(valid_until, datetime) and valid_until < datetime.now(UTC):
+                    if (
+                        valid_until
+                        and isinstance(valid_until, datetime)
+                        and valid_until < datetime.now(UTC)
+                    ):
                         continue
 
                     ev_refs = (
@@ -2381,21 +2386,28 @@ async def compute_budget_node(
                             )
 
                             for stop in stops_data:
-                                s_name = (stop.get("name") or stop.get("stop_id", "")).strip().lower()
+                                s_name = (
+                                    (stop.get("name") or stop.get("stop_id", "")).strip().lower()
+                                )
                                 s_pid = str(stop.get("place_id")) if stop.get("place_id") else None
                                 if not s_pid:
                                     for cand in state.get("validated_candidates", []):
-                                        if (cand.get("primary_name") or cand.get("name") or "").strip().lower() == s_name:
+                                        if (
+                                            cand.get("primary_name") or cand.get("name") or ""
+                                        ).strip().lower() == s_name:
                                             if cand.get("place_id"):
                                                 s_pid = str(cand["place_id"])
                                                 break
                                 s_coords = (
                                     (float(stop["lat"]), float(stop["lng"]))
                                     if stop.get("lat") and stop.get("lng")
-                                    else cand_coords.get(s_name) or (cand_coords.get(s_pid) if s_pid else None)
+                                    else cand_coords.get(s_name)
+                                    or (cand_coords.get(s_pid) if s_pid else None)
                                 )
 
-                                if _match_fee_claim_to_stop(cl_pid, cl_subj, cl_coords, s_pid, s_name, s_coords):
+                                if _match_fee_claim_to_stop(
+                                    cl_pid, cl_subj, cl_coords, s_pid, s_name, s_coords
+                                ):
                                     verified_fees[s_name] = (fee_amount, fee_source)
                                     if s_pid:
                                         verified_fees[s_pid] = (fee_amount, fee_source)
@@ -2467,17 +2479,22 @@ async def compute_budget_node(
                             s_pid = str(stop.get("place_id")) if stop.get("place_id") else None
                             if not s_pid:
                                 for cand in state.get("validated_candidates", []):
-                                    if (cand.get("primary_name") or cand.get("name") or "").strip().lower() == s_name:
+                                    if (
+                                        cand.get("primary_name") or cand.get("name") or ""
+                                    ).strip().lower() == s_name:
                                         if cand.get("place_id"):
                                             s_pid = str(cand["place_id"])
                                             break
                             s_coords = (
                                 (float(stop["lat"]), float(stop["lng"]))
                                 if stop.get("lat") and stop.get("lng")
-                                else cand_coords.get(s_name) or (cand_coords.get(s_pid) if s_pid else None)
+                                else cand_coords.get(s_name)
+                                or (cand_coords.get(s_pid) if s_pid else None)
                             )
 
-                            if _match_fee_claim_to_stop(cl_pid, cl_subj, claim_coords, s_pid, s_name, s_coords):
+                            if _match_fee_claim_to_stop(
+                                cl_pid, cl_subj, claim_coords, s_pid, s_name, s_coords
+                            ):
                                 verified_fees[s_name] = (fee_amount, fee_source)
                                 if s_pid:
                                     verified_fees[s_pid] = (fee_amount, fee_source)
@@ -2519,15 +2536,19 @@ async def compute_budget_node(
             if not cat_val and stop_place_id:
                 cat_val = place_categories.get(stop_place_id)
             cat = cat_val or "attraction"
-            if cat in (
-                "attraction",
-                "museum",
-                "park",
-                "heritage",
-                "monument",
-                "sightseeing",
-                "activity",
-            ) or stop_key in place_categories:
+            if (
+                cat
+                in (
+                    "attraction",
+                    "museum",
+                    "park",
+                    "heritage",
+                    "monument",
+                    "sightseeing",
+                    "activity",
+                )
+                or stop_key in place_categories
+            ):
                 prov_ref = place_provenance.get(stop_key) or (
                     place_provenance.get(stop_place_id) if stop_place_id else f"stop:{stop_name}"
                 )
@@ -2562,8 +2583,10 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "editorial_recommendations": state.get("editorial_recommendations", []),
         "excluded_candidates": state.get("excluded_candidates", []),
         "weather_advisories": state.get("weather_advisories", []),
-        "weather_status": state.get("weather_status") or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
-        "advisory_status": state.get("weather_status") or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
+        "weather_status": state.get("weather_status")
+        or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
+        "advisory_status": state.get("weather_status")
+        or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
         "validated_candidates": state.get("validated_candidates", []),
         "discovered_places": state.get("discovered_places", []),
         "route_id": state.get("route_id"),
@@ -2612,11 +2635,7 @@ async def publish_proposal_node(
     session_factory = configurable.get("session_factory") or state.get("_session_factory")
     is_offline_fixture = bool(state.get("_offline_fixture_mode", False))
 
-    if (
-        not is_offline_fixture
-        and session_factory is None
-        and "session_factory" not in configurable
-    ):
+    if not is_offline_fixture and session_factory is None and "session_factory" not in configurable:
         try:
             from config.db import get_session_factory
 
@@ -2637,12 +2656,7 @@ async def publish_proposal_node(
     execution_id_raw = state.get("execution_id")
     runner_lease_raw = configurable.get("runner_lease") or state.get("runner_lease")
 
-    if (
-        session_factory is None
-        or not trip_id_raw
-        or not owner_id_raw
-        or not execution_id_raw
-    ):
+    if session_factory is None or not trip_id_raw or not owner_id_raw or not execution_id_raw:
         logger.error(
             "Production proposal publication failed closed: missing required persistence identity "
             "(session_factory=%s, trip_id=%s, owner_id=%s, execution_id=%s)",
@@ -2693,9 +2707,7 @@ async def publish_proposal_node(
             from functions.orchestrator.execution.models import ExecutionModel
 
             exec_stmt = (
-                select(ExecutionModel)
-                .where(ExecutionModel.id == execution_uuid)
-                .with_for_update()
+                select(ExecutionModel).where(ExecutionModel.id == execution_uuid).with_for_update()
             )
             exec_row = (await session.execute(exec_stmt)).scalar_one_or_none()
 
@@ -2709,11 +2721,7 @@ async def publish_proposal_node(
                 }
 
             # 2. Lock and verify trip under transaction
-            trip_stmt = (
-                select(TripModel)
-                .where(TripModel.id == trip_uuid)
-                .with_for_update()
-            )
+            trip_stmt = select(TripModel).where(TripModel.id == trip_uuid).with_for_update()
             trip = (await session.execute(trip_stmt)).scalar_one_or_none()
 
             if trip is None:
@@ -2847,7 +2855,9 @@ async def publish_proposal_node(
 
             # Execution already superseded or terminal
             if exec_row.status == "SUPERSEDED":
-                logger.info("Parent execution %s is SUPERSEDED; skipping publication", execution_uuid)
+                logger.info(
+                    "Parent execution %s is SUPERSEDED; skipping publication", execution_uuid
+                )
                 return {
                     "current_step": "proposal_superseded",
                     "status": "SUPERSEDED",
@@ -2899,11 +2909,7 @@ async def publish_proposal_node(
 
             # 4. Version matches: publish proposal atomically
             proposal = state.get("proposal") or {}
-            route_uuid = (
-                uuid.UUID(str(state["route_id"]))
-                if state.get("route_id")
-                else None
-            )
+            route_uuid = uuid.UUID(str(state["route_id"])) if state.get("route_id") else None
 
             # Replay safety: check if delta already exists for (trip_id, base_version)
             delta_stmt = select(TripDeltaModel).where(
@@ -3762,7 +3768,9 @@ async def route_evidence_decision_node(
     if envelope.allowed_choice == DecisionAction.DISPATCH_EVIDENCE_SEARCH:
         dest_hash = hashlib.sha256(dest_name.encode("utf-8")).hexdigest()
         llm_for_queries = state.get("_llm_client") or configurable.get("llm_client")
-        planned_queries = await QueryPlanningService.plan_queries_with_llm(brief, llm_client=llm_for_queries, max_queries=4)
+        planned_queries = await QueryPlanningService.plan_queries_with_llm(
+            brief, llm_client=llm_for_queries, max_queries=4
+        )
         budget_dict = QueryPlanningService.calculate_collector_budget(planned_queries)
         search_task = {
             "worker": "EVIDENCE",
@@ -3771,7 +3779,9 @@ async def route_evidence_decision_node(
                 "queries": planned_queries,
                 "budget": budget_dict,
                 "destination": dest_name,
-                "origin": brief.get("origin_name", "") if isinstance(brief, dict) else getattr(brief, "origin_name", ""),
+                "origin": brief.get("origin_name", "")
+                if isinstance(brief, dict)
+                else getattr(brief, "origin_name", ""),
                 "categories": ["attractions", "lodging", "transit"],
             },
             "idempotency_key": f"{exec_uuid}:collect:{dest_hash[:16]}",

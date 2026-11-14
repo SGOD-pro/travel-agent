@@ -51,6 +51,7 @@ def _resilient_getaddrinfo(host: Any, port: Any, *args: Any, **kwargs: Any) -> A
         return _dns_cache[key]
     last_err: Exception | None = None
     import time
+
     for _ in range(5):
         try:
             res = _orig_getaddrinfo(host, port, *args, **kwargs)
@@ -272,13 +273,17 @@ async def test_concurrent_recovery_synchronization(session_factory) -> None:
     # Check that only one TASK_DISPATCH event was created
     async with session_factory() as session:
         events = (
-            await session.execute(
-                select(OutboxEventModel).where(
-                    OutboxEventModel.task_id == task_id,
-                    OutboxEventModel.kind == "TASK_DISPATCH",
+            (
+                await session.execute(
+                    select(OutboxEventModel).where(
+                        OutboxEventModel.task_id == task_id,
+                        OutboxEventModel.kind == "TASK_DISPATCH",
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(events) == 1
 
 
@@ -549,7 +554,9 @@ async def test_atomic_recovery_rollback(session_factory) -> None:
         try:
             async with session.begin():
                 task = (
-                    await session.execute(select(TaskModel).where(TaskModel.id == task_id).with_for_update())
+                    await session.execute(
+                        select(TaskModel).where(TaskModel.id == task_id).with_for_update()
+                    )
                 ).scalar_one()
                 task.status = "PENDING"
                 task.lease_token = None
@@ -584,8 +591,14 @@ async def test_atomic_recovery_rollback(session_factory) -> None:
         assert task.lease_token == lease_token
 
         outbox_events = (
-            await verify_session.execute(select(OutboxEventModel).where(OutboxEventModel.task_id == task_id))
-        ).scalars().all()
+            (
+                await verify_session.execute(
+                    select(OutboxEventModel).where(OutboxEventModel.task_id == task_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
         assert len(outbox_events) == 0
 
 
@@ -660,7 +673,9 @@ async def test_recovery_rejects_terminal_parent_executions(session_factory) -> N
 
 
 @pytest.mark.asyncio
-async def test_worker_failure_retry_backoff_blocks_claims_and_stale_messages(session_factory) -> None:
+async def test_worker_failure_retry_backoff_blocks_claims_and_stale_messages(
+    session_factory,
+) -> None:
     """Verifies that worker-reported failure retry puts task into retry backoff, blocking claims and stale queue messages."""
     exec_id, task_id = await create_test_execution_and_task(
         session_factory,
@@ -929,6 +944,7 @@ async def test_pending_task_candidate_recheck_under_lock_preserves_backoff(
     # Simulate race where task was picked up in candidate scan
     # under parent-first lock it is rechecked and skipped
     from collections import namedtuple
+
     Row = namedtuple("Row", ["id", "execution_id"])
 
     # We run recovery where candidate list contains the pending task
@@ -950,6 +966,7 @@ async def test_pending_task_candidate_recheck_under_lock_preserves_backoff(
                 # If this is the candidate scan statement, return our candidate
                 if hasattr(stmt, "is_select") and stmt.is_select:
                     from sqlalchemy.sql.selectable import Select
+
                     if isinstance(stmt, Select) and any("tasks" in str(f) for f in stmt.froms):
                         if "FOR UPDATE" not in str(stmt):
                             return MockResult()
@@ -1021,7 +1038,9 @@ async def test_recovery_dispatch_payload_deserializes_to_worker_contract(session
 
 
 @pytest.mark.asyncio
-async def test_configured_task_attempt_limits_respected_over_service_default(session_factory) -> None:
+async def test_configured_task_attempt_limits_respected_over_service_default(
+    session_factory,
+) -> None:
     """Verifies that tasks configured with max_attempts > 3 are allowed retries and not prematurely failed."""
     now = datetime.now(UTC)
     expired_lease = now - timedelta(seconds=10)
@@ -1065,6 +1084,3 @@ async def test_direct_recovery_timeout_parameter(session_factory) -> None:
         timeout_seconds=5.0,
     )
     assert isinstance(res.recovered_retried, list)
-
-
-

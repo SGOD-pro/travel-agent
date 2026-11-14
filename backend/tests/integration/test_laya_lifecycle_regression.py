@@ -159,7 +159,8 @@ async def _create_test_execution(
     now = datetime.now(UTC)
 
     async with session_factory() as session:
-        await session.execute(text("""
+        await session.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS checkpoints (
                 thread_id TEXT NOT NULL,
                 checkpoint_ns TEXT NOT NULL DEFAULT '',
@@ -170,8 +171,10 @@ async def _create_test_execution(
                 metadata BYTEA NOT NULL,
                 PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id)
             )
-        """))
-        await session.execute(text("""
+        """)
+        )
+        await session.execute(
+            text("""
             CREATE TABLE IF NOT EXISTS checkpoint_writes (
                 thread_id TEXT NOT NULL,
                 checkpoint_ns TEXT NOT NULL DEFAULT '',
@@ -183,7 +186,8 @@ async def _create_test_execution(
                 value BYTEA NOT NULL,
                 PRIMARY KEY (thread_id, checkpoint_ns, checkpoint_id, task_id, idx)
             )
-        """))
+        """)
+        )
         await session.commit()
 
     async with session_factory() as session:
@@ -365,9 +369,11 @@ async def test_lifecycle_reconciliation_to_direct_resolution_resume(
         artifact_ref={"gps": {"lat": 21.6266, "lng": 87.5074}},
     )
     search_adapter = FixtureSearchAdapter(fixtures=[digha_fixture])
-    extraction_adapter = FixtureWebExtractionAdapter({
-        "https://example.com/digha-guide": digha_fixture,
-    })
+    extraction_adapter = FixtureWebExtractionAdapter(
+        {
+            "https://example.com/digha-guide": digha_fixture,
+        }
+    )
 
     await evidence_process_record(
         record={
@@ -390,7 +396,9 @@ async def test_lifecycle_reconciliation_to_direct_resolution_resume(
         worker_res = (await session.execute(res_stmt)).scalar_one()
         result_id = worker_res.id
 
-        obs_stmt = select(SourceObservationModel).where(SourceObservationModel.execution_id == exec_id)
+        obs_stmt = select(SourceObservationModel).where(
+            SourceObservationModel.execution_id == exec_id
+        )
         persisted_obs = (await session.execute(obs_stmt)).scalars().all()
         assert len(persisted_obs) >= 1
         assert "digha" in persisted_obs[0].canonical_url.lower()
@@ -436,7 +444,8 @@ async def test_lifecycle_reconciliation_to_direct_resolution_resume(
         # Verify Phase 3 EVALUATION decision persisted
         dec_stmt = select(LayaDecisionModel).where(
             LayaDecisionModel.execution_id == exec_id,
-            LayaDecisionModel.chosen_action == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value,
+            LayaDecisionModel.chosen_action
+            == DecisionAction.PROCEED_DETERMINISTIC_EVALUATION.value,
         )
         eval_dec = (await session.execute(dec_stmt)).scalar_one_or_none()
         assert eval_dec is not None
@@ -514,9 +523,7 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
             async def extract_page(
                 self, page_url: str, category: str = "general"
             ) -> tuple[list[RawObservation], list[dict[str, Any]]]:
-                placeholder_text = (
-                    f"[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED] Dynamic rendering required for {page_url} (DYNAMIC_JAVASCRIPT_REQUIRED)"
-                )
+                placeholder_text = f"[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED] Dynamic rendering required for {page_url} (DYNAMIC_JAVASCRIPT_REQUIRED)"
                 obs = RawObservation(
                     source_url=page_url,
                     canonical_url=page_url,
@@ -583,7 +590,9 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
         )
 
         # 3. Resume 1: LAYA decision router selects DISPATCH_BROWSER_ESCALATION
-        resume_event_1 = ExecutionResumeEvent(execution_id=exec_id, triggered_by_task_id=collect_task_id)
+        resume_event_1 = ExecutionResumeEvent(
+            execution_id=exec_id, triggered_by_task_id=collect_task_id
+        )
         resume_result_1 = await runner.handle_execution_resume(event=resume_event_1, graph=graph)
 
         # Verifies execution pauses at browser dispatch boundary without premature scheduling
@@ -592,7 +601,9 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
         browser_task_id = resume_result_1.task_ids[0]
 
         async with session_factory() as session:
-            browser_task = (await session.execute(select(TaskModel).where(TaskModel.id == browser_task_id))).scalar_one()
+            browser_task = (
+                await session.execute(select(TaskModel).where(TaskModel.id == browser_task_id))
+            ).scalar_one()
             assert browser_task.worker == "BROWSER"
             assert browser_task.action == "render"
 
@@ -601,7 +612,8 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
                 await session.execute(
                     select(LayaDecisionModel).where(
                         LayaDecisionModel.execution_id == exec_id,
-                        LayaDecisionModel.chosen_action == DecisionAction.DISPATCH_BROWSER_ESCALATION.value,
+                        LayaDecisionModel.chosen_action
+                        == DecisionAction.DISPATCH_BROWSER_ESCALATION.value,
                     )
                 )
             ).scalar_one_or_none()
@@ -650,7 +662,9 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
         )
 
         async with session_factory() as session:
-            b_res_stmt = select(WorkerResultModel).where(WorkerResultModel.task_id == browser_task_id)
+            b_res_stmt = select(WorkerResultModel).where(
+                WorkerResultModel.task_id == browser_task_id
+            )
             b_worker_res = (await session.execute(b_res_stmt)).scalar_one()
             b_result_id = b_worker_res.id
 
@@ -676,7 +690,9 @@ async def test_lifecycle_reconciliation_to_browser_escalation_and_resume(
         )
 
         # 5. Resume 2: All browser requests handled -> advances to schedule solving -> SUCCEEDED
-        resume_event_2 = ExecutionResumeEvent(execution_id=exec_id, triggered_by_task_id=browser_task_id)
+        resume_event_2 = ExecutionResumeEvent(
+            execution_id=exec_id, triggered_by_task_id=browser_task_id
+        )
         resume_result_2 = await runner.handle_execution_resume(event=resume_event_2, graph=graph)
 
         assert resume_result_2.status == "SUCCEEDED"
@@ -795,7 +811,12 @@ async def test_durable_decision_reuse_runtime_path(
         "task_outputs": {},
         "static_search_completed": True,
         "required_evidence_satisfied": True,
-        "browser_requests": [{"url": "https://hotel.example.com/rates", "canonical_url": "https://hotel.example.com/rates"}],
+        "browser_requests": [
+            {
+                "url": "https://hotel.example.com/rates",
+                "canonical_url": "https://hotel.example.com/rates",
+            }
+        ],
         "remaining_search_budget": 0,
         "_laya_adapter": mock_adapter,
     }
@@ -805,7 +826,9 @@ async def test_durable_decision_reuse_runtime_path(
         result = await route_evidence_decision_node(state)
 
     # Crucial proof: Remote adapter was NOT queried because decision was reused from PostgreSQL
-    assert mock_adapter.call_count == 0, "Expected zero remote inference queries when reusable decision exists in database"
+    assert mock_adapter.call_count == 0, (
+        "Expected zero remote inference queries when reusable decision exists in database"
+    )
     assert result["evidence_routing_action"] == DecisionAction.DISPATCH_BROWSER_ESCALATION.value
     assert len(result["laya_decisions"]) == 1
     reused_record = result["laya_decisions"][0]

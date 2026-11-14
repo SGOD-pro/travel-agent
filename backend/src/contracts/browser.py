@@ -47,14 +47,38 @@ class BrowserTaskPayload(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    url: str = Field(..., min_length=1, max_length=2048, description="Target web page URL to render")
-    canonical_url: str = Field(..., min_length=1, max_length=2048, description="Normalized canonical URL")
-    category: str = Field(..., min_length=1, max_length=64, description="Evidence category, e.g. lodging, transit, advisory")
-    reason: str = Field(..., min_length=1, max_length=255, description="Dynamic detection reason, e.g. NOSCRIPT_JAVASCRIPT_REQUIRED")
-    wait_until: BrowserWaitUntil = Field(default=BrowserWaitUntil.NETWORKIDLE, description="Navigation completion strategy")
-    timeout_seconds: int = Field(default=20, ge=1, le=60, description="Maximum navigation timeout in seconds")
-    selector_target: str | None = Field(default=None, max_length=255, description="Optional CSS selector required before DOM capture")
-    placeholder_observation_id: UUID | None = Field(default=None, description="Original NEEDS_BROWSER observation UUID")
+    url: str = Field(
+        ..., min_length=1, max_length=2048, description="Target web page URL to render"
+    )
+    canonical_url: str = Field(
+        ..., min_length=1, max_length=2048, description="Normalized canonical URL"
+    )
+    category: str = Field(
+        ...,
+        min_length=1,
+        max_length=64,
+        description="Evidence category, e.g. lodging, transit, advisory",
+    )
+    reason: str = Field(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="Dynamic detection reason, e.g. NOSCRIPT_JAVASCRIPT_REQUIRED",
+    )
+    wait_until: BrowserWaitUntil = Field(
+        default=BrowserWaitUntil.NETWORKIDLE, description="Navigation completion strategy"
+    )
+    timeout_seconds: int = Field(
+        default=20, ge=1, le=60, description="Maximum navigation timeout in seconds"
+    )
+    selector_target: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Optional CSS selector required before DOM capture",
+    )
+    placeholder_observation_id: UUID | None = Field(
+        default=None, description="Original NEEDS_BROWSER observation UUID"
+    )
 
 
 class BrowserResourceUsage(BaseModel):
@@ -63,7 +87,9 @@ class BrowserResourceUsage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     duration_ms: int = Field(..., ge=0, description="Elapsed execution duration in milliseconds")
-    memory_mb: int | None = Field(default=None, ge=0, description="Estimated memory consumption in megabytes")
+    memory_mb: int | None = Field(
+        default=None, ge=0, description="Estimated memory consumption in megabytes"
+    )
 
 
 class BrowserRenderResult(BaseModel):
@@ -78,10 +104,20 @@ class BrowserRenderResult(BaseModel):
     status: BrowserRenderStatus = Field(default=BrowserRenderStatus.SUCCESS)
     canonical_url: str = Field(..., min_length=1, max_length=2048)
     effective_url: str = Field(..., min_length=1, max_length=2048)
-    content_hash: str | None = Field(default=None, description="SHA256 hex digest of clean rendered text")
-    excerpt_text: str | None = Field(default=None, max_length=1000, description="Clean substantive text excerpt up to 1000 characters")
-    excerpt_locator: str | None = Field(default=None, max_length=256, description="CSS selector or locator for extracted content")
-    rendered_html_snippet: str | None = Field(default=None, max_length=50000, description="Bounded excerpt of raw rendered HTML")
+    content_hash: str | None = Field(
+        default=None, description="SHA256 hex digest of clean rendered text"
+    )
+    excerpt_text: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Clean substantive text excerpt up to 1000 characters",
+    )
+    excerpt_locator: str | None = Field(
+        default=None, max_length=256, description="CSS selector or locator for extracted content"
+    )
+    rendered_html_snippet: str | None = Field(
+        default=None, max_length=50000, description="Bounded excerpt of raw rendered HTML"
+    )
     render_duration_ms: int = Field(..., ge=0)
     unavailable_reason: str | None = Field(default=None, max_length=500)
     usage: BrowserResourceUsage
@@ -94,7 +130,9 @@ class BrowserRenderResult(BaseModel):
         if v is not None:
             cleaned = v.strip().lower()
             if not _SHA256_HEX_REGEX.match(cleaned):
-                raise ValueError("content_hash must be a valid 64 character lowercase hex SHA256 digest")
+                raise ValueError(
+                    "content_hash must be a valid 64 character lowercase hex SHA256 digest"
+                )
             return cleaned
         return None
 
@@ -111,8 +149,14 @@ class BrowserRenderResult(BaseModel):
                 raise ValueError("SUCCESS status must not have an unavailable_reason")
         else:
             if not self.unavailable_reason or not self.unavailable_reason.strip():
-                raise ValueError(f"{self.status} status requires a descriptive non-empty unavailable_reason")
-            if self.content_hash is not None or self.excerpt_text is not None or self.excerpt_locator is not None:
+                raise ValueError(
+                    f"{self.status} status requires a descriptive non-empty unavailable_reason"
+                )
+            if (
+                self.content_hash is not None
+                or self.excerpt_text is not None
+                or self.excerpt_locator is not None
+            ):
                 raise ValueError(
                     f"{self.status} status permits absent content and must never fabricate excerpts, hashes, or locators"
                 )
@@ -131,8 +175,12 @@ class BrowserWorkerOutput(BaseModel):
     status: BrowserRenderStatus = Field(default=BrowserRenderStatus.SUCCESS)
     canonical_url: str = Field(..., min_length=1, max_length=2048)
     effective_url: str = Field(..., min_length=1, max_length=2048)
-    observation_id: UUID | None = Field(default=None, description="Persisted source observation UUID")
-    content_hash: str | None = Field(default=None, description="SHA256 hex digest of clean rendered text")
+    observation_id: UUID | None = Field(
+        default=None, description="Persisted source observation UUID"
+    )
+    content_hash: str | None = Field(
+        default=None, description="SHA256 hex digest of clean rendered text"
+    )
     rendered_html_bytes: int | None = Field(default=None, ge=0)
     render_duration_ms: int = Field(..., ge=0)
     unavailable_sources: list[dict[str, Any]] = Field(default_factory=list)
@@ -145,7 +193,9 @@ class BrowserWorkerOutput(BaseModel):
         if v is not None:
             cleaned = v.strip().lower()
             if not _SHA256_HEX_REGEX.match(cleaned):
-                raise ValueError("content_hash must be a valid 64 character lowercase hex SHA256 digest")
+                raise ValueError(
+                    "content_hash must be a valid 64 character lowercase hex SHA256 digest"
+                )
             return cleaned
         return None
 
@@ -158,7 +208,9 @@ class BrowserWorkerOutput(BaseModel):
                 raise ValueError("SUCCESS worker output requires a valid SHA256 content_hash")
         else:
             if not self.unavailable_sources:
-                raise ValueError(f"{self.status} worker output requires non-empty unavailable_sources records")
+                raise ValueError(
+                    f"{self.status} worker output requires non-empty unavailable_sources records"
+                )
             if self.observation_id is not None or self.content_hash is not None:
                 raise ValueError(
                     f"{self.status} worker output permits absent content and must not fabricate observation_id or content_hash"

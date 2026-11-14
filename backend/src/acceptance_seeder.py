@@ -120,8 +120,12 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
             )
             route_exec_ids = list((await session.execute(route_exec_stmt)).scalars().all())
 
-            await session.execute(delete(RouteLegModel).where(RouteLegModel.route_id.in_(target_rids)))
-            await session.execute(delete(RouteStopModel).where(RouteStopModel.route_id.in_(target_rids)))
+            await session.execute(
+                delete(RouteLegModel).where(RouteLegModel.route_id.in_(target_rids))
+            )
+            await session.execute(
+                delete(RouteStopModel).where(RouteStopModel.route_id.in_(target_rids))
+            )
             await session.execute(
                 delete(RouteRestrictionModel).where(RouteRestrictionModel.route_id.in_(target_rids))
             )
@@ -129,10 +133,7 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
 
         e_stmt = select(ExecutionModel.id).where(
             ExecutionModel.owner_id.in_(OWNED_USER_IDS),
-            (
-                ExecutionModel.trip_id.in_(OWNED_TRIP_IDS)
-                | ExecutionModel.id.in_(route_exec_ids)
-            ),
+            (ExecutionModel.trip_id.in_(OWNED_TRIP_IDS) | ExecutionModel.id.in_(route_exec_ids)),
         )
         target_eids = list((await session.execute(e_stmt)).scalars().all())
 
@@ -174,9 +175,7 @@ async def seed_acceptance_fixtures(session_factory: async_sessionmaker[AsyncSess
         await session.execute(
             delete(CanonicalPlaceModel).where(CanonicalPlaceModel.id == PARKING_HUB_ID)
         )
-        await session.execute(
-            delete(ClaimModel).where(ClaimModel.id == ROAD_CLOSURE_CLAIM_ID)
-        )
+        await session.execute(delete(ClaimModel).where(ClaimModel.id == ROAD_CLOSURE_CLAIM_ID))
 
         # 2. Seed Trip records for each test scenario
         trips_to_seed = [

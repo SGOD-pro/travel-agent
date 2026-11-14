@@ -228,7 +228,13 @@ class GraphRunnerService:
                     )
 
                 # Duplicate / Replay check
-                if execution.status in ("WAITING_TASKS", "SUCCEEDED", "PARTIAL", "FAILED", "SUPERSEDED"):
+                if execution.status in (
+                    "WAITING_TASKS",
+                    "SUCCEEDED",
+                    "PARTIAL",
+                    "FAILED",
+                    "SUPERSEDED",
+                ):
                     # Check if tasks already exist for this execution
                     task_stmt = select(TaskModel).where(TaskModel.execution_id == execution_id)
                     existing_tasks = (await session.execute(task_stmt)).scalars().all()

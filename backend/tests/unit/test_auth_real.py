@@ -21,10 +21,14 @@ TRUSTED_PRIVATE_PEM = _trusted_private_key.private_bytes(
     format=serialization.PrivateFormat.PKCS8,
     encryption_algorithm=serialization.NoEncryption(),
 ).decode("utf-8")
-TRUSTED_PUBLIC_PEM = _trusted_private_key.public_key().public_bytes(
-    encoding=serialization.Encoding.PEM,
-    format=serialization.PublicFormat.SubjectPublicKeyInfo,
-).decode("utf-8")
+TRUSTED_PUBLIC_PEM = (
+    _trusted_private_key.public_key()
+    .public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    .decode("utf-8")
+)
 
 _attacker_private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 ATTACKER_PRIVATE_PEM = _attacker_private_key.private_bytes(
@@ -107,7 +111,9 @@ async def test_invalid_audience_rejected_with_403() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_credentials_in_production_rejected_with_401(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_missing_credentials_in_production_rejected_with_401(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "ENVIRONMENT", "production")
     monkeypatch.setattr(settings, "ALLOW_DEV_LOCAL_USER", True)  # Ignored in production
     with pytest.raises(HTTPException) as exc_info:
@@ -125,7 +131,9 @@ async def test_missing_credentials_in_local_default_gated_with_401() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missing_credentials_in_local_explicitly_gated(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_missing_credentials_in_local_explicitly_gated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(settings, "ALLOW_DEV_LOCAL_USER", True)
     user = await get_current_user(None)
     assert isinstance(user, AuthenticatedUser)

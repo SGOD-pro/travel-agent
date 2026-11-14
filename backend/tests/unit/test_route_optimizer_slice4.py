@@ -198,7 +198,9 @@ async def test_valhalla_client_route_success() -> None:
         route_result = await client.route(
             points,
             mode=TransportMode.CAR_PETROL,
-            exclude_polygons=[[[88.265, 27.045], [88.266, 27.045], [88.266, 27.046], [88.265, 27.045]]],
+            exclude_polygons=[
+                [[88.265, 27.045], [88.266, 27.045], [88.266, 27.046], [88.265, 27.045]]
+            ],
         )
 
         assert route_result.total_distance_m == 10500
@@ -254,10 +256,12 @@ async def test_valhalla_client_fast_fails_on_4xx() -> None:
     async with httpx.AsyncClient(transport=transport) as http_client:
         client = ValhallaClient("http://localhost:8002", http_client=http_client)
         with pytest.raises(ValhallaRoutingError, match="Valhalla client error 400"):
-            await client.route([
-                Point(latitude=22.0, longitude=88.0),
-                Point(latitude=22.1, longitude=88.1),
-            ])
+            await client.route(
+                [
+                    Point(latitude=22.0, longitude=88.0),
+                    Point(latitude=22.1, longitude=88.1),
+                ]
+            )
         assert attempts == 1
         assert client.retry_count == 0
 
@@ -273,10 +277,12 @@ async def test_valhalla_client_timeout_handling() -> None:
     async with httpx.AsyncClient(transport=transport) as http_client:
         client = ValhallaClient("http://localhost:8002", http_client=http_client)
         with pytest.raises(ValhallaTimeoutError, match="timed out"):
-            await client.route([
-                Point(latitude=22.0, longitude=88.0),
-                Point(latitude=22.1, longitude=88.1),
-            ])
+            await client.route(
+                [
+                    Point(latitude=22.0, longitude=88.0),
+                    Point(latitude=22.1, longitude=88.1),
+                ]
+            )
         assert client.retry_count >= 1
 
 
@@ -286,10 +292,12 @@ async def test_valhalla_client_unconfigured_url() -> None:
     client = ValhallaClient(base_url=None)
     client.base_url = None
     with pytest.raises(ValhallaConnectionError, match="VALHALLA_ENDPOINT_URL is not configured"):
-        await client.route([
-            Point(latitude=22.0, longitude=88.0),
-            Point(latitude=22.1, longitude=88.1),
-        ])
+        await client.route(
+            [
+                Point(latitude=22.0, longitude=88.0),
+                Point(latitude=22.1, longitude=88.1),
+            ]
+        )
 
 
 # --- Closure Avoidance and Revalidation Tests ---
@@ -546,7 +554,8 @@ async def test_mock_valhalla_client_offline() -> None:
 @pytest.mark.asyncio
 async def test_changed_road_closure_full_intersection_and_route_change() -> None:
     """Proves full line-polygon intersection and demonstrates that the road closure changes the route."""
-    from shapely.geometry import LineString, Point as ShapelyPoint, Polygon
+    from shapely.geometry import LineString, Polygon
+    from shapely.geometry import Point as ShapelyPoint
 
     # Point A (MG Road Depot) and Point B (Cubbon Park Parking Hub)
     p1 = Point(latitude=12.9716, longitude=77.6101)
@@ -582,7 +591,10 @@ async def test_changed_road_closure_full_intersection_and_route_change() -> None
         arrival_at=datetime(2026, 11, 10, 10, 30, tzinfo=UTC),
         distance_m=2800,
         travel_seconds=300,
-        geometry={"type": "LineString", "coordinates": [[p1.longitude, p1.latitude], [p2.longitude, p2.latitude]]},
+        geometry={
+            "type": "LineString",
+            "coordinates": [[p1.longitude, p1.latitude], [p2.longitude, p2.latitude]],
+        },
     )
     closure_claim = RestrictionClaim(
         id=uuid.uuid4(),
@@ -593,19 +605,27 @@ async def test_changed_road_closure_full_intersection_and_route_change() -> None
         is_active=True,
         is_verified=True,
     )
-    violations = ClosureAvoidanceService.revalidate_leg_geometries([intersecting_leg], [closure_claim])
+    violations = ClosureAvoidanceService.revalidate_leg_geometries(
+        [intersecting_leg], [closure_claim]
+    )
     assert len(violations) == 1
     assert "ROAD_CLOSURE_INTERSECTION" in violations[0]
 
     # 3. Solve route WITHOUT closure using MockValhallaClient
     mock = MockValhallaClient()
-    unrestricted_route = await mock.route([p1, p2], mode=TransportMode.CAR_PETROL, exclude_polygons=[])
+    unrestricted_route = await mock.route(
+        [p1, p2], mode=TransportMode.CAR_PETROL, exclude_polygons=[]
+    )
     assert len(unrestricted_route.legs) == 1
     unrestricted_coords = unrestricted_route.legs[0].geometry["coordinates"]
-    assert LineString(unrestricted_coords).intersects(closure_poly), "Unrestricted route must intersect the closure"
+    assert LineString(unrestricted_coords).intersects(closure_poly), (
+        "Unrestricted route must intersect the closure"
+    )
 
     # 4. Solve route WITH closure using MockValhallaClient
-    detour_route = await mock.route([p1, p2], mode=TransportMode.CAR_PETROL, exclude_polygons=[closure_coords])
+    detour_route = await mock.route(
+        [p1, p2], mode=TransportMode.CAR_PETROL, exclude_polygons=[closure_coords]
+    )
     assert len(detour_route.legs) == 1
     detour_coords = detour_route.legs[0].geometry["coordinates"]
 
@@ -617,7 +637,9 @@ async def test_changed_road_closure_full_intersection_and_route_change() -> None
         f"Detour distance ({detour_route.total_distance_m}m) must exceed unrestricted ({unrestricted_route.total_distance_m}m)"
     )
     # - Detoured route leg does NOT intersect the closure polygon (full line-polygon non-intersection)
-    assert not LineString(detour_coords).intersects(closure_poly), "Detour path must not intersect closure polygon"
+    assert not LineString(detour_coords).intersects(closure_poly), (
+        "Detour path must not intersect closure polygon"
+    )
 
     # 6. Revalidation of detoured leg passes cleanly with zero violations
     detour_leg = RouteLegOutput(
@@ -632,5 +654,6 @@ async def test_changed_road_closure_full_intersection_and_route_change() -> None
         travel_seconds=detour_route.total_travel_seconds,
         geometry={"type": "LineString", "coordinates": detour_coords},
     )
-    assert len(ClosureAvoidanceService.revalidate_leg_geometries([detour_leg], [closure_claim])) == 0
-
+    assert (
+        len(ClosureAvoidanceService.revalidate_leg_geometries([detour_leg], [closure_claim])) == 0
+    )

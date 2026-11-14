@@ -83,7 +83,11 @@ class MultimodalTransitionService:
             raise ValhallaConnectionError(
                 "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
             )
-        if hasattr(client, "base_url") and not client.base_url and not hasattr(client, "canned_matrix"):
+        if (
+            hasattr(client, "base_url")
+            and not client.base_url
+            and not hasattr(client, "canned_matrix")
+        ):
             raise ValhallaConnectionError(
                 "VALHALLA_ENDPOINT_URL is not configured; cannot query external routing service"
             )
@@ -101,7 +105,9 @@ class MultimodalTransitionService:
         leg_polys: list[list[list[float]]] = []
         if restrictions:
             active_restrs = [r for r in restrictions if r.is_active and r.is_verified]
-            leg_polys, _, diags = self._closure_service.extract_valhalla_exclude_polygons(active_restrs)
+            leg_polys, _, diags = self._closure_service.extract_valhalla_exclude_polygons(
+                active_restrs
+            )
             if diags:
                 raise UnsupportedRestrictionError(diags[0])
 
@@ -111,7 +117,9 @@ class MultimodalTransitionService:
             exclude_polygons=leg_polys or None,
         )
         dist_m = route_res.total_distance_m
-        if dist_m == 0 and (from_loc.latitude != to_loc.latitude or from_loc.longitude != to_loc.longitude):
+        if dist_m == 0 and (
+            from_loc.latitude != to_loc.latitude or from_loc.longitude != to_loc.longitude
+        ):
             dist_m = max(1, haversine_distance_m(from_loc, to_loc))
         dur_s = max(1, route_res.total_travel_seconds)
         geom = route_res.legs[0].geometry if route_res.legs else route_res.geometry
@@ -124,9 +132,7 @@ class MultimodalTransitionService:
     ) -> tuple[CanonicalPlaceModel, float] | None:
         """Finds the nearest verified public parking hub in canonical_places."""
         radius = (
-            search_radius_meters
-            if search_radius_meters is not None
-            else self._search_radius_meters
+            search_radius_meters if search_radius_meters is not None else self._search_radius_meters
         )
 
         if self._search_parking_fn is not None:
@@ -312,7 +318,9 @@ class MultimodalTransitionService:
                                 diagnostics=[
                                     f"SCHEDULE_INFEASIBLE: Service at mandatory stop '{target.name}' finishes at {dep_time.isoformat()}, exceeding closing time {w_end.isoformat()}"
                                 ],
-                                warnings=[f"Hard service window breached at mandatory stop '{target.name}'"],
+                                warnings=[
+                                    f"Hard service window breached at mandatory stop '{target.name}'"
+                                ],
                             )
                         else:
                             skipped_stop = ScheduledStopOutput(
@@ -518,7 +526,9 @@ class MultimodalTransitionService:
                                 diagnostics=[
                                     f"SCHEDULE_INFEASIBLE: Service at mandatory stop '{target.name}' finishes at {dep_time.isoformat()}, exceeding closing time {w_end.isoformat()}"
                                 ],
-                                warnings=[f"Hard service window breached at mandatory stop '{target.name}'"],
+                                warnings=[
+                                    f"Hard service window breached at mandatory stop '{target.name}'"
+                                ],
                             )
                         else:
                             skipped_stop = ScheduledStopOutput(
@@ -571,7 +581,9 @@ class MultimodalTransitionService:
                         travel_seconds=walk_dur,
                         geometry=walk_geom,
                         traffic_basis=TrafficBasis.MODELED,
-                        parking_hub_id=active_parking_hub.id if active_parking_hub is not None else None,
+                        parking_hub_id=active_parking_hub.id
+                        if active_parking_hub is not None
+                        else None,
                     )
                 )
 
@@ -748,4 +760,3 @@ class MultimodalTransitionService:
             )
 
         return optimized_route
-

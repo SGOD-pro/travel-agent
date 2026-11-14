@@ -30,11 +30,7 @@ async def cancel_execution(
     now = datetime.now(UTC)
 
     # Phase 1: Parent-first row lock on executions
-    exec_stmt = (
-        select(ExecutionModel)
-        .where(ExecutionModel.id == execution_id)
-        .with_for_update()
-    )
+    exec_stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
     execution = (await session.execute(exec_stmt)).scalar_one_or_none()
 
     if execution is None or execution.owner_id != owner_id:

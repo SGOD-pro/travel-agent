@@ -45,6 +45,7 @@ REQUIRED_LEAN_PACKAGES = {
 
 def _load_cfn_template(path: Path) -> dict[str, Any]:
     """Helper loading CloudFormation SAM YAML with custom tag constructors."""
+
     class CfnSafeLoader(yaml.SafeLoader):  # type: ignore[misc]
         pass
 
@@ -162,7 +163,9 @@ def test_dependency_inclusive_package_size_and_isolated_artifact() -> None:
     for mod_path in FORBIDDEN_APP_MODULES:
         rel_parts = mod_path.split(".")
         target_path = output_dir.joinpath(*rel_parts)
-        assert not target_path.exists(), f"Forbidden app module {mod_path} found in artifact: {target_path}"
+        assert not target_path.exists(), (
+            f"Forbidden app module {mod_path} found in artifact: {target_path}"
+        )
 
     # Strict isolation: forbidden heavy third-party packages must be excluded
     for pkg in FORBIDDEN_HEAVY_PACKAGES:
@@ -231,7 +234,9 @@ def test_cached_artifact_build_avoids_reinstallation() -> None:
     assert elapsed < 5.0, f"Cached build took too long ({elapsed:.2f}s); dependency caching failed"
 
 
-def test_resolve_python_runtime_binary_fails_when_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_python_runtime_binary_fails_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """AC 17: Verifies that runtime resolution fails explicitly when Python 3.12 is unavailable."""
     from unittest.mock import MagicMock
 
@@ -244,5 +249,3 @@ def test_resolve_python_runtime_binary_fails_when_unavailable(monkeypatch: pytes
 
     with pytest.raises(RuntimeError, match="Required Python 3.12 runtime is unavailable"):
         resolve_python_runtime_binary()
-
-

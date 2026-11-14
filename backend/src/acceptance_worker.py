@@ -212,11 +212,11 @@ class LocalAcceptanceWorker:
                     processed_count += 1
 
             except Exception as e:
-                logger.error("Error processing acceptance outbox event %s (%s): %s", evt.id, kind, e)
+                logger.error(
+                    "Error processing acceptance outbox event %s (%s): %s", evt.id, kind, e
+                )
                 async with self._session_factory() as session:
-                    update_stmt = (
-                        select(OutboxEventModel).where(OutboxEventModel.id == evt.id)
-                    )
+                    update_stmt = select(OutboxEventModel).where(OutboxEventModel.id == evt.id)
                     row = (await session.execute(update_stmt)).scalar_one_or_none()
                     if row:
                         row.last_error = str(e)

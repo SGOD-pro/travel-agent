@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -25,7 +25,6 @@ from functions.api.app import app
 from functions.api.models import TripModel
 from functions.orchestrator.execution import (
     CompletionReconciliationService,
-    ExecutionModel,
     ExecutionResumeEvent,
     ExecutionStartEvent,
     GraphRunnerService,
@@ -50,7 +49,10 @@ def _is_connected_valhalla_enabled() -> tuple[bool, str]:
     """Checks whether live Valhalla provider testing is enabled and configured."""
     flag = os.getenv("RUN_CONNECTED_VALHALLA_TESTS", "0").strip().lower()
     if flag not in ("1", "true", "yes"):
-        return False, "RUN_CONNECTED_VALHALLA_TESTS is not enabled (set RUN_CONNECTED_VALHALLA_TESTS=1)"
+        return (
+            False,
+            "RUN_CONNECTED_VALHALLA_TESTS is not enabled (set RUN_CONNECTED_VALHALLA_TESTS=1)",
+        )
 
     endpoint = settings.VALHALLA_ENDPOINT_URL
     if not endpoint or not endpoint.strip():
@@ -120,14 +122,20 @@ async def test_route_graph_valhalla_connected_geojson_generation(
                     {
                         "id": str(uuid.uuid4()),
                         "name": "Bengaluru Origin",
-                        "location": {"latitude": MG_ROAD_BENGALURU.latitude, "longitude": MG_ROAD_BENGALURU.longitude},
+                        "location": {
+                            "latitude": MG_ROAD_BENGALURU.latitude,
+                            "longitude": MG_ROAD_BENGALURU.longitude,
+                        },
                         "stop_type": "ORIGIN",
                         "dwell_seconds": 0,
                     },
                     {
                         "id": str(uuid.uuid4()),
                         "name": "Indiranagar Destination",
-                        "location": {"latitude": INDIRANAGAR_BENGALURU.latitude, "longitude": INDIRANAGAR_BENGALURU.longitude},
+                        "location": {
+                            "latitude": INDIRANAGAR_BENGALURU.latitude,
+                            "longitude": INDIRANAGAR_BENGALURU.longitude,
+                        },
                         "stop_type": "DESTINATION",
                         "dwell_seconds": 3600,
                         "is_must_visit": True,
@@ -245,7 +253,9 @@ async def test_route_graph_valhalla_connected_geojson_generation(
             assert map_data["type"] == "FeatureCollection"
             assert map_data["status"] in ("OPTIMAL", "FEASIBLE")
 
-            leg_features = [f for f in map_data["features"] if f["properties"].get("feature_type") == "leg"]
+            leg_features = [
+                f for f in map_data["features"] if f["properties"].get("feature_type") == "leg"
+            ]
             assert len(leg_features) >= 1
 
             driving_leg = leg_features[0]

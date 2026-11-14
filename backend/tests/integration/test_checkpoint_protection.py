@@ -25,7 +25,9 @@ from tests.integration.test_graph_runner import (
 
 
 @pytest.mark.asyncio
-async def test_fresh_checkpointer_reads_persisted_state(session_factory, postgres_checkpointer) -> None:
+async def test_fresh_checkpointer_reads_persisted_state(
+    session_factory, postgres_checkpointer
+) -> None:
     """Proves that a fresh checkpointer instance with zero in-memory state recovers state from PostgreSQL."""
     postgres_checkpointer.session_factory = session_factory
     thread_id = f"thread-{uuid.uuid4()}"
@@ -113,9 +115,7 @@ async def test_expired_runner_takeover_stale_writes_rejected(
     graph.ainvoke = hooked_ainvoke
 
     event_a = ExecutionStartEvent(execution_id=exec_id)
-    task_a = asyncio.create_task(
-        runner_a.handle_execution_start(event=event_a, graph=graph)
-    )
+    task_a = asyncio.create_task(runner_a.handle_execution_start(event=event_a, graph=graph))
 
     # Wait for Runner A to reach Phase 2
     await pause_event.wait()

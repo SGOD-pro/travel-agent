@@ -62,6 +62,7 @@ class TestSerpApiAdapter:
     @pytest.mark.asyncio
     async def test_search_organic_and_places_normalized(self) -> None:
         """Verifies that SerpAPI returns normalized RawObservation items for organic and places (AC 1)."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/search"
             assert request.url.params["engine"] == "google"
@@ -86,7 +87,9 @@ class TestSerpApiAdapter:
         # Check first organic observation
         obs1 = results[0]
         assert obs1.publisher == "kolkatatrafficpolice.gov.in"
-        assert obs1.canonical_url == "https://kolkatatrafficpolice.gov.in/advisory2026"  # stripped utm_source
+        assert (
+            obs1.canonical_url == "https://kolkatatrafficpolice.gov.in/advisory2026"
+        )  # stripped utm_source
         assert "Central Avenue closed" in obs1.excerpt_text
         assert obs1.extraction_method == "SERPAPI_SEARCH"
         assert obs1.excerpt_locator == "serpapi:organic[0].snippet"
@@ -113,6 +116,7 @@ class TestSerpApiAdapter:
     @pytest.mark.asyncio
     async def test_latency_tracked_in_milliseconds(self) -> None:
         """Verifies that response latency is recorded in milliseconds (AC 1)."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"organic_results": []})
 
@@ -129,6 +133,7 @@ class TestSerpApiAdapter:
     @pytest.mark.asyncio
     async def test_minor_unit_cost_accumulates_per_query(self) -> None:
         """Verifies that minor unit cost increments by configured amount per query (AC 1)."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"organic_results": []})
 
@@ -152,6 +157,7 @@ class TestSerpApiAdapter:
     @pytest.mark.asyncio
     async def test_timeout_raises_serpapi_timeout_error(self) -> None:
         """Verifies that provider timeout raises SerpApiTimeoutError cleanly (AC 1)."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             raise httpx.ReadTimeout("Connection timed out after 20s")
 
@@ -169,6 +175,7 @@ class TestSerpApiAdapter:
     @pytest.mark.asyncio
     async def test_rate_limit_429_raises_serpapi_rate_limit_error(self) -> None:
         """Verifies that HTTP 429 raises SerpApiRateLimitError (AC 1)."""
+
         def handler(request: httpx.Request) -> httpx.Response:
             return httpx.Response(429, text="Too Many Requests")
 

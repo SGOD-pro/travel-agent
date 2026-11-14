@@ -229,7 +229,10 @@ class LayaPolicyValidator:
                     and remaining_browser_slots > 0
                 ):
                     fallback_action = DecisionAction.DISPATCH_BROWSER_ESCALATION
-                elif DecisionAction.PROCEED_DETERMINISTIC_EVALUATION in eligible and required_evidence_satisfied:
+                elif (
+                    DecisionAction.PROCEED_DETERMINISTIC_EVALUATION in eligible
+                    and required_evidence_satisfied
+                ):
                     fallback_action = DecisionAction.PROCEED_DETERMINISTIC_EVALUATION
                 elif DecisionAction.DISPATCH_EVIDENCE_SEARCH in eligible:
                     fallback_action = DecisionAction.DISPATCH_EVIDENCE_SEARCH
@@ -249,7 +252,9 @@ class LayaPolicyValidator:
                         "Cannot fallback to evaluation without required destination evidence"
                     )
             else:
-                fallback_action = eligible[0] if eligible else DecisionAction.DISPATCH_EVIDENCE_SEARCH
+                fallback_action = (
+                    eligible[0] if eligible else DecisionAction.DISPATCH_EVIDENCE_SEARCH
+                )
 
         else:
             # Phase-derived defaults
@@ -286,9 +291,13 @@ class LayaPolicyValidator:
                         "Insufficient required destination evidence to evaluate trip"
                     )
             else:
-                fallback_action = eligible[0] if eligible else DecisionAction.DISPATCH_EVIDENCE_SEARCH
+                fallback_action = (
+                    eligible[0] if eligible else DecisionAction.DISPATCH_EVIDENCE_SEARCH
+                )
 
-        default_rationale = f"deterministic fallback triggered: {fallback_status.value} -> {fallback_action.value}"
+        default_rationale = (
+            f"deterministic fallback triggered: {fallback_status.value} -> {fallback_action.value}"
+        )
         final_rationale = rationale or default_rationale
 
         return DecisionEnvelope(
@@ -348,10 +357,14 @@ class LayaPolicyValidator:
         - Option membership in policy_derived_eligible_choices.
         """
         if cancelled or parent_status == "CANCELLED":
-            raise ExecutionCancelledError("Execution is in CANCELLED state; halting decision dispatch")
+            raise ExecutionCancelledError(
+                "Execution is in CANCELLED state; halting decision dispatch"
+            )
 
         if deadline_exceeded:
-            raise ExecutionDeadlineExceededError("Execution deadline exceeded; halting decision dispatch")
+            raise ExecutionDeadlineExceededError(
+                "Execution deadline exceeded; halting decision dispatch"
+            )
 
         # Handle explicit fallback trigger (e.g. from client timeouts or HTTP errors)
         if fallback_status is not None:
@@ -512,9 +525,7 @@ class LayaPolicyValidator:
         resolved_threshold = (
             threshold if threshold is not None else cls.DEFAULT_CONFIDENCE_THRESHOLD
         )
-        effective_answer_conf = (
-            answer_confidence if answer_confidence is not None else choice_prob
-        )
+        effective_answer_conf = answer_confidence if answer_confidence is not None else choice_prob
 
         if low_confidence is True or effective_answer_conf < resolved_threshold:
             return cls.resolve_fallback(

@@ -170,7 +170,9 @@ class TestWorkerBudgetAndProviders:
             assert execution.budget["reserved_tool_calls"] == 0
 
     @pytest.mark.asyncio
-    async def test_syndication_and_non_independent_corroboration_flagged(self, session_factory: Any) -> None:
+    async def test_syndication_and_non_independent_corroboration_flagged(
+        self, session_factory: Any
+    ) -> None:
         """Verifies AC 4: duplicated content across distinct URLs is flagged as non independent corroboration."""
         now = datetime.now(UTC)
         unique_tag = uuid.uuid4().hex[:8]
@@ -242,7 +244,10 @@ class TestWorkerBudgetAndProviders:
             assert len(observations) == 1
             second_obs = observations[0]
 
-            assert second_obs["canonical_url"] == "https://timesofindia.indiatimes.com/kolkata-police-advisory-copy"
+            assert (
+                second_obs["canonical_url"]
+                == "https://timesofindia.indiatimes.com/kolkata-police-advisory-copy"
+            )
             assert second_obs["content_hash"] == shared_hash
             assert second_obs["non_independent_corroboration"] is True
             assert second_obs["corroborates_observation_id"] == str(orig_obs_id)

@@ -273,10 +273,14 @@ async def test_closure_detour_hydrates_real_geometry_and_schedule() -> None:
     # Stop schedule consistency must reflect the detoured leg arrival time
     dest_stop = detoured_route.stops[1]
     assert dest_stop.planned_arrival_at == t0 + timedelta(seconds=leg.travel_seconds)
-    assert dest_stop.planned_departure_at == dest_stop.planned_arrival_at + timedelta(seconds=dest_stop.dwell_seconds)
+    assert dest_stop.planned_departure_at == dest_stop.planned_arrival_at + timedelta(
+        seconds=dest_stop.dwell_seconds
+    )
 
     # Post-routing closure revalidation must pass with zero intersections
-    intersections = ClosureAvoidanceService.revalidate_leg_geometries(detoured_route.legs, [restriction])
+    intersections = ClosureAvoidanceService.revalidate_leg_geometries(
+        detoured_route.legs, [restriction]
+    )
     assert len(intersections) == 0
 
 
@@ -396,7 +400,16 @@ async def test_reconciliation_preserves_running_for_unrelated_workflow() -> None
     assert execution.status == "RUNNING"
     assert result_2.graph_resumed is False
     assert result_2.status == "APPLIED"
-    assert len([obj for obj in session_mock.add.call_args_list if isinstance(obj[0][0], OutboxEventModel)]) == 0
+    assert (
+        len(
+            [
+                obj
+                for obj in session_mock.add.call_args_list
+                if isinstance(obj[0][0], OutboxEventModel)
+            ]
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -595,9 +608,7 @@ async def test_solve_provider_detour_finishes_after_closing_returns_infeasible()
         route_repo=MagicMock(),
     )
 
-    solved_route = await worker_service._solve_route_with_provider(
-        request, restrictions=[restr]
-    )
+    solved_route = await worker_service._solve_route_with_provider(request, restrictions=[restr])
 
     assert solved_route.status == RouteStatus.INFEASIBLE
     assert solved_route.solver_status == SolverStatus.INFEASIBLE
@@ -758,9 +769,7 @@ async def test_replan_provider_detour_finishes_after_closing_returns_infeasible(
     mock_valhalla = MockValhallaClient(detour_extra_seconds=1800)
     replan_service = RouteReplanService(valhalla_client=mock_valhalla)
 
-    route_v2 = await replan_service.replan_route(
-        previous_route, replan_req, restrictions=[restr]
-    )
+    route_v2 = await replan_service.replan_route(previous_route, replan_req, restrictions=[restr])
 
     assert route_v2.status == RouteStatus.INFEASIBLE
     assert route_v2.solver_status == SolverStatus.INFEASIBLE
@@ -931,9 +940,7 @@ async def test_solve_optional_stop_detour_exceeds_closing_drops_stop_yields_part
         route_repo=MagicMock(),
     )
 
-    solved_route = await worker_service._solve_route_with_provider(
-        request, restrictions=[restr]
-    )
+    solved_route = await worker_service._solve_route_with_provider(request, restrictions=[restr])
 
     assert solved_route.status == RouteStatus.PARTIAL
     assert solved_route.solver_status in (SolverStatus.FEASIBLE, SolverStatus.OPTIMAL)
@@ -1043,9 +1050,7 @@ async def test_replan_optional_stop_detour_exceeds_closing_drops_stop_yields_par
     mock_valhalla = MockValhallaClient(detour_extra_seconds=2000)
     replan_service = RouteReplanService(valhalla_client=mock_valhalla)
 
-    route_v2 = await replan_service.replan_route(
-        previous_route, replan_req, restrictions=[restr]
-    )
+    route_v2 = await replan_service.replan_route(previous_route, replan_req, restrictions=[restr])
 
     assert route_v2.status == RouteStatus.PARTIAL
     assert route_v2.solver_status in (SolverStatus.FEASIBLE, SolverStatus.OPTIMAL)
@@ -1054,5 +1059,3 @@ async def test_replan_optional_stop_detour_exceeds_closing_drops_stop_yields_par
     assert new_leg.to_stop_id == mandatory_stop_id
     assert len(new_leg.geometry["coordinates"]) >= 3
     assert any(s.id == optional_stop_id and s.is_skipped for s in route_v2.dropped_stops)
-
-

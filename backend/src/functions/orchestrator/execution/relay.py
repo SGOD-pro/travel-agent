@@ -101,9 +101,7 @@ class OutboxRelayService:
         Commits the claim before returning so that database locks are released
         prior to making network transport calls.
         """
-        effective_batch_size = max(
-            1, min(batch_size or self._batch_size, self._max_batch_size)
-        )
+        effective_batch_size = max(1, min(batch_size or self._batch_size, self._max_batch_size))
         now = datetime.now(UTC)
         lease_expiry = now + timedelta(seconds=self._lease_seconds)
 
@@ -149,7 +147,9 @@ class OutboxRelayService:
         messages: list[OutboxMessage] = []
         for r in rows:
             # Normalize payload from payload_ref or legacy payload
-            payload_data = r["payload_ref"] if r["payload_ref"] is not None else (r["payload"] or {})
+            payload_data = (
+                r["payload_ref"] if r["payload_ref"] is not None else (r["payload"] or {})
+            )
             messages.append(
                 OutboxMessage(
                     event_id=r["id"],
@@ -246,7 +246,7 @@ class OutboxRelayService:
         else:
             backoff_sec = min(
                 self._max_backoff_seconds,
-                self._base_backoff_seconds * (2 ** current_attempts),
+                self._base_backoff_seconds * (2**current_attempts),
             )
             new_due_at = now + timedelta(seconds=backoff_sec)
 

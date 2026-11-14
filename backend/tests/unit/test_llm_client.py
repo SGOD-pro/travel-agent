@@ -342,6 +342,7 @@ class TestLlmClientFactory:
 
     def test_create_bedrock_client_factory(self) -> None:
         from functions.orchestrator.llm.adapters.bedrock import BedrockLlmClient
+
         client = create_llm_client(provider="bedrock")
         assert isinstance(client, BedrockLlmClient)
         assert isinstance(client, HostedLlmClientPort)

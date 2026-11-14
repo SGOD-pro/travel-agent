@@ -313,7 +313,13 @@ class CompletionReconciliationService:
                         and hasattr(active_graph.checkpointer, "discard")
                     ):
                         active_graph.checkpointer.discard(str(execution_id))
-                    if execution.status not in ("SUCCEEDED", "FAILED", "PARTIAL", "CANCELLED", "SUPERSEDED"):
+                    if execution.status not in (
+                        "SUCCEEDED",
+                        "FAILED",
+                        "PARTIAL",
+                        "CANCELLED",
+                        "SUPERSEDED",
+                    ):
                         execution.status = "FAILED"
                         execution.lease_token = None
                         execution.lease_expiry = None

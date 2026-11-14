@@ -145,9 +145,7 @@ def upgrade() -> None:
         if "payload_ref" not in existing_columns:
             op.add_column(
                 "outbox_events",
-                sa.Column(
-                    "payload_ref", postgresql.JSONB(astext_type=sa.Text()), nullable=True
-                ),
+                sa.Column("payload_ref", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
             )
         if "due_at" not in existing_columns:
             op.add_column(

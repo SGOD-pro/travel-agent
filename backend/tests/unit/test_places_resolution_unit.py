@@ -18,8 +18,12 @@ class TestNameSimilarity:
     """Tests for compute_name_similarity conforming to spec 0002 invariant 7."""
 
     def test_exact_match_returns_one(self) -> None:
-        assert compute_name_similarity("Dakshineswar Kali Temple", "Dakshineswar Kali Temple") == 1.0
-        assert compute_name_similarity("dakshineswar kali temple", "DAKSHINESWAR KALI TEMPLE") == 1.0
+        assert (
+            compute_name_similarity("Dakshineswar Kali Temple", "Dakshineswar Kali Temple") == 1.0
+        )
+        assert (
+            compute_name_similarity("dakshineswar kali temple", "DAKSHINESWAR KALI TEMPLE") == 1.0
+        )
 
     def test_empty_or_whitespace_strings_return_zero(self) -> None:
         assert compute_name_similarity("", "Dakshineswar") == 0.0

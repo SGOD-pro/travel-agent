@@ -108,9 +108,7 @@ def validate_hostname_or_ip(
             raise SSRFSecurityError(f"Invalid resolved IP address {ip_str}") from err
 
         if not is_ip_allowed(ip_obj):
-            raise SSRFSecurityError(
-                f"Host {cleaned_host} resolved to restricted IP {ip_str}"
-            )
+            raise SSRFSecurityError(f"Host {cleaned_host} resolved to restricted IP {ip_str}")
         resolved_ips.append(ip_str)
 
     if not resolved_ips:

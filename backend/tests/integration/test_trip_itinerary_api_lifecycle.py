@@ -189,9 +189,7 @@ async def test_trip_itinerary_api_e2e_lifecycle(
         "route_status": "FEASIBLE",
         "routing_status": "OPTIMAL",
         "route_diagnostics": [],
-        "provider_diagnostics": {
-            "weather": {"provider": "open_meteo", "horizon_days": 16}
-        },
+        "provider_diagnostics": {"weather": {"provider": "open_meteo", "horizon_days": 16}},
         "generated_at": now.isoformat(),
     }
 
@@ -240,9 +238,11 @@ async def test_trip_itinerary_api_e2e_lifecycle(
         # 3. Seed Route, RouteStops, and RouteLegs, and update Trip with published proposal
         async with session_factory() as session:
             # Mark execution complete
-            exec_row = (await session.execute(
-                select(ExecutionModel).where(ExecutionModel.id == execution_id)
-            )).scalar_one()
+            exec_row = (
+                await session.execute(
+                    select(ExecutionModel).where(ExecutionModel.id == execution_id)
+                )
+            ).scalar_one()
             exec_row.status = "SUCCEEDED"
 
             # Create route
@@ -295,14 +295,17 @@ async def test_trip_itinerary_api_e2e_lifecycle(
                 distance_m=145000,
                 travel_seconds=10800,
                 traffic_basis=TrafficBasis.HISTORICAL_SPEEDS.value,
-                geometry={"type": "LineString", "coordinates": [[77.5946, 12.9716], [76.6551, 12.3051]]},
+                geometry={
+                    "type": "LineString",
+                    "coordinates": [[77.5946, 12.9716], [76.6551, 12.3051]],
+                },
             )
             session.add_all([route, stop_1, stop_2, leg_1])
 
             # Update trip with published proposal
-            trip_row = (await session.execute(
-                select(TripModel).where(TripModel.id == trip_id)
-            )).scalar_one()
+            trip_row = (
+                await session.execute(select(TripModel).where(TripModel.id == trip_id))
+            ).scalar_one()
             trip_row.current_route_id = route_id
             trip_row.itinerary_json = proposal_payload
             trip_row.state = "proposed"
@@ -326,7 +329,11 @@ async def test_trip_itinerary_api_e2e_lifecycle(
         assert map_geojson["type"] == "FeatureCollection"
         features = map_geojson["features"]
         assert len(features) >= 2  # stops and legs
-        stop_names = [f["properties"].get("name") for f in features if f["properties"].get("feature_type") == "stop"]
+        stop_names = [
+            f["properties"].get("name")
+            for f in features
+            if f["properties"].get("feature_type") == "stop"
+        ]
         assert "Bengaluru" in stop_names
         assert "Mysuru Palace" in stop_names
 

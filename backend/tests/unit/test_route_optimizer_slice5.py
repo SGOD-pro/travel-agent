@@ -245,7 +245,9 @@ async def test_replan_coordinate_ssrf_validation() -> None:
     replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
 
     request = RouteReplanRequest.model_construct(
-        current_location=Point.model_construct(latitude=95.0, longitude=88.0),  # Bypass Pydantic field constraint
+        current_location=Point.model_construct(
+            latitude=95.0, longitude=88.0
+        ),  # Bypass Pydantic field constraint
         replan_at=datetime(2026, 10, 24, 11, 0, tzinfo=UTC),
         completed_stop_ids=[FIXED_STOP_IDS[0]],
     )
@@ -497,9 +499,7 @@ async def test_replan_retains_previously_dropped_stops_in_audit_record() -> None
         dwell_seconds=3600,
     )
 
-    route_v1 = _build_sample_route_version_1().model_copy(
-        update={"dropped_stops": [dropped_stop]}
-    )
+    route_v1 = _build_sample_route_version_1().model_copy(update={"dropped_stops": [dropped_stop]})
 
     replan_service = RouteReplanService(valhalla_client=MockValhallaClient())
     request = RouteReplanRequest(
@@ -513,4 +513,3 @@ async def test_replan_retains_previously_dropped_stops_in_audit_record() -> None
     assert route_v2.route_version == 2
     dropped_ids = [s.id for s in route_v2.dropped_stops]
     assert prev_dropped_id in dropped_ids
-

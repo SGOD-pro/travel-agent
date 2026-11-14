@@ -197,7 +197,9 @@ class RouteReplanService:
             for leg in (previous_route.legs or [])
             if leg.transport_mode == TransportMode.WALKING
         }
-        has_parking_hub = any(s.stop_type == StopType.PARKING_HUB for s in (previous_route.stops or []))
+        has_parking_hub = any(
+            s.stop_type == StopType.PARKING_HUB for s in (previous_route.stops or [])
+        )
 
         remaining_stop_inputs: list[RouteStopInput] = []
         for s in remaining_candidates:
@@ -234,7 +236,10 @@ class RouteReplanService:
             clean_home_name = home_stop.name
             if clean_home_name.lower().startswith("return to "):
                 clean_home_name = clean_home_name[10:].strip()
-            if not any(s.name in (home_stop.name, f"Return to {clean_home_name}") for s in remaining_stop_inputs):
+            if not any(
+                s.name in (home_stop.name, f"Return to {clean_home_name}")
+                for s in remaining_stop_inputs
+            ):
                 remaining_stop_inputs.append(
                     RouteStopInput(
                         id=uuid.uuid4(),
@@ -795,11 +800,7 @@ class RouteReplanService:
             infeasible_dropped_stops = []
             for idx, s in enumerate(source_stops):
                 prev_s = existing_stops_by_name.get(s.name)
-                s_id = (
-                    getattr(prev_s, "id", None)
-                    or getattr(s, "id", None)
-                    or uuid.uuid4()
-                )
+                s_id = getattr(prev_s, "id", None) or getattr(s, "id", None) or uuid.uuid4()
                 was_completed = (
                     s_id in completed_ids
                     or getattr(s, "id", None) in completed_ids
@@ -818,12 +819,16 @@ class RouteReplanService:
                     is_must_visit=s.is_must_visit,
                     is_completed=was_completed,
                     is_skipped=not was_completed,
-                    skip_reason=None if was_completed else (getattr(prev_s, "skip_reason", None) or infeasible_reason),
+                    skip_reason=None
+                    if was_completed
+                    else (getattr(prev_s, "skip_reason", None) or infeasible_reason),
                     window_start=s.window_start,
                     window_end=s.window_end,
                     dwell_seconds=s.dwell_seconds,
-                    planned_arrival_at=getattr(prev_s, "planned_arrival_at", None) or getattr(s, "planned_arrival_at", None),
-                    planned_departure_at=getattr(prev_s, "planned_departure_at", None) or getattr(s, "planned_departure_at", None),
+                    planned_arrival_at=getattr(prev_s, "planned_arrival_at", None)
+                    or getattr(s, "planned_arrival_at", None),
+                    planned_departure_at=getattr(prev_s, "planned_departure_at", None)
+                    or getattr(s, "planned_departure_at", None),
                 )
                 if was_completed:
                     infeasible_completed_stops.append(stop_out)

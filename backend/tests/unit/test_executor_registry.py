@@ -38,14 +38,16 @@ async def test_dispatch_unregistered_worker_raises_error() -> None:
     with pytest.raises(WorkerNotImplementedError) as exc_info:
         await dispatch("NON_EXISTENT_WORKER", "non_existent_action", {})
 
-    assert "No executor registered for worker='NON_EXISTENT_WORKER' action='non_existent_action'" in str(
-        exc_info.value
+    assert (
+        "No executor registered for worker='NON_EXISTENT_WORKER' action='non_existent_action'"
+        in str(exc_info.value)
     )
 
 
 @pytest.mark.asyncio
 async def test_custom_executor_registration_and_dispatch() -> None:
     """Verifies that dynamically registered executors can be dispatched and executed."""
+
     async def mock_custom_executor(payload: dict[str, Any]) -> dict[str, Any]:
         return {"custom_result": payload.get("data", 0) * 2}
 

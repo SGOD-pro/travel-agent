@@ -91,7 +91,9 @@ class RawObservation:
     ) -> RawObservation:
         """Helper creating a RawObservation with automatic URL normalization and hashing."""
         norm_url = canonical_url if canonical_url is not None else normalize_url(source_url)
-        computed_hash = content_hash if content_hash is not None else compute_content_hash(excerpt_text)
+        computed_hash = (
+            content_hash if content_hash is not None else compute_content_hash(excerpt_text)
+        )
         return cls(
             source_url=source_url,
             canonical_url=norm_url,
@@ -144,8 +146,12 @@ class FixtureSearchAdapter:
         self.call_count += 1
         query_lower = query.lower()
         matched = [
-            f for f in self._fixtures
-            if any(term in f.excerpt_text.lower() or term in f.source_url.lower() for term in query_lower.split())
+            f
+            for f in self._fixtures
+            if any(
+                term in f.excerpt_text.lower() or term in f.source_url.lower()
+                for term in query_lower.split()
+            )
         ]
         results = matched if matched else self._fixtures
         return results[:limit]

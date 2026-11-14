@@ -92,7 +92,9 @@ class BenchmarkRunner:
                 if candidate.exists():
                     found_path = candidate
                     break
-            cases_file_path = found_path or (current.parents[5] / "tests" / "evaluations" / "cases.json")
+            cases_file_path = found_path or (
+                current.parents[5] / "tests" / "evaluations" / "cases.json"
+            )
         self.cases_file_path = cases_file_path
 
     def load_cases(self) -> list[dict[str, Any]]:

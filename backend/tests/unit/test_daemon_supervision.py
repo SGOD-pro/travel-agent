@@ -177,7 +177,9 @@ async def test_daemon_resets_consecutive_failures_after_stability() -> None:
 
     status = daemon.get_status()
     assert status["healer"]["restart_count"] >= 1
-    assert status["healer"]["consecutive_failures"] == 0, "Should have reset consecutive failures after stable run"
+    assert status["healer"]["consecutive_failures"] == 0, (
+        "Should have reset consecutive failures after stable run"
+    )
     assert status["healer"]["state"] == WorkerState.RUNNING.value
 
     await daemon.stop()

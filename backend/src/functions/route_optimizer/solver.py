@@ -196,7 +196,9 @@ class OrToolsRoutingSolver:
                 dist_km = Decimal(str(dist)) / Decimal("1000")
                 fuel_liters = dist_km / fuel_profile.mileage_km_per_liter
                 fuel_cost = fuel_liters * fuel_profile.fuel_price_per_liter
-                fuel_minor = int((fuel_cost * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+                fuel_minor = int(
+                    (fuel_cost * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+                )
 
                 cost = (
                     self.DEFAULT_WEIGHT_TIME * dur
@@ -258,7 +260,7 @@ class OrToolsRoutingSolver:
             time_cb_idx,
             self.HORIZON_SECONDS,  # Allowed waiting slack at stops
             self.HORIZON_SECONDS,  # Maximum horizon
-            False,                 # Do not fix start to zero automatically
+            False,  # Do not fix start to zero automatically
             time_dim_name,
         )
         time_dim = routing.GetDimensionOrDie(time_dim_name)
@@ -402,9 +404,7 @@ class OrToolsRoutingSolver:
                 # Determine explicit skip reason
                 skip_reason = "TIME_WINDOW_EXCEEDED"
                 # Check if all incoming arcs were unreachable
-                incoming_unreachable = all(
-                    durations_s[j][i] is None for j in range(n) if j != i
-                )
+                incoming_unreachable = all(durations_s[j][i] is None for j in range(n) if j != i)
                 if incoming_unreachable:
                     skip_reason = "UNREACHABLE_TRANSITION"
 
@@ -479,7 +479,10 @@ class OrToolsRoutingSolver:
                         geometry={
                             "type": "LineString",
                             "coordinates": [
-                                [stops[prev_node].location.longitude, stops[prev_node].location.latitude],
+                                [
+                                    stops[prev_node].location.longitude,
+                                    stops[prev_node].location.latitude,
+                                ],
                                 [s.location.longitude, s.location.latitude],
                             ],
                         },
@@ -537,8 +540,14 @@ class OrToolsRoutingSolver:
                     geometry={
                         "type": "LineString",
                         "coordinates": [
-                            [stops[last_node].location.longitude, stops[last_node].location.latitude],
-                            [stops[start_node].location.longitude, stops[start_node].location.latitude],
+                            [
+                                stops[last_node].location.longitude,
+                                stops[last_node].location.latitude,
+                            ],
+                            [
+                                stops[start_node].location.longitude,
+                                stops[start_node].location.latitude,
+                            ],
                         ],
                     },
                     traffic_basis=TrafficBasis.MODELED,

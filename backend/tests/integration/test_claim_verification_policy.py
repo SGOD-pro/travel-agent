@@ -129,7 +129,9 @@ class TestClaimVerificationPolicyIntegration:
             assert persisted.verification == "VERIFIED"
             assert persisted.availability == "UNAVAILABLE"
 
-            ev_stmt = select(ClaimEvidenceModel).where(ClaimEvidenceModel.claim_id == created_claim.id)
+            ev_stmt = select(ClaimEvidenceModel).where(
+                ClaimEvidenceModel.claim_id == created_claim.id
+            )
             ev_res = await session.execute(ev_stmt)
             ev_links = list(ev_res.scalars().all())
             assert len(ev_links) == 1
@@ -229,9 +231,7 @@ class TestClaimVerificationPolicyIntegration:
             assert str(loaded_2.id) in refs_1
             assert str(loaded_1.id) in refs_2
 
-    async def test_multiple_contradictions_batch_update(
-        self, session_factory: Any
-    ) -> None:
+    async def test_multiple_contradictions_batch_update(self, session_factory: Any) -> None:
         """Nit 2: Verifies record_contradictions_batch handles multiple conflicting claims in one flush."""
         async with session_factory() as session:
             subject = f"venue_{uuid.uuid4().hex[:8]}"
@@ -300,7 +300,6 @@ class TestClaimVerificationPolicyIntegration:
             c3_refs = {item.get("claim_id") for item in l3.contradictions}
             assert str(l1.id) in c3_refs
             assert str(l2.id) in c3_refs
-
 
     async def test_claim_freshness_expiration_to_stale_without_altering_verification(
         self, session_factory: Any

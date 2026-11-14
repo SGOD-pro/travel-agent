@@ -36,7 +36,11 @@ def test_claim_create_with_valid_parameters() -> None:
     payload = {
         "subject_id": "dakshineswar-temple",
         "category": ClaimCategory.HOURS,
-        "typed_value": {"open": "06:00", "close": "20:30", "breaks": [{"from": "12:30", "to": "15:00"}]},
+        "typed_value": {
+            "open": "06:00",
+            "close": "20:30",
+            "breaks": [{"from": "12:30", "to": "15:00"}],
+        },
         "verification": VerificationStatus.VERIFIED,
         "availability": AvailabilityStatus.AVAILABLE,
         "freshness": FreshnessStatus.FRESH,

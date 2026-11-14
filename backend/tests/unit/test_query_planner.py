@@ -81,4 +81,3 @@ def test_calculate_collector_budget() -> None:
     assert budget["cost_per_call_minor"] == DEFAULT_COST_PER_CALL_MINOR  # 50
     assert budget["remaining_cost_minor"] == 200
     assert budget["currency"] == "INR"
-

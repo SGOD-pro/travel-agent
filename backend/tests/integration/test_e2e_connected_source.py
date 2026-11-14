@@ -170,9 +170,9 @@ class TestConnectedSourceBackedEvidenceScenario:
             published_at=now,
         )
         search_adapter = FixtureSearchAdapter(fixtures=[police_fixture])
-        extraction_adapter = FixtureWebExtractionAdapter({
-            "https://kolkatatrafficpolice.gov.in/dakshineswar-advisory": police_fixture
-        })
+        extraction_adapter = FixtureWebExtractionAdapter(
+            {"https://kolkatatrafficpolice.gov.in/dakshineswar-advisory": police_fixture}
+        )
 
         async with session_factory() as session:
             collector_service = EvidenceCollectorService(session)
@@ -181,7 +181,6 @@ class TestConnectedSourceBackedEvidenceScenario:
                 adapter=search_adapter,
                 extraction_adapter=extraction_adapter,
             )
-
 
         assert result_id is not None
         assert len(observation_ids) > 0
@@ -225,7 +224,6 @@ class TestConnectedSourceBackedEvidenceScenario:
             assert resolution_result.distance_meters is not None
             assert resolution_result.distance_meters <= 100.0
 
-
             # Step 7: Submit claim linked to official police observation
             claims_service = ClaimVerificationService(session)
             claim_data = ClaimCreate(
@@ -243,7 +241,9 @@ class TestConnectedSourceBackedEvidenceScenario:
             # Link observation with SUPPORTS
             created_claim = await claims_service.submit_claim(
                 claim_data=claim_data,
-                observations_with_support=[(first_obs, EvidenceSupportType.SUPPORTS, "div.advisory")],
+                observations_with_support=[
+                    (first_obs, EvidenceSupportType.SUPPORTS, "div.advisory")
+                ],
             )
             await session.commit()
 
@@ -256,7 +256,6 @@ class TestConnectedSourceBackedEvidenceScenario:
             evidence_links = await claims_repo.get_claim_evidence(created_claim.id)
             assert len(evidence_links) == 1
             assert evidence_links[0].observation_id == first_obs.id
-
 
             # Step 8: Contradiction handling with side by side preservation (AC 11)
             contradicting_claim_data = ClaimCreate(

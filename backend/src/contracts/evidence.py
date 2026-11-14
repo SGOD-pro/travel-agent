@@ -38,12 +38,16 @@ class HotelObservation(BaseModel):
 
     property_name: str = Field(..., min_length=1)
     location_name: str = Field(..., min_length=1)
-    price_per_night: Decimal = Field(..., description="Base room price per night, Decimal non-negative")
+    price_per_night: Decimal = Field(
+        ..., description="Base room price per night, Decimal non-negative"
+    )
     currency: Currency = Field(default=Currency.INR)
     rating: float | None = Field(default=None, ge=0.0, le=5.0)
     review_count: int | None = Field(default=None, ge=0)
     evidence_class: EvidenceClass = Field(default=EvidenceClass.INDICATIVE_SEARCH)
-    provider: str = Field(..., description="Provider registry identifier (e.g. makemytrip_scrapling_candidate)")
+    provider: str = Field(
+        ..., description="Provider registry identifier (e.g. makemytrip_scrapling_candidate)"
+    )
     source_url: str
     observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     deep_link: str
@@ -79,7 +83,9 @@ class FareObservation(BaseModel):
     currency: Currency = Field(default=Currency.INR)
     mode: TransportMode
     evidence_class: EvidenceClass = Field(default=EvidenceClass.INDICATIVE_SEARCH)
-    provider: str = Field(..., description="Provider registry identifier (e.g. redbus_scrapling_candidate)")
+    provider: str = Field(
+        ..., description="Provider registry identifier (e.g. redbus_scrapling_candidate)"
+    )
     source_url: str
     observed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     deep_link: str

@@ -93,10 +93,12 @@ def ensure_sparticuz_chromium(
     env_layer = os.environ.get("SPARTICUZ_LAYER_DIR")
     if env_layer:
         candidate_layer_dirs.append(Path(env_layer))
-    candidate_layer_dirs.extend([
-        Path("/opt/nodejs/node_modules/@sparticuz/chromium"),
-        Path("/opt"),
-    ])
+    candidate_layer_dirs.extend(
+        [
+            Path("/opt/nodejs/node_modules/@sparticuz/chromium"),
+            Path("/opt"),
+        ]
+    )
 
     resolved_sparticuz_dir: Path | None = None
     for cand in candidate_layer_dirs:
@@ -110,7 +112,10 @@ def ensure_sparticuz_chromium(
             resolved_sparticuz_dir = cand
             break
 
-    if resolved_sparticuz_dir is None or not (resolved_sparticuz_dir / "bin" / "chromium.br").is_file():
+    if (
+        resolved_sparticuz_dir is None
+        or not (resolved_sparticuz_dir / "bin" / "chromium.br").is_file()
+    ):
         return None
 
     node_bin: str | Path | None = None
@@ -147,7 +152,9 @@ def ensure_sparticuz_chromium(
 
     env = os.environ.copy()
     existing_node_path = env.get("NODE_PATH", "")
-    env["NODE_PATH"] = f"{node_modules_dir}:{existing_node_path}" if existing_node_path else str(node_modules_dir)
+    env["NODE_PATH"] = (
+        f"{node_modules_dir}:{existing_node_path}" if existing_node_path else str(node_modules_dir)
+    )
     if "AWS_EXECUTION_ENV" not in env:
         env["AWS_EXECUTION_ENV"] = "AWS_Lambda_nodejs20.x"
 
@@ -166,7 +173,9 @@ def ensure_sparticuz_chromium(
             if al2023_lib.exists():
                 curr_ld = os.environ.get("LD_LIBRARY_PATH", "")
                 if "/tmp/al2023/lib" not in curr_ld:
-                    os.environ["LD_LIBRARY_PATH"] = f"/tmp/al2023/lib:{curr_ld}" if curr_ld else "/tmp/al2023/lib"
+                    os.environ["LD_LIBRARY_PATH"] = (
+                        f"/tmp/al2023/lib:{curr_ld}" if curr_ld else "/tmp/al2023/lib"
+                    )
             fonts_dir = Path("/tmp/fonts")
             if fonts_dir.exists() and "FONTCONFIG_PATH" not in os.environ:
                 os.environ["FONTCONFIG_PATH"] = "/tmp/fonts"
@@ -253,8 +262,12 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                 except Exception:
                     executable_path = None
 
-            if executable_path == "/tmp/chromium" or (executable_path and not os.path.exists(executable_path)):
-                bootstrapped = ensure_sparticuz_chromium(target_path=executable_path or "/tmp/chromium")
+            if executable_path == "/tmp/chromium" or (
+                executable_path and not os.path.exists(executable_path)
+            ):
+                bootstrapped = ensure_sparticuz_chromium(
+                    target_path=executable_path or "/tmp/chromium"
+                )
                 if bootstrapped:
                     executable_path = bootstrapped
 
@@ -357,8 +370,10 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                 main_blocked = [
                     b
                     for b in all_blocked
-                    if b["url"] == payload.url or b["url"] == effective_url
-                    or payload.url.startswith(b["url"]) or effective_url.startswith(b["url"])
+                    if b["url"] == payload.url
+                    or b["url"] == effective_url
+                    or payload.url.startswith(b["url"])
+                    or effective_url.startswith(b["url"])
                 ]
                 if main_blocked:
                     duration_ms = int((time.monotonic() - start_time) * 1000)

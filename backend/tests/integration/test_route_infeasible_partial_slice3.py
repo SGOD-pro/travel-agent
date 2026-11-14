@@ -308,7 +308,10 @@ async def test_route_infeasible_mandatory_constraint_lifecycle(
                 assert len(persisted_route.legs) == 0
                 # Diagnostics preserved in assumptions JSONB column
                 assert len(persisted_route.assumptions) > 0
-                assert any("cannot complete service before closing" in d or "MANDATORY" in d for d in persisted_route.assumptions)
+                assert any(
+                    "cannot complete service before closing" in d or "MANDATORY" in d
+                    for d in persisted_route.assumptions
+                )
 
             # 7. Completion Reconciliation
             reconciler = CompletionReconciliationService(
@@ -512,9 +515,7 @@ async def test_route_partial_optional_stop_drop_lifecycle(
             # Claim and process worker task
             async with session_factory() as session:
                 task = (
-                    await session.execute(
-                        select(TaskModel).where(TaskModel.execution_id == job_id)
-                    )
+                    await session.execute(select(TaskModel).where(TaskModel.execution_id == job_id))
                 ).scalar_one()
                 dispatch_outbox = (
                     await session.execute(
@@ -538,16 +539,12 @@ async def test_route_partial_optional_stop_drop_lifecycle(
             # Verify persisted route is PARTIAL
             async with session_factory() as session:
                 task_done = (
-                    await session.execute(
-                        select(TaskModel).where(TaskModel.execution_id == job_id)
-                    )
+                    await session.execute(select(TaskModel).where(TaskModel.execution_id == job_id))
                 ).scalar_one()
                 assert task_done.status == "COMPLETED"
                 worker_res = (
                     await session.execute(
-                        select(WorkerResultModel).where(
-                            WorkerResultModel.id == task_done.result_id
-                        )
+                        select(WorkerResultModel).where(WorkerResultModel.id == task_done.result_id)
                     )
                 ).scalar_one()
                 route_id_str = worker_res.output_ref["route_id"]
@@ -744,17 +741,16 @@ async def test_route_system_job_failure_separation(
             # Simulate worker/system failure: Task transitions to FAILED
             async with session_factory() as session:
                 task = (
-                    await session.execute(
-                        select(TaskModel).where(TaskModel.execution_id == job_id)
-                    )
+                    await session.execute(select(TaskModel).where(TaskModel.execution_id == job_id))
                 ).scalar_one()
                 task.status = "FAILED"
-                task.error = {"code": "WORKER_PANIC", "message": "Unhandled segmentation fault in solver"}
+                task.error = {
+                    "code": "WORKER_PANIC",
+                    "message": "Unhandled segmentation fault in solver",
+                }
                 # Transition execution to FAILED
                 exec_model = (
-                    await session.execute(
-                        select(ExecutionModel).where(ExecutionModel.id == job_id)
-                    )
+                    await session.execute(select(ExecutionModel).where(ExecutionModel.id == job_id))
                 ).scalar_one()
                 exec_model.status = "FAILED"
                 await session.commit()

@@ -29,6 +29,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.execute(
-        sa.text("DROP INDEX IF EXISTS idx_canonical_places_point_geog;")
-    )
+    op.execute(sa.text("DROP INDEX IF EXISTS idx_canonical_places_point_geog;"))

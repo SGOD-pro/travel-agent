@@ -30,9 +30,13 @@ logger = logging.getLogger(__name__)
 # Sparticuz Chromium layer v130.0.0 artifact specifications (C2)
 SPARTICUZ_CHROMIUM_VERSION: str = "v130.0.0"
 SPARTICUZ_CHROMIUM_LAYER_FILENAME: str = "chromium-v130.0.0-layer.zip"
-SPARTICUZ_CHROMIUM_LAYER_SHA256: str = "c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480"
+SPARTICUZ_CHROMIUM_LAYER_SHA256: str = (
+    "c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480"
+)
 SPARTICUZ_CHROMIUM_LAYER_ARCHIVE_BYTES: int = 67_464_242  # 64.34 MB compressed archive
-SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES: int = 67_633_712  # 64.50 MB across 54 extracted files (74 archive entries)
+SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES: int = (
+    67_633_712  # 64.50 MB across 54 extracted files (74 archive entries)
+)
 
 # Packaging size thresholds conforming to spec 0003 AC-8 and measured layer artifacts
 MAX_FUNCTION_COMPRESSED_BYTES: int = 70 * 1024 * 1024  # 70 MB
@@ -77,8 +81,22 @@ def resolve_python_runtime_binary() -> str:
     """
     # Check uv managed Python 3.12 installations
     candidates = [
-        Path.home() / ".local" / "share" / "uv" / "python" / "cpython-3.12-linux-x86_64-gnu" / "bin" / "python3.12",
-        Path.home() / ".local" / "share" / "uv" / "python" / "cpython-3.12.13-linux-x86_64-gnu" / "bin" / "python3.12",
+        Path.home()
+        / ".local"
+        / "share"
+        / "uv"
+        / "python"
+        / "cpython-3.12-linux-x86_64-gnu"
+        / "bin"
+        / "python3.12",
+        Path.home()
+        / ".local"
+        / "share"
+        / "uv"
+        / "python"
+        / "cpython-3.12.13-linux-x86_64-gnu"
+        / "bin"
+        / "python3.12",
     ]
     for cand in candidates:
         if cand.exists() and os.access(cand, os.X_OK):
@@ -257,7 +275,9 @@ def build_isolated_browser_artifact(
     # Strip unneeded symbols from compiled C extensions (.so files)
     if strip_bin:
         for so_file in output_dir.rglob("*.so"):
-            subprocess.run([strip_bin, "--strip-unneeded", str(so_file)], check=False, capture_output=True)
+            subprocess.run(
+                [strip_bin, "--strip-unneeded", str(so_file)], check=False, capture_output=True
+            )
 
     # Clean out unused Playwright reporter and testing assets from package
     for dev_tool in ["htmlReport", "recorder", "traceViewer", "dashboard"]:
@@ -274,12 +294,16 @@ def build_isolated_browser_artifact(
     # 5. Strict isolation verification
     for forbidden in FORBIDDEN_HEAVY_PACKAGES:
         direct_pkg = output_dir / forbidden
-        assert not direct_pkg.exists(), f"Forbidden package {forbidden} found in artifact: {direct_pkg}"
+        assert not direct_pkg.exists(), (
+            f"Forbidden package {forbidden} found in artifact: {direct_pkg}"
+        )
 
     for mod_path in FORBIDDEN_APP_MODULES:
         rel_parts = mod_path.split(".")
         target_path = output_dir.joinpath(*rel_parts)
-        assert not target_path.exists(), f"Forbidden app module {mod_path} found in artifact: {target_path}"
+        assert not target_path.exists(), (
+            f"Forbidden app module {mod_path} found in artifact: {target_path}"
+        )
 
     # 6. Measure unpacked function size and combined size
     unpacked_function_bytes = sum(f.stat().st_size for f in output_dir.rglob("*") if f.is_file())
@@ -426,7 +450,9 @@ def verify_browser_startup_and_render_isolated_environment(
         or shutil.which("chromium")
         or shutil.which("chromium-browser")
         or shutil.which("google-chrome")
-        or str(Path.home() / ".cache" / "ms-playwright" / "chromium-1243" / "chrome-linux64" / "chrome")
+        or str(
+            Path.home() / ".cache" / "ms-playwright" / "chromium-1243" / "chrome-linux64" / "chrome"
+        )
     )
 
     verify_script = f"""
@@ -526,11 +552,17 @@ def verify_sparticuz_layer_bootstrap(
     with zipfile.ZipFile(archive_path, "r") as zf:
         namelist = set(zf.namelist())
         if "nodejs/node_modules/@sparticuz/chromium/bin/chromium.br" not in namelist:
-            raise AssertionError("Layer archive missing nodejs/node_modules/@sparticuz/chromium/bin/chromium.br")
+            raise AssertionError(
+                "Layer archive missing nodejs/node_modules/@sparticuz/chromium/bin/chromium.br"
+            )
         if "nodejs/node_modules/@sparticuz/chromium/bin/al2023.tar.br" not in namelist:
-            raise AssertionError("Layer archive missing nodejs/node_modules/@sparticuz/chromium/bin/al2023.tar.br")
+            raise AssertionError(
+                "Layer archive missing nodejs/node_modules/@sparticuz/chromium/bin/al2023.tar.br"
+            )
         if "chromium" in namelist or "opt/chromium" in namelist:
-            raise AssertionError("Layer archive unexpectedly contains uncompressed chromium binary at root")
+            raise AssertionError(
+                "Layer archive unexpectedly contains uncompressed chromium binary at root"
+            )
 
     node_bin = node_binary
     if node_bin is None:
@@ -545,7 +577,9 @@ def verify_sparticuz_layer_bootstrap(
     if node_bin is None:
         node_bin = shutil.which("node")
     if node_bin is None or not os.access(node_bin, os.X_OK):
-        raise RuntimeError("No executable Node binary available to verify Sparticuz layer decompression")
+        raise RuntimeError(
+            "No executable Node binary available to verify Sparticuz layer decompression"
+        )
 
     import tempfile
 
@@ -581,11 +615,15 @@ def verify_sparticuz_layer_bootstrap(
             check=False,
         )
         if res.returncode != 0:
-            raise RuntimeError(f"Sparticuz bootstrap failed:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
+            raise RuntimeError(
+                f"Sparticuz bootstrap failed:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"
+            )
 
         tmp_chromium = Path("/tmp/chromium")
         if not tmp_chromium.exists() or not os.access(tmp_chromium, os.X_OK):
-            raise RuntimeError(f"Bootstrap completed but {tmp_chromium} is missing or not executable")
+            raise RuntimeError(
+                f"Bootstrap completed but {tmp_chromium} is missing or not executable"
+            )
 
         with open(tmp_chromium, "rb") as f:
             magic = f.read(4)
@@ -637,4 +675,3 @@ if __name__ == "__main__":
     print(f"Browser render verification: {render_res['local_proof']}")
     layer_res = verify_sparticuz_layer_bootstrap()
     print(f"Layer bootstrap verification: {layer_res['bootstrap_status']}")
-

@@ -247,7 +247,7 @@ class MockValhallaClient:
             ]
 
             detour_occurred = False
-            for poly_coords in (exclude_polygons or []):
+            for poly_coords in exclude_polygons or []:
                 if len(poly_coords) >= 3:
                     try:
                         poly = Polygon(poly_coords)
@@ -303,4 +303,3 @@ class MockValhallaClient:
             legs=legs,
             geometry={"type": "LineString", "coordinates": all_coords},
         )
-

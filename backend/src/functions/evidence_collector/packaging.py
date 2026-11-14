@@ -61,8 +61,22 @@ def resolve_python_runtime_binary() -> str:
     """
     # Check uv managed Python 3.12 installations
     candidates = [
-        Path.home() / ".local" / "share" / "uv" / "python" / "cpython-3.12-linux-x86_64-gnu" / "bin" / "python3.12",
-        Path.home() / ".local" / "share" / "uv" / "python" / "cpython-3.12.13-linux-x86_64-gnu" / "bin" / "python3.12",
+        Path.home()
+        / ".local"
+        / "share"
+        / "uv"
+        / "python"
+        / "cpython-3.12-linux-x86_64-gnu"
+        / "bin"
+        / "python3.12",
+        Path.home()
+        / ".local"
+        / "share"
+        / "uv"
+        / "python"
+        / "cpython-3.12.13-linux-x86_64-gnu"
+        / "bin"
+        / "python3.12",
     ]
     for cand in candidates:
         if cand.exists() and os.access(cand, os.X_OK):
@@ -229,10 +243,16 @@ def build_isolated_collector_artifact(
     # 4. Strict isolation verification
     for forbidden in FORBIDDEN_HEAVY_PACKAGES:
         direct_pkg = output_dir / forbidden
-        assert not direct_pkg.exists(), f"Forbidden package {forbidden} found in artifact: {direct_pkg}"
+        assert not direct_pkg.exists(), (
+            f"Forbidden package {forbidden} found in artifact: {direct_pkg}"
+        )
 
-    assert not (output_dir / "functions" / "optimizer").exists(), "optimizer must not exist in collector artifact"
-    assert not (output_dir / "functions" / "api").exists(), "api must not exist in collector artifact"
+    assert not (output_dir / "functions" / "optimizer").exists(), (
+        "optimizer must not exist in collector artifact"
+    )
+    assert not (output_dir / "functions" / "api").exists(), (
+        "api must not exist in collector artifact"
+    )
     assert not (output_dir / "functions" / "orchestrator" / "evidence").exists(), (
         "orchestrator evidence policy must not exist in collector artifact"
     )

@@ -33,7 +33,9 @@ class VehicleContinuityViolationError(Exception):
 class NoVerifiedParkingHubError(Exception):
     """Raised when a pedestrian destination has no verified parking hub within threshold."""
 
-    def __init__(self, message: str, stop_id: UUID | None = None, stop_name: str | None = None) -> None:
+    def __init__(
+        self, message: str, stop_id: UUID | None = None, stop_name: str | None = None
+    ) -> None:
         super().__init__(message)
         self.stop_id = stop_id
         self.stop_name = stop_name

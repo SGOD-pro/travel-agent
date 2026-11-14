@@ -86,9 +86,7 @@ class TestAmbiguousResolution:
             assert result.confidence is not None and result.confidence >= 0.8
             assert result.distance_meters is not None and result.distance_meters <= 100.0
 
-    async def test_provider_id_match_resolves_definitively(
-        self, session_factory: Any
-    ) -> None:
+    async def test_provider_id_match_resolves_definitively(self, session_factory: Any) -> None:
         """AC-7: Matching authoritative provider ID resolves definitively."""
         osm_id = f"node/{uuid.uuid4().hex[:10]}"
         existing_id = uuid.uuid4()
@@ -193,9 +191,7 @@ class TestAmbiguousResolution:
             assert new_town_place.locality == "New Town, Kolkata"
             assert salt_lake_place.id != new_town_place.id
 
-    async def test_ambiguous_multiple_matches_within_100_meters(
-        self, session_factory: Any
-    ) -> None:
+    async def test_ambiguous_multiple_matches_within_100_meters(self, session_factory: Any) -> None:
         """AC-7: Multiple places within 100m matching name threshold are flagged as AMBIGUOUS."""
         test_suffix = uuid.uuid4().hex[:8]
         id_a = uuid.uuid4()
@@ -250,9 +246,7 @@ class TestAmbiguousResolution:
             assert id_a in cand_ids
             assert id_b in cand_ids
 
-    async def test_new_candidate_creation_when_no_match_exists(
-        self, session_factory: Any
-    ) -> None:
+    async def test_new_candidate_creation_when_no_match_exists(self, session_factory: Any) -> None:
         """AC-7: Candidate with unique name and coordinates creates new candidate place."""
         unique_name = f"Unique Sanctuary {uuid.uuid4().hex[:8]}"
         candidate_point = _isolated_point(82.0, 19.0)

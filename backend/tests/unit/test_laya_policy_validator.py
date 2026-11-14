@@ -207,7 +207,9 @@ class TestSingletonAndZeroChoiceBypass:
             phase=DecisionPhase.BROWSER_ELIGIBILITY,
             eligible_choices=[DecisionAction.DISPATCH_EVIDENCE_SEARCH],
         )
-        with pytest.raises(InsufficientRequiredEvidenceError, match="Insufficient required destination evidence"):
+        with pytest.raises(
+            InsufficientRequiredEvidenceError, match="Insufficient required destination evidence"
+        ):
             LayaPolicyValidator.handle_zero_choices(req, required_evidence_satisfied=False)
 
 
@@ -504,7 +506,9 @@ class TestDeterministicFallbackTable:
             phase=DecisionPhase.BROWSER_ELIGIBILITY,
             eligible_choices=[DecisionAction.DISPATCH_EVIDENCE_SEARCH],
         )
-        with pytest.raises(InsufficientRequiredEvidenceError, match="Insufficient required destination evidence"):
+        with pytest.raises(
+            InsufficientRequiredEvidenceError, match="Insufficient required destination evidence"
+        ):
             LayaPolicyValidator.resolve_fallback(
                 req,
                 DecisionStatus.FALLBACK_ERROR,

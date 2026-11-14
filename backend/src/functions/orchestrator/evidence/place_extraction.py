@@ -106,7 +106,12 @@ class PlaceExtractionService:
                 if not raw_title and excerpt_text.startswith("Place: "):
                     raw_title = excerpt_text.split("|")[0].replace("Place: ", "").strip()
 
-                if raw_title and isinstance(gps, dict) and gps.get("latitude") and gps.get("longitude"):
+                if (
+                    raw_title
+                    and isinstance(gps, dict)
+                    and gps.get("latitude")
+                    and gps.get("longitude")
+                ):
                     try:
                         lat = float(gps["latitude"])
                         lng = float(gps["longitude"])
@@ -114,7 +119,14 @@ class PlaceExtractionService:
                         # Find matching existing accumulator
                         matched_acc: PlaceEvidenceAccumulator | None = None
                         for existing in accumulators:
-                            if _is_same_place(raw_title, lat, lng, existing.canonical_name, existing.latitude, existing.longitude):
+                            if _is_same_place(
+                                raw_title,
+                                lat,
+                                lng,
+                                existing.canonical_name,
+                                existing.latitude,
+                                existing.longitude,
+                            ):
                                 matched_acc = existing
                                 break
 
@@ -142,7 +154,10 @@ class PlaceExtractionService:
                 excerpt_lower = excerpt_text.lower()
                 for acc in accumulators:
                     acc_name_norm = _normalize_place_name(acc.canonical_name)
-                    if acc_name_norm and (acc_name_norm in excerpt_lower or acc.canonical_name.lower() in excerpt_lower):
+                    if acc_name_norm and (
+                        acc_name_norm in excerpt_lower
+                        or acc.canonical_name.lower() in excerpt_lower
+                    ):
                         acc.publishers.add(publisher)
                         acc.source_urls.add(source_url)
                         acc.excerpts.append(excerpt_text)
@@ -186,14 +201,41 @@ class PlaceExtractionService:
     def _infer_category(cls, title: str, text: str) -> str:
         """Infers domain category from title and text keywords."""
         combined = f"{title} {text}".lower()
-        if any(w in combined for w in ("restaurant", "food", "cafe", "dhaba", "dining", "cuisine", "bakery", "sweet")):
+        if any(
+            w in combined
+            for w in ("restaurant", "food", "cafe", "dhaba", "dining", "cuisine", "bakery", "sweet")
+        ):
             return "restaurant"
         if any(w in combined for w in ("street food", "chaat", "snack", "roll", "stall", "vendor")):
             return "street_food"
         if any(w in combined for w in ("hotel", "resort", "lodge", "homestay", "inn", "hostel")):
             return "lodging"
-        if any(w in combined for w in ("fort", "palace", "museum", "temple", "monument", "memorial", "church", "heritage")):
+        if any(
+            w in combined
+            for w in (
+                "fort",
+                "palace",
+                "museum",
+                "temple",
+                "monument",
+                "memorial",
+                "church",
+                "heritage",
+            )
+        ):
             return "heritage"
-        if any(w in combined for w in ("park", "lake", "falls", "mountain", "hill", "garden", "wildlife", "sanctuary")):
+        if any(
+            w in combined
+            for w in (
+                "park",
+                "lake",
+                "falls",
+                "mountain",
+                "hill",
+                "garden",
+                "wildlife",
+                "sanctuary",
+            )
+        ):
             return "nature"
         return "attraction"

@@ -323,7 +323,9 @@ async def test_outbox_transport_routes_evidence_worker_to_dedicated_queue() -> N
 
     assert mock_sqs.send_message.call_count == 1
     call_args = mock_sqs.send_message.call_args[1]
-    assert call_args["QueueUrl"] == "https://sqs.ap-south-1.amazonaws.com/123/evidence-collector-queue"
+    assert (
+        call_args["QueueUrl"] == "https://sqs.ap-south-1.amazonaws.com/123/evidence-collector-queue"
+    )
 
     other_msg = OutboxMessage(
         event_id=uuid.uuid4(),

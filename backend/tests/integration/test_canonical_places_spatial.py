@@ -101,9 +101,7 @@ class TestCanonicalPlacesSpatialRepository:
             not_found = await repo.find_by_provider_id("osm_id", "node/non_existent_9999")
             assert not_found is None
 
-    async def test_annular_band_queries_2000_to_3000_meters(
-        self, session_factory: Any
-    ) -> None:
+    async def test_annular_band_queries_2000_to_3000_meters(self, session_factory: Any) -> None:
         """AC-6: PostGIS spatial queries correctly filter places in a 2000m to 3000m annular band."""
         # Origin: Center of Kolkata (Maidan / Park Street area)
         origin = CoordinatePoint(lng=88.3500, lat=22.5500)
@@ -160,17 +158,19 @@ class TestCanonicalPlacesSpatialRepository:
 
             result_ids = {p.id for p, _ in results}
             assert place_in_band_id in result_ids, "Expected 2500m place inside 2000-3000m band"
-            assert place_too_close_id not in result_ids, "1000m place should be excluded from 2000-3000m band"
-            assert place_too_far_id not in result_ids, "4000m place should be excluded from 2000-3000m band"
+            assert place_too_close_id not in result_ids, (
+                "1000m place should be excluded from 2000-3000m band"
+            )
+            assert place_too_far_id not in result_ids, (
+                "4000m place should be excluded from 2000-3000m band"
+            )
 
             # Check distance calculation
             for place, dist in results:
                 if place.id == place_in_band_id:
                     assert 2000.0 <= dist <= 3000.0, f"Distance {dist} should be in [2000, 3000]"
 
-    async def test_annular_band_queries_5000_to_7000_meters(
-        self, session_factory: Any
-    ) -> None:
+    async def test_annular_band_queries_5000_to_7000_meters(self, session_factory: Any) -> None:
         """AC-6: PostGIS spatial queries correctly filter places in a 5000m to 7000m annular band."""
         origin = CoordinatePoint(lng=88.3500, lat=22.5500)
 
@@ -226,15 +226,15 @@ class TestCanonicalPlacesSpatialRepository:
             result_ids = {p.id for p, _ in results}
             assert p_6k_id in result_ids, "Expected 6000m place inside 5000-7000m band"
             assert p_2k_id not in result_ids, "2000m place should be excluded from 5000-7000m band"
-            assert p_10k_id not in result_ids, "10000m place should be excluded from 5000-7000m band"
+            assert p_10k_id not in result_ids, (
+                "10000m place should be excluded from 5000-7000m band"
+            )
 
             for place, dist in results:
                 if place.id == p_6k_id:
                     assert 5000.0 <= dist <= 7000.0, f"Distance {dist} should be in [5000, 7000]"
 
-    async def test_update_place_and_link_identity_claims(
-        self, session_factory: Any
-    ) -> None:
+    async def test_update_place_and_link_identity_claims(self, session_factory: Any) -> None:
         """Verifies place updates and identity claim linking."""
         place_id = uuid.uuid4()
         claim_id_1 = uuid.uuid4()

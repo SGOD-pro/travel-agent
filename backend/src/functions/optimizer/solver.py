@@ -233,7 +233,7 @@ class ItineraryScheduler:
         sched_stops: list[ScheduledStop] = []
         for stop_out in optimized.stops:
             info = stop_input_map.get(stop_out.name, {})
-            is_origin = (stop_out.name == origin_name and stop_out.stop_order == 0)
+            is_origin = stop_out.name == origin_name and stop_out.stop_order == 0
             sched_stops.append(
                 ScheduledStop(
                     position=stop_out.stop_order,
@@ -245,8 +245,12 @@ class ItineraryScheduler:
                     stay_duration_minutes=stop_out.dwell_seconds // 60,
                     window_start=stop_out.window_start,
                     window_end=stop_out.window_end,
-                    is_hours_assumed=bool(info.get("is_hours_assumed", False)) if not is_origin else False,
-                    hours_status=str(info.get("hours_status", "ORIGIN" if is_origin else "UNKNOWN")),
+                    is_hours_assumed=bool(info.get("is_hours_assumed", False))
+                    if not is_origin
+                    else False,
+                    hours_status=str(
+                        info.get("hours_status", "ORIGIN" if is_origin else "UNKNOWN")
+                    ),
                 )
             )
 

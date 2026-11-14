@@ -48,15 +48,17 @@ from functions.orchestrator.execution.completion_consumer import (
     process_batch as completion_process_batch,
 )
 from functions.orchestrator.execution.consumer import process_batch as runner_process_batch
+from functions.orchestrator.execution.executor_registry import EXECUTOR_REGISTRY
 from functions.orchestrator.execution.worker_consumer import (
     process_batch as worker_process_batch,
 )
-from functions.orchestrator.execution.executor_registry import EXECUTOR_REGISTRY
 from middleware.auth import AuthenticatedUser, get_current_user
+
 
 # Inject a mock executor for the E2E test graph tasks so that dispatch succeeds
 async def _mock_executor(payload: Any) -> Any:
     return {"status": "mock_success", "payload_received": payload}
+
 
 EXECUTOR_REGISTRY[("EVIDENCE", "collect")] = _mock_executor
 EXECUTOR_REGISTRY[("TEST", "resume")] = _mock_executor
@@ -172,9 +174,7 @@ async def main() -> None:
 
         async with session_factory() as session:
             exec_row = (
-                await session.execute(
-                    select(ExecutionModel).where(ExecutionModel.id == job_id)
-                )
+                await session.execute(select(ExecutionModel).where(ExecutionModel.id == job_id))
             ).scalar_one_or_none()
             assert exec_row is not None, "Execution record missing in database"
 
@@ -186,7 +186,9 @@ async def main() -> None:
             )
             start_event = outbox_res.scalar_one_or_none()
             assert start_event is not None, "EXECUTION_START outbox event not emitted"
-            print(f" -> Verified database: Execution {exec_row.status}, Outbox Event {start_event.id} (EXECUTION_START)")
+            print(
+                f" -> Verified database: Execution {exec_row.status}, Outbox Event {start_event.id} (EXECUTION_START)"
+            )
 
         # ----------------------------------------------------------------------
         # STEP 2: EXECUTION_START Consumer -> WAITING_TASKS + TASK_DISPATCH
@@ -219,11 +221,11 @@ async def main() -> None:
 
         async with session_factory() as session:
             exec_row = (
-                await session.execute(
-                    select(ExecutionModel).where(ExecutionModel.id == job_id)
-                )
+                await session.execute(select(ExecutionModel).where(ExecutionModel.id == job_id))
             ).scalar_one_or_none()
-            assert exec_row.status == "WAITING_TASKS", f"Expected WAITING_TASKS, got {exec_row.status}"
+            assert exec_row.status == "WAITING_TASKS", (
+                f"Expected WAITING_TASKS, got {exec_row.status}"
+            )
 
             task_res = await session.execute(
                 select(TaskModel).where(TaskModel.execution_id == job_id)
@@ -240,7 +242,9 @@ async def main() -> None:
             )
             dispatch_event = dispatch_outbox_res.scalar_one_or_none()
             assert dispatch_event is not None, "TASK_DISPATCH outbox event not emitted"
-            print(f" -> Verified: Execution status is WAITING_TASKS, Task {dispatched_task.id} (PENDING), Outbox TASK_DISPATCH emitted")
+            print(
+                f" -> Verified: Execution status is WAITING_TASKS, Task {dispatched_task.id} (PENDING), Outbox TASK_DISPATCH emitted"
+            )
 
         # ----------------------------------------------------------------------
         # STEP 3: TASK_DISPATCH Worker Consumer -> Worker claim and completion
@@ -276,21 +280,21 @@ async def main() -> None:
 
         async with session_factory() as session:
             updated_task = (
-                await session.execute(
-                    select(TaskModel).where(TaskModel.id == dispatched_task.id)
-                )
+                await session.execute(select(TaskModel).where(TaskModel.id == dispatched_task.id))
             ).scalar_one()
-            assert updated_task.status == "COMPLETED", f"Expected task COMPLETED, got {updated_task.status}"
+            assert updated_task.status == "COMPLETED", (
+                f"Expected task COMPLETED, got {updated_task.status}"
+            )
 
             res_record = (
                 await session.execute(
-                    select(WorkerResultModel).where(
-                        WorkerResultModel.task_id == dispatched_task.id
-                    )
+                    select(WorkerResultModel).where(WorkerResultModel.task_id == dispatched_task.id)
                 )
             ).scalar_one_or_none()
             assert res_record is not None, "WorkerResultModel record missing"
-            print(f" -> Verified: Task {updated_task.id} status is COMPLETED with WorkerResult recorded")
+            print(
+                f" -> Verified: Task {updated_task.id} status is COMPLETED with WorkerResult recorded"
+            )
 
         # ----------------------------------------------------------------------
         # STEP 4: TASK_COMPLETED Completion Consumer -> Reconcile & Emit RESUME
@@ -333,12 +337,14 @@ async def main() -> None:
             assert resume_event is not None, "EXECUTION_RESUME outbox event not emitted"
 
             exec_row = (
-                await session.execute(
-                    select(ExecutionModel).where(ExecutionModel.id == job_id)
-                )
+                await session.execute(select(ExecutionModel).where(ExecutionModel.id == job_id))
             ).scalar_one()
-            assert exec_row.status == "RUNNING", f"Expected RUNNING after completion reconciliation, got {exec_row.status}"
-            print(f" -> Verified: Execution transitioned to RUNNING, Outbox EXECUTION_RESUME emitted ({resume_event.id})")
+            assert exec_row.status == "RUNNING", (
+                f"Expected RUNNING after completion reconciliation, got {exec_row.status}"
+            )
+            print(
+                f" -> Verified: Execution transitioned to RUNNING, Outbox EXECUTION_RESUME emitted ({resume_event.id})"
+            )
 
         # ----------------------------------------------------------------------
         # STEP 5: EXECUTION_RESUME Consumer -> Actual Graph Continuation -> SUCCEEDED
@@ -366,9 +372,7 @@ async def main() -> None:
 
         async with session_factory() as session:
             exec_row = (
-                await session.execute(
-                    select(ExecutionModel).where(ExecutionModel.id == job_id)
-                )
+                await session.execute(select(ExecutionModel).where(ExecutionModel.id == job_id))
             ).scalar_one()
             assert exec_row.status == "SUCCEEDED", f"Expected SUCCEEDED, got {exec_row.status}"
 
@@ -381,18 +385,24 @@ async def main() -> None:
                 )
             ).scalar_one_or_none()
             assert terminal_outbox is not None, "EXECUTION_SUCCEEDED outbox event not emitted"
-            print(" -> Verified: Execution reached terminal SUCCEEDED, Outbox EXECUTION_SUCCEEDED emitted")
+            print(
+                " -> Verified: Execution reached terminal SUCCEEDED, Outbox EXECUTION_SUCCEEDED emitted"
+            )
 
         # ----------------------------------------------------------------------
         # STEP 6: Terminal Job Status and Timeline Query via HTTP API
         # ----------------------------------------------------------------------
-        print("\n[Step 6] Verifying terminal job status and timeline via GET /api/v1/jobs/{job_id}...")
+        print(
+            "\n[Step 6] Verifying terminal job status and timeline via GET /api/v1/jobs/{job_id}..."
+        )
         status_resp = await client.get(f"/api/v1/jobs/{job_id}")
         assert status_resp.status_code == 200, f"Failed job status query: {status_resp.text}"
         status_payload = status_resp.json()
 
         print(f" -> API Job Status: {status_payload['status']}")
-        assert status_payload["status"].upper() == "SUCCEEDED", f"Expected 'SUCCEEDED', got {status_payload['status']}"
+        assert status_payload["status"].upper() == "SUCCEEDED", (
+            f"Expected 'SUCCEEDED', got {status_payload['status']}"
+        )
         assert status_payload["progress"]["tasks_total"] == 1
         assert status_payload["progress"]["tasks_completed"] == 1
         assert status_payload["progress"]["tasks_failed"] == 0

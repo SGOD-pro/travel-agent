@@ -12,7 +12,6 @@ Tests against live PostgreSQL with actual LangGraph AsyncPostgresSaver checkpoin
 from __future__ import annotations
 
 import asyncio
-import re
 import socket
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -21,11 +20,8 @@ from typing import Any
 import pytest
 import sqlalchemy as sa
 from langgraph.graph import END, START, StateGraph
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
+from sqlalchemy import select
 
-from config.config import settings
 from functions.orchestrator.execution import (
     CompletionReconciliationService,
     ExecutionModel,
@@ -39,7 +35,6 @@ from functions.orchestrator.execution import (
     TaskModel,
     WorkerFencingService,
 )
-from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
 from functions.orchestrator.execution.job_events import get_job_events
 
 _orig_getaddrinfo = socket.getaddrinfo

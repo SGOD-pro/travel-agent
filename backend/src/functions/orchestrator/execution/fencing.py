@@ -145,9 +145,7 @@ class WorkerFencingService:
 
         # Consistent lock order: Parent (executions) FIRST
         exec_stmt = (
-            select(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .with_for_update()
+            select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
         )
         exec_res = await self._session.execute(exec_stmt)
         execution = exec_res.scalar_one_or_none()
@@ -179,11 +177,7 @@ class WorkerFencingService:
             )
 
         # Consistent lock order: Child (tasks) SECOND
-        task_stmt = (
-            select(TaskModel)
-            .where(TaskModel.id == task_id)
-            .with_for_update()
-        )
+        task_stmt = select(TaskModel).where(TaskModel.id == task_id).with_for_update()
         task_res = await self._session.execute(task_stmt)
         task = task_res.scalar_one_or_none()
 
@@ -206,9 +200,7 @@ class WorkerFencingService:
             )
 
         if task.deadline_at <= now:
-            raise DeadlineExceededError(
-                f"Task {task_id} deadline passed at {task.deadline_at}"
-            )
+            raise DeadlineExceededError(f"Task {task_id} deadline passed at {task.deadline_at}")
 
         if task.status in ("COMPLETED", "FAILED", "CANCELLED"):
             raise TaskAlreadyTerminalError(
@@ -227,11 +219,7 @@ class WorkerFencingService:
             )
 
         # Check if task is currently under active retry backoff delay
-        if (
-            task.status == "PENDING"
-            and task.lease_expiry is not None
-            and task.lease_expiry > now
-        ):
+        if task.status == "PENDING" and task.lease_expiry is not None and task.lease_expiry > now:
             raise TaskInRetryBackoffError(
                 f"Task {task_id} is in retry backoff until {task.lease_expiry}"
             )
@@ -315,9 +303,7 @@ class WorkerFencingService:
 
         # 1. Lock executions parent row
         exec_stmt = (
-            select(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .with_for_update()
+            select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
         )
         exec_res = await self._session.execute(exec_stmt)
         execution = exec_res.scalar_one_or_none()
@@ -370,9 +356,7 @@ class WorkerFencingService:
             )
 
         if task.deadline_at <= now:
-            raise DeadlineExceededError(
-                f"Task {task_id} deadline passed; lease renewal rejected"
-            )
+            raise DeadlineExceededError(f"Task {task_id} deadline passed; lease renewal rejected")
 
         if (
             task.lease_token != lease_token
@@ -441,9 +425,7 @@ class WorkerFencingService:
 
         # 1. Lock executions parent row FIRST
         exec_stmt = (
-            select(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .with_for_update()
+            select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
         )
         exec_res = await self._session.execute(exec_stmt)
         execution = exec_res.scalar_one_or_none()
@@ -627,9 +609,7 @@ class WorkerFencingService:
 
         # 1. Lock executions parent row FIRST
         exec_stmt = (
-            select(ExecutionModel)
-            .where(ExecutionModel.id == execution_id)
-            .with_for_update()
+            select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
         )
         exec_res = await self._session.execute(exec_stmt)
         execution = exec_res.scalar_one_or_none()
@@ -682,9 +662,7 @@ class WorkerFencingService:
             )
 
         if task.deadline_at <= now:
-            raise DeadlineExceededError(
-                f"Task {task_id} deadline passed; failure rejected"
-            )
+            raise DeadlineExceededError(f"Task {task_id} deadline passed; failure rejected")
 
         if (
             task.lease_token != lease_token
@@ -797,9 +775,7 @@ class WorkerFencingService:
             )
             row = res.mappings().first()
             if row is None:
-                raise LeaseFencingError(
-                    f"Task {task_id} failure update failed: stale lease token"
-                )
+                raise LeaseFencingError(f"Task {task_id} failure update failed: stale lease token")
 
             self._session.add(outbox_event)
             await self._session.flush()

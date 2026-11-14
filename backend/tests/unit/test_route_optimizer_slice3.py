@@ -295,7 +295,9 @@ async def test_multimodal_transition_service_injects_parking_hub() -> None:
         lng=88.3570,
     )
 
-    async def mock_search_fn(point: Point, radius: float) -> list[tuple[CanonicalPlaceModel, float]]:
+    async def mock_search_fn(
+        point: Point, radius: float
+    ) -> list[tuple[CanonicalPlaceModel, float]]:
         return [(mock_hub, 250.0)]
 
     service = MultimodalTransitionService(search_parking_fn=mock_search_fn)
@@ -371,7 +373,9 @@ async def test_multimodal_transition_service_injects_parking_hub() -> None:
 async def test_multimodal_transition_service_fails_closed_when_no_parking_hub() -> None:
     """Verifies AC-4 and AC-5: Fails closed with INFEASIBLE and NO_VERIFIED_PARKING_HUB."""
 
-    async def mock_empty_search(point: Point, radius: float) -> list[tuple[CanonicalPlaceModel, float]]:
+    async def mock_empty_search(
+        point: Point, radius: float
+    ) -> list[tuple[CanonicalPlaceModel, float]]:
         return []
 
     service = MultimodalTransitionService(search_parking_fn=mock_empty_search)
@@ -414,7 +418,9 @@ async def test_multimodal_transition_service_walk_chaining() -> None:
         lng=88.3520,
     )
 
-    async def mock_search_fn(point: Point, radius: float) -> list[tuple[CanonicalPlaceModel, float]]:
+    async def mock_search_fn(
+        point: Point, radius: float
+    ) -> list[tuple[CanonicalPlaceModel, float]]:
         return [(mock_hub, 200.0)]
 
     service = MultimodalTransitionService(search_parking_fn=mock_search_fn)
@@ -510,4 +516,3 @@ async def test_multimodal_transition_service_walking_round_trip() -> None:
     assert route.legs[0].transport_mode == TransportMode.WALKING
     assert route.legs[1].transport_mode == TransportMode.WALKING
     assert route.legs[1].to_stop_name == "Hotel"
-

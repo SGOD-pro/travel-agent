@@ -101,20 +101,24 @@ class ClaimVerificationService:
 
             initial_contradictions = []
             for existing_c, reason_msg in conflicting_claims:
-                initial_contradictions.append({
-                    "claim_id": str(existing_c.id),
-                    "reason": reason_msg,
-                    "detected_at": now_iso,
-                })
+                initial_contradictions.append(
+                    {
+                        "claim_id": str(existing_c.id),
+                        "reason": reason_msg,
+                        "detected_at": now_iso,
+                    }
+                )
             claim_data.contradictions = initial_contradictions
 
             decision_history = list(claim_data.decision_history)
-            decision_history.append({
-                "event": "CLAIM_SUBMITTED_WITH_CONFLICT",
-                "verification": VerificationStatus.CONFLICTED.value,
-                "contradictions_count": len(conflicting_claims),
-                "at": now_iso,
-            })
+            decision_history.append(
+                {
+                    "event": "CLAIM_SUBMITTED_WITH_CONFLICT",
+                    "verification": VerificationStatus.CONFLICTED.value,
+                    "contradictions_count": len(conflicting_claims),
+                    "at": now_iso,
+                }
+            )
             claim_data.decision_history = decision_history
 
             created_claim = await self._repo.create_claim(claim_data)
@@ -138,13 +142,15 @@ class ClaimVerificationService:
             )
 
             decision_history = list(claim_data.decision_history)
-            decision_history.append({
-                "event": "CLAIM_EVALUATED",
-                "verification": verif.value,
-                "availability": avail.value,
-                "freshness": claim_data.freshness.value,
-                "at": now_iso,
-            })
+            decision_history.append(
+                {
+                    "event": "CLAIM_EVALUATED",
+                    "verification": verif.value,
+                    "availability": avail.value,
+                    "freshness": claim_data.freshness.value,
+                    "at": now_iso,
+                }
+            )
             claim_data.decision_history = decision_history
 
             created_claim = await self._repo.create_claim(claim_data)
@@ -203,12 +209,14 @@ class ClaimVerificationService:
         if new_freshness.value != claim.freshness:
             now_iso = datetime.now(UTC).isoformat()
             history = list(claim.decision_history)
-            history.append({
-                "event": "FRESHNESS_TRANSITION",
-                "from": claim.freshness,
-                "to": new_freshness.value,
-                "at": now_iso,
-            })
+            history.append(
+                {
+                    "event": "FRESHNESS_TRANSITION",
+                    "from": claim.freshness,
+                    "to": new_freshness.value,
+                    "at": now_iso,
+                }
+            )
             update_dto = ClaimUpdate(
                 freshness=new_freshness,
                 decision_history=history,
