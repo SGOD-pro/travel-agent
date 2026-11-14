@@ -85,7 +85,7 @@ class TestSerpApiAdapter:
         assert len(results) == 3
 
         # Check first organic observation
-        obs1 = results[0]
+        obs1 = next(r for r in results if r.excerpt_locator == "serpapi:organic[0].snippet")
         assert obs1.publisher == "kolkatatrafficpolice.gov.in"
         assert (
             obs1.canonical_url == "https://kolkatatrafficpolice.gov.in/advisory2026"
@@ -97,7 +97,7 @@ class TestSerpApiAdapter:
         assert obs1.artifact_ref["position"] == 1
 
         # Check place observation
-        place_obs = results[2]
+        place_obs = next(r for r in results if r.excerpt_locator == "serpapi:places[0]")
         assert "Dakshineswar Kali Temple" in place_obs.excerpt_text
         assert "Rating: 4.7" in place_obs.excerpt_text
         assert place_obs.extraction_method == "SERPAPI_SEARCH"

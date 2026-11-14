@@ -44,6 +44,8 @@ PERMITTED_CONTRACT_FILES: tuple[str, ...] = (
     "routing.py",
     "money.py",
     "trips.py",
+    "candidate.py",
+    "llm.py",
 )
 
 

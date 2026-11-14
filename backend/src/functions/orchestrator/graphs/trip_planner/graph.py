@@ -2999,6 +2999,9 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
     env_max = os.environ.get("BROWSER_MAX_ESCALATION_TASKS")
     if env_max and env_max.isdigit():
         max_slots = int(env_max)
+    elif "brief" in state or "trip_id" in state:
+        # For 0007 trip planner workflow, default to maximum 2 browser URLs when not explicitly overridden
+        max_slots = 2
     else:
         try:
             from config.config import get_settings
@@ -3007,8 +3010,6 @@ def escalate_dynamic_evidence_node(state: TripPlanningState) -> dict[str, Any]:
         except Exception:
             max_slots = 3
 
-    # For 0007 trip planner workflow, apply maximum 2 browser URLs without changing general worker cap
-    max_slots = min(2, max_slots)
     available_slots = max(0, max_slots - len(already_dispatched))
 
     if available_slots <= 0:
@@ -3410,12 +3411,17 @@ async def route_evidence_decision_node(
     )
 
     max_slots = 3
-    try:
-        max_slots = int(get_settings().BROWSER_MAX_ESCALATION_TASKS)
-    except Exception:
-        max_slots = 3
-    # For 0007 trip planner workflow, apply maximum 2 browser URLs without changing general worker cap
-    max_slots = min(2, max_slots)
+    env_max = os.environ.get("BROWSER_MAX_ESCALATION_TASKS")
+    if env_max and env_max.isdigit():
+        max_slots = int(env_max)
+    elif "brief" in state or "trip_id" in state:
+        # For 0007 trip planner workflow, default to maximum 2 browser URLs when not explicitly overridden
+        max_slots = 2
+    else:
+        try:
+            max_slots = int(get_settings().BROWSER_MAX_ESCALATION_TASKS)
+        except Exception:
+            max_slots = 3
     remaining_browser_slots = max(0, max_slots - len(already_dispatched))
 
     # 2. Extract canonical destination requirements: identity and coordinates
