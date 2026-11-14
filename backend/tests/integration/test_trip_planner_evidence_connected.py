@@ -25,10 +25,6 @@ import pytest
 from sqlalchemy import select
 
 from config.config import settings
-from contracts.candidate import (
-    CoordinatePoint,
-    RegisteredCandidate,
-)
 from functions.api.models import TripModel
 from functions.browser.driver import PlaywrightBrowserAdapter
 from functions.evidence_collector.models import SourceObservationModel
@@ -38,13 +34,7 @@ from functions.evidence_collector.service import (
     EvidenceCollectorService,
     TaskDispatchEnvelope,
 )
-from functions.orchestrator.evidence.claim_ingestion import (
-    ingest_claims_from_observations,
-)
-from functions.orchestrator.evidence.eligibility import (
-    DeterministicEvidenceEligibilityGate,
-)
-from functions.orchestrator.evidence.models import ClaimModel
+from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
 from functions.orchestrator.evidence.query_planner import QueryPlanningService
 from functions.orchestrator.execution.checkpointer import (
     TransactionBoundCheckpointer,
@@ -86,11 +76,13 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
         "static_extraction_status": "PENDING",
         "browser_fallback_status": "PENDING",
         "persistence_status": "PENDING",
+        "graph_ingestion_and_eligibility_status": "PENDING",
         "runner_resume_status": "PENDING",
         "queries_planned_count": 0,
         "queries_executed_count": 0,
         "persisted_observations_count": 0,
         "persisted_claims_count": 0,
+        "persisted_evidence_count": 0,
         "source_urls": [],
         "verified_candidates": [],
         "editorial_candidates": [],
@@ -121,22 +113,8 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     execution_manifest["queries_planned_count"] = len(planned_queries)
     execution_manifest["details"].append(f"Planned queries: {planned_queries}")
 
-    # 2. Permitted Static Web Extraction via Scrapling
-    scrapling_adapter = ScraplingExtractionAdapter()
-    test_target_url = "https://en.wikipedia.org/wiki/Victoria_Memorial,_Kolkata"
-    try:
-        page_obs, browser_reqs = await scrapling_adapter.extract_page(
-            test_target_url, category="attraction"
-        )
-        execution_manifest["static_extraction_status"] = "COMPLETED"
-        execution_manifest["details"].append(
-            f"Scrapling extracted {len(page_obs)} static observations from {test_target_url}"
-        )
-    except Exception as exc:
-        execution_manifest["static_extraction_status"] = "SKIPPED"
-        execution_manifest["details"].append(
-            f"Static extraction unavailable ({type(exc).__name__}): {exc}; marked SKIPPED"
-        )
+    # 2. Selected Public Search Result for Worker Static Extraction
+    selected_target_url = "https://en.wikipedia.org/wiki/Victoria_Memorial,_Kolkata"
 
     # 3. Initialize Graph and Start Execution on Isolated PostgreSQL
     owner_id = uuid.uuid4()
@@ -174,10 +152,28 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     runner = GraphRunnerService(session_factory, default_graph=graph)
 
     # Start graph: halts at AWAIT_EVIDENCE_RESULTS with pending EVIDENCE collect task
+    # Seed an unsupported control candidate to verify the running graph keeps it unverified
     start_res = await runner.handle_execution_start(
         event=ExecutionStartEvent(
             execution_id=exec_id,
-            payload={"trip_id": str(trip_id), "brief": brief_data},
+            payload={
+                "trip_id": str(trip_id),
+                "owner_id": str(owner_id),
+                "brief": brief_data,
+                "discovered_places": [
+                    {
+                        "name": "Fictional Cloud Observatory",
+                        "category": "attraction",
+                        "lat": 22.5000,
+                        "lng": 88.3000,
+                        "latitude": 22.5000,
+                        "longitude": 88.3000,
+                        "confidence": 0.5,
+                        "uncertainty": "EDITORIAL_DISCOVERY",
+                        "is_candidate": True,
+                    }
+                ],
+            },
         ),
         graph=graph,
     )
@@ -185,7 +181,7 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     assert len(start_res.task_ids) > 0
     collect_task_id = start_res.task_ids[0]
 
-    # Verify task in PostgreSQL
+    # Verify task in PostgreSQL and wire selected search result URL into task payload
     async with session_factory() as session:
         task_record = (
             await session.execute(select(TaskModel).where(TaskModel.id == collect_task_id))
@@ -193,13 +189,20 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
         assert task_record.worker == "EVIDENCE"
         assert task_record.action == "collect"
 
+        task_payload = dict(task_record.payload_ref or {})
+        task_payload["urls"] = [{"url": selected_target_url, "category": "attraction"}]
+        task_record.payload_ref = task_payload
+        await session.commit()
+
     # 4. Exercise the Real Dispatched Evidence Worker Collection Entry Point with Live SerpAPI
-    # No manual injection: execute_collection_task claims task, queries provider, stages, and completes
+    # and Worker Static Extraction Path (Stage 1 and Stage 2)
+    # execute_collection_task claims task, queries SerpAPI, extracts static page, stages, and completes
     live_serp_adapter = SerpApiAdapter(
         api_key=serpapi_key.strip(),
         timeout_seconds=15.0,
         default_engine="google_maps",
     )
+    scrapling_adapter = ScraplingExtractionAdapter()
 
     envelope = TaskDispatchEnvelope(
         event_id=uuid.uuid4(),
@@ -211,7 +214,7 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
         context_version=1,
         worker="EVIDENCE",
         action="collect",
-        inner_payload=task_record.payload_ref,
+        inner_payload=task_payload,
     )
 
     try:
@@ -225,10 +228,12 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
             await session.commit()
 
         execution_manifest["live_search_status"] = "COMPLETED"
+        execution_manifest["static_extraction_status"] = "COMPLETED"
         execution_manifest["queries_executed_count"] = live_serp_adapter.call_count
         execution_manifest["details"].append(
             f"Evidence worker executed {live_serp_adapter.call_count} live SerpAPI queries "
-            f"in {live_serp_adapter.last_latency_ms:.1f}ms, staging {len(obs_ids)} observations"
+            f"in {live_serp_adapter.last_latency_ms:.1f}ms and static extraction on {selected_target_url}, "
+            f"staging {len(obs_ids)} observations"
         )
     except Exception as exc:
         execution_manifest["live_search_status"] = "FAILED"
@@ -296,7 +301,7 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
         )
         raise
 
-    # 8. Browser Fallback Evaluation
+    # 8. Browser Fallback Evaluation (Stage 3)
     # Prove browser fallback through the actual dispatch path if a target required it; else record PENDING
     browser_dispatched_tasks: list[TaskModel] = []
     if resume_res.task_ids:
@@ -343,82 +348,62 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
             "No dynamic page emitted NEEDS_BROWSER; browser fallback gate recorded as PENDING"
         )
 
-    # 9. Prove Ingested Claims and Candidate Eligibility
-    top_verified_place: RegisteredCandidate | None = None
-    for obs in persisted_obs:
-        art = obs.artifact_ref or {}
-        if isinstance(art, dict):
-            title = art.get("title")
-            gps = art.get("gps_coordinates") or art.get("gps") or {}
-            if title and isinstance(gps, dict) and gps.get("latitude") and gps.get("longitude"):
-                top_verified_place = RegisteredCandidate(
-                    primary_name=str(title).strip(),
-                    category="attraction",
-                    point=CoordinatePoint(lat=float(gps["latitude"]), lng=float(gps["longitude"])),
-                )
-                break
-
-    assert top_verified_place is not None, (
-        "Real worker collection must extract local places with GPS"
-    )
-
-    # Add an unsupported control candidate that must stay unverified
-    unsupported_control = RegisteredCandidate(
-        primary_name="Fictional Cloud Observatory",
-        category="attraction",
-        point=CoordinatePoint(lat=22.5000, lng=88.3000),
-    )
-
-    candidates_to_evaluate = [top_verified_place, unsupported_control]
-
+    # 9. Verify Graph Itself Ingests Claims and Evaluates Candidate Eligibility (Stage 4)
+    # We do NOT invoke ingestion functions or eligibility gates separately in the test;
+    # we verify database claims, evidence links, and checkpointed state produced by the running graph.
     async with session_factory() as session:
-        # Ingest claims through the real claim ingestion path
-        ingested_claims = await ingest_claims_from_observations(
-            session=session,
-            execution_id=exec_id,
-            candidates=candidates_to_evaluate,
-            owner_id=owner_id,
-        )
-        await session.commit()
-        execution_manifest["persisted_claims_count"] = len(ingested_claims)
+        claims_stmt = select(ClaimModel).where(ClaimModel.execution_id == exec_id)
+        persisted_claims = list((await session.execute(claims_stmt)).scalars().all())
+        execution_manifest["persisted_claims_count"] = len(persisted_claims)
 
-        # Match place_id if candidate was registered by graph
-        claim_stmt = select(ClaimModel).where(ClaimModel.execution_id == exec_id)
-        persisted_claims = list((await session.execute(claim_stmt)).scalars().all())
-        matching_claim = next(
-            (
-                c
-                for c in persisted_claims
-                if c.subject_id == top_verified_place.primary_name.strip().lower()
-            ),
-            None,
+        claim_ids = [c.id for c in persisted_claims]
+        evidence_stmt = select(ClaimEvidenceModel).where(
+            ClaimEvidenceModel.claim_id.in_(claim_ids)
         )
-        if matching_claim is not None and matching_claim.place_id is not None:
-            top_verified_place = top_verified_place.model_copy(
-                update={"place_id": matching_claim.place_id}
-            )
+        persisted_evidence = list((await session.execute(evidence_stmt)).scalars().all())
+        execution_manifest["persisted_evidence_count"] = len(persisted_evidence)
 
-        gate = DeterministicEvidenceEligibilityGate(session=session)
-        elig_report = await gate.evaluate_candidate_eligibility(
-            candidates=[top_verified_place, unsupported_control],
-            execution_id=exec_id,
-            owner_id=owner_id,
+    checkpoint_config = {"configurable": {"thread_id": str(exec_id)}}
+    checkpoint_state = await graph.aget_state(config=checkpoint_config)
+    checkpoint_values = (
+        checkpoint_state.values if checkpoint_state and checkpoint_state.values else {}
+    )
+    graph_eligible = checkpoint_values.get("eligible_stops", [])
+    graph_editorial = checkpoint_values.get("editorial_recommendations", [])
+
+    for stop in graph_eligible:
+        s_name = (
+            stop.get("primary_name")
+            if isinstance(stop, dict)
+            else getattr(stop, "primary_name", "")
         )
+        pt = stop.get("point") if isinstance(stop, dict) else getattr(stop, "point", None)
+        coords = None
+        if isinstance(pt, dict) and pt.get("lat") and pt.get("lng"):
+            coords = [float(pt["lat"]), float(pt["lng"])]
+        elif hasattr(pt, "lat") and hasattr(pt, "lng"):
+            coords = [float(pt.lat), float(pt.lng)]
+        execution_manifest["verified_candidates"].append({"name": s_name, "coords": coords})
 
-        for stop in elig_report.eligible_stops:
-            execution_manifest["verified_candidates"].append(
-                {
-                    "name": stop.primary_name,
-                    "coords": [stop.point.lat, stop.point.lng] if stop.point else None,
-                }
-            )
-        for rec in elig_report.editorial_recommendations:
-            execution_manifest["editorial_candidates"].append(rec.primary_name)
+    for rec in graph_editorial:
+        r_name = (
+            rec.get("primary_name")
+            if isinstance(rec, dict)
+            else getattr(rec, "primary_name", "")
+        )
+        execution_manifest["editorial_candidates"].append(r_name)
+
+    if (
+        execution_manifest["persisted_claims_count"] > 0
+        and execution_manifest["persisted_evidence_count"] > 0
+        and len(execution_manifest["verified_candidates"]) > 0
+    ):
+        execution_manifest["graph_ingestion_and_eligibility_status"] = "COMPLETED"
 
     if (
         execution_manifest["live_search_status"] == "COMPLETED"
         and execution_manifest["persistence_status"] == "COMPLETED"
-        and len(execution_manifest["verified_candidates"]) > 0
+        and execution_manifest["graph_ingestion_and_eligibility_status"] == "COMPLETED"
     ):
         execution_manifest["live_collection_proven"] = True
 
@@ -433,28 +418,35 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     print(f"4. Database Persistence:      {execution_manifest['persistence_status']}")
     print(f"   Persisted Observations:    {execution_manifest['persisted_observations_count']}")
     print(f"   Persisted Claims:          {execution_manifest['persisted_claims_count']}")
+    print(f"   Persisted Evidence Links:  {execution_manifest['persisted_evidence_count']}")
     print("   Source URLs (Sanitized):")
     for u in execution_manifest["source_urls"][:5]:
         print(f"     - {u}")
     print(f"5. Graph Runner Resume:       {execution_manifest['runner_resume_status']}")
+    print(f"6. Graph Ingestion & Gate:    {execution_manifest['graph_ingestion_and_eligibility_status']}")
     print(
-        f"6. Verified Candidates:       {[c['name'] for c in execution_manifest['verified_candidates']]}"
+        f"7. Verified Candidates:       {[c['name'] for c in execution_manifest['verified_candidates']]}"
     )
-    print(f"7. Editorial Candidates:      {execution_manifest['editorial_candidates']}")
-    print(f"8. Live Collection Proven:    {execution_manifest['live_collection_proven']}")
+    print(f"8. Editorial Candidates:      {execution_manifest['editorial_candidates']}")
+    print(f"9. Live Collection Proven:    {execution_manifest['live_collection_proven']}")
     print("=" * 70)
 
     # 11. Assertions
     assert execution_manifest["live_search_status"] == "COMPLETED"
+    assert execution_manifest["static_extraction_status"] == "COMPLETED"
     assert execution_manifest["persistence_status"] == "COMPLETED"
     assert execution_manifest["runner_resume_status"] == "COMPLETED"
     assert execution_manifest["browser_fallback_status"] in ("COMPLETED", "PENDING")
+    assert execution_manifest["graph_ingestion_and_eligibility_status"] == "COMPLETED"
     assert execution_manifest["persisted_observations_count"] > 0
+    assert execution_manifest["persisted_claims_count"] > 0
+    assert execution_manifest["persisted_evidence_count"] > 0
     assert execution_manifest["live_collection_proven"] is True
 
-    # Real place verified by live observations
+    # Real places verified by graph from live observations
     verified_names = [c["name"] for c in execution_manifest["verified_candidates"]]
-    assert top_verified_place.primary_name in verified_names
+    assert len(verified_names) > 0, "Running graph must verify at least one candidate"
 
-    # Unsupported control candidate remains unverified
+    # Unsupported control candidate remains unverified as editorial recommendation
     assert "Fictional Cloud Observatory" in execution_manifest["editorial_candidates"]
+    assert "Fictional Cloud Observatory" not in verified_names
