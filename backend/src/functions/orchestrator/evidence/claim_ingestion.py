@@ -52,12 +52,165 @@ CASUAL_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
 )
 
+CLOSED_OR_UNAVAILABLE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\b(?:permanently|temporarily)\s+closed\b", re.IGNORECASE),
+    re.compile(r"\bclosed\s+(?:permanently|temporarily|down)\b", re.IGNORECASE),
+    re.compile(
+        r"\b(?:no\s+longer\s+(?:open|in\s+operation|operating)|ceased\s+operations|shut\s+down)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:defunct|demolished|abandoned|not\s+operational)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bunder\s+(?:renovation|construction)\s+and\s+closed\b",
+        re.IGNORECASE,
+    ),
+)
+
+DISTINCT_ENTITY_MODIFIERS: frozenset[str] = frozenset(
+    {
+        "cafe",
+        "canteen",
+        "restaurant",
+        "food",
+        "bar",
+        "pub",
+        "dhaba",
+        "mess",
+        "hotel",
+        "resort",
+        "lodge",
+        "motel",
+        "hostel",
+        "inn",
+        "stay",
+        "guest",
+        "house",
+        "shop",
+        "store",
+        "bookstore",
+        "counter",
+        "gift",
+        "stall",
+        "kiosk",
+        "mart",
+        "bazaar",
+        "market",
+        "bus",
+        "stand",
+        "stop",
+        "station",
+        "terminus",
+        "terminal",
+        "metro",
+        "railway",
+        "train",
+        "airport",
+        "depot",
+        "school",
+        "college",
+        "university",
+        "institute",
+        "academy",
+        "class",
+        "classes",
+        "hospital",
+        "clinic",
+        "dispensary",
+        "pharmacy",
+        "medical",
+        "nursing",
+        "police",
+        "outpost",
+        "thana",
+        "post",
+        "office",
+        "bank",
+        "atm",
+        "branch",
+        "parking",
+        "garage",
+        "gate",
+        "quarters",
+        "colony",
+        "society",
+        "club",
+        "association",
+        "complex",
+        "auditorium",
+        "library",
+    }
+)
+
+ALLOWED_MONUMENT_DESCRIPTORS: frozenset[str] = frozenset(
+    {
+        "hall",
+        "memorial",
+        "monument",
+        "temple",
+        "math",
+        "museum",
+        "palace",
+        "fort",
+        "church",
+        "cathedral",
+        "mosque",
+        "masjid",
+        "gurdwara",
+    }
+)
+
 
 def _is_casual_mention(text: str) -> bool:
     """Detects whether text is merely a casual passing mention."""
     if not text:
         return False
     return any(p.search(text) for p in CASUAL_PATTERNS)
+
+
+def _is_place_closed_or_unavailable(obs: SourceObservationModel) -> bool:
+    """Detects whether observation indicates the place is permanently closed or unavailable."""
+    art_ref = getattr(obs, "artifact_ref", None)
+    if isinstance(art_ref, dict):
+        bus_status = str(art_ref.get("business_status") or "").upper()
+        if bus_status in ("CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY", "INACTIVE"):
+            return True
+        op_status = str(art_ref.get("operating_status") or "").upper()
+        if op_status in ("CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY", "INACTIVE"):
+            return True
+        status_val = str(art_ref.get("status") or "").upper()
+        if status_val in (
+            "CLOSED",
+            "PERMANENTLY_CLOSED",
+            "TEMPORARILY_CLOSED",
+            "DEFUNCT",
+            "INACTIVE",
+            "UNAVAILABLE",
+        ):
+            return True
+        if art_ref.get("permanently_closed") is True or art_ref.get("is_closed") is True:
+            return True
+
+    excerpt = getattr(obs, "excerpt_text", "") or ""
+    if any(p.search(excerpt) for p in CLOSED_OR_UNAVAILABLE_PATTERNS):
+        return True
+
+    return False
+
+
+def _tokens_match_ignoring_inflection(t1: list[str], t2: list[str]) -> bool:
+    """Matches two token sequences allowing only minor grammatical inflections like plural s."""
+    if len(t1) != len(t2):
+        return False
+    for a, b in zip(t1, t2, strict=True):
+        if a == b:
+            continue
+        if a.rstrip("s") == b.rstrip("s"):
+            continue
+        return False
+    return True
 
 
 def _normalize_name(name: str) -> str:
@@ -153,53 +306,137 @@ def _observation_supports_candidate(
 ) -> tuple[bool, tuple[float, float] | None]:
     """Evaluates whether an observation genuinely supports candidate existence.
 
-    Guarantees:
-    1. A name appearing only in URL or publisher without substantive content does not match.
-    2. An unrelated nearby coordinate (different place name within 1.0 km) does not match.
-    3. Same-name places with coordinates > 1.0 km away do not match.
-    4. Casual mentions in passing text without coordinates or structured place metadata do not match.
-    5. Returns (is_match, verified_coordinates). Verified coordinates come strictly from the observation.
+    Guarantees conforming to spec 0007 AC-13, AC-14:
+    1. Permanently closed, defunct, demolished, or unavailable places never support active existence.
+    2. Shorter candidate names matching different longer titles (e.g. 'Museum' vs 'Indian Museum',
+       or 'National Museum' vs 'National Museum Cafe') are rejected.
+    3. Distinct subsidiary entities (canteen, cafe, bus stop, metro station, school, hospital, police)
+       are never assumed to be the same place.
+    4. Observations whose coordinates or metadata describe a different entity or incompatible category
+       (e.g. transit station, lodging, ATM) never verify the candidate.
+    5. A name appearing only in URL or publisher without substantive content does not match.
+    6. An unrelated nearby coordinate (different place name within 1.0 km) does not match.
+    7. Same-name places with coordinates > 1.0 km away do not match.
+    8. Casual mentions in passing text without coordinates or structured place metadata do not match.
+    9. Returns (is_match, verified_coordinates). Verified coordinates come strictly from the observation.
     """
+    # 0. Check closed or unavailable status
+    if _is_place_closed_or_unavailable(obs):
+        return False, None
+
     cand_name = candidate.primary_name.strip()
     cand_norm = _normalize_name(cand_name)
-    if not cand_norm:
+    cand_tokens = cand_norm.split()
+    if not cand_tokens:
         return False, None
 
     obs_title = _extract_observation_title(obs)
     obs_title_norm = _normalize_name(obs_title) if obs_title else ""
-    excerpt = (obs.excerpt_text or "").strip()
-    excerpt_lower = excerpt.lower()
-    obs_coords = _extract_observation_coordinates(obs)
+    title_tokens = obs_title_norm.split() if obs_title_norm else []
 
-    # 1. Check place identity: does the observation substantively identify the candidate?
-    title_matches = False
-    if obs_title_norm:
-        if (
-            cand_norm == obs_title_norm
-            or cand_norm in obs_title_norm
-            or obs_title_norm in cand_norm
+    art_ref = getattr(obs, "artifact_ref", None)
+    art_category = ""
+    art_types: list[str] = []
+    art_title_norm = ""
+    art_tokens: list[str] = []
+    if isinstance(art_ref, dict):
+        art_title = (
+            art_ref.get("title")
+            or art_ref.get("name")
+            or art_ref.get("place_name")
+            or art_ref.get("property_name")
+        )
+        if art_title and isinstance(art_title, str):
+            art_title_norm = _normalize_name(art_title)
+            art_tokens = art_title_norm.split()
+        art_category = str(art_ref.get("category") or "").lower()
+        raw_types = art_ref.get("types") or []
+        if isinstance(raw_types, list):
+            art_types = [str(t).lower() for t in raw_types]
+
+    # Incompatible entity category check
+    cand_cat = (candidate.category or "").lower()
+    incompatible_categories = {
+        "transit",
+        "transit_station",
+        "bus_station",
+        "train_station",
+        "subway_station",
+        "lodging",
+        "hotel",
+        "atm",
+        "bank",
+        "hospital",
+        "police",
+        "school",
+    }
+    if cand_cat in ("attraction", "heritage", "monument", "nature", "sightseeing"):
+        if art_category in incompatible_categories or any(
+            t in incompatible_categories for t in art_types
         ):
+            return False, None
+
+    # Determine structured entity title from observation
+    entity_norm = art_title_norm or obs_title_norm
+    entity_tokens = art_tokens or title_tokens
+
+    title_matches = False
+    if entity_norm:
+        if cand_norm == entity_norm:
+            title_matches = True
+        elif _tokens_match_ignoring_inflection(cand_tokens, entity_tokens):
             title_matches = True
         else:
-            cand_tokens = set(cand_norm.split())
-            title_tokens = set(obs_title_norm.split())
-            if cand_tokens and cand_tokens.issubset(title_tokens):
-                title_matches = True
+            extra_in_entity = set(entity_tokens) - set(cand_tokens)
+            extra_in_cand = set(cand_tokens) - set(entity_tokens)
 
+            # If the entity title contains distinct entity modifiers (cafe, bus stop, school, etc.), reject
+            if extra_in_entity & DISTINCT_ENTITY_MODIFIERS:
+                return False, None
+            if extra_in_cand & DISTINCT_ENTITY_MODIFIERS:
+                return False, None
+
+            # Shorter candidate name matching a different longer title:
+            # If candidate has fewer words than entity, reject unless candidate has >= 2 words
+            # and ALL extra tokens in entity are allowed monument descriptors.
+            if len(cand_tokens) < len(entity_tokens):
+                if len(cand_tokens) < 2 or not extra_in_entity.issubset(
+                    ALLOWED_MONUMENT_DESCRIPTORS
+                ):
+                    return False, None
+                if set(cand_tokens).issubset(set(entity_tokens)):
+                    title_matches = True
+
+            # Candidate name has more words than entity:
+            elif len(cand_tokens) > len(entity_tokens):
+                if len(entity_tokens) < 2 or not extra_in_cand.issubset(
+                    ALLOWED_MONUMENT_DESCRIPTORS
+                ):
+                    return False, None
+                if set(entity_tokens).issubset(set(cand_tokens)):
+                    title_matches = True
+
+    excerpt = (obs.excerpt_text or "").strip()
+    excerpt_lower = excerpt.lower()
     excerpt_matches = False
-    if not title_matches and excerpt:
-        # Candidate name must be present in excerpt text (not just in URL or publisher)
+    if not title_matches and not entity_norm and excerpt:
+        # Check text-only observations when no structured title is present
         if cand_norm in excerpt_lower or cand_name.lower() in excerpt_lower:
-            # Reject casual passing mentions without structured title or coordinates
             if not _is_casual_mention(excerpt):
-                excerpt_matches = True
+                cand_lower = cand_norm
+                idx = excerpt_lower.find(cand_lower)
+                trailing_text = excerpt_lower[idx + len(cand_lower) : idx + len(cand_lower) + 30]
+                trailing_words = set(re.findall(r"\b\w+\b", trailing_text))
+                if not (trailing_words & DISTINCT_ENTITY_MODIFIERS):
+                    excerpt_matches = True
 
     name_matches = title_matches or excerpt_matches
     if not name_matches:
-        # An unrelated nearby place name must never match, even if coordinates are nearby
+        # Metadata or title describes a different entity
         return False, None
 
-    # 2. Spatial verification against candidate location
+    # Spatial verification against candidate location
+    obs_coords = _extract_observation_coordinates(obs)
     if obs_coords is not None and candidate.point is not None:
         dist = haversine_distance_km(
             candidate.point.lat,
@@ -210,15 +447,12 @@ def _observation_supports_candidate(
         if dist > 1.0:
             # Same-name place located far away: reject
             return False, None
-        # Name matches AND observation coordinates match within 1.0 km
         return True, obs_coords
 
     if obs_coords is not None and candidate.point is None:
         return True, obs_coords
 
-    # 3. Observation has no independent coordinates (obs_coords is None):
-    # Match the observation if it has substantive title or detailed excerpt,
-    # but return None for verified coordinates so candidate's own coordinates are not used as proof.
+    # Observation has no independent coordinates
     if title_matches or (
         excerpt_matches and len(excerpt) >= 40 and not _is_casual_mention(excerpt)
     ):

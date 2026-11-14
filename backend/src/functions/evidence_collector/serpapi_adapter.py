@@ -67,6 +67,7 @@ class SerpApiAdapter:
         cost_per_query_minor: int = DEFAULT_SERPAPI_COST_MINOR,
         min_request_interval_seconds: float = 0.1,
         client: httpx.AsyncClient | None = None,
+        default_engine: str | None = None,
     ) -> None:
         self._api_key = api_key or settings.SERPAPI_API_KEY
         self._base_url = (base_url or settings.SERPAPI_BASE_URL).rstrip("/")
@@ -74,6 +75,7 @@ class SerpApiAdapter:
         self._cost_per_query_minor = cost_per_query_minor
         self._min_request_interval = min_request_interval_seconds
         self._client = client
+        self._default_engine = default_engine
         self._last_request_time: float = 0.0
         self._rate_limit_lock = asyncio.Lock()
 
@@ -224,8 +226,13 @@ class SerpApiAdapter:
                 "SERPAPI_API_KEY is not configured; live search requires valid credentials"
             )
 
+        selected_engine = (
+            (extra_params or {}).get("engine")
+            or (self._default_engine if engine == "google" else engine)
+            or "google"
+        )
         params: dict[str, Any] = {
-            "engine": engine,
+            "engine": selected_engine,
             "q": query,
             "api_key": self._api_key,
             "num": limit,

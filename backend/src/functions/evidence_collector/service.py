@@ -520,7 +520,14 @@ class EvidenceCollectorService:
                 # Execute provider call outside database transaction
                 call_success = False
                 try:
-                    results = await active_adapter.search(q, limit=5)
+                    if isinstance(q, dict):
+                        q_str = str(q.get("query") or q.get("q") or "")
+                        q_extra = {k: v for k, v in q.items() if k not in ("query", "q")}
+                        results = await active_adapter.search(
+                            q_str, limit=5, extra_params=q_extra or None
+                        )
+                    else:
+                        results = await active_adapter.search(q, limit=5)
                     collected_observations.extend(results)
                     calls_made += 1
                     cost_spent += cost_per_call

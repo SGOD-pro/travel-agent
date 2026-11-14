@@ -147,8 +147,10 @@ class CandidateRegistrationService:
                 new_id = uuid.uuid4()
                 create_data = CanonicalPlaceCreate(
                     id=new_id,
-                    primary_name=proposal.name,
-                    locality=proposal.address or "Corridor Destination",
+                    primary_name=proposal.name[:256],
+                    locality=(
+                        proposal.address[:128] if proposal.address else "Corridor Destination"
+                    ),
                     point=point,
                     names=[proposal.name],
                     access_status=AccessStatus.UNKNOWN,

@@ -625,3 +625,195 @@ class TestClaimIngestionIntegration:
             await session.commit()
             # Does not duplicate or error
             assert len(second_run) == 0
+
+    async def test_shorter_candidate_matching_longer_title_stays_unverified(
+        self, session_factory: Any
+    ) -> None:
+        """Shorter candidate name matching a different longer place title must not verify candidate."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Observation describes a cafe inside or near the museum: 'National Museum Cafe'
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://kolkatacafe.com/national-museum-cafe",
+                canonical_url="https://kolkatacafe.com/national-museum-cafe",
+                publisher="Kolkata Cafe Guide",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Place: National Museum Cafe | Cozy espresso bar and bakery.",
+                excerpt_locator="serpapi:places[0]",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={
+                    "category": "restaurant",
+                    "status": "AVAILABLE",
+                    "title": "National Museum Cafe",
+                    "latitude": 22.5580,
+                    "longitude": 88.3510,
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            # Shorter candidate name: 'National Museum'
+            candidate = RegisteredCandidate(
+                primary_name="National Museum",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5580, lng=88.3510),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Must NOT promote the shorter candidate from a longer distinct title
+            assert len(claims) == 0
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
+
+    async def test_permanently_closed_or_defunct_place_stays_unverified(
+        self, session_factory: Any
+    ) -> None:
+        """Observation indicating a place is permanently closed or defunct must not support existence."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Observation for a permanently closed heritage palace
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtourism.gov.in/old-heritage-palace",
+                canonical_url="https://wbtourism.gov.in/old-heritage-palace",
+                publisher="West Bengal Tourism",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Place: Old Heritage Palace | The historical palace is permanently closed to visitors.",
+                excerpt_locator="div.notice",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "attraction",
+                    "business_status": "CLOSED_PERMANENTLY",
+                    "title": "Old Heritage Palace",
+                    "latitude": 22.5680,
+                    "longitude": 88.3520,
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            candidate = RegisteredCandidate(
+                primary_name="Old Heritage Palace",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5680, lng=88.3520),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Must NOT ingest active existence claim for a closed place
+            assert len(claims) == 0
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
+
+    async def test_coordinates_and_metadata_describing_different_entity_stays_unverified(
+        self, session_factory: Any
+    ) -> None:
+        """Observation whose coordinates or metadata describe a different entity must not verify candidate."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Observation for Victoria Memorial Bus Stand (transit stop, not the monument)
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://calcuttatransit.org/vm-bus-stand",
+                canonical_url="https://calcuttatransit.org/vm-bus-stand",
+                publisher="Calcutta Transit",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Place: Victoria Memorial Bus Stand | Busy transit stop on Queens Way.",
+                excerpt_locator="serpapi:places[0]",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={
+                    "category": "transit_station",
+                    "types": ["transit_station", "bus_stop"],
+                    "status": "AVAILABLE",
+                    "title": "Victoria Memorial Bus Stand",
+                    "latitude": 22.5448,
+                    "longitude": 88.3425,
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            # Candidate is the attraction 'Victoria Memorial'
+            candidate = RegisteredCandidate(
+                primary_name="Victoria Memorial",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5448, lng=88.3425),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Transit station metadata must not promote the attraction candidate
+            assert len(claims) == 0
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
