@@ -63,6 +63,8 @@ from functions.orchestrator.execution.runner import (
 from functions.orchestrator.graphs.trip_planner import (
     compile_trip_planning_workflow,
 )
+from functions.route_optimizer.fixtures import MockValhallaClient
+from functions.route_optimizer.service import RouteOptimizerWorkerService
 
 
 async def _create_test_execution_and_trip(
@@ -471,3 +473,310 @@ class TestTripPlannerEvidenceRunnerLifecycle:
                 report.editorial_recommendations[0].existence_status
                 == CandidateExistenceStatus.UNVERIFIED
             )
+
+    async def test_food_and_accommodation_research_traced_through_running_graph_to_proposal(
+        self, session_factory: async_sessionmaker[AsyncSession]
+    ) -> None:
+        """AC-13, AC-14: Traces food dishes vs dining businesses and indicative lodging to proposal output."""
+        owner_id, trip_id, exec_id = await _create_test_execution_and_trip(session_factory)
+        checkpointer = TransactionBoundCheckpointer(session_factory=session_factory)
+        graph = compile_trip_planning_workflow(checkpointer=checkpointer)
+        runner = GraphRunnerService(session_factory, default_graph=graph)
+
+        brief_data = {
+            "origin_name": "Kolkata",
+            "origin_lat": 22.5726,
+            "origin_lng": 88.3639,
+            "destinations": [
+                {
+                    "name": "Kolkata",
+                    "latitude": 22.5726,
+                    "longitude": 88.3639,
+                    "stay_days": 2,
+                }
+            ],
+            "start_date": "2026-12-01",
+            "end_date": "2026-12-03",
+            "traveler_preferences": ["bengali sweets", "heritage dining", "moderate budget"],
+            "dietary_preferences": ["halal"],
+            "budget": {"tier": "MODERATE"},
+        }
+
+        # 1. Start execution and verify planned queries for food and accommodation
+        start_event = ExecutionStartEvent(
+            execution_id=exec_id,
+            payload={
+                "trip_id": str(trip_id),
+                "owner_id": str(owner_id),
+                "execution_id": str(exec_id),
+                "brief": brief_data,
+            },
+        )
+        start_res = await runner.handle_execution_start(event=start_event, graph=graph)
+        assert start_res.status == "WAITING_TASKS"
+        collect_task_id = start_res.task_ids[0]
+
+        async with session_factory() as session:
+            task = (
+                await session.execute(select(TaskModel).where(TaskModel.id == collect_task_id))
+            ).scalar_one()
+            queries = task.payload_ref["queries"]
+            assert len(queries) <= 4
+            assert any(
+                "food" in q.lower() or "dining" in q.lower() or "sweets" in q.lower()
+                for q in queries
+            )
+            assert any("hotel" in q.lower() or "stay" in q.lower() for q in queries)
+
+        # 2. Stage authentic observations in PostgreSQL
+        now = datetime.now(UTC)
+        async with session_factory() as session:
+            # Dining business venue observation
+            obs_dining = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtourism.gov.in/dining/kewpie",
+                canonical_url="https://wbtourism.gov.in/dining/kewpie",
+                publisher="West Bengal Tourism",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now - timedelta(days=2),
+                excerpt_text="Kewpie's Kitchen is an authentic traditional Bengali dining restaurant located in Elgin Kolkata.",
+                excerpt_locator="div.dining-spot",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "restaurant",
+                    "title": "Kewpie's Kitchen",
+                    "status": "AVAILABLE",
+                    "latitude": 22.5348,
+                    "longitude": 88.3512,
+                    "gps_coordinates": {"latitude": 22.5348, "longitude": 88.3512},
+                },
+                created_at=now,
+            )
+            # Dish observation (culinary preparation, not physical venue)
+            obs_dish = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtourism.gov.in/culinary-heritage",
+                canonical_url="https://wbtourism.gov.in/culinary-heritage",
+                publisher="West Bengal Culinary Board",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now - timedelta(days=2),
+                excerpt_text="Celebrated Kolkata street food specialties include Kolkata Kathi Roll and sweet Rosogolla dumplings.",
+                excerpt_locator="div.culinary-list",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "culinary",
+                    "title": "Kolkata Culinary Specialties",
+                },
+                created_at=now,
+            )
+            # Lodging observation (indicative search rates only)
+            obs_lodging = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://hotels-aggregator.com/heritage-inn",
+                canonical_url="https://hotels-aggregator.com/heritage-inn",
+                publisher="Hotels Aggregator",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now - timedelta(days=1),
+                excerpt_text="Heritage Inn Kolkata offers comfortable rooms near Park Street.",
+                excerpt_locator="div.hotel-card",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "lodging",
+                    "title": "Heritage Inn Kolkata",
+                    "property_name": "Heritage Inn Kolkata",
+                    "price_per_night": 4500,
+                    "currency": "INR",
+                    "evidence_class": "INDICATIVE_SEARCH",
+                    "latitude": 22.5510,
+                    "longitude": 88.3530,
+                    "gps_coordinates": {"latitude": 22.5510, "longitude": 88.3530},
+                },
+                created_at=now,
+            )
+            # Unrelated commercial office observation
+            obs_office = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://business-directory.com/bengal-corp-tech",
+                canonical_url="https://business-directory.com/bengal-corp-tech",
+                publisher="Business Directory",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now - timedelta(days=10),
+                excerpt_text="Bengal Corporate IT Tech Park is an office building in Salt Lake Sector V.",
+                excerpt_locator="div.office-listing",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "office",
+                    "title": "Bengal Corporate IT Tech Park",
+                    "latitude": 22.5700,
+                    "longitude": 88.4300,
+                    "gps_coordinates": {"latitude": 22.5700, "longitude": 88.4300},
+                },
+                created_at=now,
+            )
+            session.add_all([obs_dining, obs_dish, obs_lodging, obs_office])
+            await session.commit()
+
+        # 3. Complete collect task with empty browser escalation
+        async with session_factory() as session:
+            fencing = EvidenceCollectorService(session).fencing_service
+            claim_msg = TaskQueueMessage(
+                task_id=collect_task_id,
+                execution_id=exec_id,
+                attempt=0,
+            )
+            claim_res = await fencing.claim_task(
+                message=claim_msg,
+                worker="EVIDENCE",
+                action="collect",
+                expected_context_version=1,
+            )
+            result_id = await fencing.complete_task(
+                execution_id=exec_id,
+                task_id=collect_task_id,
+                lease_token=claim_res.lease_token,
+                output={
+                    "observation_ids": [],
+                    "browser_requests": [],
+                    "search_completed": True,
+                },
+                expected_context_version=1,
+            )
+
+        # 4. Reconcile completion event
+        reconciler = CompletionReconciliationService(session_factory, default_graph=graph)
+        rec_res = await reconciler.reconcile_task_event(
+            event=TaskCompletionEvent(
+                event_id=uuid.uuid4(),
+                task_id=collect_task_id,
+                execution_id=exec_id,
+                attempt=claim_res.attempt,
+                result_id=result_id,
+            ),
+            graph=graph,
+        )
+        assert rec_res.checkpoint_updated is True
+        assert rec_res.graph_resumed is True
+
+        # 5. Resume runner -> evaluates evidence, derives candidates and claims, dispatches route optimizer
+        resume_res = await runner.handle_execution_resume(
+            event=ExecutionResumeEvent(
+                execution_id=exec_id,
+                triggered_by_task_id=collect_task_id,
+            ),
+            graph=graph,
+        )
+        assert resume_res.status == "WAITING_TASKS"
+        assert len(resume_res.task_ids) == 1
+        route_task_id = resume_res.task_ids[0]
+
+        # 6. Execute route optimizer worker task and reconcile completion
+        async with session_factory() as session:
+            outbox_stmt = select(OutboxEventModel).where(
+                OutboxEventModel.task_id == route_task_id,
+                OutboxEventModel.kind == "TASK_DISPATCH",
+            )
+            dispatch_outbox = (await session.execute(outbox_stmt)).scalar_one()
+            dispatch_payload = dispatch_outbox.payload_ref or dispatch_outbox.payload
+
+        mock_valhalla = MockValhallaClient()
+        async with session_factory() as session:
+            worker_service = RouteOptimizerWorkerService(
+                session=session,
+                valhalla_client=mock_valhalla,
+            )
+            persisted_route_id, worker_output = await worker_service.execute_task(dispatch_payload)
+            await session.commit()
+
+        async with session_factory() as session:
+            route_task_row = (
+                await session.execute(select(TaskModel).where(TaskModel.id == route_task_id))
+            ).scalar_one()
+
+        rec_res2 = await reconciler.reconcile_task_event(
+            event=TaskCompletionEvent(
+                event_id=uuid.uuid4(),
+                task_id=route_task_id,
+                execution_id=exec_id,
+                attempt=route_task_row.attempt,
+                result_id=route_task_row.result_id,
+                output=worker_output.model_dump(mode="json"),
+            ),
+            graph=graph,
+        )
+        assert rec_res2.checkpoint_updated is True
+        assert rec_res2.graph_resumed is True
+
+        # 7. Final resume runner to complete graph and synthesize proposal
+        resume_res2 = await runner.handle_execution_resume(
+            event=ExecutionResumeEvent(
+                execution_id=exec_id,
+                triggered_by_task_id=route_task_id,
+            ),
+            graph=graph,
+        )
+        assert resume_res2.status == "SUCCEEDED"
+
+        # 8. Verify proposal outputs and honest provenance
+        checkpoint_config = {"configurable": {"thread_id": str(exec_id)}}
+        checkpoint_state = await graph.aget_state(config=checkpoint_config)
+        assert checkpoint_state is not None
+        values = checkpoint_state.values or {}
+        proposal = values.get("proposal")
+        assert proposal is not None
+
+        # Verify Food Research
+        food_res = proposal.get("food_research") or values.get("food_research")
+        assert food_res is not None
+        local_dishes = food_res.get("local_dishes", [])
+        assert len(local_dishes) > 0
+        dish_names = [d["name"] for d in local_dishes]
+        assert any("Kathi Roll" in n or "Rosogolla" in n for n in dish_names)
+        for d in local_dishes:
+            assert d.get("is_business_venue") is False
+            assert d.get("uncertainty") == "EDITORIAL_DISCOVERY"
+
+        dining_recs = food_res.get("dining_recommendations", [])
+        dining_names = [d["name"] for d in dining_recs]
+        # Authentic dining venue appears with source provenance
+        assert "Kewpie's Kitchen" in dining_names
+        kewpie_item = next(d for d in dining_recs if d["name"] == "Kewpie's Kitchen")
+        assert kewpie_item.get("source_url") == "https://wbtourism.gov.in/dining/kewpie"
+        assert kewpie_item.get("identity") is not None
+        assert kewpie_item.get("retrieval_time") is not None
+        # Unrelated commercial office is NOT presented as dining recommendation
+        assert "Bengal Corporate IT Tech Park" not in dining_names
+        # Dish name is NOT presented as a dining business
+        assert not any("Rosogolla" == d["name"] for d in dining_recs)
+
+        # Verify Accommodation Research
+        accom_res = proposal.get("accommodation_research") or values.get("accommodation_research")
+        assert accom_res is not None
+        indicative_options = accom_res.get("indicative_options", [])
+        hotel_names = [h.get("property_name") for h in indicative_options]
+        assert "Heritage Inn Kolkata" in hotel_names
+        h_item = next(
+            h for h in indicative_options if h.get("property_name") == "Heritage Inn Kolkata"
+        )
+        assert h_item.get("evidence_class") == "INDICATIVE_SEARCH"
+        assert h_item.get("is_indicative_search") is True
+        assert h_item.get("is_verified_offer") is False
+        assert h_item.get("booking_confirmed") is False
+        assert h_item.get("price_per_night") == 4500
+        assert h_item.get("source_url") == "https://hotels-aggregator.com/heritage-inn"
+        assert h_item.get("retrieval_time") is not None
+        assert "live_room_availability_unverified" in h_item.get("unavailable_details", [])
+
+        # Assert honest notices avoiding fabricated guarantees
+        pricing_notice = accom_res.get("pricing_notice", "")
+        assert "indicative search estimates" in pricing_notice
+        assert "Verified date specific offers" in pricing_notice
+        assert "No cheapest hotel claims" in accom_res.get("cheapest_claim_guarantee", "")
+        assert accom_res.get("verified_offers") == []

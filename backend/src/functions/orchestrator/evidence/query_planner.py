@@ -42,10 +42,13 @@ class QueryPlanningService:
         """
         ceiling = min(max_queries, DEFAULT_MAX_QUERIES)
 
-        # Extract destinations and origin from brief
+        # Extract destinations, origin, dates, preferences, and budget from brief
         destinations: list[str] = []
         origin: str = ""
         dietary: list[str] = []
+        traveler_prefs: list[str] = []
+        start_date_val: Any = None
+        budget_tier: str = "MODERATE"
 
         if isinstance(brief, TripBrief):
             origin = brief.origin_name.strip()
@@ -53,6 +56,11 @@ class QueryPlanningService:
                 if d.name and d.name.strip():
                     destinations.append(d.name.strip())
             dietary = list(brief.dietary_preferences)
+            traveler_prefs = list(brief.dietary_preferences) + list(brief.accessibility_requirements)
+            start_date_val = brief.start_date
+            if brief.target_budget is not None:
+                # If budget is provided as Money
+                budget_tier = "BUDGET" if getattr(brief.target_budget, "amount_minor", 0) < 500000 else "MODERATE"
         elif isinstance(brief, dict):
             origin = str(brief.get("origin_name") or "").strip()
             raw_dests = brief.get("destinations", [])
@@ -73,18 +81,48 @@ class QueryPlanningService:
             raw_dietary = brief.get("dietary_preferences", [])
             if isinstance(raw_dietary, list):
                 dietary = [str(x).strip() for x in raw_dietary if x and str(x).strip()]
+            raw_prefs = brief.get("traveler_preferences", [])
+            if isinstance(raw_prefs, list):
+                traveler_prefs = [str(x).strip() for x in raw_prefs if x and str(x).strip()]
+            start_date_val = brief.get("start_date")
+            budget_tier = str(brief.get("budget_tier") or "MODERATE").upper()
 
         primary_dest = destinations[0] if destinations else "Unknown Destination"
 
+        # Date context for seasonal/stay relevance
+        date_context = ""
+        if start_date_val is not None:
+            if hasattr(start_date_val, "strftime"):
+                date_context = f" {start_date_val.strftime('%B')}"
+            elif isinstance(start_date_val, str) and len(start_date_val) >= 7:
+                try:
+                    from datetime import date as dt_date
+                    parsed_d = dt_date.fromisoformat(start_date_val[:10])
+                    date_context = f" {parsed_d.strftime('%B')}"
+                except Exception:
+                    pass
+
+        # Food preferences context
         diet_context = ""
         if dietary:
             diet_context = f" {dietary[0]}"
+        elif traveler_prefs:
+            food_terms = [p for p in traveler_prefs if any(k in p.lower() for k in ("food", "dining", "cuisine", "street", "sweet", "veg"))]
+            if food_terms:
+                diet_context = f" {food_terms[0]}"
+
+        # Budget tier context for accommodation
+        hotel_tier = "budget "
+        if budget_tier == "LUXURY":
+            hotel_tier = "luxury resorts "
+        elif budget_tier == "MODERATE":
+            hotel_tier = "budget "
 
         # Formulate ordered candidate queries
         query_candidates: list[str] = [
             f"{primary_dest} top attractions sightseeing places to visit",
             f"{primary_dest}{diet_context} authentic local food restaurants",
-            f"{primary_dest} budget hotels affordable accommodation",
+            f"{primary_dest} {hotel_tier}hotels affordable accommodation{date_context}".strip(),
         ]
 
         if origin:

@@ -540,7 +540,46 @@ class ScraplingExtractionAdapter(WebExtractionPort):
             return [placeholder_obs], [browser_request]
 
         # 3. Static extraction by category
-        if category in ("destination", "poi", "attraction"):
+        if category in ("lodging", "hotel", "stay"):
+            hotel_obs = self.parse_hotel_html(
+                html_content=html_content, destination="destination", source_url=effective_url
+            )
+            if hotel_obs:
+                results: list[RawObservation] = []
+                for idx, h in enumerate(hotel_obs):
+                    raw_text = (
+                        f"Hotel: {h.property_name} | Indicative Rate: ₹{h.price_per_night} per night "
+                        f"(Indicative Search) | Location: {h.location_name}"
+                    )
+                    results.append(
+                        RawObservation(
+                            source_url=effective_url,
+                            canonical_url=canonical_url,
+                            publisher=publisher,
+                            content_hash=compute_content_hash(raw_text),
+                            retrieved_at=retrieved_at,
+                            excerpt_text=raw_text,
+                            excerpt_locator=f"scrapling:hotels[{idx}]",
+                            extraction_method="SCRAPLING_HTTP",
+                            artifact_ref={
+                                "category": "lodging",
+                                "property_name": h.property_name,
+                                "price_per_night": float(h.price_per_night),
+                                "currency": str(
+                                    h.currency.value if hasattr(h.currency, "value") else h.currency
+                                ),
+                                "rating": h.rating,
+                                "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                                "is_indicative_search": True,
+                                "is_verified_offer": False,
+                                "booking_confirmed": False,
+                                "taxes_unknown": True,
+                            },
+                        )
+                    )
+                return results, []
+
+        elif category in ("destination", "poi", "attraction"):
             obs = self.parse_destination_html(html_content, effective_url, retrieved_at)
             if obs:
                 return obs, []
@@ -585,7 +624,10 @@ class ScraplingExtractionAdapter(WebExtractionPort):
                 if raw_t:
                     page_title = raw_t.split("|")[0].split("-")[0].strip()
 
-        artifact_metadata: dict[str, Any] = {"category": category}
+        artifact_metadata: dict[str, Any] = {
+            "category": category,
+            "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+        }
         if page_title:
             artifact_metadata["title"] = page_title
             artifact_metadata["page_title"] = page_title

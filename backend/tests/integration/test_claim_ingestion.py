@@ -1190,3 +1190,241 @@ class TestClaimIngestionIntegration:
                 "Conflicting claims"
                 in report.excluded_candidates[0].diagnostics.get("contradiction_reason", "")
             )
+
+    async def test_accommodation_preserves_indicative_search_and_never_promotes_to_live_offer(
+        self, session_factory: Any
+    ) -> None:
+        """Accommodation rates from search must stay INDICATIVE_SEARCH without promotion to live offers."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://makemytrip.com/hotels/kolkata-grand-hotel",
+                canonical_url="https://makemytrip.com/hotels/kolkata-grand-hotel",
+                publisher="MakeMyTrip",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Hotel: Park Street Heritage Grand Hotel | Indicative rate ₹3500 per night",
+                excerpt_locator="hotel:card[0]",
+                extraction_method="SCRAPLING_HTTP",
+                artifact_ref={
+                    "category": "lodging",
+                    "property_name": "Park Street Heritage Grand Hotel",
+                    "price_per_night": 3500.0,
+                    "currency": "INR",
+                    "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                    "is_indicative_search": True,
+                    "is_verified_offer": False,
+                    "booking_confirmed": False,
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            assert len(claims) == 1
+            claim = claims[0]
+            assert claim.category == "LODGING"
+            assert claim.subject_id == "park street heritage grand hotel"
+            assert claim.typed_value["evidence_class"] == EvidenceClass.INDICATIVE_SEARCH.value
+            assert claim.typed_value["price_per_night"] == 3500.0
+            assert claim.typed_value["currency"] == "INR"
+            assert claim.typed_value["is_indicative_search"] is True
+            assert claim.typed_value["is_verified_offer"] is False
+            assert claim.typed_value["booking_confirmed"] is False
+            assert claim.typed_value["availability"] == "UNKNOWN"
+
+    async def test_unpriced_accommodation_observation_stays_none_without_zero_coercion(
+        self, session_factory: Any
+    ) -> None:
+        """Unpriced accommodation observation preserves None price without zero coercion."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://booking.com/hotels/boutique-residency-kolkata",
+                canonical_url="https://booking.com/hotels/boutique-residency-kolkata",
+                publisher="Booking",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Hotel: Boutique Residency Kolkata | Room rates on request",
+                excerpt_locator="hotel:card[1]",
+                extraction_method="SCRAPLING_HTTP",
+                artifact_ref={
+                    "category": "lodging",
+                    "property_name": "Boutique Residency Kolkata",
+                    "price_per_night": None,
+                    "currency": "INR",
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            assert len(claims) == 1
+            claim = claims[0]
+            assert claim.typed_value["price_per_night"] is None
+            assert claim.typed_value["price_per_night"] != 0
+
+    async def test_food_dish_distinguished_from_business_and_not_promoted_as_place_existence(
+        self, session_factory: Any
+    ) -> None:
+        """Culinary dishes must not be promoted as physical place candidates."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Observation for physical dining business with verified coordinates
+            obs_biz = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://zomato.com/kolkata/nizam-heritage-restaurant",
+                canonical_url="https://zomato.com/kolkata/nizam-heritage-restaurant",
+                publisher="Zomato",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Place: Nizam Heritage Restaurant | Iconic dining on Hogg Street Kolkata",
+                excerpt_locator="serpapi:places[0]",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={
+                    "title": "Nizam Heritage Restaurant",
+                    "category": "restaurant",
+                    "address": "New Market, Hogg Street, Kolkata",
+                    "gps_coordinates": {"latitude": 22.5601, "longitude": 88.3522},
+                },
+                created_at=now,
+            )
+            # Observation mentioning local dish
+            obs_dish = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://culinary-tours.com/bengali-specialties",
+                canonical_url="https://culinary-tours.com/bengali-specialties",
+                publisher="Culinary Tours",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Famous Kolkata Kathi Roll is a classic street food snack across the city.",
+                excerpt_locator="p.food-guide",
+                extraction_method="SCRAPLING_HTTP",
+                artifact_ref={
+                    "category": "cuisine",
+                    "title": "Kolkata Kathi Roll",
+                },
+                created_at=now,
+            )
+            session.add_all([obs_biz, obs_dish])
+            await session.commit()
+
+            cand_dish = RegisteredCandidate(
+                primary_name="Kolkata Kathi Roll",
+                category="street_food",
+                point=CoordinatePoint(lat=22.5600, lng=88.3520),
+            )
+            cand_biz = RegisteredCandidate(
+                primary_name="Nizam Heritage Restaurant",
+                category="restaurant",
+                point=CoordinatePoint(lat=22.5601, lng=88.3522),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[cand_dish, cand_biz],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Physical business gets verified CUISINE claim, dish is skipped
+            assert len(claims) == 1
+            assert claims[0].subject_id == "nizam heritage restaurant"
+            assert claims[0].category == ClaimCategory.CUISINE.value
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [cand_dish, cand_biz],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+
+            # Business is eligible stop with verified existence and provenance
+            assert len(report.eligible_stops) == 1
+            assert report.eligible_stops[0].primary_name == "Nizam Heritage Restaurant"
+            assert report.eligible_stops[0].existence_status == CandidateExistenceStatus.VERIFIED
+            assert report.eligible_stops[0].provenance["uncertainty"] == "VERIFIED"
+            assert len(report.eligible_stops[0].provenance["source_urls"]) >= 1
+
+            # Dish stays unverified in editorial recommendations
+            assert len(report.editorial_recommendations) == 1
+            assert report.editorial_recommendations[0].primary_name == "Kolkata Kathi Roll"
+            assert report.editorial_recommendations[0].existence_status == CandidateExistenceStatus.UNVERIFIED
+            assert report.editorial_recommendations[0].provenance["uncertainty"] == "EDITORIAL_DISCOVERY"
+
+    async def test_unverified_and_unrelated_business_not_presented_as_confirmed_recommendation(
+        self, session_factory: Any
+    ) -> None:
+        """Unrelated businesses and unverified dining places must not become confirmed stops."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+
+            cand_unrelated = RegisteredCandidate(
+                primary_name="Kolkata Commercial Office Tower",
+                category="corporate",
+                point=CoordinatePoint(lat=22.5700, lng=88.3600),
+            )
+            cand_unverified_dining = RegisteredCandidate(
+                primary_name="Unverified Street Cafe",
+                category="restaurant",
+                point=CoordinatePoint(lat=22.5710, lng=88.3610),
+            )
+
+            # Ingest with no matching observations in database
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[cand_unrelated, cand_unverified_dining],
+                owner_id=owner_id,
+            )
+            assert len(claims) == 0
+
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [cand_unrelated, cand_unverified_dining],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+
+            # Zero confirmed stops
+            assert len(report.eligible_stops) == 0
+            # Both remain in editorial recommendations with unverified status
+            assert len(report.editorial_recommendations) == 2
+            for rec in report.editorial_recommendations:
+                assert rec.existence_status == CandidateExistenceStatus.UNVERIFIED
+                assert rec.provenance["uncertainty"] == "EDITORIAL_DISCOVERY"
+                assert "existence_unverified" in rec.provenance["unavailable_details"]
+

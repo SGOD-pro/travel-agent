@@ -100,6 +100,14 @@ class PlaceProposal(BaseModel):
         default=None,
         description="Approximate address or landmark description",
     )
+    source_urls: list[str] = Field(
+        default_factory=list,
+        description="Source observation URLs supporting place existence",
+    )
+    retrieval_time: str | None = Field(
+        default=None,
+        description="ISO 8601 timestamp of evidence retrieval",
+    )
 
 
 class RankedPlace(BaseModel):

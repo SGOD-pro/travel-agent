@@ -33,6 +33,7 @@ class PlaceEvidenceAccumulator:
     price_estimate_inr: float | None = None
     publishers: set[str] = field(default_factory=set)
     source_urls: set[str] = field(default_factory=set)
+    retrieval_times: list[str] = field(default_factory=list)
     excerpts: list[str] = field(default_factory=list)
 
 
@@ -98,6 +99,12 @@ class PlaceExtractionService:
             source_url = str(getattr(obs, "source_url", "") or "").strip()
             artifact_ref = getattr(obs, "artifact_ref", None) or {}
             excerpt_text = str(getattr(obs, "excerpt_text", "") or "").strip()
+            retrieved_at = getattr(obs, "retrieved_at", None)
+            retrieved_str = (
+                retrieved_at.isoformat()
+                if retrieved_at is not None and hasattr(retrieved_at, "isoformat")
+                else None
+            )
 
             # 1. Check local place result structured metadata from SerpApi with verified GPS coordinates
             if isinstance(artifact_ref, dict):
@@ -105,6 +112,10 @@ class PlaceExtractionService:
                 raw_title = str(artifact_ref.get("title") or "").strip()
                 if not raw_title and excerpt_text.startswith("Place: "):
                     raw_title = excerpt_text.split("|")[0].replace("Place: ", "").strip()
+
+                if raw_title and cls.is_culinary_dish(raw_title):
+                    # Culinary dish names without business venue keywords are not physical place candidates
+                    continue
 
                 if (
                     raw_title
@@ -130,6 +141,11 @@ class PlaceExtractionService:
                                 matched_acc = existing
                                 break
 
+                        price_val = (
+                            artifact_ref.get("price_per_night")
+                            or artifact_ref.get("indicative_price_inr")
+                            or artifact_ref.get("price_estimate_inr")
+                        )
                         if matched_acc is None:
                             matched_acc = PlaceEvidenceAccumulator(
                                 canonical_name=raw_title,
@@ -138,11 +154,19 @@ class PlaceExtractionService:
                                 longitude=lng,
                                 address=artifact_ref.get("address"),
                                 description=excerpt_text or f"Discovered via search on {publisher}",
+                                price_estimate_inr=int(price_val) if price_val is not None else None,
                             )
                             accumulators.append(matched_acc)
+                        elif price_val is not None and matched_acc.price_estimate_inr is None:
+                            try:
+                                matched_acc.price_estimate_inr = int(price_val)
+                            except (ValueError, TypeError):
+                                pass
 
                         matched_acc.publishers.add(publisher)
                         matched_acc.source_urls.add(source_url)
+                        if retrieved_str and retrieved_str not in matched_acc.retrieval_times:
+                            matched_acc.retrieval_times.append(retrieved_str)
                         if excerpt_text:
                             matched_acc.excerpts.append(excerpt_text)
                         continue
@@ -160,6 +184,8 @@ class PlaceExtractionService:
                     ):
                         acc.publishers.add(publisher)
                         acc.source_urls.add(source_url)
+                        if retrieved_str and retrieved_str not in acc.retrieval_times:
+                            acc.retrieval_times.append(retrieved_str)
                         acc.excerpts.append(excerpt_text)
 
         # 3. Consensus ranking by distinct publisher appearance count
@@ -192,6 +218,8 @@ class PlaceExtractionService:
                 is_candidate=True,
                 opening_hours=acc.opening_hours,
                 address=acc.address,
+                source_urls=sorted(list(acc.source_urls)),
+                retrieval_time=acc.retrieval_times[0] if acc.retrieval_times else None,
             )
             proposals.append(proposal)
 
@@ -239,3 +267,142 @@ class PlaceExtractionService:
         ):
             return "nature"
         return "attraction"
+
+    @classmethod
+    def is_culinary_dish(cls, name: str) -> bool:
+        """Determines if a name represents a culinary dish rather than a physical business venue."""
+        name_lower = name.lower().strip()
+        # Physical venue indicators
+        venue_indicators = (
+            "restaurant",
+            "cafe",
+            "coffee",
+            "dhaba",
+            "bistro",
+            "eatery",
+            "kitchen",
+            "canteen",
+            "inn",
+            "pub",
+            "bar",
+            "bhojanalaya",
+            "stall",
+            "corner",
+            "center",
+            "centre",
+            "parlour",
+            "parlor",
+            "house",
+            "shop",
+            "hotel",
+            "bakery",
+            "cabin",
+            "sweet shop",
+            "bazaar",
+            "joint",
+            "outlet",
+        )
+        if any(v in name_lower for v in venue_indicators):
+            return False
+
+        dish_terms = (
+            "kathi roll",
+            "kati roll",
+            "momo",
+            "momos",
+            "thukpa",
+            "biryani",
+            "rosogolla",
+            "rasgulla",
+            "sandesh",
+            "sondesh",
+            "mishti doi",
+            "misti doi",
+            "macher jhol",
+            "kosha mangsho",
+            "phuchka",
+            "puchka",
+            "pani puri",
+            "panipuri",
+            "luchi",
+            "alur dom",
+            "cholar dal",
+            "shukto",
+            "chelo kabab",
+            "fish fry",
+            "daab chingri",
+            "ilish bhapa",
+        )
+        return any(
+            name_lower == d or name_lower.endswith(f" {d}") or f"{d} " in name_lower
+            for d in dish_terms
+        )
+
+    @classmethod
+    def extract_local_dishes_from_observations(
+        cls,
+        observations: list[Any],
+    ) -> list[dict[str, Any]]:
+        """Extracts authentic regional culinary dishes from collected search and scraping observations."""
+        dishes: list[dict[str, Any]] = []
+        seen_names: set[str] = set()
+
+        regional_catalog = {
+            "kathi roll": ("Kathi Roll", "street_food", "Skewer roasted kebab rolled in paratha flatbread"),
+            "rosogolla": ("Rosogolla", "sweet", "Syrupy cottage cheese dumpling confection"),
+            "rasgulla": ("Rosogolla", "sweet", "Syrupy cottage cheese dumpling confection"),
+            "sandesh": ("Sandesh", "sweet", "Delicate artisanal milk fudge"),
+            "sondesh": ("Sandesh", "sweet", "Delicate artisanal milk fudge"),
+            "mishti doi": ("Mishti Doi", "sweet", "Caramelized fermented sweet curd"),
+            "macher jhol": ("Macher Jhol", "main_course", "Traditional light mustard fish curry"),
+            "kosha mangsho": ("Kosha Mangsho", "main_course", "Slow cooked rich spiced mutton curry"),
+            "phuchka": ("Phuchka", "street_food", "Crisp hollow puri filled with spiced potato and tamarind water"),
+            "puchka": ("Phuchka", "street_food", "Crisp hollow puri filled with spiced potato and tamarind water"),
+            "momos": ("Momos", "street_food", "Steamed dumplings served with spicy sesame chutney"),
+            "thukpa": ("Thukpa", "main_course", "Himalayan noodle soup with vegetables and herbs"),
+            "luchi": ("Luchi Alur Dom", "breakfast", "Deep fried puffed flatbread with spiced potato curry"),
+            "biryani": ("Kolkata Biryani", "main_course", "Fragrant saffron rice layered with meat and spiced potato"),
+            "chelo kabab": ("Chelo Kabab", "heritage_dish", "Heritage Persian style buttered rice with grilled kebabs"),
+            "daab chingri": ("Daab Chingri", "specialty", "Prawns cooked inside tender coconut with mustard paste"),
+            "shukto": ("Shukto", "traditional", "Traditional bitter sweet mixed vegetable medley"),
+        }
+
+        for obs in observations:
+            text = str(
+                getattr(obs, "excerpt_text", None)
+                or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
+                or ""
+            ).lower()
+            source_url = str(
+                getattr(obs, "canonical_url", None)
+                or getattr(obs, "source_url", None)
+                or (obs.get("canonical_url") if isinstance(obs, dict) else "")
+                or (obs.get("source_url") if isinstance(obs, dict) else "")
+                or ""
+            ).strip()
+            retrieved_at = (
+                getattr(obs, "retrieved_at", None)
+                or (obs.get("retrieved_at") if isinstance(obs, dict) else None)
+            )
+            retrieved_str = (
+                retrieved_at.isoformat()
+                if retrieved_at is not None and hasattr(retrieved_at, "isoformat")
+                else (str(retrieved_at) if retrieved_at is not None else None)
+            )
+
+            for key, (dish_name, dish_type, desc) in regional_catalog.items():
+                if key in text and dish_name.lower() not in seen_names:
+                    seen_names.add(dish_name.lower())
+                    dishes.append(
+                        {
+                            "name": dish_name,
+                            "dish_type": dish_type,
+                            "description": desc,
+                            "is_business_venue": False,
+                            "source_url": source_url or None,
+                            "retrieval_time": retrieved_str,
+                            "uncertainty": "EDITORIAL_DISCOVERY",
+                        }
+                    )
+
+        return dishes

@@ -40,7 +40,7 @@ from functions.orchestrator.execution.checkpointer import (
     TransactionBoundCheckpointer,
 )
 from functions.orchestrator.execution.fencing import TaskQueueMessage
-from functions.orchestrator.execution.models import ExecutionModel, TaskModel
+from functions.orchestrator.execution.models import ExecutionModel, OutboxEventModel, TaskModel
 from functions.orchestrator.execution.reconciliation import (
     CompletionReconciliationService,
     TaskCompletionEvent,
@@ -53,6 +53,8 @@ from functions.orchestrator.execution.runner import (
 from functions.orchestrator.graphs.trip_planner import (
     compile_trip_planning_workflow,
 )
+from functions.route_optimizer.fixtures import MockValhallaClient
+from functions.route_optimizer.service import RouteOptimizerWorkerService
 
 logger = logging.getLogger(__name__)
 
@@ -376,6 +378,63 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
             "No dynamic page emitted NEEDS_BROWSER; browser fallback gate recorded as PENDING"
         )
 
+    # 8b. Complete route optimization to advance graph to synthesized proposal
+    route_dispatched_tasks: list[TaskModel] = []
+    if resume_res.task_ids:
+        async with session_factory() as session:
+            stmt = select(TaskModel).where(
+                TaskModel.id.in_(resume_res.task_ids),
+                TaskModel.worker.in_(("OPTIMIZER", "ROUTE_OPTIMIZER")),
+            )
+            route_dispatched_tasks = list((await session.execute(stmt)).scalars().all())
+
+    if route_dispatched_tasks:
+        r_task = route_dispatched_tasks[0]
+        r_task_id = r_task.id
+        async with session_factory() as session:
+            outbox_stmt = select(OutboxEventModel).where(
+                OutboxEventModel.task_id == r_task_id,
+                OutboxEventModel.kind == "TASK_DISPATCH",
+            )
+            dispatch_outbox = (await session.execute(outbox_stmt)).scalar_one()
+            dispatch_payload = dispatch_outbox.payload_ref or dispatch_outbox.payload
+
+        mock_valhalla = MockValhallaClient()
+        async with session_factory() as session:
+            worker_service = RouteOptimizerWorkerService(
+                session=session,
+                valhalla_client=mock_valhalla,
+            )
+            persisted_route_id, worker_output = await worker_service.execute_task(dispatch_payload)
+            await session.commit()
+
+        async with session_factory() as session:
+            route_task_row = (
+                await session.execute(select(TaskModel).where(TaskModel.id == r_task_id))
+            ).scalar_one()
+
+        rec_res2 = await reconciler.reconcile_task_event(
+            event=TaskCompletionEvent(
+                event_id=uuid.uuid4(),
+                task_id=r_task_id,
+                execution_id=exec_id,
+                attempt=route_task_row.attempt,
+                result_id=route_task_row.result_id,
+                output=worker_output.model_dump(mode="json"),
+            ),
+            graph=graph,
+        )
+        assert rec_res2.checkpoint_updated is True
+
+        resume_res2 = await runner.handle_execution_resume(
+            event=ExecutionResumeEvent(
+                execution_id=exec_id,
+                triggered_by_task_id=r_task_id,
+            ),
+            graph=graph,
+        )
+        assert resume_res2.status == "SUCCEEDED"
+
     # 9. Verify Graph Itself Ingests Claims and Evaluates Candidate Eligibility (Stage 4)
     # We do NOT invoke ingestion functions or eligibility gates separately in the test;
     # we verify database claims, evidence links, and checkpointed state produced by the running graph.
@@ -508,6 +567,17 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     )
     print(f"8. Editorial Candidates:      {execution_manifest['editorial_candidates']}")
     print(f"9. Live Collection Proven:    {execution_manifest['live_collection_proven']}")
+
+    proposal = checkpoint_values.get("proposal")
+    food_res = (proposal.get("food_research") if isinstance(proposal, dict) else None) or checkpoint_values.get("food_research") or {}
+    accom_res = (proposal.get("accommodation_research") if isinstance(proposal, dict) else None) or checkpoint_values.get("accommodation_research") or {}
+    local_dishes = food_res.get("local_dishes", [])
+    dining_recs = food_res.get("dining_recommendations", [])
+    indicative_options = accom_res.get("indicative_options", [])
+
+    print(f"10. Local Food Dishes:        {[d['name'] for d in local_dishes][:4]}")
+    print(f"11. Dining Recommendations:   {[d['name'] for d in dining_recs][:4]}")
+    print(f"12. Indicative Hotels:        {[h['property_name'] for h in indicative_options][:4]}")
     print("=" * 70)
     print("EVIDENCE PROVENANCE & CONTENT PROOF:")
     print(f"1. Search Result URL:          {proven_search_url}")
@@ -548,3 +618,28 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     # Unsupported control candidate remains unverified as editorial recommendation
     assert "Fictional Cloud Observatory" in execution_manifest["editorial_candidates"]
     assert "Fictional Cloud Observatory" not in verified_names
+
+    # Food and Accommodation Research assertions
+    assert len(local_dishes) > 0, "Running graph must produce authentic regional dishes"
+    for d in local_dishes:
+        assert d.get("is_business_venue") is False
+        assert d.get("uncertainty") == "EDITORIAL_DISCOVERY"
+
+    assert len(dining_recs) > 0, "Running graph must produce dining recommendations"
+    for dr in dining_recs:
+        assert dr.get("name") is not None
+        assert dr.get("category") in ("restaurant", "street_food", "cafe", "dining", "cuisine", "food")
+
+    assert len(indicative_options) > 0, "Running graph must produce indicative lodging options"
+    for opt in indicative_options:
+        assert opt.get("evidence_class") == "INDICATIVE_SEARCH"
+        assert opt.get("is_indicative_search") is True
+        assert opt.get("is_verified_offer") is False
+        assert opt.get("booking_confirmed") is False
+        assert "live_room_availability_unverified" in opt.get("unavailable_details", [])
+
+    pricing_notice = accom_res.get("pricing_notice", "")
+    assert "indicative search estimates" in pricing_notice
+    assert "Verified date specific offers" in pricing_notice
+    assert "No cheapest hotel claims" in accom_res.get("cheapest_claim_guarantee", "")
+    assert accom_res.get("verified_offers") == []

@@ -147,10 +147,18 @@ class DeterministicEvidenceEligibilityGate:
             if existence_status == CandidateExistenceStatus.CONTRADICTED:
                 updated_diag = dict(candidate.diagnostics)
                 updated_diag.update(existence_diag)
+                updated_prov = dict(candidate.provenance or {})
+                updated_prov["uncertainty"] = "CONTRADICTED"
+                updated_prov["conflicting_details"] = [
+                    existence_diag.get(
+                        "contradiction_reason", "Conflict detected in place evidence"
+                    )
+                ]
                 excluded_candidate = candidate.model_copy(
                     update={
                         "existence_status": CandidateExistenceStatus.CONTRADICTED,
                         "diagnostics": updated_diag,
+                        "provenance": updated_prov,
                     }
                 )
                 excluded_candidates.append(excluded_candidate)
@@ -159,12 +167,21 @@ class DeterministicEvidenceEligibilityGate:
             if existence_status == CandidateExistenceStatus.UNVERIFIED:
                 updated_diag = dict(candidate.diagnostics)
                 updated_diag.update(existence_diag)
+                updated_prov = dict(candidate.provenance or {})
+                updated_prov["uncertainty"] = "EDITORIAL_DISCOVERY"
+                updated_prov["identity"] = {
+                    "name": candidate.primary_name,
+                    "category": candidate.category,
+                    "point": {"lat": candidate.point.lat, "lng": candidate.point.lng},
+                }
+                updated_prov["unavailable_details"] = ["existence_unverified"]
                 editorial_cand = candidate.model_copy(
                     update={
                         "existence_status": CandidateExistenceStatus.UNVERIFIED,
                         "uncertainty": "EDITORIAL_DISCOVERY",
                         "is_candidate": True,
                         "diagnostics": updated_diag,
+                        "provenance": updated_prov,
                     }
                 )
                 editorial_recommendations.append(editorial_cand)
@@ -180,6 +197,34 @@ class DeterministicEvidenceEligibilityGate:
             updated_diag.update(existence_diag)
             updated_diag.update(hours_diag)
 
+            source_urls: list[str] = list(candidate.provenance.get("source_urls", []) or [])
+            retrieval_times: list[str] = []
+            for obs in obs_list:
+                s_url = getattr(obs, "canonical_url", None) or getattr(obs, "source_url", None)
+                if s_url and s_url not in source_urls:
+                    source_urls.append(s_url)
+                r_time = getattr(obs, "retrieved_at", None)
+                if r_time and hasattr(r_time, "isoformat"):
+                    retrieval_times.append(r_time.isoformat())
+
+            updated_prov = dict(candidate.provenance or {})
+            updated_prov["source_urls"] = source_urls
+            if retrieval_times:
+                updated_prov["retrieval_time"] = retrieval_times[0]
+            updated_prov["identity"] = {
+                "name": candidate.primary_name,
+                "category": candidate.category,
+                "point": {"lat": candidate.point.lat, "lng": candidate.point.lng},
+            }
+            updated_prov["uncertainty"] = "VERIFIED"
+            updated_prov["conflicting_details"] = []
+            unavailable: list[str] = []
+            if is_assumed:
+                unavailable.append("opening_hours_assumed")
+            elif hours_status == CandidateHoursStatus.UNKNOWN:
+                unavailable.append("opening_hours_unverified")
+            updated_prov["unavailable_details"] = unavailable
+
             eligible_cand = candidate.model_copy(
                 update={
                     "existence_status": CandidateExistenceStatus.VERIFIED,
@@ -188,6 +233,7 @@ class DeterministicEvidenceEligibilityGate:
                     "window_end": end_t,
                     "is_hours_assumed": is_assumed,
                     "diagnostics": updated_diag,
+                    "provenance": updated_prov,
                 }
             )
             eligible_stops.append(eligible_cand)
@@ -635,6 +681,11 @@ class DeterministicEvidenceEligibilityGate:
             "ATTRACTION",
             "LODGING",
             "TRANSIT",
+            ClaimCategory.CUISINE.value,
+            "CUISINE",
+            "RESTAURANT",
+            "FOOD",
+            "DINING",
         }
 
         has_verified_existence = False

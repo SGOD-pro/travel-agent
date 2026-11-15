@@ -533,11 +533,31 @@ async def ingest_claims_from_observations(
         if not cand_name_norm:
             continue
 
+        # Distinguish local dishes from physical businesses
+        from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
+
+        if PlaceExtractionService.is_culinary_dish(cand_name):
+            # A culinary dish is a regional preparation or specialty, not a physical venue
+            logger.info("Skipping candidate existence claim for culinary dish '%s'", cand_name)
+            continue
+
+        # Map candidate category to appropriate claim category
+        cand_cat = candidate.category.strip().lower()
+        if cand_cat in ("restaurant", "street_food", "cafe", "dining", "cuisine", "food"):
+            cand_claim_category: Any = ClaimCategory.CUISINE
+            claim_cat_str = ClaimCategory.CUISINE.value
+        elif cand_cat in ("lodging", "hotel"):
+            cand_claim_category = "LODGING"
+            claim_cat_str = "LODGING"
+        else:
+            cand_claim_category = ClaimCategory.ATTRACTION
+            claim_cat_str = ClaimCategory.ATTRACTION.value
+
         # Check existing claims for this candidate under this execution
         existing_stmt = select(ClaimModel).where(
             ClaimModel.execution_id == execution_id,
             ClaimModel.subject_id == cand_name_norm,
-            ClaimModel.category == ClaimCategory.ATTRACTION.value,
+            ClaimModel.category == claim_cat_str,
         )
         if candidate.place_id is not None:
             existing_stmt = existing_stmt.where(ClaimModel.place_id == candidate.place_id)
@@ -577,7 +597,7 @@ async def ingest_claims_from_observations(
             ]
             claim_create = ClaimCreate(
                 subject_id=cand_name_norm,
-                category=ClaimCategory.ATTRACTION,
+                category=cand_claim_category,
                 place_id=candidate.place_id,
                 execution_id=execution_id,
                 typed_value={
@@ -618,7 +638,7 @@ async def ingest_claims_from_observations(
             target_conflict_coords = refuting_coords or verified_coords
             closed_claim = ClaimCreate(
                 subject_id=cand_name_norm,
-                category=ClaimCategory.ATTRACTION,
+                category=cand_claim_category,
                 place_id=candidate.place_id,
                 execution_id=execution_id,
                 typed_value={
@@ -661,10 +681,23 @@ async def ingest_claims_from_observations(
     for obs in valid_observations:
         art_ref = obs.artifact_ref or {}
         cat = str(art_ref.get("category") or "").lower() if isinstance(art_ref, dict) else ""
-        if "lodging" in cat or "hotel" in cat or "stay" in cat:
+        is_stay = "lodging" in cat or "hotel" in cat or "stay" in cat
+        if not is_stay and isinstance(art_ref, dict):
+            t = str(art_ref.get("property_name") or art_ref.get("title") or "").lower()
+            if any(
+                w in t
+                for w in ("hotel", "resort", "homestay", "lodge", "inn", "hostel")
+            ):
+                is_stay = True
+        if is_stay:
             hotel_name = str(
-                art_ref.get("property_name") or art_ref.get("name") or "lodging"
+                art_ref.get("property_name")
+                or art_ref.get("name")
+                or art_ref.get("title")
+                or ""
             ).strip()
+            if not hotel_name or hotel_name.lower() in ("lodging", "hotel"):
+                continue
             hotel_norm = hotel_name.lower()
             existing_stay_stmt = select(ClaimModel).where(
                 ClaimModel.execution_id == execution_id,
@@ -687,6 +720,10 @@ async def ingest_claims_from_observations(
                     "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
                     "price_per_night": art_ref.get("price_per_night"),
                     "currency": art_ref.get("currency", "INR"),
+                    "is_indicative_search": True,
+                    "is_verified_offer": False,
+                    "booking_confirmed": False,
+                    "availability": "UNKNOWN",
                 },
                 confidence=0.85,
                 valid_from=obs.retrieved_at or now,

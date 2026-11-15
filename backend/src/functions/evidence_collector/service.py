@@ -315,7 +315,17 @@ class EvidenceCollectorService:
 
             art_ref = obs.artifact_ref if isinstance(obs.artifact_ref, dict) else {}
             title = art_ref.get("title") or art_ref.get("place_name") or art_ref.get("name") or ""
-            category = art_ref.get("category") or "attraction"
+            category = art_ref.get("category")
+            if not category:
+                excerpt = str(obs.excerpt_text or "").lower()
+                url_lower = url.lower()
+                combined_hint = f"{title.lower()} {excerpt} {url_lower}"
+                if any(w in combined_hint for w in ("hotel", "resort", "homestay", "lodge", "inn", "hostel", "accommodation")):
+                    category = "lodging"
+                elif any(w in combined_hint for w in ("restaurant", "food", "cafe", "dhaba", "dining", "cuisine", "bakery", "street food", "sweets", "chaat", "eatery")):
+                    category = "restaurant"
+                else:
+                    category = "attraction"
 
             selected.append(
                 {

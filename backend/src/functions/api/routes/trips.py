@@ -71,6 +71,8 @@ class ItineraryResponse(BaseModel):
     weather_status: str = "WEATHER_UNAVAILABLE"
     validated_candidates: list[dict[str, Any]] = Field(default_factory=list)
     discovered_places: list[dict[str, Any]] = Field(default_factory=list)
+    food_research: dict[str, Any] | None = Field(default=None)
+    accommodation_research: dict[str, Any] | None = Field(default=None)
     route_id: uuid.UUID | None = None
     route_status: str | None = None
     routing_status: str | None = None
@@ -381,6 +383,8 @@ async def get_trip_itinerary(
         weather_status=proposal.get("weather_status", "WEATHER_UNAVAILABLE"),
         validated_candidates=proposal.get("validated_candidates", []),
         discovered_places=proposal.get("discovered_places", []),
+        food_research=proposal.get("food_research"),
+        accommodation_research=proposal.get("accommodation_research"),
         route_id=trip.current_route_id or proposal.get("route_id"),
         route_status=proposal.get("route_status"),
         routing_status=proposal.get("routing_status"),

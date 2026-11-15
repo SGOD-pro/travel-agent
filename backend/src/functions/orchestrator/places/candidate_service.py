@@ -192,7 +192,19 @@ class CandidateRegistrationService:
                 "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
             },
             provenance={
-                "source": "llm_proposal",
+                "source": "evidence_observation"
+                if getattr(proposal, "source_urls", None)
+                else "llm_proposal",
+                "source_urls": list(getattr(proposal, "source_urls", []) or []),
+                "retrieval_time": getattr(proposal, "retrieval_time", None),
+                "identity": {
+                    "name": proposal.name,
+                    "category": proposal.category,
+                    "point": {"lat": point.lat, "lng": point.lng},
+                },
+                "uncertainty": "EDITORIAL_DISCOVERY",
+                "unavailable_details": ["existence_unverified"],
+                "conflicting_details": [],
                 "execution_id": str(execution_id) if execution_id else None,
                 "owner_id": str(owner_id) if owner_id else None,
                 "brief_corridor_validated": True,
@@ -235,7 +247,19 @@ class CandidateRegistrationService:
                 "rejection_reason": corridor_result.diagnostic,
             },
             provenance={
-                "source": "llm_proposal",
+                "source": "evidence_observation"
+                if getattr(proposal, "source_urls", None)
+                else "llm_proposal",
+                "source_urls": list(getattr(proposal, "source_urls", []) or []),
+                "retrieval_time": getattr(proposal, "retrieval_time", None),
+                "identity": {
+                    "name": proposal.name,
+                    "category": proposal.category,
+                    "point": {"lat": lat, "lng": lng},
+                },
+                "uncertainty": "EDITORIAL_DISCOVERY",
+                "unavailable_details": ["corridor_validation_failed"],
+                "conflicting_details": [],
                 "execution_id": str(execution_id) if execution_id else None,
                 "owner_id": str(owner_id) if owner_id else None,
                 "brief_corridor_validated": False,

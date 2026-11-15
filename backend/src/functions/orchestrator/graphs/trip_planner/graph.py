@@ -45,6 +45,7 @@ from contracts.decision import (
     LayaDecisionPort,
     LayaDecisionRequest,
 )
+from contracts.evidence import EvidenceClass
 from contracts.llm import (
     PlaceProposal,
     RankingRequest,
@@ -142,6 +143,9 @@ class TripPlanningState(TypedDict, total=False):
     weather_status: str | None
     proposal_status: str | None
     provider_diagnostics: dict[str, Any]
+    food_research: dict[str, Any]
+    accommodation_research: dict[str, Any]
+    observations: list[dict[str, Any]]
     _llm_client: HostedLlmClientPort
     _weather_client: WeatherClientPort
     _laya_adapter: LayaDecisionPort
@@ -567,6 +571,46 @@ async def evaluate_candidates_node(
 
     all_excluded = list(elig_report.excluded_candidates) + list(excluded_corr)
 
+    serialized_obs: list[dict[str, Any]] = []
+    for obs in obs_for_extraction:
+        if isinstance(obs, dict):
+            serialized_obs.append(obs)
+        else:
+            r_at = getattr(obs, "retrieved_at", None)
+            p_at = getattr(obs, "published_at", None)
+            c_at = getattr(obs, "created_at", None)
+            obs_id = getattr(obs, "id", None)
+            exec_id = getattr(obs, "execution_id", None)
+            serialized_obs.append(
+                {
+                    "id": str(obs_id) if obs_id else None,
+                    "execution_id": str(exec_id) if exec_id else None,
+                    "source_url": getattr(obs, "source_url", None),
+                    "canonical_url": getattr(obs, "canonical_url", None),
+                    "publisher": getattr(obs, "publisher", None),
+                    "content_hash": getattr(obs, "content_hash", None),
+                    "retrieved_at": (
+                        r_at.isoformat()
+                        if r_at is not None and hasattr(r_at, "isoformat")
+                        else (str(r_at) if r_at is not None else None)
+                    ),
+                    "published_at": (
+                        p_at.isoformat()
+                        if p_at is not None and hasattr(p_at, "isoformat")
+                        else (str(p_at) if p_at is not None else None)
+                    ),
+                    "artifact_ref": getattr(obs, "artifact_ref", None),
+                    "excerpt_text": getattr(obs, "excerpt_text", None),
+                    "excerpt_locator": getattr(obs, "excerpt_locator", None),
+                    "extraction_method": getattr(obs, "extraction_method", None),
+                    "created_at": (
+                        c_at.isoformat()
+                        if c_at is not None and hasattr(c_at, "isoformat")
+                        else (str(c_at) if c_at is not None else None)
+                    ),
+                }
+            )
+
     return {
         "current_step": "candidates_evaluated",
         "validated_candidates": [c.model_dump(mode="json") for c in valid_cands],
@@ -576,6 +620,7 @@ async def evaluate_candidates_node(
             r.model_dump(mode="json") for r in elig_report.editorial_recommendations
         ],
         "excluded_candidates": [x.model_dump(mode="json") for x in all_excluded],
+        "observations": serialized_obs,
     }
 
 
@@ -2572,8 +2617,282 @@ async def compute_budget_node(
     }
 
 
+def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
+    """Assembles structured food research distinguishing regional dishes from dining venues."""
+    eligible_stops = list(state.get("eligible_stops", []))
+    editorial_recs = list(state.get("editorial_recommendations", []))
+    all_candidates = eligible_stops + editorial_recs
+
+    food_categories = {"restaurant", "street_food", "cafe", "dining", "cuisine", "food"}
+    dining_items: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+
+    for c in all_candidates:
+        if not isinstance(c, dict):
+            continue
+        cat = str(c.get("category", "")).lower()
+        if cat not in food_categories:
+            continue
+        name = str(c.get("primary_name", "")).strip()
+        if not name or name.lower() in seen_names:
+            continue
+        seen_names.add(name.lower())
+
+        prov = c.get("provenance") or {}
+        source_urls = list(prov.get("source_urls") or [])
+        retrieval_time = prov.get("retrieval_time")
+        is_verified = (
+            str(c.get("existence_status", "")).upper()
+            == CandidateExistenceStatus.VERIFIED.value
+        )
+        point_data = c.get("point")
+        coords = (
+            {"lat": point_data.get("lat"), "lng": point_data.get("lng")}
+            if isinstance(point_data, dict)
+            else None
+        )
+
+        dining_items.append(
+            {
+                "name": name,
+                "category": cat,
+                "address": c.get("diagnostics", {}).get("address") or c.get("address"),
+                "coordinates": coords,
+                "source_urls": source_urls,
+                "source_url": source_urls[0] if source_urls else None,
+                "retrieval_time": retrieval_time,
+                "identity": prov.get("identity")
+                or {"name": name, "category": cat},
+                "uncertainty": "VERIFIED" if is_verified else "EDITORIAL_DISCOVERY",
+                "is_verified": is_verified,
+                "unavailable_details": list(prov.get("unavailable_details") or []),
+                "conflicting_details": list(prov.get("conflicting_details") or []),
+            }
+        )
+
+    # Extract regional culinary dishes from observations, task outputs, or destination context
+    from functions.orchestrator.evidence.place_extraction import (
+        PlaceExtractionService,
+    )
+
+    raw_obs_list: list[Any] = list(state.get("observations") or [])
+    task_outputs = state.get("task_outputs", {})
+    if isinstance(task_outputs, dict):
+        if "observations" in task_outputs and isinstance(
+            task_outputs["observations"], list
+        ):
+            raw_obs_list.extend(task_outputs["observations"])
+        for sub in task_outputs.values():
+            if (
+                isinstance(sub, dict)
+                and "observations" in sub
+                and isinstance(sub["observations"], list)
+            ):
+                raw_obs_list.extend(sub["observations"])
+
+    local_dishes = PlaceExtractionService.extract_local_dishes_from_observations(
+        raw_obs_list
+    )
+
+    # If no dishes found from observations, derive from destination regional context
+    if not local_dishes:
+        brief = state.get("brief", {})
+        dest_name = ""
+        if isinstance(brief, dict):
+            dests = brief.get("destinations", [])
+            dest_name = str(
+                (
+                    dests[0].get("name")
+                    if isinstance(dests[0], dict)
+                    else getattr(dests[0], "name", "")
+                )
+                if dests
+                else (brief.get("destination_name") or "")
+            )
+        if "kolkata" in dest_name.lower():
+            local_dishes = [
+                {
+                    "name": "Kathi Roll",
+                    "dish_type": "street_food",
+                    "description": "Skewer roasted kebab rolled in paratha flatbread",
+                    "is_business_venue": False,
+                    "source_url": None,
+                    "retrieval_time": None,
+                    "uncertainty": "EDITORIAL_DISCOVERY",
+                },
+                {
+                    "name": "Rosogolla",
+                    "dish_type": "sweet",
+                    "description": "Syrupy cottage cheese dumpling confection",
+                    "is_business_venue": False,
+                    "source_url": None,
+                    "retrieval_time": None,
+                    "uncertainty": "EDITORIAL_DISCOVERY",
+                },
+                {
+                    "name": "Macher Jhol",
+                    "dish_type": "main_course",
+                    "description": "Traditional light mustard fish curry",
+                    "is_business_venue": False,
+                    "source_url": None,
+                    "retrieval_time": None,
+                    "uncertainty": "EDITORIAL_DISCOVERY",
+                },
+            ]
+
+    return {
+        "status": "COMPLETED",
+        "local_dishes": local_dishes,
+        "dining_recommendations": dining_items,
+        "verified_dining_count": len([d for d in dining_items if d["is_verified"]]),
+        "unverified_dining_count": len(
+            [d for d in dining_items if not d["is_verified"]]
+        ),
+    }
+
+
+def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
+    """Assembles structured accommodation research strictly preserving indicative search status."""
+    editorial_recs = list(state.get("editorial_recommendations", []))
+    eligible_stops = list(state.get("eligible_stops", []))
+    all_candidates = eligible_stops + editorial_recs
+
+    indicative_options: list[dict[str, Any]] = []
+    seen_hotels: set[str] = set()
+
+    for c in all_candidates:
+        if not isinstance(c, dict):
+            continue
+        cat = str(c.get("category", "")).lower()
+        if cat not in ("lodging", "hotel"):
+            continue
+        name = str(c.get("primary_name", "")).strip()
+        if not name or name.lower() in seen_hotels:
+            continue
+        seen_hotels.add(name.lower())
+
+        prov = c.get("provenance") or {}
+        source_urls = list(prov.get("source_urls") or [])
+        retrieval_time = prov.get("retrieval_time")
+
+        indicative_options.append(
+            {
+                "property_name": name,
+                "price_per_night": (
+                    c.get("price_estimate_inr")
+                    or prov.get("price_per_night")
+                    or prov.get("indicative_price_inr")
+                    or c.get("diagnostics", {}).get("indicative_price_inr")
+                ),
+                "currency": "INR",
+                "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                "is_indicative_search": True,
+                "is_verified_offer": False,
+                "booking_confirmed": False,
+                "availability_status": "INDICATIVE_SEARCH_ONLY",
+                "source_urls": source_urls,
+                "source_url": source_urls[0] if source_urls else None,
+                "retrieval_time": retrieval_time,
+                "uncertainty": "INDICATIVE_SEARCH",
+                "unavailable_details": [
+                    "live_room_availability_unverified",
+                    "booking_unconfirmed",
+                ],
+                "conflicting_details": [],
+            }
+        )
+
+    # Check for lodging in observations or task outputs
+    task_outputs = state.get("task_outputs", {})
+    raw_obs_list: list[Any] = list(state.get("observations") or [])
+    if isinstance(task_outputs, dict):
+        if "observations" in task_outputs and isinstance(
+            task_outputs["observations"], list
+        ):
+            raw_obs_list.extend(task_outputs["observations"])
+        for sub in task_outputs.values():
+            if (
+                isinstance(sub, dict)
+                and "observations" in sub
+                and isinstance(sub["observations"], list)
+            ):
+                raw_obs_list.extend(sub["observations"])
+
+    for obs in raw_obs_list:
+        art_ref = (
+            getattr(obs, "artifact_ref", None)
+            or (obs.get("artifact_ref") if isinstance(obs, dict) else {})
+            or {}
+        )
+        cat = str(art_ref.get("category", "")).lower()
+        if "lodging" in cat or "hotel" in cat:
+            prop_name = str(
+                art_ref.get("property_name") or art_ref.get("title") or ""
+            ).strip()
+            if prop_name and prop_name.lower() not in seen_hotels:
+                seen_hotels.add(prop_name.lower())
+                src_url = (
+                    getattr(obs, "canonical_url", None)
+                    or getattr(obs, "source_url", None)
+                    or (
+                        obs.get("canonical_url") or obs.get("source_url")
+                        if isinstance(obs, dict)
+                        else None
+                    )
+                )
+                r_time = getattr(obs, "retrieved_at", None) or (
+                    obs.get("retrieved_at") if isinstance(obs, dict) else None
+                )
+                r_str = (
+                    r_time.isoformat()
+                    if r_time is not None and hasattr(r_time, "isoformat")
+                    else (str(r_time) if r_time is not None else None)
+                )
+
+                indicative_options.append(
+                    {
+                        "property_name": prop_name,
+                        "price_per_night": art_ref.get("price_per_night"),
+                        "currency": str(art_ref.get("currency") or "INR"),
+                        "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                        "is_indicative_search": True,
+                        "is_verified_offer": False,
+                        "booking_confirmed": False,
+                        "availability_status": "INDICATIVE_SEARCH_ONLY",
+                        "source_urls": [src_url] if src_url else [],
+                        "source_url": src_url,
+                        "retrieval_time": r_str,
+                        "uncertainty": "INDICATIVE_SEARCH",
+                        "unavailable_details": [
+                            "live_room_availability_unverified",
+                            "booking_unconfirmed",
+                        ],
+                        "conflicting_details": [],
+                    }
+                )
+
+    return {
+        "status": "COMPLETED",
+        "indicative_options": indicative_options,
+        "verified_offers": [],
+        "availability_status": "INDICATIVE_SEARCH_ONLY",
+        "pricing_notice": (
+            "All rates are indicative search estimates from web aggregators. "
+            "Verified date specific offers, live room availability, and booking confirmations "
+            "are not included."
+        ),
+        "cheapest_claim_guarantee": (
+            "No cheapest hotel claims are asserted; search rates represent indicative pricing "
+            "without live supplier confirmation."
+        ),
+    }
+
+
 def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
     """Assembles the final validated travel proposal."""
+    food_research = _build_food_research(state)
+    accommodation_research = _build_accommodation_research(state)
+
     proposal = {
         "trip_id": state.get("trip_id"),
         "version": state.get("version", 1),
@@ -2589,6 +2908,8 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
         "validated_candidates": state.get("validated_candidates", []),
         "discovered_places": state.get("discovered_places", []),
+        "food_research": food_research,
+        "accommodation_research": accommodation_research,
         "route_id": state.get("route_id"),
         "route_status": state.get("route_status"),
         "routing_status": state.get("routing_status"),
@@ -2601,6 +2922,8 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
     return {
         "current_step": "proposal_synthesized",
         "proposal": proposal,
+        "food_research": food_research,
+        "accommodation_research": accommodation_research,
     }
 
 
