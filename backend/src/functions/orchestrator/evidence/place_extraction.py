@@ -103,7 +103,7 @@ class PlaceExtractionService:
             retrieved_str: str | None = None
             if isinstance(retrieved_at, str):
                 retrieved_str = retrieved_at
-            elif hasattr(retrieved_at, "isoformat"):
+            elif retrieved_at is not None and hasattr(retrieved_at, "isoformat"):
                 val = retrieved_at.isoformat()
                 if isinstance(val, str):
                     retrieved_str = val
@@ -413,7 +413,7 @@ class PlaceExtractionService:
             retrieved_str: str | None = None
             if isinstance(retrieved_at, str):
                 retrieved_str = retrieved_at
-            elif hasattr(retrieved_at, "isoformat"):
+            elif retrieved_at is not None and hasattr(retrieved_at, "isoformat"):
                 val = retrieved_at.isoformat()
                 if isinstance(val, str):
                     retrieved_str = val
