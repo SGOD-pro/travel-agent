@@ -563,17 +563,17 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         if not clean_text:
             return [], []
 
-        page_title = title or ""
-        if not page_title:
-            h1_elem = page.css("h1").first
-            if h1_elem:
-                h1_text = (
-                    h1_elem.get_all_text().strip()
-                    if hasattr(h1_elem, "get_all_text")
-                    else getattr(h1_elem, "text", "").strip()
-                )
-                if h1_text:
-                    page_title = h1_text
+        # Extract page title strictly from HTML content, never defaulting to search title
+        page_title = ""
+        h1_elem = page.css("h1").first
+        if h1_elem:
+            h1_text = (
+                h1_elem.get_all_text().strip()
+                if hasattr(h1_elem, "get_all_text")
+                else getattr(h1_elem, "text", "").strip()
+            )
+            if h1_text:
+                page_title = h1_text
         if not page_title:
             title_elem = page.css("title").first
             if title_elem:
@@ -588,7 +588,9 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         artifact_metadata: dict[str, Any] = {"category": category}
         if page_title:
             artifact_metadata["title"] = page_title
+            artifact_metadata["page_title"] = page_title
         if title:
+            # Preserve search result context separately from page extracted identity
             artifact_metadata["search_selected_title"] = title
 
         obs = [

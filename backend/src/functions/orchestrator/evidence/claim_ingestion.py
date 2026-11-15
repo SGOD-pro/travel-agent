@@ -288,7 +288,8 @@ def _extract_observation_title(obs: SourceObservationModel) -> str | None:
     """Extracts structured place title or name from observation metadata or excerpt prefix."""
     art_ref = getattr(obs, "artifact_ref", None)
     if isinstance(art_ref, dict):
-        for k in ("title", "place_name", "name", "property_name"):
+        # Extract strictly from page or place identity fields, never from search origin title
+        for k in ("page_title", "title", "place_name", "name", "property_name"):
             val = art_ref.get(k)
             if val and isinstance(val, str) and val.strip():
                 return val.strip()
@@ -300,35 +301,19 @@ def _extract_observation_title(obs: SourceObservationModel) -> str | None:
     return None
 
 
-def _observation_supports_candidate(
+def _match_observation_entity(
     obs: SourceObservationModel,
     candidate: RegisteredCandidate,
-) -> tuple[bool, tuple[float, float] | None]:
-    """Evaluates whether an observation genuinely supports candidate existence.
+) -> tuple[bool, bool, tuple[float, float] | None]:
+    """Matches an observation to candidate entity and checks active vs closed status.
 
-    Guarantees conforming to spec 0007 AC-13, AC-14:
-    1. Permanently closed, defunct, demolished, or unavailable places never support active existence.
-    2. Shorter candidate names matching different longer titles (e.g. 'Museum' vs 'Indian Museum',
-       or 'National Museum' vs 'National Museum Cafe') are rejected.
-    3. Distinct subsidiary entities (canteen, cafe, bus stop, metro station, school, hospital, police)
-       are never assumed to be the same place.
-    4. Observations whose coordinates or metadata describe a different entity or incompatible category
-       (e.g. transit station, lodging, ATM) never verify the candidate.
-    5. A name appearing only in URL or publisher without substantive content does not match.
-    6. An unrelated nearby coordinate (different place name within 1.0 km) does not match.
-    7. Same-name places with coordinates > 1.0 km away do not match.
-    8. Casual mentions in passing text without coordinates or structured place metadata do not match.
-    9. Returns (is_match, verified_coordinates). Verified coordinates come strictly from the observation.
+    Returns a tuple of (is_entity_match, is_closed_or_unavailable, verified_coordinates).
     """
-    # 0. Check closed or unavailable status
-    if _is_place_closed_or_unavailable(obs):
-        return False, None
-
     cand_name = candidate.primary_name.strip()
     cand_norm = _normalize_name(cand_name)
     cand_tokens = cand_norm.split()
     if not cand_tokens:
-        return False, None
+        return False, False, None
 
     obs_title = _extract_observation_title(obs)
     obs_title_norm = _normalize_name(obs_title) if obs_title else ""
@@ -341,7 +326,8 @@ def _observation_supports_candidate(
     art_tokens: list[str] = []
     if isinstance(art_ref, dict):
         art_title = (
-            art_ref.get("title")
+            art_ref.get("page_title")
+            or art_ref.get("title")
             or art_ref.get("name")
             or art_ref.get("place_name")
             or art_ref.get("property_name")
@@ -374,7 +360,7 @@ def _observation_supports_candidate(
         if art_category in incompatible_categories or any(
             t in incompatible_categories for t in art_types
         ):
-            return False, None
+            return False, False, None
 
     # Determine structured entity title from observation
     entity_norm = art_title_norm or obs_title_norm
@@ -392,9 +378,9 @@ def _observation_supports_candidate(
 
             # If the entity title contains distinct entity modifiers (cafe, bus stop, school, etc.), reject
             if extra_in_entity & DISTINCT_ENTITY_MODIFIERS:
-                return False, None
+                return False, False, None
             if extra_in_cand & DISTINCT_ENTITY_MODIFIERS:
-                return False, None
+                return False, False, None
 
             # Shorter candidate name matching a different longer title:
             # If candidate has fewer words than entity, reject unless candidate has >= 2 words
@@ -403,7 +389,7 @@ def _observation_supports_candidate(
                 if len(cand_tokens) < 2 or not extra_in_entity.issubset(
                     ALLOWED_MONUMENT_DESCRIPTORS
                 ):
-                    return False, None
+                    return False, False, None
                 if set(cand_tokens).issubset(set(entity_tokens)):
                     title_matches = True
 
@@ -412,7 +398,7 @@ def _observation_supports_candidate(
                 if len(entity_tokens) < 2 or not extra_in_cand.issubset(
                     ALLOWED_MONUMENT_DESCRIPTORS
                 ):
-                    return False, None
+                    return False, False, None
                 if set(entity_tokens).issubset(set(cand_tokens)):
                     title_matches = True
 
@@ -433,7 +419,7 @@ def _observation_supports_candidate(
     name_matches = title_matches or excerpt_matches
     if not name_matches:
         # Metadata or title describes a different entity
-        return False, None
+        return False, False, None
 
     # Spatial verification against candidate location
     obs_coords = _extract_observation_coordinates(obs)
@@ -446,18 +432,28 @@ def _observation_supports_candidate(
         )
         if dist > 1.0:
             # Same-name place located far away: reject
-            return False, None
-        return True, obs_coords
+            return False, False, None
 
-    if obs_coords is not None and candidate.point is None:
-        return True, obs_coords
+    has_identity_evidence = (
+        title_matches
+        or (excerpt_matches and len(excerpt) >= 40 and not _is_casual_mention(excerpt))
+        or obs_coords is not None
+    )
+    if not has_identity_evidence:
+        return False, False, None
 
-    # Observation has no independent coordinates
-    if title_matches or (
-        excerpt_matches and len(excerpt) >= 40 and not _is_casual_mention(excerpt)
-    ):
-        return True, None
+    is_closed = _is_place_closed_or_unavailable(obs)
+    return True, is_closed, obs_coords
 
+
+def _observation_supports_candidate(
+    obs: SourceObservationModel,
+    candidate: RegisteredCandidate,
+) -> tuple[bool, tuple[float, float] | None]:
+    """Evaluates whether an observation genuinely supports active candidate existence."""
+    is_match, is_closed, coords = _match_observation_entity(obs, candidate)
+    if is_match and not is_closed:
+        return True, coords
     return False, None
 
 
@@ -537,7 +533,7 @@ async def ingest_claims_from_observations(
         if not cand_name_norm:
             continue
 
-        # Check existing claim for this candidate under this execution
+        # Check existing claims for this candidate under this execution
         existing_stmt = select(ClaimModel).where(
             ClaimModel.execution_id == execution_id,
             ClaimModel.subject_id == cand_name_norm,
@@ -546,63 +542,120 @@ async def ingest_claims_from_observations(
         if candidate.place_id is not None:
             existing_stmt = existing_stmt.where(ClaimModel.place_id == candidate.place_id)
 
-        existing_res = await session.execute(existing_stmt)
-        if existing_res.scalar_one_or_none() is not None:
-            continue
+        existing_claims = list((await session.execute(existing_stmt)).scalars().all())
+        existing_statuses = {
+            str((c.typed_value or {}).get("status") or "").lower() for c in existing_claims
+        }
 
         # Find matching observations with independent verification
-        matched_obs: list[SourceObservationModel] = []
+        supporting_obs: list[SourceObservationModel] = []
+        refuting_obs: list[SourceObservationModel] = []
         verified_coords: tuple[float, float] | None = None
+        refuting_coords: tuple[float, float] | None = None
 
         for obs in valid_observations:
-            is_match, coords = _observation_supports_candidate(obs, candidate)
-            if is_match:
-                matched_obs.append(obs)
+            is_match, is_closed, coords = _match_observation_entity(obs, candidate)
+            if not is_match:
+                continue
+            if is_closed:
+                refuting_obs.append(obs)
+                if coords is not None and refuting_coords is None:
+                    refuting_coords = coords
+            else:
+                supporting_obs.append(obs)
                 if coords is not None and verified_coords is None:
                     verified_coords = coords
 
-        if not matched_obs:
+        if not supporting_obs and not refuting_obs:
             continue
 
-        # Build claim linking observations with SUPPORTS
-        support_links = [
-            (obs, EvidenceSupportType.SUPPORTS, obs.canonical_url or obs.source_url)
-            for obs in matched_obs
-        ]
-
-        claim_create = ClaimCreate(
-            subject_id=cand_name_norm,
-            category=ClaimCategory.ATTRACTION,
-            place_id=candidate.place_id,
-            execution_id=execution_id,
-            typed_value={
-                "place_name": cand_name,
-                "category": candidate.category,
-                "source": "source_observation",
-                "status": "active",
-                "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
-            },
-            confidence=0.9,
-            valid_from=matched_obs[0].retrieved_at or now,
-            valid_until=now + timedelta(days=365),
-            geographic_scope={
-                "lat": verified_coords[0],
-                "lng": verified_coords[1],
-            }
-            if verified_coords
-            else None,
-        )
-
-        try:
-            created = await claim_service.submit_claim(
-                claim_data=claim_create,
-                observations_with_support=support_links,
-                as_of=now,
+        # Positive active support: ingest active claim
+        if supporting_obs and "active" not in existing_statuses:
+            support_links = [
+                (obs, EvidenceSupportType.SUPPORTS, obs.canonical_url or obs.source_url)
+                for obs in supporting_obs
+            ]
+            claim_create = ClaimCreate(
+                subject_id=cand_name_norm,
+                category=ClaimCategory.ATTRACTION,
+                place_id=candidate.place_id,
+                execution_id=execution_id,
+                typed_value={
+                    "place_name": cand_name,
+                    "category": candidate.category,
+                    "source": "source_observation",
+                    "status": "active",
+                    "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                },
+                confidence=0.9,
+                valid_from=supporting_obs[0].retrieved_at or now,
+                valid_until=now + timedelta(days=365),
+                geographic_scope={
+                    "lat": verified_coords[0],
+                    "lng": verified_coords[1],
+                }
+                if verified_coords
+                else None,
             )
-            ingested_claims.append(created)
-            logger.info("Ingested claim %s for candidate '%s'", created.id, cand_name)
-        except Exception as exc:
-            logger.warning("Failed submitting claim for candidate '%s': %s", cand_name, exc)
+            try:
+                created = await claim_service.submit_claim(
+                    claim_data=claim_create,
+                    observations_with_support=support_links,
+                    as_of=now,
+                )
+                ingested_claims.append(created)
+                logger.info("Ingested active claim %s for candidate '%s'", created.id, cand_name)
+            except Exception as exc:
+                logger.warning("Failed submitting active claim for candidate '%s': %s", cand_name, exc)
+
+        # Conflicting evidence: if supporting observations coexist with refuting observations,
+        # ingest closed claim so policy preserves the conflict honestly as CONFLICTED
+        if supporting_obs and refuting_obs and "closed" not in existing_statuses:
+            conflict_links = [
+                (obs, EvidenceSupportType.REFUTES, obs.canonical_url or obs.source_url)
+                for obs in refuting_obs
+            ]
+            target_conflict_coords = refuting_coords or verified_coords
+            closed_claim = ClaimCreate(
+                subject_id=cand_name_norm,
+                category=ClaimCategory.ATTRACTION,
+                place_id=candidate.place_id,
+                execution_id=execution_id,
+                typed_value={
+                    "place_name": cand_name,
+                    "category": candidate.category,
+                    "source": "source_observation",
+                    "status": "closed",
+                    "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                },
+                confidence=0.9,
+                valid_from=refuting_obs[0].retrieved_at or now,
+                valid_until=now + timedelta(days=365),
+                geographic_scope={
+                    "lat": target_conflict_coords[0],
+                    "lng": target_conflict_coords[1],
+                }
+                if target_conflict_coords is not None
+                else None,
+            )
+            try:
+                created_closed = await claim_service.submit_claim(
+                    claim_data=closed_claim,
+                    observations_with_support=conflict_links,
+                    as_of=now,
+                )
+                ingested_claims.append(created_closed)
+                logger.info(
+                    "Ingested conflicting closed claim %s for candidate '%s'",
+                    created_closed.id,
+                    cand_name,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Failed submitting conflicting closed claim for candidate '%s': %s",
+                    cand_name,
+                    exc,
+                )
 
     # 3. Ingest accommodation observations, strictly preserving INDICATIVE_SEARCH
     for obs in valid_observations:

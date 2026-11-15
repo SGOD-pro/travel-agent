@@ -36,7 +36,7 @@ from functions.orchestrator.evidence.claim_ingestion import (
 from functions.orchestrator.evidence.eligibility import (
     DeterministicEvidenceEligibilityGate,
 )
-from functions.orchestrator.evidence.models import ClaimEvidenceModel
+from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
 from functions.orchestrator.evidence.schemas import (
     ClaimCategory,
     EvidenceSupportType,
@@ -816,4 +816,377 @@ class TestClaimIngestionIntegration:
             assert (
                 report.editorial_recommendations[0].existence_status
                 == CandidateExistenceStatus.UNVERIFIED
+            )
+
+    async def test_search_title_with_unrelated_page_creates_no_page_supports_promotion(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 1: Search title A with unrelated page B must not promote candidate via page SUPPORTS link."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Search observation for Victoria Memorial (Title A)
+            search_obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtourism.gov.in/victoria-memorial",
+                canonical_url="https://wbtourism.gov.in/victoria-memorial",
+                publisher="West Bengal Tourism",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Place: Victoria Memorial | Historic marble monument in Kolkata.",
+                excerpt_locator="serpapi:places[0]",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={
+                    "category": "attraction",
+                    "title": "Victoria Memorial",
+                    "latitude": 22.5448,
+                    "longitude": 88.3425,
+                    "status": "active",
+                },
+                created_at=now,
+            )
+            session.add(search_obs)
+
+            # Scraped page observation from target URL describing Science City (Title B), not Victoria Memorial
+            page_obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://sciencecitykolkata.org/overview",
+                canonical_url="https://sciencecitykolkata.org/overview",
+                publisher="Science City Kolkata",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Science City in Kolkata features the Space Odyssey, Dynamotion Hall, and Earth Exploration Hall.",
+                excerpt_locator="main:text",
+                extraction_method="SCRAPLING_HTTP",
+                artifact_ref={
+                    "category": "attraction",
+                    "page_title": "Science City Kolkata",
+                    "title": "Science City Kolkata",
+                    "search_selected_title": "Victoria Memorial",
+                },
+                created_at=now,
+            )
+            session.add(page_obs)
+            await session.commit()
+
+            candidate = RegisteredCandidate(
+                primary_name="Victoria Memorial",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5448, lng=88.3425),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Active claim is ingested for Victoria Memorial
+            assert len(claims) >= 1
+            vm_claim = claims[0]
+            assert vm_claim.subject_id == "victoria memorial"
+
+            # Page observation for Science City must NOT have a SUPPORTS link to Victoria Memorial claim
+            page_supports_stmt = select(ClaimEvidenceModel).where(
+                ClaimEvidenceModel.observation_id == page_obs.id,
+                ClaimEvidenceModel.support_type == "SUPPORTS",
+            )
+            page_supports_links = list(
+                (await session.execute(page_supports_stmt)).scalars().all()
+            )
+            assert len(page_supports_links) == 0
+
+            # Search observation DOES have a SUPPORTS link to Victoria Memorial claim
+            search_supports_stmt = select(ClaimEvidenceModel).where(
+                ClaimEvidenceModel.observation_id == search_obs.id,
+                ClaimEvidenceModel.claim_id == vm_claim.id,
+                ClaimEvidenceModel.support_type == "SUPPORTS",
+            )
+            search_supports_links = list(
+                (await session.execute(search_supports_stmt)).scalars().all()
+            )
+            assert len(search_supports_links) == 1
+
+    async def test_search_title_with_page_without_identity_evidence_stays_unverified(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 2: Search title with page lacking identity evidence must remain UNVERIFIED."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Search observation has no verified coordinates or independent proof
+            search_obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://search.example.com/fictional-cloud",
+                canonical_url="https://search.example.com/fictional-cloud",
+                publisher="Search Engine",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="A casual search query for fictional cloud observatory in the sky.",
+                excerpt_locator="serpapi:organic[0]",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={
+                    "search_selected_title": "Fictional Cloud Observatory",
+                },
+                created_at=now,
+            )
+            session.add(search_obs)
+
+            # Scraped page observation has generic portal content without identity evidence
+            page_obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://portal.example.com/home",
+                canonical_url="https://portal.example.com/home",
+                publisher="Generic Portal",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Welcome to our municipal web portal. View public services, announcements, and directories.",
+                excerpt_locator="main:text",
+                extraction_method="SCRAPLING_HTTP",
+                artifact_ref={
+                    "category": "general",
+                    "page_title": "",
+                    "search_selected_title": "Fictional Cloud Observatory",
+                },
+                created_at=now,
+            )
+            session.add(page_obs)
+            await session.commit()
+
+            candidate = RegisteredCandidate(
+                primary_name="Fictional Cloud Observatory",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5448, lng=88.3425),
+            )
+
+            _ = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # No claims or unverified claims must not promote candidate to solver
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+            assert len(report.eligible_stops) == 0
+            assert len(report.editorial_recommendations) == 1
+            assert (
+                report.editorial_recommendations[0].existence_status
+                == CandidateExistenceStatus.UNVERIFIED
+            )
+
+    async def test_matching_page_with_genuine_supporting_evidence_eligible(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 3: Matching page with genuine supporting evidence becomes eligible when policy allows."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Search observation with verified coordinates
+            search_obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtourism.gov.in/prinsep-ghat",
+                canonical_url="https://wbtourism.gov.in/prinsep-ghat",
+                publisher="West Bengal Tourism",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Place: Prinsep Ghat Memorial | Historic riverside monument along Strand Road.",
+                excerpt_locator="serpapi:places[0]",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={
+                    "category": "attraction",
+                    "title": "Prinsep Ghat Memorial",
+                    "latitude": 22.5550,
+                    "longitude": 88.3320,
+                    "status": "active",
+                },
+                created_at=now,
+            )
+            session.add(search_obs)
+
+            # Scraped page observation with genuine matching identity and substantive excerpt
+            page_obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtourism.gov.in/prinsep-ghat/details",
+                canonical_url="https://wbtourism.gov.in/prinsep-ghat/details",
+                publisher="West Bengal Tourism",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Prinsep Ghat Memorial is a majestic Greek Gothic style memorial built in 1843 along the Hooghly river.",
+                excerpt_locator="main:text",
+                extraction_method="SCRAPLING_HTTP",
+                artifact_ref={
+                    "category": "attraction",
+                    "page_title": "Prinsep Ghat Memorial",
+                    "title": "Prinsep Ghat Memorial",
+                    "search_selected_title": "Prinsep Ghat Memorial",
+                },
+                created_at=now,
+            )
+            session.add(page_obs)
+            await session.commit()
+
+            candidate = RegisteredCandidate(
+                primary_name="Prinsep Ghat Memorial",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5550, lng=88.3320),
+            )
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            assert len(claims) >= 1
+            jp_claim = claims[0]
+
+            # Page observation genuinely matches and has a SUPPORTS link
+            page_supports_stmt = select(ClaimEvidenceModel).where(
+                ClaimEvidenceModel.observation_id == page_obs.id,
+                ClaimEvidenceModel.claim_id == jp_claim.id,
+                ClaimEvidenceModel.support_type == "SUPPORTS",
+            )
+            page_supports_links = list(
+                (await session.execute(page_supports_stmt)).scalars().all()
+            )
+            assert len(page_supports_links) == 1
+
+            # Candidate evaluates to VERIFIED and enters eligible stops
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+            assert len(report.eligible_stops) == 1
+            assert (
+                report.eligible_stops[0].existence_status
+                == CandidateExistenceStatus.VERIFIED
+            )
+
+    async def test_conflicting_page_and_search_metadata_preserves_conflict_honestly(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 4: Conflicting page and search metadata preserves conflict honestly as CONFLICTED."""
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Search observation asserts active existence
+            search_obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtourism.gov.in/heritage-museum",
+                canonical_url="https://wbtourism.gov.in/heritage-museum",
+                publisher="West Bengal Tourism",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Place: Heritage Museum | Open daily showcasing historical artifacts.",
+                excerpt_locator="serpapi:places[0]",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={
+                    "category": "attraction",
+                    "title": "Heritage Museum",
+                    "latitude": 22.5600,
+                    "longitude": 88.3500,
+                    "status": "active",
+                },
+                created_at=now,
+            )
+            session.add(search_obs)
+
+            # Scraped page observation for the place asserts it is permanently closed
+            page_obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://heritagemuseum.org/closure-notice",
+                canonical_url="https://heritagemuseum.org/closure-notice",
+                publisher="Heritage Museum Official",
+                content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Heritage Museum is permanently closed to all visitors following structural condemnation.",
+                excerpt_locator="main:text",
+                extraction_method="SCRAPLING_HTTP",
+                artifact_ref={
+                    "category": "attraction",
+                    "page_title": "Heritage Museum",
+                    "title": "Heritage Museum",
+                    "business_status": "CLOSED_PERMANENTLY",
+                    "status": "closed",
+                    "search_selected_title": "Heritage Museum",
+                },
+                created_at=now,
+            )
+            session.add(page_obs)
+            await session.commit()
+
+            candidate = RegisteredCandidate(
+                primary_name="Heritage Museum",
+                category="attraction",
+                point=CoordinatePoint(lat=22.5600, lng=88.3500),
+            )
+
+            _ = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[candidate],
+                owner_id=owner_id,
+            )
+            await session.commit()
+
+            # Conflict is preserved honestly: claims are marked CONFLICTED
+            claims_stmt = select(ClaimModel).where(
+                ClaimModel.execution_id == exec_id,
+                ClaimModel.subject_id == "heritage museum",
+            )
+            persisted_claims = list((await session.execute(claims_stmt)).scalars().all())
+            assert len(persisted_claims) >= 2
+            assert any(
+                c.verification == VerificationStatus.CONFLICTED for c in persisted_claims
+            )
+
+            # Eligibility gate evaluates candidate as CONTRADICTED and excludes it
+            gate = DeterministicEvidenceEligibilityGate(session=session)
+            report = await gate.evaluate_candidate_eligibility(
+                [candidate],
+                execution_id=exec_id,
+                owner_id=owner_id,
+            )
+            assert len(report.eligible_stops) == 0
+            assert len(report.excluded_candidates) == 1
+            assert (
+                report.excluded_candidates[0].existence_status
+                == CandidateExistenceStatus.CONTRADICTED
+            )
+            assert (
+                "Conflicting claims"
+                in report.excluded_candidates[0].diagnostics.get("contradiction_reason", "")
             )

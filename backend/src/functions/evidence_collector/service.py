@@ -677,8 +677,7 @@ class EvidenceCollectorService:
                             for ext_obs in obs_list:
                                 if page_title:
                                     ext_art = dict(ext_obs.artifact_ref or {})
-                                    if not ext_art.get("title"):
-                                        ext_art["title"] = page_title
+                                    # Keep search result metadata separate from page extracted identity
                                     ext_art.setdefault("search_selected_title", page_title)
                                     updated_obs_list.append(
                                         replace(ext_obs, artifact_ref=ext_art)
@@ -698,8 +697,7 @@ class EvidenceCollectorService:
                             if extracted_obs:
                                 if page_title:
                                     ext_art = dict(extracted_obs.artifact_ref or {})
-                                    if not ext_art.get("title"):
-                                        ext_art["title"] = page_title
+                                    # Keep search result metadata separate from page extracted identity
                                     ext_art.setdefault("search_selected_title", page_title)
                                     collected_observations.append(
                                         replace(extracted_obs, artifact_ref=ext_art)
