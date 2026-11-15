@@ -2269,10 +2269,21 @@ class TestClaimIngestionIntegration:
                 "affected_area": "NH-10 Rangpo Sikkim",
                 "severity": "CRITICAL",
                 "is_authoritative": True,
+                "latitude": 27.1767,
+                "longitude": 88.5333,
             },
             created_at=now,
         )
 
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
         state: dict[str, Any] = {
             "trip_id": str(uuid.uuid4()),
             "owner_id": str(uuid.uuid4()),
@@ -2292,6 +2303,7 @@ class TestClaimIngestionIntegration:
                 "start_date": "2026-11-20",
                 "end_date": "2026-11-22",
             },
+            "route_geometry": route_geom,
             "eligible_stops": [],
             "editorial_recommendations": [],
             "observations": [obs_sikkim],
@@ -2877,6 +2889,8 @@ class TestClaimIngestionIntegration:
                 "applicable_start": "2026-11-20T00:00:00Z",
                 "applicable_end": "2026-11-22T00:00:00Z",
                 "is_authoritative": True,
+                "latitude": 17.3850,
+                "longitude": 78.4867,
             },
             created_at=now,
         )
@@ -2907,6 +2921,15 @@ class TestClaimIngestionIntegration:
             created_at=now,
         )
 
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
         state: dict[str, Any] = {
             "trip_id": str(uuid.uuid4()),
             "owner_id": str(uuid.uuid4()),
@@ -2926,6 +2949,7 @@ class TestClaimIngestionIntegration:
                 "start_date": "2026-11-20",
                 "end_date": "2026-11-22",
             },
+            "route_geometry": route_geom,
             "eligible_stops": [],
             "editorial_recommendations": [],
             "observations": [obs_unrelated, obs_insufficient],
@@ -3667,4 +3691,345 @@ class TestClaimIngestionIntegration:
         assert proposal["route_geometry"] == route_geom
         assert proposal["advisory_status"] == "ADVISORIES_PRESENT"
         assert any("Nandakumar" in diag for diag in proposal["route_diagnostics"])
+
+    async def test_advisory_research_unnamed_intermediate_road_location_without_coordinates(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 15: Intermediate road location without coordinates preserves UNKNOWN relevance not OUTSIDE_CORRIDOR."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_intermediate = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/kolaghat-bypass-maintenance",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/kolaghat-bypass-maintenance",
+            publisher="West Bengal Traffic Police",
+            content_hash="kolaghat_bypass_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="One lane closed for resurfacing at Kolaghat Bypass. Heavy vehicles diverted.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "ROAD_CLOSURE",
+                "headline": "Lane closure at Kolaghat Bypass",
+                "affected_area": "Kolaghat Bypass",
+                "severity": "WARNING",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-22T00:00:00Z",
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": route_geom,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_intermediate],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        proposal = proposal_res["proposal"]
+        adv_res = proposal["advisory_research"]
+
+        # Must not be classified as OUTSIDE_CORRIDOR or put in unrelated_advisories
+        assert len(adv_res["unrelated_advisories"]) == 0
+        assert len(adv_res["advisories"]) == 0
+        # Preserved in unverified_advisories with UNKNOWN relevance and source details
+        assert len(adv_res["unverified_advisories"]) == 1
+        adv = adv_res["unverified_advisories"][0]
+        assert adv["relevance"] == "UNKNOWN"
+        assert adv["uncertainty"] == "UNKNOWN_RELEVANCE"
+        assert "lacks coordinates; intermediate corridor location cannot be ruled out" in adv["relevance_reason"]
+        assert adv["observation_id"] == str(obs_intermediate.id)
+        assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/kolaghat-bypass-maintenance"
+        assert adv["retrieval_time"] is not None
+        assert proposal["advisory_status"] == "ADVISORY_UNKNOWN"
+
+    async def test_advisory_research_missing_geometry_with_unmatched_affected_area_name(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 16: Missing geometry with unmatched affected area preserves UNKNOWN relevance not OUTSIDE_CORRIDOR."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_contai = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/contai-waterlogging",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/contai-waterlogging",
+            publisher="West Bengal Traffic Police",
+            content_hash="contai_waterlogging_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Waterlogging advisory for Contai Coastal Sector after heavy rain.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "weather_warning",
+                "advisory_type": "WEATHER_WARNING",
+                "headline": "Waterlogging advisory for Contai Coastal Sector",
+                "affected_area": "Contai Coastal Sector",
+                "severity": "WARNING",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-22T00:00:00Z",
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": None,  # Geometry missing
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_contai],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        proposal = proposal_res["proposal"]
+        adv_res = proposal["advisory_research"]
+
+        # Must not be classified as OUTSIDE_CORRIDOR
+        assert len(adv_res["unrelated_advisories"]) == 0
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["unverified_advisories"]) == 1
+        adv = adv_res["unverified_advisories"][0]
+        assert adv["relevance"] == "UNKNOWN"
+        assert adv["uncertainty"] == "UNKNOWN_RELEVANCE"
+        assert "Selected road route geometry is unavailable and affected area 'Contai Coastal Sector' lacks coordinates" in adv["relevance_reason"]
+        assert adv["observation_id"] == str(obs_contai.id)
+        assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/contai-waterlogging"
+        assert adv["retrieval_time"] is not None
+        assert proposal["advisory_status"] == "ADVISORY_UNKNOWN"
+
+    async def test_advisory_research_genuinely_outside_location_supported_by_coordinates(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 17: Genuinely outside location supported by coordinates is classified as OUTSIDE_CORRIDOR."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_sikkim = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/nh10-rangpo-landslide",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/nh10-rangpo-landslide",
+            publisher="West Bengal Traffic Police",
+            content_hash="rangpo_landslide_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Major rockslide blocks NH-10 near Rangpo. Route impassable.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "LANDSLIDE",
+                "headline": "Rockslide on NH-10 near Rangpo",
+                "affected_area": "Rangpo Sikkim",
+                "severity": "CRITICAL",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-22T00:00:00Z",
+                "is_authoritative": True,
+                "latitude": 27.1767,
+                "longitude": 88.5333,  # > 500 km away from Kolkata-Digha road
+            },
+            created_at=now,
+        )
+
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": route_geom,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_sikkim],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        proposal = proposal_res["proposal"]
+        adv_res = proposal["advisory_research"]
+
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["unverified_advisories"]) == 0
+        assert len(adv_res["unrelated_advisories"]) == 1
+        adv = adv_res["unrelated_advisories"][0]
+        assert adv["relevance"] == "OUTSIDE_CORRIDOR"
+        assert "exceeds 100 km corridor" in adv["relevance_reason"].lower()
+        assert adv["affected_area"] == "Rangpo Sikkim"
+        assert adv["observation_id"] == str(obs_sikkim.id)
+        assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/nh10-rangpo-landslide"
+        assert adv["retrieval_time"] is not None
+        assert proposal["advisory_status"] == "ADVISORY_UNKNOWN"
+
+    async def test_advisory_research_valid_relevant_location_supported_by_route_geometry(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 18: Valid relevant location with coordinates supported by road geometry confirmed active."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_relevant = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/nh116b-nandakumar-culvert",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/nh116b-nandakumar-culvert",
+            publisher="West Bengal Traffic Police",
+            content_hash="nandakumar_culvert_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Emergency culvert repair near Nandakumar junction on NH-116B.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "ROAD_CLOSURE",
+                "headline": "Emergency culvert repair at Nandakumar on NH-116B",
+                "affected_area": "NH-116B Nandakumar Junction",
+                "severity": "WARNING",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-22T00:00:00Z",
+                "latitude": 22.3020,
+                "longitude": 87.9250,
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": route_geom,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_relevant],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        proposal = proposal_res["proposal"]
+        adv_res = proposal["advisory_research"]
+
+        assert adv_res["status"] == "ADVISORIES_PRESENT"
+        assert len(adv_res["advisories"]) == 1
+        assert len(adv_res["unrelated_advisories"]) == 0
+        assert len(adv_res["unverified_advisories"]) == 0
+        adv = adv_res["advisories"][0]
+        assert adv["is_authoritative"] is True
+        assert adv["status"] == "ACTIVE"
+        assert adv["relevance"] == "WITHIN_CORRIDOR"
+        assert adv["uncertainty"] == "CONFIRMED_AUTHORITATIVE"
+        assert adv["observation_id"] == str(obs_relevant.id)
+        assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/nh116b-nandakumar-culvert"
+        assert adv["retrieval_time"] is not None
+        assert "within 100 km corridor" in adv["relevance_reason"].lower()
+        assert proposal["route_geometry"] == route_geom
+        assert proposal["advisory_status"] == "ADVISORIES_PRESENT"
 

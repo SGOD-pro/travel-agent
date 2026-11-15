@@ -3631,15 +3631,16 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
                     spatial_relevance = "UNKNOWN"
                     relevance_reason = "Error validating affected area coordinates"
             else:
-                # Road route geometry exists but affected area cannot be tied to it without coordinates
+                # Road route geometry exists but notice has only an affected area name without coordinates
                 spatial_relevance = "UNKNOWN"
                 if matched_trip_place:
                     relevance_reason = (
                         "Affected area mentions trip place but lacks coordinates to tie to selected road route geometry"
                     )
-                elif affected_area and verified_trip_places:
-                    spatial_relevance = "OUTSIDE_CORRIDOR"
-                    relevance_reason = f"Affected area '{affected_area}' does not match verified trip locations"
+                elif affected_area:
+                    relevance_reason = (
+                        f"Affected area '{affected_area}' lacks coordinates; intermediate corridor location cannot be ruled out"
+                    )
                 else:
                     relevance_reason = (
                         "Affected area has no coordinates to evaluate against selected road route geometry"
@@ -3652,9 +3653,11 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
                     "Selected road route geometry is unavailable; "
                     "notice mentions trip place but spatial corridor cannot be confirmed without road geometry"
                 )
-            elif affected_area and verified_trip_places:
-                spatial_relevance = "OUTSIDE_CORRIDOR"
-                relevance_reason = f"Affected area '{affected_area}' does not match verified trip locations"
+            elif affected_area:
+                relevance_reason = (
+                    f"Selected road route geometry is unavailable and affected area '{affected_area}' lacks coordinates; "
+                    "spatial relevance cannot be verified"
+                )
             else:
                 relevance_reason = (
                     "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
