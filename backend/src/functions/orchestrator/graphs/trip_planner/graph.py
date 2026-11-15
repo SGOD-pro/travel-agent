@@ -3606,38 +3606,59 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         )
 
         spatial_relevance: str
-        if adv_lat is not None and adv_lng is not None:
-            try:
-                is_valid_pt, _ = validate_coordinates(float(adv_lat), float(adv_lng))
-                if is_valid_pt:
-                    adv_pt = CoordinatePoint(lat=float(adv_lat), lng=float(adv_lng))
-                    if road_corridor_coords:
+        relevance_reason: str | None = None
+        if road_corridor_coords:
+            if adv_lat is not None and adv_lng is not None:
+                try:
+                    is_valid_pt, _ = validate_coordinates(float(adv_lat), float(adv_lng))
+                    if is_valid_pt:
+                        adv_pt = CoordinatePoint(lat=float(adv_lat), lng=float(adv_lng))
                         dist_km = compute_corridor_distance_km(adv_pt, road_corridor_coords)
                         if dist_km <= 100.0:
                             spatial_relevance = "WITHIN_CORRIDOR"
+                            relevance_reason = (
+                                f"Notice coordinates are {dist_km:.1f} km from selected road route (within 100 km corridor)"
+                            )
                         else:
                             spatial_relevance = "OUTSIDE_CORRIDOR"
-                    elif verified_trip_places:
-                        # Road route geometry is not available; check affected area text against trip places
-                        if matched_trip_place:
-                            spatial_relevance = "WITHIN_CORRIDOR"
-                        elif affected_area:
-                            spatial_relevance = "OUTSIDE_CORRIDOR"
-                        else:
-                            spatial_relevance = "UNKNOWN"
+                            relevance_reason = (
+                                f"Notice coordinates are {dist_km:.1f} km from selected road route (exceeds 100 km corridor)"
+                            )
                     else:
                         spatial_relevance = "UNKNOWN"
+                        relevance_reason = "Affected area coordinates are invalid or out of bounds"
+                except Exception:
+                    spatial_relevance = "UNKNOWN"
+                    relevance_reason = "Error validating affected area coordinates"
+            else:
+                # Road route geometry exists but affected area cannot be tied to it without coordinates
+                spatial_relevance = "UNKNOWN"
+                if matched_trip_place:
+                    relevance_reason = (
+                        "Affected area mentions trip place but lacks coordinates to tie to selected road route geometry"
+                    )
+                elif affected_area and verified_trip_places:
+                    spatial_relevance = "OUTSIDE_CORRIDOR"
+                    relevance_reason = f"Affected area '{affected_area}' does not match verified trip locations"
                 else:
-                    spatial_relevance = "LOCATION_EVIDENCE_INSUFFICIENT"
-            except Exception:
-                spatial_relevance = "LOCATION_EVIDENCE_INSUFFICIENT"
+                    relevance_reason = (
+                        "Affected area has no coordinates to evaluate against selected road route geometry"
+                    )
         else:
+            # Selected road route geometry is unavailable
+            spatial_relevance = "UNKNOWN"
             if matched_trip_place:
-                spatial_relevance = "WITHIN_CORRIDOR"
+                relevance_reason = (
+                    "Selected road route geometry is unavailable; "
+                    "notice mentions trip place but spatial corridor cannot be confirmed without road geometry"
+                )
             elif affected_area and verified_trip_places:
                 spatial_relevance = "OUTSIDE_CORRIDOR"
+                relevance_reason = f"Affected area '{affected_area}' does not match verified trip locations"
             else:
-                spatial_relevance = "UNKNOWN"
+                relevance_reason = (
+                    "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+                )
 
         # Determine status and uncertainty
         if is_lifted:
@@ -3683,6 +3704,8 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
             "retrieval_time": ret_str,
             "uncertainty": uncertainty_val,
             "relevance": spatial_relevance,
+            "relevance_reason": relevance_reason,
+            "reason": relevance_reason,
         }
 
         if is_expired or is_lifted:
@@ -3692,7 +3715,13 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
             unrelated_advisories.append(adv_item)
         elif spatial_relevance in ("UNKNOWN", "LOCATION_EVIDENCE_INSUFFICIENT"):
             adv_item["relevance"] = "UNKNOWN"
-            adv_item["uncertainty"] = "UNKNOWN_RELEVANCE"
+            if adv_item["uncertainty"] not in (
+                "FUTURE_ADVISORY",
+                "UNVERIFIED_UNDATED",
+                "STALE",
+                "UNVERIFIED_SEARCH",
+            ):
+                adv_item["uncertainty"] = "UNKNOWN_RELEVANCE"
             unverified_advisories.append(adv_item)
         elif status_val in ("FUTURE", "UNDATED", "STALE", "MALFORMED_DATES", "UNKNOWN_INTERVAL"):
             unverified_advisories.append(adv_item)

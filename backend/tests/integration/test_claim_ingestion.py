@@ -2159,6 +2159,8 @@ class TestClaimIngestionIntegration:
                     "applicable_start": "2026-11-20T00:00:00Z",
                     "applicable_end": "2026-11-23T00:00:00Z",
                     "is_authoritative": True,
+                    "latitude": 22.3020,
+                    "longitude": 87.9250,
                 },
                 created_at=now,
             )
@@ -2182,7 +2184,16 @@ class TestClaimIngestionIntegration:
             assert claim.typed_value["is_authoritative"] is True
             assert claim.typed_value["uncertainty"] == "CONFIRMED_AUTHORITATIVE"
 
-            # Test proposal path
+            # Test proposal path with selected road route geometry
+            route_geom = {
+                "type": "LineString",
+                "coordinates": [
+                    [88.3639, 22.5726],
+                    [87.9250, 22.3020],
+                    [87.8100, 22.0600],
+                    [87.5074, 21.6266],
+                ],
+            }
             state: dict[str, Any] = {
                 "trip_id": str(uuid.uuid4()),
                 "owner_id": str(owner_id),
@@ -2202,6 +2213,7 @@ class TestClaimIngestionIntegration:
                     "start_date": "2026-11-20",
                     "end_date": "2026-11-22",
                 },
+                "route_geometry": route_geom,
                 "eligible_stops": [],
                 "editorial_recommendations": [],
                 "observations": [obs_closure],
@@ -2398,6 +2410,8 @@ class TestClaimIngestionIntegration:
                 "applicable_end": "2026-11-22T00:00:00Z",
                 "status": "ACTIVE",
                 "is_authoritative": True,
+                "latitude": 22.3020,
+                "longitude": 87.9250,
             },
             created_at=now,
         )
@@ -2425,10 +2439,21 @@ class TestClaimIngestionIntegration:
                 "applicable_end": "2026-11-22T00:00:00Z",
                 "status": "LIFTED",
                 "is_authoritative": True,
+                "latitude": 22.3020,
+                "longitude": 87.9250,
             },
             created_at=now,
         )
 
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
         state: dict[str, Any] = {
             "trip_id": str(uuid.uuid4()),
             "owner_id": str(uuid.uuid4()),
@@ -2448,6 +2473,7 @@ class TestClaimIngestionIntegration:
                 "start_date": "2026-11-20",
                 "end_date": "2026-11-22",
             },
+            "route_geometry": route_geom,
             "eligible_stops": [],
             "editorial_recommendations": [],
             "observations": [obs_closed, obs_reopened],
@@ -2947,6 +2973,8 @@ class TestClaimIngestionIntegration:
                     "severity": "CRITICAL",
                     "applicable_start": "2026-11-20T00:00:00Z",
                     "applicable_end": "2026-11-23T00:00:00Z",
+                    "latitude": 22.3020,
+                    "longitude": 87.9250,
                 },
                 created_at=now,
             )
@@ -2964,6 +2992,15 @@ class TestClaimIngestionIntegration:
             assert claim.typed_value["is_authoritative"] is True
             assert claim.typed_value["uncertainty"] == "CONFIRMED_AUTHORITATIVE"
 
+            route_geom = {
+                "type": "LineString",
+                "coordinates": [
+                    [88.3639, 22.5726],
+                    [87.9250, 22.3020],
+                    [87.8100, 22.0600],
+                    [87.5074, 21.6266],
+                ],
+            }
             state: dict[str, Any] = {
                 "trip_id": str(uuid.uuid4()),
                 "owner_id": str(owner_id),
@@ -2983,6 +3020,7 @@ class TestClaimIngestionIntegration:
                     "start_date": "2026-11-20",
                     "end_date": "2026-11-22",
                 },
+                "route_geometry": route_geom,
                 "eligible_stops": [],
                 "editorial_recommendations": [],
                 "observations": [obs_valid],
@@ -3378,4 +3416,255 @@ class TestClaimIngestionIntegration:
         assert proposal["route_geometry"] == route_geom
         assert proposal["advisory_status"] == "ADVISORIES_PRESENT"
         assert any("NH-116B" in diag for diag in proposal["route_diagnostics"])
+
+    async def test_advisory_research_matching_place_name_without_road_geometry_reports_unknown(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 12: Matching place name without road route geometry reports unknown relevance and advisory unknown."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_digha = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/digha-coastal-waterlogging",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/digha-coastal-waterlogging",
+            publisher="West Bengal Traffic Police",
+            content_hash="digha_waterlogging_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Severe waterlogging on Digha coastal approach road. High tide surge.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "weather_warning",
+                "advisory_type": "FLOOD",
+                "headline": "Waterlogging on entry road to Digha",
+                "affected_area": "Digha Coastal Road",
+                "severity": "WARNING",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-23T00:00:00Z",
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": None,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_digha],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert adv_res["status"] == "ADVISORY_UNKNOWN"
+        assert adv_res["status"] != "SAFE"
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["unverified_advisories"]) == 1
+        adv = adv_res["unverified_advisories"][0]
+        assert adv["relevance"] == "UNKNOWN"
+        assert adv["uncertainty"] == "UNKNOWN_RELEVANCE"
+        assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/digha-coastal-waterlogging"
+        assert adv["observation_id"] == str(obs_digha.id)
+        assert adv["reason"] is not None
+        assert "road route geometry is unavailable" in adv["reason"].lower()
+        assert proposal_res["proposal"]["advisory_status"] == "ADVISORY_UNKNOWN"
+
+    async def test_advisory_research_missing_affected_area_coordinates_reports_unknown(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 13: Road route geometry exists but affected area lacks coordinates reporting unknown relevance."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_no_coords = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/digha-flash-flood",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/digha-flash-flood",
+            publisher="West Bengal Traffic Police",
+            content_hash="digha_flash_flood_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Flash flood alert for Digha coastal zone following tropical depression.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "weather_warning",
+                "advisory_type": "FLOOD",
+                "headline": "Flash flood alert for Digha coastal zone",
+                "affected_area": "Digha Coastal Zone",
+                "severity": "CRITICAL",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-23T00:00:00Z",
+                "is_authoritative": True,
+                "latitude": None,
+                "longitude": None,
+            },
+            created_at=now,
+        )
+
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": route_geom,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_no_coords],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert adv_res["status"] == "ADVISORY_UNKNOWN"
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["unverified_advisories"]) == 1
+        adv = adv_res["unverified_advisories"][0]
+        assert adv["relevance"] == "UNKNOWN"
+        assert adv["uncertainty"] == "UNKNOWN_RELEVANCE"
+        assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/digha-flash-flood"
+        assert adv["observation_id"] == str(obs_no_coords.id)
+        assert adv["reason"] is not None
+        assert "lacks coordinates to tie to selected road route geometry" in adv["reason"]
+        assert proposal_res["proposal"]["advisory_status"] == "ADVISORY_UNKNOWN"
+
+    async def test_advisory_research_valid_road_geometry_match_confirmed_active(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 14: Valid road route geometry match with coordinates on corridor confirmed active."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_matched = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/nh116b-nandakumar-bridge",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/nh116b-nandakumar-bridge",
+            publisher="West Bengal Traffic Police",
+            content_hash="nandakumar_bridge_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Bridge damage and total road closure on NH-116B near Nandakumar. Diversion via Kolaghat.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "ROAD_CLOSURE",
+                "headline": "Bridge damage and road closure at Nandakumar on NH-116B",
+                "affected_area": "NH-116B Nandakumar",
+                "severity": "CRITICAL",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-23T00:00:00Z",
+                "latitude": 22.3020,
+                "longitude": 87.9250,
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": route_geom,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_matched],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        proposal = proposal_res["proposal"]
+        adv_res = proposal["advisory_research"]
+
+        assert adv_res["status"] == "ADVISORIES_PRESENT"
+        assert len(adv_res["advisories"]) == 1
+        adv = adv_res["advisories"][0]
+        assert adv["is_authoritative"] is True
+        assert adv["status"] == "ACTIVE"
+        assert adv["relevance"] == "WITHIN_CORRIDOR"
+        assert adv["uncertainty"] == "CONFIRMED_AUTHORITATIVE"
+        assert adv["observation_id"] == str(obs_matched.id)
+        assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/nh116b-nandakumar-bridge"
+        assert adv["retrieval_time"] is not None
+        assert "within 100 km corridor" in adv["relevance_reason"].lower()
+        assert proposal["route_geometry"] == route_geom
+        assert proposal["advisory_status"] == "ADVISORIES_PRESENT"
+        assert any("Nandakumar" in diag for diag in proposal["route_diagnostics"])
 
