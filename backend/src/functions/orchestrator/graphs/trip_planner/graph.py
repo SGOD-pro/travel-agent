@@ -3180,9 +3180,27 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
     7. Fail closed safety: absence of warnings NEVER evaluates to SAFE; reports ADVISORY_UNKNOWN
        with an explicit reason whenever evidence is missing, stale, outside area, or unverified.
     """
+    from functions.orchestrator.evidence.policy import (
+        is_verified_authority_domain,
+        safe_parse_datetime,
+    )
+    from functions.orchestrator.places.corridor import (
+        compute_corridor_distance_km,
+        validate_coordinates,
+    )
+    from functions.orchestrator.places.schemas import CoordinatePoint
+
     brief_data = state.get("brief", {})
-    origin_name = str(brief_data.get("origin_name") or "").strip().lower()
-    raw_dests = brief_data.get("destinations", [])
+    origin_name = str(
+        brief_data.get("origin_name")
+        if isinstance(brief_data, dict)
+        else getattr(brief_data, "origin_name", "")
+    ).strip().lower()
+    raw_dests = (
+        brief_data.get("destinations", [])
+        if isinstance(brief_data, dict)
+        else getattr(brief_data, "destinations", [])
+    )
     dest_names = [
         str(d.get("name") if isinstance(d, dict) else getattr(d, "name", "")).strip().lower()
         for d in (raw_dests if isinstance(raw_dests, list) else [])
@@ -3199,31 +3217,73 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         for s in (sched_stops if isinstance(sched_stops, list) else [])
     ]
 
+    # Build corridor points dynamically from origin, destinations, and scheduled stops
+    corridor_coords: list[CoordinatePoint] = []
+    origin_lat = (
+        brief_data.get("origin_lat")
+        if isinstance(brief_data, dict)
+        else getattr(brief_data, "origin_lat", None)
+    )
+    origin_lng = (
+        brief_data.get("origin_lng")
+        if isinstance(brief_data, dict)
+        else getattr(brief_data, "origin_lng", None)
+    )
+    if origin_lat is not None and origin_lng is not None:
+        try:
+            is_valid_orig, _ = validate_coordinates(float(origin_lat), float(origin_lng))
+            if is_valid_orig:
+                corridor_coords.append(
+                    CoordinatePoint(lat=float(origin_lat), lng=float(origin_lng))
+                )
+        except Exception:
+            pass
+
+    for d in (raw_dests if isinstance(raw_dests, list) else []):
+        d_lat = d.get("latitude") if isinstance(d, dict) else getattr(d, "latitude", None)
+        d_lng = d.get("longitude") if isinstance(d, dict) else getattr(d, "longitude", None)
+        if d_lat is not None and d_lng is not None:
+            try:
+                is_valid_d, _ = validate_coordinates(float(d_lat), float(d_lng))
+                if is_valid_d:
+                    corridor_coords.append(CoordinatePoint(lat=float(d_lat), lng=float(d_lng)))
+            except Exception:
+                pass
+
+    for s in (sched_stops if isinstance(sched_stops, list) else []):
+        s_lat = (
+            s.get("lat") or s.get("latitude")
+            if isinstance(s, dict)
+            else getattr(s, "lat", getattr(s, "latitude", None))
+        )
+        s_lng = (
+            s.get("lng") or s.get("longitude")
+            if isinstance(s, dict)
+            else getattr(s, "lng", getattr(s, "longitude", None))
+        )
+        if s_lat is not None and s_lng is not None:
+            try:
+                is_valid_s, _ = validate_coordinates(float(s_lat), float(s_lng))
+                if is_valid_s:
+                    corridor_coords.append(CoordinatePoint(lat=float(s_lat), lng=float(s_lng)))
+            except Exception:
+                pass
+
     # Trip travel dates
-    start_date_val = brief_data.get("start_date")
-    end_date_val = brief_data.get("end_date")
-    trip_start_date: date | None = None
-    trip_end_date: date | None = None
-
-    if isinstance(start_date_val, datetime):
-        trip_start_date = start_date_val.date()
-    elif isinstance(start_date_val, date):
-        trip_start_date = start_date_val
-    elif isinstance(start_date_val, str) and len(start_date_val) >= 10:
-        try:
-            trip_start_date = date.fromisoformat(start_date_val[:10])
-        except Exception:
-            pass
-
-    if isinstance(end_date_val, datetime):
-        trip_end_date = end_date_val.date()
-    elif isinstance(end_date_val, date):
-        trip_end_date = end_date_val
-    elif isinstance(end_date_val, str) and len(end_date_val) >= 10:
-        try:
-            trip_end_date = date.fromisoformat(end_date_val[:10])
-        except Exception:
-            pass
+    start_date_val = (
+        brief_data.get("start_date")
+        if isinstance(brief_data, dict)
+        else getattr(brief_data, "start_date", None)
+    )
+    end_date_val = (
+        brief_data.get("end_date")
+        if isinstance(brief_data, dict)
+        else getattr(brief_data, "end_date", None)
+    )
+    parsed_trip_start = safe_parse_datetime(start_date_val)
+    parsed_trip_end = safe_parse_datetime(end_date_val)
+    trip_start_date: date | None = parsed_trip_start.date() if parsed_trip_start else None
+    trip_end_date: date | None = parsed_trip_end.date() if parsed_trip_end else None
 
     if trip_start_date and not trip_end_date:
         stay_days = sum(
@@ -3233,33 +3293,15 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         trip_end_date = trip_start_date + timedelta(days=max(stay_days, 1))
 
     # Relevant trip location keywords
-    trip_location_terms: set[str] = set()
+    verified_trip_places: set[str] = set()
     if origin_name:
-        trip_location_terms.add(origin_name)
+        verified_trip_places.add(origin_name)
     for dn in dest_names:
         if dn:
-            trip_location_terms.add(dn)
+            verified_trip_places.add(dn)
     for sn in stop_names:
         if sn:
-            trip_location_terms.add(sn)
-
-    corridor_keywords: set[str] = set()
-    for loc in trip_location_terms:
-        if "kolkata" in loc or "digha" in loc:
-            corridor_keywords.update(
-                [
-                    "nh-116b",
-                    "nh116b",
-                    "nh-16",
-                    "nh16",
-                    "kolkata",
-                    "digha",
-                    "medinipur",
-                    "bengal",
-                    "nandakumar",
-                    "kolaghat",
-                ]
-            )
+            verified_trip_places.add(sn)
 
     # Collect all observations
     raw_obs_list: list[Any] = list(state.get("observations") or [])
@@ -3280,6 +3322,7 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
     relevant_advisories: list[dict[str, Any]] = []
     unrelated_advisories: list[dict[str, Any]] = []
     expired_advisories: list[dict[str, Any]] = []
+    unverified_advisories: list[dict[str, Any]] = []
     conflicting_advisories: list[dict[str, Any]] = []
     checked_sources: set[str] = set()
     auth_sources: set[str] = set()
@@ -3379,36 +3422,17 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         if has_usable_url:
             checked_sources.add(obs_url)
 
-        is_auth = (
-            bool(art.get("is_authoritative"))
-            if "is_authoritative" in art
-            else (
-                any(
-                    k in obs_url.lower()
-                    for k in (
-                        ".gov.in",
-                        ".nic.in",
-                        "imd.",
-                        "ndma.",
-                        "nhai.",
-                        "trafficpolice",
-                        "police.",
-                    )
-                )
-                or any(
-                    k in pub_name.lower()
-                    for k in (
-                        "imd",
-                        "india meteorological",
-                        "ndma",
-                        "disaster management",
-                        "police",
-                        "traffic police",
-                        "nhai",
-                        "government",
-                    )
-                )
-            )
+        # 1. Authority validation against explicit policy (no substring matching, no untrusted flags)
+        is_auth = is_verified_authority_domain(obs_url)
+        ext_method = str(
+            getattr(obs, "extraction_method", None)
+            or (obs.get("extraction_method") if isinstance(obs, dict) else "")
+            or ""
+        ).upper()
+        is_search_snippet = ext_method in (
+            "SERPAPI_SEARCH",
+            "SEARCH_SNIPPET",
+            "SEARCH_RESULT",
         )
         if is_auth:
             auth_sources.add(obs_url or pub_name)
@@ -3443,38 +3467,114 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
                 adv_type = "GENERAL_ADVISORY"
 
         severity = str(art.get("severity") or "WARNING").upper()
+
+        # 2. Time and freshness validation
         start_time_raw = art.get("applicable_start")
         end_time_raw = art.get("applicable_end")
+        parsed_start = safe_parse_datetime(start_time_raw)
+        parsed_end = safe_parse_datetime(end_time_raw)
+        is_malformed = (start_time_raw is not None and parsed_start is None) or (
+            end_time_raw is not None and parsed_end is None
+        )
+        is_undated = parsed_start is None and parsed_end is None
+
+        ret_dt = ret_time if isinstance(ret_time, datetime) else safe_parse_datetime(ret_time)
+        pub_dt = (
+            getattr(obs, "published_at", None)
+            or (obs.get("published_at") if isinstance(obs, dict) else None)
+        )
+        if isinstance(pub_dt, str):
+            pub_dt = safe_parse_datetime(pub_dt)
+        obs_dt = pub_dt or ret_dt
+
+        is_stale = False
+        if obs_dt is not None:
+            dt_with_tz = obs_dt if obs_dt.tzinfo else obs_dt.replace(tzinfo=UTC)
+            age_hours = (datetime.now(UTC) - dt_with_tz).total_seconds() / 3600.0
+            if age_hours > 24.0 and parsed_end is None:
+                is_stale = True
+
+        is_expired = False
+        if parsed_end and trip_start_date:
+            if parsed_end.date() < trip_start_date:
+                is_expired = True
+
+        is_future = False
+        if parsed_start and trip_end_date:
+            if parsed_start.date() > trip_end_date:
+                is_future = True
 
         is_lifted = any(
             w in combined_text
             for w in ("reopened", "lifted", "cleared", "normal traffic", "road opened")
         )
-        is_expired = False
-        if end_time_raw:
+
+        # 3. Route and spatial relevance validation
+        adv_lat = (
+            art.get("latitude")
+            or art.get("lat")
+            or (art.get("point", {}).get("lat") if isinstance(art.get("point"), dict) else None)
+        )
+        adv_lng = (
+            art.get("longitude")
+            or art.get("lng")
+            or (art.get("point", {}).get("lng") if isinstance(art.get("point"), dict) else None)
+        )
+
+        spatial_relevance: str
+        if adv_lat is not None and adv_lng is not None and corridor_coords:
             try:
-                end_d = None
-                if isinstance(end_time_raw, datetime):
-                    end_d = end_time_raw.date()
-                elif isinstance(end_time_raw, date):
-                    end_d = end_time_raw
-                elif isinstance(end_time_raw, str) and len(end_time_raw) >= 10:
-                    end_d = date.fromisoformat(end_time_raw[:10])
-                if end_d and trip_start_date and end_d < trip_start_date:
-                    is_expired = True
+                is_valid_pt, _ = validate_coordinates(float(adv_lat), float(adv_lng))
+                if is_valid_pt:
+                    adv_pt = CoordinatePoint(lat=float(adv_lat), lng=float(adv_lng))
+                    dist_km = compute_corridor_distance_km(adv_pt, corridor_coords)
+                    if dist_km <= 100.0:
+                        spatial_relevance = "WITHIN_CORRIDOR"
+                    else:
+                        spatial_relevance = "OUTSIDE_CORRIDOR"
+                else:
+                    spatial_relevance = "LOCATION_EVIDENCE_INSUFFICIENT"
             except Exception:
-                pass
+                spatial_relevance = "LOCATION_EVIDENCE_INSUFFICIENT"
+        else:
+            area_text = (affected_area + " " + headline + " " + excerpt).lower()
+            matched_trip_place = any(
+                place in area_text for place in verified_trip_places if len(place) >= 3
+            )
+            if matched_trip_place:
+                spatial_relevance = "WITHIN_CORRIDOR"
+            elif affected_area:
+                spatial_relevance = "OUTSIDE_CORRIDOR"
+            elif not verified_trip_places:
+                spatial_relevance = "WITHIN_CORRIDOR"
+            else:
+                spatial_relevance = "LOCATION_EVIDENCE_INSUFFICIENT"
 
-        status_val = "LIFTED" if is_lifted else ("EXPIRED" if is_expired else "ACTIVE")
-
-        area_text = (affected_area + " " + headline + " " + excerpt).lower()
-        is_spatially_relevant = False
-        if any(term in area_text for term in trip_location_terms):
-            is_spatially_relevant = True
-        elif corridor_keywords and any(kw in area_text for kw in corridor_keywords):
-            is_spatially_relevant = True
-        elif not affected_area and not trip_location_terms:
-            is_spatially_relevant = True
+        # Determine status and uncertainty
+        if is_lifted:
+            status_val = "LIFTED"
+            uncertainty_val = "LIFTED"
+        elif is_expired:
+            status_val = "EXPIRED"
+            uncertainty_val = "EXPIRED"
+        elif is_future:
+            status_val = "FUTURE"
+            uncertainty_val = "FUTURE_ADVISORY"
+        elif is_malformed:
+            status_val = "MALFORMED_DATES"
+            uncertainty_val = "MALFORMED_DATES"
+        elif is_undated:
+            status_val = "UNDATED"
+            uncertainty_val = "UNVERIFIED_UNDATED"
+        elif is_stale:
+            status_val = "STALE"
+            uncertainty_val = "STALE"
+        elif is_auth and not is_search_snippet:
+            status_val = "ACTIVE"
+            uncertainty_val = "CONFIRMED_AUTHORITATIVE"
+        else:
+            status_val = "ACTIVE"
+            uncertainty_val = "UNVERIFIED_SEARCH"
 
         adv_item = {
             "headline": headline,
@@ -3489,26 +3589,23 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
             "source_url": obs_url if has_usable_url else None,
             "observation_id": obs_id or None,
             "retrieval_time": ret_str,
-            "uncertainty": (
-                "EXPIRED"
-                if is_expired
-                else (
-                    "LIFTED"
-                    if is_lifted
-                    else (
-                        "CONFIRMED_AUTHORITATIVE"
-                        if is_auth
-                        else "UNVERIFIED_SEARCH"
-                    )
-                )
-            ),
+            "uncertainty": uncertainty_val,
+            "relevance": spatial_relevance,
         }
 
         if is_expired or is_lifted:
             expired_advisories.append(adv_item)
-        elif not is_spatially_relevant:
+        elif spatial_relevance == "OUTSIDE_CORRIDOR":
             adv_item["relevance"] = "OUTSIDE_CORRIDOR"
             unrelated_advisories.append(adv_item)
+        elif spatial_relevance == "LOCATION_EVIDENCE_INSUFFICIENT":
+            adv_item["relevance"] = "UNKNOWN"
+            adv_item["uncertainty"] = "UNKNOWN_RELEVANCE"
+            unverified_advisories.append(adv_item)
+        elif status_val in ("FUTURE", "UNDATED", "STALE", "MALFORMED_DATES"):
+            unverified_advisories.append(adv_item)
+        elif uncertainty_val == "UNVERIFIED_SEARCH":
+            unverified_advisories.append(adv_item)
         else:
             relevant_advisories.append(adv_item)
 
@@ -3564,10 +3661,15 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         status = "ADVISORIES_PRESENT"
         active_count = len([a for a in relevant_advisories if a["status"] == "ACTIVE"])
         reason = f"{active_count} active travel warning(s) detected for trip corridor"
-        reason = "Conflicting travel advisory reports detected for route corridor"
     elif expired_advisories:
         status = "ADVISORY_UNKNOWN"
-        reason = "Advisory evidence is expired or lifted; real-time road conditions unmonitored"
+        reason = "Advisory evidence is expired or lifted; real time road conditions unmonitored"
+    elif unverified_advisories:
+        status = "ADVISORY_UNKNOWN"
+        reason = (
+            "Advisory reports are unverified, undated, stale, or have insufficient location evidence; "
+            "route conditions remain unverified"
+        )
     elif unrelated_advisories:
         status = "ADVISORY_UNKNOWN"
         reason = (
@@ -3590,6 +3692,7 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         "advisories": relevant_advisories,
         "unrelated_advisories": unrelated_advisories,
         "expired_advisories": expired_advisories,
+        "unverified_advisories": unverified_advisories,
         "conflicting_advisories": conflicting_advisories,
         "checked_sources_count": len(checked_sources),
         "authoritative_sources_count": len(auth_sources),

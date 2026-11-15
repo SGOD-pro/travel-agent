@@ -854,6 +854,11 @@ async def ingest_claims_from_observations(
             else:
                 adv_type = "GENERAL_ADVISORY"
 
+        from functions.orchestrator.evidence.policy import (
+            is_verified_authority_domain,
+            safe_parse_datetime,
+        )
+
         severity = (
             str(art_ref.get("severity") or "WARNING").upper()
             if isinstance(art_ref, dict)
@@ -861,38 +866,17 @@ async def ingest_claims_from_observations(
         )
         raw_url = getattr(obs, "canonical_url", None) or getattr(obs, "source_url", None) or ""
         obs_url = str(raw_url).strip()
-        pub = str(getattr(obs, "publisher", "") or "").lower()
-        is_auth = (
-            bool(art_ref.get("is_authoritative"))
-            if isinstance(art_ref, dict) and "is_authoritative" in art_ref
-            else (
-                any(
-                    k in obs_url.lower()
-                    for k in (
-                        ".gov.in",
-                        ".nic.in",
-                        "imd.",
-                        "ndma.",
-                        "nhai.",
-                        "trafficpolice",
-                        "police.",
-                    )
-                )
-                or any(
-                    k in pub
-                    for k in (
-                        "imd",
-                        "india meteorological",
-                        "ndma",
-                        "disaster management",
-                        "police",
-                        "traffic police",
-                        "nhai",
-                        "government",
-                    )
-                )
-            )
+        has_usable_url = bool(
+            obs_url and (obs_url.startswith("http://") or obs_url.startswith("https://"))
         )
+
+        # 1. Authority validation against explicit policy (no substring matching, no untrusted flags)
+        is_auth = is_verified_authority_domain(obs_url)
+
+        # 2. Extraction method check: search snippets remain unverified unless scraped content supports it
+        ext_method = str(getattr(obs, "extraction_method", "") or "").upper()
+        is_search_snippet = ext_method in ("SERPAPI_SEARCH", "SEARCH_SNIPPET", "SEARCH_RESULT")
+        is_confirmed = is_auth and not is_search_snippet
 
         status_val = (
             str(art_ref.get("status") or "ACTIVE").upper()
@@ -911,6 +895,40 @@ async def ingest_claims_from_observations(
         end_time_val = (
             art_ref.get("applicable_end") if isinstance(art_ref, dict) else None
         )
+
+        # 3. Time and freshness validation
+        parsed_start = safe_parse_datetime(start_time_val)
+        parsed_end = safe_parse_datetime(end_time_val)
+        is_malformed = (start_time_val is not None and parsed_start is None) or (
+            end_time_val is not None and parsed_end is None
+        )
+        is_undated = parsed_start is None and parsed_end is None
+
+        ret_dt = getattr(obs, "retrieved_at", None)
+        pub_dt = getattr(obs, "published_at", None)
+        obs_dt = pub_dt or ret_dt
+        is_stale = False
+        if obs_dt is not None:
+            dt_with_tz = obs_dt if obs_dt.tzinfo else obs_dt.replace(tzinfo=UTC)
+            age_hours = (now - dt_with_tz).total_seconds() / 3600.0
+            if age_hours > 24.0 and parsed_end is None:
+                is_stale = True
+
+        if is_malformed:
+            status_val = "MALFORMED_DATES"
+            uncertainty_val = "MALFORMED_DATES"
+        elif is_undated:
+            status_val = "UNDATED"
+            uncertainty_val = "UNVERIFIED_UNDATED"
+        elif is_stale:
+            status_val = "STALE"
+            uncertainty_val = "STALE"
+        elif status_val == "LIFTED":
+            uncertainty_val = "LIFTED"
+        elif is_confirmed and status_val == "ACTIVE":
+            uncertainty_val = "CONFIRMED_AUTHORITATIVE"
+        else:
+            uncertainty_val = "UNVERIFIED_SEARCH"
 
         subject_key = _normalize_name(affected_area or headline)[:64]
         if not subject_key:
@@ -933,16 +951,6 @@ async def ingest_claims_from_observations(
 
         adv_coords = (
             _extract_coordinates_from_dict(art_ref) if isinstance(art_ref, dict) else None
-        )
-
-        uncertainty_val = (
-            "CONFIRMED_AUTHORITATIVE"
-            if is_auth and status_val == "ACTIVE"
-            else ("UNVERIFIED_SEARCH" if status_val == "ACTIVE" else status_val)
-        )
-
-        has_usable_url = bool(
-            obs_url and (obs_url.startswith("http://") or obs_url.startswith("https://"))
         )
 
         advisory_claim = ClaimCreate(

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 from functions.orchestrator.evidence.schemas import (
@@ -29,18 +29,95 @@ AUTHORITATIVE_DOMAIN_PATTERNS: tuple[str, ...] = (
 
 OFFICIAL_AUTHORITY_DOMAINS: frozenset[str] = frozenset(
     {
+        "imd.gov.in",
+        "mausam.imd.gov.in",
+        "ndma.gov.in",
+        "nhai.gov.in",
+        "wbtrafficpolice.gov.in",
         "kolkatatrafficpolice.gov.in",
         "kolkatapolice.gov.in",
         "wb.gov.in",
         "wbtourism.gov.in",
         "transport.wb.gov.in",
         "kmda.wb.gov.in",
+        "sikkimpolice.gov.in",
         "delhitrafficpolice.nic.in",
         "delhipolice.gov.in",
         "mumbaipolice.gov.in",
         "maharashtra.gov.in",
     }
 )
+
+
+def is_verified_authority_domain(
+    url_or_domain: str,
+    trusted_domains: frozenset[str] | set[str] | None = None,
+) -> bool:
+    """Validates that a URL or hostname belongs to an authoritative government, municipal, or police domain.
+
+    Parses the actual netloc and hostname using urllib.parse.urlparse.
+    Rejects substring matches, query parameter tricks, user credentials, and untrusted observation flags.
+    Checks against explicit domain whitelist and trusted apex domain patterns (.gov.in, .nic.in).
+    """
+    if not url_or_domain or not isinstance(url_or_domain, str):
+        return False
+    cleaned = url_or_domain.strip()
+    if not cleaned:
+        return False
+    if "://" not in cleaned:
+        cleaned = f"https://{cleaned}"
+    try:
+        parsed = urllib.parse.urlparse(cleaned)
+        if parsed.scheme not in ("http", "https"):
+            return False
+        hostname = (parsed.hostname or "").lower().strip()
+        if not hostname:
+            return False
+
+        allowed = trusted_domains or OFFICIAL_AUTHORITY_DOMAINS
+        if hostname in allowed:
+            return True
+        for d in allowed:
+            if hostname.endswith("." + d):
+                return True
+
+        if hostname == "gov.in" or hostname.endswith(".gov.in"):
+            return True
+        if hostname == "nic.in" or hostname.endswith(".nic.in"):
+            return True
+
+        return False
+    except Exception:
+        return False
+
+
+def safe_parse_datetime(val: Any) -> datetime | None:
+    """Safely parses ISO datetime or date string into datetime object.
+
+    Returns None when parsing fails or input is None or boolean.
+    """
+    if val is None or isinstance(val, bool):
+        return None
+    if isinstance(val, datetime):
+        return val
+    if isinstance(val, date):
+        return datetime.combine(val, time.min)
+    if isinstance(val, str):
+        cleaned = val.strip()
+        if not cleaned:
+            return None
+        iso_str = cleaned.replace("Z", "+00:00")
+        try:
+            return datetime.fromisoformat(iso_str)
+        except Exception:
+            pass
+        if len(cleaned) >= 10:
+            try:
+                d = date.fromisoformat(cleaned[:10])
+                return datetime.combine(d, time.min)
+            except Exception:
+                pass
+    return None
 
 # Category freshness validity windows per spec 0002
 CATEGORY_FRESHNESS_WINDOWS: dict[str, timedelta] = {

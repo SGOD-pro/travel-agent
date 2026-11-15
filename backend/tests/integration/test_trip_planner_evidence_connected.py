@@ -707,9 +707,12 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     assert accom_res.get("verified_offers") == []
 
     # 3. Advisory Research: Traces advisories to supporting persisted observations or reports honest ADVISORY_UNKNOWN
+    from functions.orchestrator.evidence.policy import is_verified_authority_domain
+
     advisory_status = adv_res.get("status")
     assert advisory_status in ("ADVISORIES_PRESENT", "ADVISORY_UNKNOWN")
     assert advisory_status != "SAFE", "Route safety must never be asserted as SAFE"
+    assert advisory_status != "COMPLETED", "Advisory research must not claim COMPLETED without live authority proof"
     assert "Absence of travel advisories" in adv_res.get("safety_notice", "")
 
     if advisories:
@@ -722,6 +725,15 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
                 assert obs_id in persisted_obs_by_id, f"Advisory observation {obs_id} must be in persisted observations"
                 supporting_obs = persisted_obs_by_id[obs_id]
                 assert a.get("source_url") in (supporting_obs.canonical_url, supporting_obs.source_url)
+                if a.get("is_authoritative") or a.get("uncertainty") == "CONFIRMED_AUTHORITATIVE":
+                    assert is_verified_authority_domain(supporting_obs.source_url or supporting_obs.canonical_url or ""), (
+                        f"Authoritative warning must stem from validated authority domain: {a.get('source_url')}"
+                    )
+                    ext_m = str(supporting_obs.extraction_method or "").upper()
+                    assert ext_m not in ("SERPAPI_SEARCH", "SEARCH_SNIPPET", "SEARCH_RESULT"), (
+                        "Raw search snippets cannot be marked as confirmed authoritative warnings"
+                    )
+                    assert a.get("status") == "ACTIVE"
     else:
         assert advisory_status == "ADVISORY_UNKNOWN"
         assert adv_res.get("reason") is not None
