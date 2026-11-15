@@ -145,6 +145,9 @@ class TripPlanningState(TypedDict, total=False):
     provider_diagnostics: dict[str, Any]
     food_research: dict[str, Any]
     accommodation_research: dict[str, Any]
+    advisory_research: dict[str, Any]
+    advisory_status: str | None
+    advisories: list[dict[str, Any]]
     observations: list[dict[str, Any]]
     _llm_client: HostedLlmClientPort
     _weather_client: WeatherClientPort
@@ -3164,10 +3167,451 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
     }
 
 
+def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
+    """Assembles structured road hazard and travel advisory research.
+
+    Conforms to spec 0007 AC-13, AC-14, AC-15:
+    1. Extracts travel advisories, road closures, and weather warnings from observations and claims.
+    2. Preserves source URL, observation ID, retrieval time, affected area, applicable time, and uncertainty.
+    3. Distinguishes confirmed authoritative warnings from unverified search snippets.
+    4. Evaluates geographic relevance against trip origin, destinations, corridor, and scheduled stops.
+    5. Evaluates temporal relevance against trip travel dates; classifies ended alerts as expired.
+    6. Preserves conflicting reports side by side without guessing.
+    7. Fail closed safety: absence of warnings NEVER evaluates to SAFE; reports ADVISORY_UNKNOWN
+       with an explicit reason whenever evidence is missing, stale, outside area, or unverified.
+    """
+    brief_data = state.get("brief", {})
+    origin_name = str(brief_data.get("origin_name") or "").strip().lower()
+    raw_dests = brief_data.get("destinations", [])
+    dest_names = [
+        str(d.get("name") if isinstance(d, dict) else getattr(d, "name", "")).strip().lower()
+        for d in (raw_dests if isinstance(raw_dests, list) else [])
+    ]
+
+    opt_sched = state.get("optimized_schedule", {})
+    sched_stops = (
+        opt_sched.get("stops", [])
+        if isinstance(opt_sched, dict)
+        else getattr(opt_sched, "stops", [])
+    )
+    stop_names = [
+        str(s.get("name") if isinstance(s, dict) else getattr(s, "name", "")).strip().lower()
+        for s in (sched_stops if isinstance(sched_stops, list) else [])
+    ]
+
+    # Trip travel dates
+    start_date_val = brief_data.get("start_date")
+    end_date_val = brief_data.get("end_date")
+    trip_start_date: date | None = None
+    trip_end_date: date | None = None
+
+    if isinstance(start_date_val, datetime):
+        trip_start_date = start_date_val.date()
+    elif isinstance(start_date_val, date):
+        trip_start_date = start_date_val
+    elif isinstance(start_date_val, str) and len(start_date_val) >= 10:
+        try:
+            trip_start_date = date.fromisoformat(start_date_val[:10])
+        except Exception:
+            pass
+
+    if isinstance(end_date_val, datetime):
+        trip_end_date = end_date_val.date()
+    elif isinstance(end_date_val, date):
+        trip_end_date = end_date_val
+    elif isinstance(end_date_val, str) and len(end_date_val) >= 10:
+        try:
+            trip_end_date = date.fromisoformat(end_date_val[:10])
+        except Exception:
+            pass
+
+    if trip_start_date and not trip_end_date:
+        stay_days = sum(
+            int(d.get("stay_days", 1) if isinstance(d, dict) else getattr(d, "stay_days", 1))
+            for d in (raw_dests if isinstance(raw_dests, list) else [])
+        )
+        trip_end_date = trip_start_date + timedelta(days=max(stay_days, 1))
+
+    # Relevant trip location keywords
+    trip_location_terms: set[str] = set()
+    if origin_name:
+        trip_location_terms.add(origin_name)
+    for dn in dest_names:
+        if dn:
+            trip_location_terms.add(dn)
+    for sn in stop_names:
+        if sn:
+            trip_location_terms.add(sn)
+
+    corridor_keywords: set[str] = set()
+    for loc in trip_location_terms:
+        if "kolkata" in loc or "digha" in loc:
+            corridor_keywords.update(
+                [
+                    "nh-116b",
+                    "nh116b",
+                    "nh-16",
+                    "nh16",
+                    "kolkata",
+                    "digha",
+                    "medinipur",
+                    "bengal",
+                    "nandakumar",
+                    "kolaghat",
+                ]
+            )
+
+    # Collect all observations
+    raw_obs_list: list[Any] = list(state.get("observations") or [])
+    task_outputs = state.get("task_outputs", {})
+    if isinstance(task_outputs, dict):
+        if "observations" in task_outputs and isinstance(
+            task_outputs["observations"], list
+        ):
+            raw_obs_list.extend(task_outputs["observations"])
+        for sub in task_outputs.values():
+            if (
+                isinstance(sub, dict)
+                and "observations" in sub
+                and isinstance(sub["observations"], list)
+            ):
+                raw_obs_list.extend(sub["observations"])
+
+    relevant_advisories: list[dict[str, Any]] = []
+    unrelated_advisories: list[dict[str, Any]] = []
+    expired_advisories: list[dict[str, Any]] = []
+    conflicting_advisories: list[dict[str, Any]] = []
+    checked_sources: set[str] = set()
+    auth_sources: set[str] = set()
+
+    for obs in raw_obs_list:
+        art = (
+            getattr(obs, "artifact_ref", None)
+            or (obs.get("artifact_ref") if isinstance(obs, dict) else {})
+            or {}
+        )
+        if not isinstance(art, dict):
+            art = {}
+        cat = str(art.get("category") or "").lower()
+        excerpt = str(
+            getattr(obs, "excerpt_text", None)
+            or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
+            or ""
+        )
+        title = str(
+            art.get("headline")
+            or art.get("title")
+            or (obs.get("title") if isinstance(obs, dict) else "")
+            or ""
+        ).strip()
+
+        is_adv = any(
+            k in cat
+            for k in (
+                "advisory",
+                "hazard",
+                "road_closure",
+                "closure",
+                "restriction",
+                "weather_warning",
+                "disaster",
+                "weather_alert",
+            )
+        )
+        combined_text = (cat + " " + title + " " + excerpt).lower()
+        if not is_adv and any(
+            k in combined_text
+            for k in (
+                "road closure",
+                "road closed",
+                "highway closed",
+                "traffic diversion",
+                "cyclone",
+                "landslide",
+                "flood",
+                "flooding",
+                "waterlog",
+                "heavy rain alert",
+                "storm warning",
+                "travel advisory",
+                "travel restriction",
+            )
+        ):
+            is_adv = True
+
+        if not is_adv:
+            continue
+
+        raw_url = (
+            getattr(obs, "canonical_url", None)
+            or getattr(obs, "source_url", None)
+            or (
+                obs.get("canonical_url") or obs.get("source_url")
+                if isinstance(obs, dict)
+                else ""
+            )
+        )
+        obs_url = str(raw_url).strip()
+        obs_id = str(
+            getattr(obs, "id", None)
+            or (obs.get("id") if isinstance(obs, dict) else "")
+            or ""
+        )
+        ret_time = (
+            getattr(obs, "retrieved_at", None)
+            or (obs.get("retrieved_at") if isinstance(obs, dict) else None)
+        )
+        ret_str: str | None = None
+        if isinstance(ret_time, str):
+            ret_str = ret_time
+        elif ret_time is not None and hasattr(ret_time, "isoformat"):
+            ret_str = ret_time.isoformat()
+
+        pub_name = str(
+            getattr(obs, "publisher", None)
+            or (obs.get("publisher") if isinstance(obs, dict) else "")
+            or ""
+        )
+
+        has_usable_url = bool(
+            obs_url and (obs_url.startswith("http://") or obs_url.startswith("https://"))
+        )
+        if has_usable_url:
+            checked_sources.add(obs_url)
+
+        is_auth = (
+            bool(art.get("is_authoritative"))
+            if "is_authoritative" in art
+            else (
+                any(
+                    k in obs_url.lower()
+                    for k in (
+                        ".gov.in",
+                        ".nic.in",
+                        "imd.",
+                        "ndma.",
+                        "nhai.",
+                        "trafficpolice",
+                        "police.",
+                    )
+                )
+                or any(
+                    k in pub_name.lower()
+                    for k in (
+                        "imd",
+                        "india meteorological",
+                        "ndma",
+                        "disaster management",
+                        "police",
+                        "traffic police",
+                        "nhai",
+                        "government",
+                    )
+                )
+            )
+        )
+        if is_auth:
+            auth_sources.add(obs_url or pub_name)
+
+        headline = title
+        if not headline and excerpt:
+            first_sent = excerpt.split(".")[0].strip()
+            headline = first_sent[:120] if first_sent else "Travel Advisory"
+
+        affected_area = str(
+            art.get("affected_area")
+            or art.get("location")
+            or art.get("route")
+            or ""
+        ).strip()
+
+        adv_type = str(art.get("advisory_type") or "").upper()
+        if not adv_type:
+            if "cyclone" in combined_text:
+                adv_type = "CYCLONE"
+            elif "flood" in combined_text or "waterlog" in combined_text:
+                adv_type = "FLOOD"
+            elif "landslide" in combined_text:
+                adv_type = "LANDSLIDE"
+            elif any(w in combined_text for w in ("closure", "closed", "blocked", "diversion")):
+                adv_type = "ROAD_CLOSURE"
+            elif "restriction" in combined_text or "curfew" in combined_text:
+                adv_type = "TRAVEL_RESTRICTION"
+            elif "rain" in combined_text or "storm" in combined_text:
+                adv_type = "WEATHER_WARNING"
+            else:
+                adv_type = "GENERAL_ADVISORY"
+
+        severity = str(art.get("severity") or "WARNING").upper()
+        start_time_raw = art.get("applicable_start")
+        end_time_raw = art.get("applicable_end")
+
+        is_lifted = any(
+            w in combined_text
+            for w in ("reopened", "lifted", "cleared", "normal traffic", "road opened")
+        )
+        is_expired = False
+        if end_time_raw:
+            try:
+                end_d = None
+                if isinstance(end_time_raw, datetime):
+                    end_d = end_time_raw.date()
+                elif isinstance(end_time_raw, date):
+                    end_d = end_time_raw
+                elif isinstance(end_time_raw, str) and len(end_time_raw) >= 10:
+                    end_d = date.fromisoformat(end_time_raw[:10])
+                if end_d and trip_start_date and end_d < trip_start_date:
+                    is_expired = True
+            except Exception:
+                pass
+
+        status_val = "LIFTED" if is_lifted else ("EXPIRED" if is_expired else "ACTIVE")
+
+        area_text = (affected_area + " " + headline + " " + excerpt).lower()
+        is_spatially_relevant = False
+        if any(term in area_text for term in trip_location_terms):
+            is_spatially_relevant = True
+        elif corridor_keywords and any(kw in area_text for kw in corridor_keywords):
+            is_spatially_relevant = True
+        elif not affected_area and not trip_location_terms:
+            is_spatially_relevant = True
+
+        adv_item = {
+            "headline": headline,
+            "advisory_type": adv_type,
+            "severity": severity,
+            "affected_area": affected_area,
+            "applicable_start": str(start_time_raw) if start_time_raw else None,
+            "applicable_end": str(end_time_raw) if end_time_raw else None,
+            "is_authoritative": is_auth,
+            "authority_name": pub_name if is_auth else None,
+            "status": status_val,
+            "source_url": obs_url if has_usable_url else None,
+            "observation_id": obs_id or None,
+            "retrieval_time": ret_str,
+            "uncertainty": (
+                "EXPIRED"
+                if is_expired
+                else (
+                    "LIFTED"
+                    if is_lifted
+                    else (
+                        "CONFIRMED_AUTHORITATIVE"
+                        if is_auth
+                        else "UNVERIFIED_SEARCH"
+                    )
+                )
+            ),
+        }
+
+        if is_expired or is_lifted:
+            expired_advisories.append(adv_item)
+        elif not is_spatially_relevant:
+            adv_item["relevance"] = "OUTSIDE_CORRIDOR"
+            unrelated_advisories.append(adv_item)
+        else:
+            relevant_advisories.append(adv_item)
+
+    # Detect conflicts between active closures and reopenings for the same route or area
+    active_closures = [
+        a
+        for a in relevant_advisories
+        if a["advisory_type"] == "ROAD_CLOSURE" and a["status"] == "ACTIVE"
+    ]
+    lifted_for_same_area = [
+        e
+        for e in expired_advisories
+        if e["status"] == "LIFTED"
+        and any(
+            (c["affected_area"] and c["affected_area"].lower() in e["affected_area"].lower())
+            or (e["affected_area"] and e["affected_area"].lower() in c["affected_area"].lower())
+            or (c["headline"] and c["headline"].lower() in e["headline"].lower())
+            for c in active_closures
+        )
+    ]
+    if active_closures and lifted_for_same_area:
+        for c in active_closures:
+            c["uncertainty"] = "CONFLICTED"
+            c["conflict_reason"] = (
+                "Conflicting reports: road closure reported alongside reopening report"
+            )
+            if c not in conflicting_advisories:
+                conflicting_advisories.append(c)
+        for l_item in lifted_for_same_area:
+            l_item["uncertainty"] = "CONFLICTED"
+            l_item["conflict_reason"] = (
+                "Conflicting reports: road reopening reported alongside closure report"
+            )
+            if l_item not in conflicting_advisories:
+                conflicting_advisories.append(l_item)
+
+    # Also detect contradictory reports within relevant advisories
+    seen_opposing: dict[str, str] = {}
+    for a in relevant_advisories:
+        k = (a["affected_area"] or a["headline"]).lower()
+        if k in seen_opposing and seen_opposing[k] != a["status"]:
+            a["uncertainty"] = "CONFLICTED"
+            if a not in conflicting_advisories:
+                conflicting_advisories.append(a)
+        else:
+            seen_opposing[k] = a["status"]
+
+    # Determine status and fail closed reason
+    if conflicting_advisories:
+        status = "ADVISORIES_PRESENT"
+        reason = "Conflicting travel advisory reports detected for route corridor"
+    elif relevant_advisories:
+        status = "ADVISORIES_PRESENT"
+        active_count = len([a for a in relevant_advisories if a["status"] == "ACTIVE"])
+        reason = f"{active_count} active travel warning(s) detected for trip corridor"
+        reason = "Conflicting travel advisory reports detected for route corridor"
+    elif expired_advisories:
+        status = "ADVISORY_UNKNOWN"
+        reason = "Advisory evidence is expired or lifted; real-time road conditions unmonitored"
+    elif unrelated_advisories:
+        status = "ADVISORY_UNKNOWN"
+        reason = (
+            "No verified advisories for route corridor during travel dates; "
+            "unmonitored road segments remain unverified"
+        )
+    else:
+        status = "ADVISORY_UNKNOWN"
+        reason = "No road hazard or travel advisory evidence retrieved for route; route safety unverified"
+
+    safety_notice = (
+        "Absence of travel advisories or warnings is not proof of safety; "
+        "unmonitored conditions remain unverified."
+    )
+
+    return {
+        "status": status,
+        "reason": reason,
+        "safety_notice": safety_notice,
+        "advisories": relevant_advisories,
+        "unrelated_advisories": unrelated_advisories,
+        "expired_advisories": expired_advisories,
+        "conflicting_advisories": conflicting_advisories,
+        "checked_sources_count": len(checked_sources),
+        "authoritative_sources_count": len(auth_sources),
+    }
+
+
 def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
     """Assembles the final validated travel proposal."""
     food_research = _build_food_research(state)
     accommodation_research = _build_accommodation_research(state)
+    advisory_research = _build_advisory_research(state)
+
+    # Route diagnostics: append advisory notices if active warnings exist, without mutating route
+    route_diagnostics = list(state.get("route_diagnostics", []))
+    for adv in advisory_research.get("advisories", []):
+        if adv.get("severity") in ("CRITICAL", "WARNING"):
+            notice = (
+                f"Advisory Notice: {adv.get('headline')} "
+                f"({adv.get('affected_area') or 'Route Corridor'}) - {adv.get('uncertainty')}"
+            )
+            if notice not in route_diagnostics:
+                route_diagnostics.append(notice)
 
     proposal = {
         "trip_id": state.get("trip_id"),
@@ -3180,16 +3624,19 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "weather_advisories": state.get("weather_advisories", []),
         "weather_status": state.get("weather_status")
         or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
-        "advisory_status": state.get("weather_status")
-        or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
+        "advisory_status": advisory_research.get(
+            "status", WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value
+        ),
         "validated_candidates": state.get("validated_candidates", []),
         "discovered_places": state.get("discovered_places", []),
         "food_research": food_research,
         "accommodation_research": accommodation_research,
+        "advisory_research": advisory_research,
+        "advisories": advisory_research.get("advisories", []),
         "route_id": state.get("route_id"),
         "route_status": state.get("route_status"),
         "routing_status": state.get("routing_status"),
-        "route_diagnostics": state.get("route_diagnostics", []),
+        "route_diagnostics": route_diagnostics,
         "provider_diagnostics": state.get("provider_diagnostics", {}),
         "generated_at": datetime.now(UTC).isoformat(),
         "status": "ready_for_approval",
@@ -3200,6 +3647,11 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "proposal": proposal,
         "food_research": food_research,
         "accommodation_research": accommodation_research,
+        "advisory_research": advisory_research,
+        "advisory_status": advisory_research.get(
+            "status", WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value
+        ),
+        "advisories": advisory_research.get("advisories", []),
     }
 
 

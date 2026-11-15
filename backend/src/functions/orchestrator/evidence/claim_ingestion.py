@@ -765,4 +765,225 @@ async def ingest_claims_from_observations(
             except Exception as stay_exc:
                 logger.warning("Failed submitting lodging claim for '%s': %s", hotel_name, stay_exc)
 
+    # 4. Ingest travel advisory, road hazard, and restriction observations
+    for obs in valid_observations:
+        art_ref = obs.artifact_ref or {}
+        cat = str(art_ref.get("category") or "").lower() if isinstance(art_ref, dict) else ""
+        excerpt = str(getattr(obs, "excerpt_text", "") or "")
+        headline = (
+            str(
+                art_ref.get("headline")
+                or art_ref.get("title")
+                or art_ref.get("summary")
+                or ""
+            ).strip()
+            if isinstance(art_ref, dict)
+            else ""
+        )
+
+        is_advisory = any(
+            k in cat
+            for k in (
+                "advisory",
+                "hazard",
+                "road_closure",
+                "closure",
+                "restriction",
+                "weather_warning",
+                "disaster",
+                "weather_alert",
+            )
+        )
+        if not is_advisory and (
+            any(
+                k in (cat + " " + headline + " " + excerpt).lower()
+                for k in (
+                    "road closure",
+                    "road closed",
+                    "highway closed",
+                    "traffic diversion",
+                    "cyclone warning",
+                    "cyclone alert",
+                    "landslide warning",
+                    "flood warning",
+                    "flooding alert",
+                    "travel advisory",
+                    "travel restriction",
+                )
+            )
+        ):
+            is_advisory = True
+
+        if not is_advisory:
+            continue
+
+        if not headline and excerpt:
+            first_sent = excerpt.split(".")[0].strip()
+            headline = first_sent[:120] if first_sent else "Travel Advisory"
+
+        affected_area = (
+            str(
+                art_ref.get("affected_area")
+                or art_ref.get("location")
+                or art_ref.get("route")
+                or ""
+            ).strip()
+            if isinstance(art_ref, dict)
+            else ""
+        )
+
+        adv_type = (
+            str(art_ref.get("advisory_type") or "").upper()
+            if isinstance(art_ref, dict)
+            else ""
+        )
+        combined_text = (cat + " " + headline + " " + excerpt).lower()
+        if not adv_type:
+            if "cyclone" in combined_text:
+                adv_type = "CYCLONE"
+            elif "flood" in combined_text or "waterlog" in combined_text:
+                adv_type = "FLOOD"
+            elif "landslide" in combined_text:
+                adv_type = "LANDSLIDE"
+            elif any(w in combined_text for w in ("closure", "closed", "blocked", "diversion")):
+                adv_type = "ROAD_CLOSURE"
+            elif "restriction" in combined_text or "curfew" in combined_text:
+                adv_type = "TRAVEL_RESTRICTION"
+            elif "rain" in combined_text or "storm" in combined_text:
+                adv_type = "WEATHER_WARNING"
+            else:
+                adv_type = "GENERAL_ADVISORY"
+
+        severity = (
+            str(art_ref.get("severity") or "WARNING").upper()
+            if isinstance(art_ref, dict)
+            else "WARNING"
+        )
+        raw_url = getattr(obs, "canonical_url", None) or getattr(obs, "source_url", None) or ""
+        obs_url = str(raw_url).strip()
+        pub = str(getattr(obs, "publisher", "") or "").lower()
+        is_auth = (
+            bool(art_ref.get("is_authoritative"))
+            if isinstance(art_ref, dict) and "is_authoritative" in art_ref
+            else (
+                any(
+                    k in obs_url.lower()
+                    for k in (
+                        ".gov.in",
+                        ".nic.in",
+                        "imd.",
+                        "ndma.",
+                        "nhai.",
+                        "trafficpolice",
+                        "police.",
+                    )
+                )
+                or any(
+                    k in pub
+                    for k in (
+                        "imd",
+                        "india meteorological",
+                        "ndma",
+                        "disaster management",
+                        "police",
+                        "traffic police",
+                        "nhai",
+                        "government",
+                    )
+                )
+            )
+        )
+
+        status_val = (
+            str(art_ref.get("status") or "ACTIVE").upper()
+            if isinstance(art_ref, dict)
+            else "ACTIVE"
+        )
+        if any(
+            w in combined_text
+            for w in ("reopened", "lifted", "cleared", "normal traffic", "road opened")
+        ):
+            status_val = "LIFTED"
+
+        start_time_val = (
+            art_ref.get("applicable_start") if isinstance(art_ref, dict) else None
+        )
+        end_time_val = (
+            art_ref.get("applicable_end") if isinstance(art_ref, dict) else None
+        )
+
+        subject_key = _normalize_name(affected_area or headline)[:64]
+        if not subject_key:
+            subject_key = "general"
+        subject_id = f"advisory:{adv_type.lower()}:{subject_key}"
+
+        claim_category = (
+            "RESTRICTION"
+            if adv_type in ("ROAD_CLOSURE", "TRAVEL_RESTRICTION")
+            else "WEATHER"
+        )
+
+        existing_adv_stmt = select(ClaimModel).where(
+            ClaimModel.execution_id == execution_id,
+            ClaimModel.subject_id == subject_id,
+            ClaimModel.category == claim_category,
+        )
+        if (await session.execute(existing_adv_stmt)).scalar_one_or_none() is not None:
+            continue
+
+        adv_coords = (
+            _extract_coordinates_from_dict(art_ref) if isinstance(art_ref, dict) else None
+        )
+
+        uncertainty_val = (
+            "CONFIRMED_AUTHORITATIVE"
+            if is_auth and status_val == "ACTIVE"
+            else ("UNVERIFIED_SEARCH" if status_val == "ACTIVE" else status_val)
+        )
+
+        has_usable_url = bool(
+            obs_url and (obs_url.startswith("http://") or obs_url.startswith("https://"))
+        )
+
+        advisory_claim = ClaimCreate(
+            subject_id=subject_id,
+            category=claim_category,
+            place_id=None,
+            execution_id=execution_id,
+            typed_value={
+                "advisory_type": adv_type,
+                "severity": severity,
+                "headline": headline,
+                "affected_area": affected_area,
+                "applicable_start": str(start_time_val) if start_time_val is not None else None,
+                "applicable_end": str(end_time_val) if end_time_val is not None else None,
+                "is_authoritative": is_auth,
+                "status": status_val,
+                "uncertainty": uncertainty_val,
+                "observation_id": str(obs.id) if getattr(obs, "id", None) else None,
+                "source_url": obs_url if has_usable_url else None,
+                "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+            },
+            confidence=0.95 if is_auth else 0.75,
+            valid_from=obs.retrieved_at or now,
+            valid_until=now + timedelta(days=30),
+            geographic_scope={
+                "lat": adv_coords[0],
+                "lng": adv_coords[1],
+            }
+            if adv_coords
+            else None,
+        )
+        try:
+            created = await claim_service.submit_claim(
+                claim_data=advisory_claim,
+                observations_with_support=[
+                    (obs, EvidenceSupportType.SUPPORTS, obs.canonical_url)
+                ],
+                as_of=now,
+            )
+            ingested_claims.append(created)
+        except Exception as adv_exc:
+            logger.warning("Failed submitting advisory claim for '%s': %s", subject_id, adv_exc)
+
     return ingested_claims

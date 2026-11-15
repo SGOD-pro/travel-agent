@@ -572,13 +572,17 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     proposal = checkpoint_values.get("proposal")
     food_res = (proposal.get("food_research") if isinstance(proposal, dict) else None) or checkpoint_values.get("food_research") or {}
     accom_res = (proposal.get("accommodation_research") if isinstance(proposal, dict) else None) or checkpoint_values.get("accommodation_research") or {}
+    adv_res = (proposal.get("advisory_research") if isinstance(proposal, dict) else None) or checkpoint_values.get("advisory_research") or {}
     local_dishes = food_res.get("local_dishes", [])
     dining_recs = food_res.get("dining_recommendations", [])
     indicative_options = accom_res.get("indicative_options", [])
+    advisories = adv_res.get("advisories", [])
 
     print(f"10. Local Food Dishes:        {[d['name'] for d in local_dishes][:4]}")
     print(f"11. Dining Recommendations:   {[d['name'] for d in dining_recs][:4]}")
     print(f"12. Indicative Hotels:        {[h['property_name'] for h in indicative_options][:4]}")
+    print(f"13. Advisory Research Status: {adv_res.get('status')}")
+    print(f"14. Route Advisories:         {[a['headline'] for a in advisories][:4]}")
     print("=" * 70)
     print("EVIDENCE PROVENANCE & CONTENT PROOF:")
     print(f"1. Search Result URL:          {proven_search_url}")
@@ -701,3 +705,23 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     assert "Verified date specific offers" in pricing_notice
     assert "No cheapest hotel claims" in accom_res.get("cheapest_claim_guarantee", "")
     assert accom_res.get("verified_offers") == []
+
+    # 3. Advisory Research: Traces advisories to supporting persisted observations or reports honest ADVISORY_UNKNOWN
+    advisory_status = adv_res.get("status")
+    assert advisory_status in ("ADVISORIES_PRESENT", "ADVISORY_UNKNOWN")
+    assert advisory_status != "SAFE", "Route safety must never be asserted as SAFE"
+    assert "Absence of travel advisories" in adv_res.get("safety_notice", "")
+
+    if advisories:
+        for a in advisories:
+            assert a.get("headline") is not None
+            assert a.get("advisory_type") is not None
+            assert a.get("severity") in ("CRITICAL", "WARNING", "ADVISORY", "INFO")
+            obs_id = a.get("observation_id")
+            if obs_id:
+                assert obs_id in persisted_obs_by_id, f"Advisory observation {obs_id} must be in persisted observations"
+                supporting_obs = persisted_obs_by_id[obs_id]
+                assert a.get("source_url") in (supporting_obs.canonical_url, supporting_obs.source_url)
+    else:
+        assert advisory_status == "ADVISORY_UNKNOWN"
+        assert adv_res.get("reason") is not None

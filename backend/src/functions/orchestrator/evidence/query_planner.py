@@ -127,10 +127,12 @@ class QueryPlanningService:
 
         if origin:
             query_candidates.append(
-                f"{origin} to {primary_dest} road travel advisory route conditions"
+                f"{origin} to {primary_dest} road travel advisory route conditions weather road closures{date_context}".strip()
             )
         else:
-            query_candidates.append(f"{primary_dest} travel advisory weather road alerts")
+            query_candidates.append(
+                f"{primary_dest} road travel advisory route conditions weather warnings road closures{date_context}".strip()
+            )
 
         # If multiple destinations exist and room permits, add secondary destination query
         if len(destinations) > 1 and len(query_candidates) < ceiling:

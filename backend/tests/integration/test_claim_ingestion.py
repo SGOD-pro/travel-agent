@@ -2128,3 +2128,375 @@ class TestClaimIngestionIntegration:
         assert opt["availability_status"] == "PRICE_UNAVAILABLE"
         assert "price_unsupported_by_source" in opt["unavailable_details"]
 
+    async def test_advisory_research_relevant_active_warning(
+        self, session_factory: Any
+    ) -> None:
+        """Advisory 1: Active relevant road closure warning is preserved with full provenance and diagnostics."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            obs_closure = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://wbtrafficpolice.gov.in/advisories/nh116b-closure",
+                canonical_url="https://wbtrafficpolice.gov.in/advisories/nh116b-closure",
+                publisher="West Bengal Traffic Police",
+                content_hash="closure_hash_nh116b_12345",
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="NH-116B submerged at Nandakumar culvert. Total road closure in effect. Traffic diverted.",
+                excerpt_locator="advisory:notice[0]",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "road_closure",
+                    "advisory_type": "ROAD_CLOSURE",
+                    "headline": "NH-116B culvert damage and road closure near Nandakumar",
+                    "affected_area": "NH-116B Nandakumar to Digha",
+                    "severity": "CRITICAL",
+                    "applicable_start": "2026-11-20T00:00:00Z",
+                    "applicable_end": "2026-11-23T00:00:00Z",
+                    "is_authoritative": True,
+                },
+                created_at=now,
+            )
+            session.add(obs_closure)
+            await session.commit()
+
+            # Test claim ingestion
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[],
+                owner_id=owner_id,
+            )
+            assert len(claims) == 1
+            claim = claims[0]
+            assert claim.category == "RESTRICTION"
+            assert claim.typed_value["advisory_type"] == "ROAD_CLOSURE"
+            assert claim.typed_value["severity"] == "CRITICAL"
+            assert claim.typed_value["observation_id"] == str(obs_closure.id)
+            assert claim.typed_value["source_url"] == "https://wbtrafficpolice.gov.in/advisories/nh116b-closure"
+            assert claim.typed_value["is_authoritative"] is True
+            assert claim.typed_value["uncertainty"] == "CONFIRMED_AUTHORITATIVE"
+
+            # Test proposal path
+            state: dict[str, Any] = {
+                "trip_id": str(uuid.uuid4()),
+                "owner_id": str(owner_id),
+                "execution_id": str(exec_id),
+                "brief": {
+                    "origin_name": "Kolkata",
+                    "origin_lat": 22.5726,
+                    "origin_lng": 88.3639,
+                    "destinations": [
+                        {
+                            "name": "Digha",
+                            "latitude": 21.6266,
+                            "longitude": 87.5074,
+                            "stay_days": 2,
+                        }
+                    ],
+                    "start_date": "2026-11-20",
+                    "end_date": "2026-11-22",
+                },
+                "eligible_stops": [],
+                "editorial_recommendations": [],
+                "observations": [obs_closure],
+                "task_outputs": {},
+            }
+
+            proposal_res = synthesize_proposal_node(state)
+            proposal = proposal_res["proposal"]
+            advisory_res = proposal["advisory_research"]
+
+            assert advisory_res["status"] == "ADVISORIES_PRESENT"
+            assert len(advisory_res["advisories"]) == 1
+
+            adv = advisory_res["advisories"][0]
+            assert adv["headline"] == "NH-116B culvert damage and road closure near Nandakumar"
+            assert adv["advisory_type"] == "ROAD_CLOSURE"
+            assert adv["severity"] == "CRITICAL"
+            assert adv["affected_area"] == "NH-116B Nandakumar to Digha"
+            assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/nh116b-closure"
+            assert adv["observation_id"] == str(obs_closure.id)
+            assert adv["is_authoritative"] is True
+            assert adv["uncertainty"] == "CONFIRMED_AUTHORITATIVE"
+            assert adv["status"] == "ACTIVE"
+
+            assert proposal["advisory_status"] == "ADVISORIES_PRESENT"
+            assert any("NH-116B" in diag for diag in proposal["route_diagnostics"])
+            assert "Absence of travel advisories" in advisory_res["safety_notice"]
+
+    async def test_advisory_research_unrelated_area_excluded_and_reports_advisory_unknown(
+        self, session_factory: Any
+    ) -> None:
+        """Advisory 2: Warning for unrelated corridor is excluded and route reports ADVISORY_UNKNOWN."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+        # Landslide on NH-10 in North Sikkim when the trip is Kolkata to Digha in South Bengal
+        obs_sikkim = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://sikkimpolice.gov.in/advisories/nh10-landslide",
+            canonical_url="https://sikkimpolice.gov.in/advisories/nh10-landslide",
+            publisher="Sikkim Traffic Police",
+            content_hash="sikkim_hash_nh10_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Massive landslide blocks NH-10 near Rangpo in Sikkim. Traffic suspended indefinitely.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "LANDSLIDE",
+                "headline": "Landslide blocks NH-10 in North Sikkim",
+                "affected_area": "NH-10 Rangpo Sikkim",
+                "severity": "CRITICAL",
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_sikkim],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["unrelated_advisories"]) == 1
+        assert adv_res["unrelated_advisories"][0]["headline"] == "Landslide blocks NH-10 in North Sikkim"
+        assert adv_res["status"] == "ADVISORY_UNKNOWN"
+        assert adv_res["status"] != "SAFE"
+        assert "No verified advisories for route corridor" in adv_res["reason"]
+        assert "Absence of travel advisories" in adv_res["safety_notice"]
+
+    async def test_advisory_research_expired_warning_treated_as_expired_not_safe(
+        self, session_factory: Any
+    ) -> None:
+        """Advisory 3: Expired warning is classified as expired and route reports ADVISORY_UNKNOWN."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+        # Advisory that ended on 2026-11-10 when trip is on 2026-11-20
+        obs_expired = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/nh116b-culvert-completed",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/nh116b-culvert-completed",
+            publisher="West Bengal Traffic Police",
+            content_hash="expired_hash_nh116b_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="NH-116B temporary culvert inspection closure concluded on November 10 2026.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "ROAD_CLOSURE",
+                "headline": "NH-116B culvert inspection closure",
+                "affected_area": "NH-116B Nandakumar to Digha",
+                "severity": "WARNING",
+                "applicable_start": "2026-11-08T00:00:00Z",
+                "applicable_end": "2026-11-10T00:00:00Z",
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_expired],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["expired_advisories"]) == 1
+        exp = adv_res["expired_advisories"][0]
+        assert exp["status"] == "EXPIRED"
+        assert exp["uncertainty"] == "EXPIRED"
+        assert adv_res["status"] == "ADVISORY_UNKNOWN"
+        assert adv_res["status"] != "SAFE"
+        assert "expired" in adv_res["reason"].lower()
+        assert "Absence of travel advisories" in adv_res["safety_notice"]
+
+    async def test_advisory_research_conflicting_reports_preserved_honestly(
+        self, session_factory: Any
+    ) -> None:
+        """Advisory 4: Conflicting reports are preserved side by side without guessing."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+        # Source 1 reports road closed
+        obs_closed = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/nh116b-closed",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/nh116b-closed",
+            publisher="West Bengal Traffic Police",
+            content_hash="conflict_hash_nh116b_closed_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="NH-116B closed at Nandakumar due to heavy waterlogging and damaged culvert.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "ROAD_CLOSURE",
+                "headline": "NH-116B closed at Nandakumar due to heavy waterlogging",
+                "affected_area": "NH-116B Nandakumar to Digha",
+                "severity": "CRITICAL",
+                "status": "ACTIVE",
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        # Source 2 reports road reopened to all traffic
+        obs_reopened = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://nhai.gov.in/updates/nh116b-reopened",
+            canonical_url="https://nhai.gov.in/updates/nh116b-reopened",
+            publisher="NHAI Regional Office",
+            content_hash="conflict_hash_nh116b_reopened_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="NH-116B reopened to all vehicular traffic following water pumping operations.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "ROAD_CLOSURE",
+                "headline": "NH-116B reopened to all vehicular traffic",
+                "affected_area": "NH-116B Nandakumar to Digha",
+                "severity": "INFO",
+                "status": "LIFTED",
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_closed, obs_reopened],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert len(adv_res["conflicting_advisories"]) >= 2
+        assert all(c["uncertainty"] == "CONFLICTED" for c in adv_res["conflicting_advisories"])
+        assert adv_res["status"] == "ADVISORIES_PRESENT"
+        assert "Conflicting travel advisory reports" in adv_res["reason"]
+        assert "Absence of travel advisories" in adv_res["safety_notice"]
+
+    async def test_advisory_research_unavailable_evidence_reports_advisory_unknown(
+        self, session_factory: Any
+    ) -> None:
+        """Advisory 5: Unavailable evidence reports ADVISORY_UNKNOWN with explicit reason."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert adv_res["status"] == "ADVISORY_UNKNOWN"
+        assert adv_res["status"] != "SAFE"
+        assert adv_res["status"] != "COMPLETED"
+        assert "No road hazard or travel advisory evidence retrieved" in adv_res["reason"]
+        assert adv_res["advisories"] == []
+        assert "Absence of travel advisories" in adv_res["safety_notice"]
+

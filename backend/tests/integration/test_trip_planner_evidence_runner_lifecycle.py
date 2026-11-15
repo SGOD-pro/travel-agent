@@ -791,3 +791,10 @@ class TestTripPlannerEvidenceRunnerLifecycle:
         assert "Verified date specific offers" in pricing_notice
         assert "No cheapest hotel claims" in accom_res.get("cheapest_claim_guarantee", "")
         assert accom_res.get("verified_offers") == []
+
+        # Verify Advisory Research
+        adv_res = proposal.get("advisory_research") or values.get("advisory_research")
+        assert adv_res is not None
+        assert adv_res.get("status") in ("ADVISORIES_PRESENT", "ADVISORY_UNKNOWN")
+        assert adv_res.get("status") != "SAFE"
+        assert "Absence of travel advisories" in adv_res.get("safety_notice", "")
