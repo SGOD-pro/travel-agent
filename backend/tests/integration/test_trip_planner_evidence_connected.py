@@ -35,6 +35,7 @@ from functions.evidence_collector.service import (
     TaskDispatchEnvelope,
 )
 from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
+from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
 from functions.orchestrator.evidence.query_planner import QueryPlanningService
 from functions.orchestrator.execution.checkpointer import (
     TransactionBoundCheckpointer,
@@ -620,23 +621,72 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     assert "Fictional Cloud Observatory" not in verified_names
 
     # Food and Accommodation Research assertions
-    assert len(local_dishes) > 0, "Running graph must produce authentic regional dishes"
-    for d in local_dishes:
-        assert d.get("is_business_venue") is False
-        assert d.get("uncertainty") == "EDITORIAL_DISCOVERY"
+    persisted_obs_by_id = {str(o.id): o for o in persisted_obs}
 
-    assert len(dining_recs) > 0, "Running graph must produce dining recommendations"
-    for dr in dining_recs:
-        assert dr.get("name") is not None
-        assert dr.get("category") in ("restaurant", "street_food", "cafe", "dining", "cuisine", "food")
+    # 1. Food Research: Dishes must trace to actual supporting observations
+    if local_dishes:
+        assert food_res.get("status") in ("COMPLETED", "PARTIAL")
+        for d in local_dishes:
+            assert d.get("is_business_venue") is False
+            assert d.get("uncertainty") == "EDITORIAL_DISCOVERY"
+            # Provenance: dish must trace to an actual persisted observation
+            obs_id = d.get("observation_id")
+            assert obs_id is not None, f"Dish '{d.get('name')}' must carry observation_id"
+            assert obs_id in persisted_obs_by_id, (
+                f"Observation {obs_id} for dish '{d.get('name')}' must be in persisted observations"
+            )
+            supporting_obs = persisted_obs_by_id[obs_id]
+            assert d.get("source_url") in (supporting_obs.canonical_url, supporting_obs.source_url)
+            # Description must come from the source excerpt text
+            desc = d.get("description")
+            if desc:
+                assert desc in supporting_obs.excerpt_text, (
+                    f"Dish description '{desc}' must be extracted from observation excerpt, not a canned catalog"
+                )
+    else:
+        assert food_res.get("status") in ("UNAVAILABLE", "PARTIAL")
+        assert food_res.get("status") != "COMPLETED"
+        assert food_res.get("reason") is not None
 
-    assert len(indicative_options) > 0, "Running graph must produce indicative lodging options"
-    for opt in indicative_options:
-        assert opt.get("evidence_class") == "INDICATIVE_SEARCH"
-        assert opt.get("is_indicative_search") is True
-        assert opt.get("is_verified_offer") is False
-        assert opt.get("booking_confirmed") is False
-        assert "live_room_availability_unverified" in opt.get("unavailable_details", [])
+    if dining_recs:
+        for dr in dining_recs:
+            assert dr.get("name") is not None
+            assert dr.get("category") in ("restaurant", "street_food", "cafe", "dining", "cuisine", "food")
+            assert not PlaceExtractionService.is_culinary_dish(dr["name"])
+
+    # 2. Accommodation Research: Indicative rates must trace to actual supporting observations
+    if indicative_options:
+        for opt in indicative_options:
+            price = opt.get("price_per_night")
+            if price is not None:
+                assert opt.get("evidence_class") == "INDICATIVE_SEARCH"
+                assert opt.get("is_indicative_search") is True
+                assert opt.get("currency") is not None
+                matching_priced_obs = any(
+                    isinstance(o.artifact_ref, dict)
+                    and (
+                        o.artifact_ref.get("price_per_night") == price
+                        or o.artifact_ref.get("indicative_price_inr") == price
+                    )
+                    and o.artifact_ref.get("currency") == opt.get("currency")
+                    for o in persisted_obs
+                )
+                assert matching_priced_obs, f"Hotel '{opt.get('property_name')}' price {price} must trace to an observation"
+            else:
+                assert opt.get("currency") is None
+                assert opt.get("evidence_class") is None
+                assert opt.get("is_indicative_search") is False
+                assert opt.get("availability_status") == "PRICE_UNAVAILABLE"
+                assert "price_unsupported_by_source" in opt.get("unavailable_details", [])
+
+            assert opt.get("is_verified_offer") is False
+            assert opt.get("booking_confirmed") is False
+            assert "live_room_availability_unverified" in opt.get("unavailable_details", [])
+            assert "booking_unconfirmed" in opt.get("unavailable_details", [])
+    else:
+        assert accom_res.get("status") == "UNAVAILABLE"
+        assert accom_res.get("status") != "COMPLETED"
+        assert accom_res.get("reason") is not None
 
     pricing_notice = accom_res.get("pricing_notice", "")
     assert "indicative search estimates" in pricing_notice

@@ -2619,6 +2619,10 @@ async def compute_budget_node(
 
 def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
     """Assembles structured food research distinguishing regional dishes from dining venues."""
+    from functions.orchestrator.evidence.place_extraction import (
+        PlaceExtractionService,
+    )
+
     eligible_stops = list(state.get("eligible_stops", []))
     editorial_recs = list(state.get("editorial_recommendations", []))
     all_candidates = eligible_stops + editorial_recs
@@ -2635,6 +2639,8 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
             continue
         name = str(c.get("primary_name", "")).strip()
         if not name or name.lower() in seen_names:
+            continue
+        if PlaceExtractionService.is_culinary_dish(name):
             continue
         seen_names.add(name.lower())
 
@@ -2670,11 +2676,7 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
             }
         )
 
-    # Extract regional culinary dishes from observations, task outputs, or destination context
-    from functions.orchestrator.evidence.place_extraction import (
-        PlaceExtractionService,
-    )
-
+    # Extract regional culinary dishes from source observations
     raw_obs_list: list[Any] = list(state.get("observations") or [])
     task_outputs = state.get("task_outputs", {})
     if isinstance(task_outputs, dict):
@@ -2694,54 +2696,22 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
         raw_obs_list
     )
 
-    # If no dishes found from observations, derive from destination regional context
-    if not local_dishes:
-        brief = state.get("brief", {})
-        dest_name = ""
-        if isinstance(brief, dict):
-            dests = brief.get("destinations", [])
-            dest_name = str(
-                (
-                    dests[0].get("name")
-                    if isinstance(dests[0], dict)
-                    else getattr(dests[0], "name", "")
-                )
-                if dests
-                else (brief.get("destination_name") or "")
-            )
-        if "kolkata" in dest_name.lower():
-            local_dishes = [
-                {
-                    "name": "Kathi Roll",
-                    "dish_type": "street_food",
-                    "description": "Skewer roasted kebab rolled in paratha flatbread",
-                    "is_business_venue": False,
-                    "source_url": None,
-                    "retrieval_time": None,
-                    "uncertainty": "EDITORIAL_DISCOVERY",
-                },
-                {
-                    "name": "Rosogolla",
-                    "dish_type": "sweet",
-                    "description": "Syrupy cottage cheese dumpling confection",
-                    "is_business_venue": False,
-                    "source_url": None,
-                    "retrieval_time": None,
-                    "uncertainty": "EDITORIAL_DISCOVERY",
-                },
-                {
-                    "name": "Macher Jhol",
-                    "dish_type": "main_course",
-                    "description": "Traditional light mustard fish curry",
-                    "is_business_venue": False,
-                    "source_url": None,
-                    "retrieval_time": None,
-                    "uncertainty": "EDITORIAL_DISCOVERY",
-                },
-            ]
+    if not local_dishes and not dining_items:
+        food_status = "UNAVAILABLE"
+        reason: str | None = "No usable source-backed food or dining evidence retrieved"
+    elif not local_dishes:
+        food_status = "PARTIAL"
+        reason = "Dining recommendations retrieved without source-backed regional culinary dishes"
+    elif not dining_items:
+        food_status = "PARTIAL"
+        reason = "Regional culinary dishes retrieved without verified dining venues"
+    else:
+        food_status = "COMPLETED"
+        reason = None
 
     return {
-        "status": "COMPLETED",
+        "status": food_status,
+        "reason": reason,
         "local_dishes": local_dishes,
         "dining_recommendations": dining_items,
         "verified_dining_count": len([d for d in dining_items if d["is_verified"]]),
@@ -2753,6 +2723,70 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
 
 def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
     """Assembles structured accommodation research strictly preserving indicative search status."""
+    from functions.orchestrator.evidence.place_extraction import _normalize_place_name
+
+    task_outputs = state.get("task_outputs", {})
+    raw_obs_list: list[Any] = list(state.get("observations") or [])
+    if isinstance(task_outputs, dict):
+        if "observations" in task_outputs and isinstance(
+            task_outputs["observations"], list
+        ):
+            raw_obs_list.extend(task_outputs["observations"])
+        for sub in task_outputs.values():
+            if (
+                isinstance(sub, dict)
+                and "observations" in sub
+                and isinstance(sub["observations"], list)
+            ):
+                raw_obs_list.extend(sub["observations"])
+
+    def _find_matching_priced_obs(
+        prop_name: str,
+    ) -> tuple[int | None, str | None, str | None, str | None]:
+        norm_name = _normalize_place_name(prop_name)
+        for obs in raw_obs_list:
+            art = (
+                getattr(obs, "artifact_ref", None)
+                or (obs.get("artifact_ref") if isinstance(obs, dict) else {})
+                or {}
+            )
+            title = str(
+                art.get("property_name")
+                or art.get("title")
+                or art.get("name")
+                or ""
+            ).strip()
+            if not title:
+                continue
+            norm_title = _normalize_place_name(title)
+            if norm_name == norm_title or norm_name in norm_title or norm_title in norm_name:
+                p_val = art.get("price_per_night") or art.get("indicative_price_inr")
+                c_val = art.get("currency")
+                if p_val is not None and c_val:
+                    try:
+                        int_price = int(p_val)
+                    except (ValueError, TypeError):
+                        continue
+                    src_url = (
+                        getattr(obs, "canonical_url", None)
+                        or getattr(obs, "source_url", None)
+                        or (
+                            obs.get("canonical_url") or obs.get("source_url")
+                            if isinstance(obs, dict)
+                            else None
+                        )
+                    )
+                    r_time = getattr(obs, "retrieved_at", None) or (
+                        obs.get("retrieved_at") if isinstance(obs, dict) else None
+                    )
+                    r_str = (
+                        r_time.isoformat()
+                        if r_time is not None and hasattr(r_time, "isoformat")
+                        else (str(r_time) if r_time is not None else None)
+                    )
+                    return int_price, str(c_val), src_url, r_str
+        return None, None, None, None
+
     editorial_recs = list(state.get("editorial_recommendations", []))
     eligible_stops = list(state.get("eligible_stops", []))
     all_candidates = eligible_stops + editorial_recs
@@ -2775,49 +2809,54 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
         source_urls = list(prov.get("source_urls") or [])
         retrieval_time = prov.get("retrieval_time")
 
-        indicative_options.append(
-            {
-                "property_name": name,
-                "price_per_night": (
-                    c.get("price_estimate_inr")
-                    or prov.get("price_per_night")
-                    or prov.get("indicative_price_inr")
-                    or c.get("diagnostics", {}).get("indicative_price_inr")
-                ),
-                "currency": "INR",
-                "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
-                "is_indicative_search": True,
-                "is_verified_offer": False,
-                "booking_confirmed": False,
-                "availability_status": "INDICATIVE_SEARCH_ONLY",
-                "source_urls": source_urls,
-                "source_url": source_urls[0] if source_urls else None,
-                "retrieval_time": retrieval_time,
-                "uncertainty": "INDICATIVE_SEARCH",
-                "unavailable_details": [
-                    "live_room_availability_unverified",
-                    "booking_unconfirmed",
-                ],
-                "conflicting_details": [],
-            }
-        )
+        obs_price, obs_curr, obs_url, obs_time = _find_matching_priced_obs(name)
+        if obs_price is not None and obs_curr:
+            indicative_options.append(
+                {
+                    "property_name": name,
+                    "price_per_night": obs_price,
+                    "currency": obs_curr,
+                    "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                    "is_indicative_search": True,
+                    "is_verified_offer": False,
+                    "booking_confirmed": False,
+                    "availability_status": "INDICATIVE_SEARCH_ONLY",
+                    "source_urls": [obs_url] if obs_url else source_urls,
+                    "source_url": obs_url or (source_urls[0] if source_urls else None),
+                    "retrieval_time": obs_time or retrieval_time,
+                    "uncertainty": "INDICATIVE_SEARCH",
+                    "unavailable_details": [
+                        "live_room_availability_unverified",
+                        "booking_unconfirmed",
+                    ],
+                    "conflicting_details": [],
+                }
+            )
+        else:
+            indicative_options.append(
+                {
+                    "property_name": name,
+                    "price_per_night": None,
+                    "currency": None,
+                    "evidence_class": None,
+                    "is_indicative_search": False,
+                    "is_verified_offer": False,
+                    "booking_confirmed": False,
+                    "availability_status": "PRICE_UNAVAILABLE",
+                    "source_urls": source_urls,
+                    "source_url": source_urls[0] if source_urls else None,
+                    "retrieval_time": retrieval_time,
+                    "uncertainty": "UNVERIFIED",
+                    "unavailable_details": [
+                        "price_unsupported_by_source",
+                        "live_room_availability_unverified",
+                        "booking_unconfirmed",
+                    ],
+                    "conflicting_details": [],
+                }
+            )
 
     # Check for lodging in observations or task outputs
-    task_outputs = state.get("task_outputs", {})
-    raw_obs_list: list[Any] = list(state.get("observations") or [])
-    if isinstance(task_outputs, dict):
-        if "observations" in task_outputs and isinstance(
-            task_outputs["observations"], list
-        ):
-            raw_obs_list.extend(task_outputs["observations"])
-        for sub in task_outputs.values():
-            if (
-                isinstance(sub, dict)
-                and "observations" in sub
-                and isinstance(sub["observations"], list)
-            ):
-                raw_obs_list.extend(sub["observations"])
-
     for obs in raw_obs_list:
         art_ref = (
             getattr(obs, "artifact_ref", None)
@@ -2849,33 +2888,73 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
                     else (str(r_time) if r_time is not None else None)
                 )
 
-                indicative_options.append(
-                    {
-                        "property_name": prop_name,
-                        "price_per_night": art_ref.get("price_per_night"),
-                        "currency": str(art_ref.get("currency") or "INR"),
-                        "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
-                        "is_indicative_search": True,
-                        "is_verified_offer": False,
-                        "booking_confirmed": False,
-                        "availability_status": "INDICATIVE_SEARCH_ONLY",
-                        "source_urls": [src_url] if src_url else [],
-                        "source_url": src_url,
-                        "retrieval_time": r_str,
-                        "uncertainty": "INDICATIVE_SEARCH",
-                        "unavailable_details": [
-                            "live_room_availability_unverified",
-                            "booking_unconfirmed",
-                        ],
-                        "conflicting_details": [],
-                    }
-                )
+                obs_price, obs_curr, obs_u, obs_t = _find_matching_priced_obs(prop_name)
+                if obs_price is not None and obs_curr:
+                    indicative_options.append(
+                        {
+                            "property_name": prop_name,
+                            "price_per_night": obs_price,
+                            "currency": obs_curr,
+                            "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                            "is_indicative_search": True,
+                            "is_verified_offer": False,
+                            "booking_confirmed": False,
+                            "availability_status": "INDICATIVE_SEARCH_ONLY",
+                            "source_urls": [obs_u or src_url] if (obs_u or src_url) else [],
+                            "source_url": obs_u or src_url,
+                            "retrieval_time": obs_t or r_str,
+                            "uncertainty": "INDICATIVE_SEARCH",
+                            "unavailable_details": [
+                                "live_room_availability_unverified",
+                                "booking_unconfirmed",
+                            ],
+                            "conflicting_details": [],
+                        }
+                    )
+                else:
+                    indicative_options.append(
+                        {
+                            "property_name": prop_name,
+                            "price_per_night": None,
+                            "currency": None,
+                            "evidence_class": None,
+                            "is_indicative_search": False,
+                            "is_verified_offer": False,
+                            "booking_confirmed": False,
+                            "availability_status": "PRICE_UNAVAILABLE",
+                            "source_urls": [src_url] if src_url else [],
+                            "source_url": src_url,
+                            "retrieval_time": r_str,
+                            "uncertainty": "UNVERIFIED",
+                            "unavailable_details": [
+                                "price_unsupported_by_source",
+                                "live_room_availability_unverified",
+                                "booking_unconfirmed",
+                            ],
+                            "conflicting_details": [],
+                        }
+                    )
+
+    if not indicative_options:
+        status = "UNAVAILABLE"
+        reason = "No usable source-backed accommodation evidence retrieved"
+    elif all(opt.get("price_per_night") is None for opt in indicative_options):
+        status = "PARTIAL"
+        reason = "Accommodation options identified without source-supported indicative rates"
+    else:
+        status = "COMPLETED"
+        reason = None
 
     return {
-        "status": "COMPLETED",
+        "status": status,
+        "reason": reason,
         "indicative_options": indicative_options,
         "verified_offers": [],
-        "availability_status": "INDICATIVE_SEARCH_ONLY",
+        "availability_status": (
+            "INDICATIVE_SEARCH_ONLY"
+            if any(opt.get("is_indicative_search") for opt in indicative_options)
+            else "PRICE_UNAVAILABLE"
+        ),
         "pricing_notice": (
             "All rates are indicative search estimates from web aggregators. "
             "Verified date specific offers, live room availability, and booking confirmations "

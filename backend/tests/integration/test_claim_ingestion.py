@@ -1289,6 +1289,8 @@ class TestClaimIngestionIntegration:
             claim = claims[0]
             assert claim.typed_value["price_per_night"] is None
             assert claim.typed_value["price_per_night"] != 0
+            assert claim.typed_value["evidence_class"] is None
+            assert claim.typed_value["is_indicative_search"] is False
 
     async def test_food_dish_distinguished_from_business_and_not_promoted_as_place_existence(
         self, session_factory: Any
@@ -1427,4 +1429,249 @@ class TestClaimIngestionIntegration:
                 assert rec.existence_status == CandidateExistenceStatus.UNVERIFIED
                 assert rec.provenance["uncertainty"] == "EDITORIAL_DISCOVERY"
                 assert "existence_unverified" in rec.provenance["unavailable_details"]
+
+    async def test_food_and_accommodation_research_no_evidence_returns_unavailable_not_completed(
+        self, session_factory: Any
+    ) -> None:
+        """Missing food and lodging evidence produces honest UNAVAILABLE status, never COMPLETED."""
+        from functions.orchestrator.graphs.trip_planner.graph import (
+            _build_accommodation_research,
+            _build_food_research,
+        )
+
+        empty_state: dict[str, Any] = {
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [],
+            "task_outputs": {},
+            "brief": {"destinations": [{"name": "Kolkata"}]},
+        }
+
+        food_res = _build_food_research(empty_state)
+        assert food_res["status"] == "UNAVAILABLE"
+        assert food_res["status"] != "COMPLETED"
+        assert "No usable source-backed food or dining evidence retrieved" in str(food_res["reason"])
+        assert food_res["local_dishes"] == []
+        assert food_res["dining_recommendations"] == []
+
+        accom_res = _build_accommodation_research(empty_state)
+        assert accom_res["status"] == "UNAVAILABLE"
+        assert accom_res["status"] != "COMPLETED"
+        assert "No usable source-backed accommodation evidence retrieved" in str(accom_res["reason"])
+        assert accom_res["indicative_options"] == []
+        assert accom_res["availability_status"] == "PRICE_UNAVAILABLE"
+
+    async def test_food_and_accommodation_research_provider_failure_returns_unavailable(
+        self, session_factory: Any
+    ) -> None:
+        """Provider failures return honest UNAVAILABLE status with informative diagnostic reasons."""
+        from functions.orchestrator.graphs.trip_planner.graph import (
+            _build_accommodation_research,
+            _build_food_research,
+        )
+
+        failed_provider_state: dict[str, Any] = {
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [],
+            "task_outputs": {
+                "evidence_collection": {
+                    "status": "FAILED",
+                    "error": "Upstream search provider timeout",
+                    "observations": [],
+                }
+            },
+            "brief": {"destinations": [{"name": "Kolkata"}]},
+        }
+
+        food_res = _build_food_research(failed_provider_state)
+        assert food_res["status"] == "UNAVAILABLE"
+        assert food_res["status"] != "COMPLETED"
+        assert food_res["reason"] is not None
+
+        accom_res = _build_accommodation_research(failed_provider_state)
+        assert accom_res["status"] == "UNAVAILABLE"
+        assert accom_res["status"] != "COMPLETED"
+        assert accom_res["reason"] is not None
+
+    async def test_unsupported_candidate_price_kept_unknown_not_labeled_indicative_search(
+        self, session_factory: Any
+    ) -> None:
+        """Candidate prices lacking matching source observations must not be labeled INDICATIVE_SEARCH."""
+        from functions.orchestrator.graphs.trip_planner.graph import _build_accommodation_research
+
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+
+            cand_hotel = RegisteredCandidate(
+                primary_name="Hypothetical Boutique Grand Hotel",
+                category="lodging",
+                point=CoordinatePoint(lat=22.5600, lng=88.3500),
+            )
+
+            cand_dict = cand_hotel.model_dump()
+            cand_dict["price_estimate_inr"] = 7500
+
+            state: dict[str, Any] = {
+                "eligible_stops": [],
+                "editorial_recommendations": [cand_dict],
+                "observations": [],
+                "task_outputs": {},
+            }
+
+            accom_res = _build_accommodation_research(state)
+            assert accom_res["status"] == "PARTIAL"
+            assert accom_res["reason"] == "Accommodation options identified without source-supported indicative rates"
+            assert len(accom_res["indicative_options"]) == 1
+
+            opt = accom_res["indicative_options"][0]
+            assert opt["property_name"] == "Hypothetical Boutique Grand Hotel"
+            assert opt["price_per_night"] is None
+            assert opt["currency"] is None
+            assert opt["evidence_class"] is None
+            assert opt["is_indicative_search"] is False
+            assert opt["is_verified_offer"] is False
+            assert opt["booking_confirmed"] is False
+            assert opt["availability_status"] == "PRICE_UNAVAILABLE"
+            assert opt["uncertainty"] == "UNVERIFIED"
+            assert "price_unsupported_by_source" in opt["unavailable_details"]
+
+    async def test_valid_source_backed_dish_preserves_source_provenance_without_region_override(
+        self, session_factory: Any
+    ) -> None:
+        """Dishes trace to source observations without region overrides or canned descriptions."""
+        from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
+
+        now = datetime.now(UTC)
+        obs_id_generic = uuid.uuid4()
+        obs_id_regional = uuid.uuid4()
+
+        obs_generic = SourceObservationModel(
+            id=obs_id_generic,
+            execution_id=uuid.uuid4(),
+            source_url="https://food-gazette.com/delicacies",
+            canonical_url="https://food-gazette.com/delicacies",
+            publisher="Food Gazette",
+            content_hash="generic_dish_hash_0123456789abcdef",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="The traditional feast features fragrant biryani cooked in sealed earthenware vessels.",
+            excerpt_locator="article:body[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={"category": "culinary"},
+            created_at=now,
+        )
+
+        obs_regional = SourceObservationModel(
+            id=obs_id_regional,
+            execution_id=uuid.uuid4(),
+            source_url="https://streetfood-atlas.org/kolkata-kathi",
+            canonical_url="https://streetfood-atlas.org/kolkata-kathi",
+            publisher="Street Food Atlas",
+            content_hash="regional_dish_hash_0123456789abcdef",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Kolkata Kathi Roll originated at historic dining stalls in central Kolkata.",
+            excerpt_locator="article:body[1]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={"category": "culinary"},
+            created_at=now,
+        )
+
+        dishes = PlaceExtractionService.extract_local_dishes_from_observations(
+            [obs_generic, obs_regional]
+        )
+        assert len(dishes) == 2
+
+        dish_map = {d["name"]: d for d in dishes}
+
+        # Generic biryani must NOT be coerced to Kolkata Biryani
+        assert "Biryani" in dish_map
+        biryani = dish_map["Biryani"]
+        assert biryani["name"] == "Biryani"
+        assert biryani["observation_id"] == str(obs_id_generic)
+        assert biryani["source_url"] == "https://food-gazette.com/delicacies"
+        assert biryani["retrieval_time"] is not None
+        assert "fragrant biryani cooked in sealed earthenware vessels" in str(biryani["description"])
+
+        # Regional kathi roll retains Kolkata Kathi Roll because it appeared in the source text
+        assert "Kolkata Kathi Roll" in dish_map
+        kathi = dish_map["Kolkata Kathi Roll"]
+        assert kathi["observation_id"] == str(obs_id_regional)
+        assert kathi["source_url"] == "https://streetfood-atlas.org/kolkata-kathi"
+        assert kathi["retrieval_time"] is not None
+        assert "Kolkata Kathi Roll originated at historic dining stalls" in str(kathi["description"])
+
+    async def test_valid_indicative_lodging_rate_labeled_indicative_search_with_unconfirmed_booking(
+        self, session_factory: Any
+    ) -> None:
+        """Source backed lodging rates are labeled INDICATIVE_SEARCH with unconfirmed booking status."""
+        from functions.orchestrator.graphs.trip_planner.graph import _build_accommodation_research
+
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            obs = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="https://verified-booking-aggregator.com/the-oberoi-grand",
+                canonical_url="https://verified-booking-aggregator.com/the-oberoi-grand",
+                publisher="Aggregator",
+                content_hash="lodging_rate_hash_0123456789abcdef",
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="The Oberoi Grand Kolkata | Indicative standard room rate ₹9500 per night",
+                excerpt_locator="hotel:card[0]",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "lodging",
+                    "property_name": "The Oberoi Grand Kolkata",
+                    "price_per_night": 9500,
+                    "currency": "INR",
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[],
+                owner_id=owner_id,
+            )
+            assert len(claims) == 1
+            claim = claims[0]
+            assert claim.category == "LODGING"
+            assert claim.typed_value["evidence_class"] == EvidenceClass.INDICATIVE_SEARCH.value
+            assert claim.typed_value["price_per_night"] == 9500
+            assert claim.typed_value["currency"] == "INR"
+            assert claim.typed_value["is_indicative_search"] is True
+            assert claim.typed_value["is_verified_offer"] is False
+            assert claim.typed_value["booking_confirmed"] is False
+
+            state: dict[str, Any] = {
+                "eligible_stops": [],
+                "editorial_recommendations": [],
+                "observations": [obs],
+                "task_outputs": {},
+            }
+            accom_res = _build_accommodation_research(state)
+            assert accom_res["status"] == "COMPLETED"
+            assert accom_res["reason"] is None
+            assert len(accom_res["indicative_options"]) == 1
+
+            opt = accom_res["indicative_options"][0]
+            assert opt["property_name"] == "The Oberoi Grand Kolkata"
+            assert opt["price_per_night"] == 9500
+            assert opt["currency"] == "INR"
+            assert opt["evidence_class"] == EvidenceClass.INDICATIVE_SEARCH.value
+            assert opt["is_indicative_search"] is True
+            assert opt["is_verified_offer"] is False
+            assert opt["booking_confirmed"] is False
+            assert opt["availability_status"] == "INDICATIVE_SEARCH_ONLY"
+            assert "live_room_availability_unverified" in opt["unavailable_details"]
+            assert "booking_unconfirmed" in opt["unavailable_details"]
+            assert opt["source_url"] == "https://verified-booking-aggregator.com/the-oberoi-grand"
 

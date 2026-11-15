@@ -735,6 +735,8 @@ class TestTripPlannerEvidenceRunnerLifecycle:
         # Verify Food Research
         food_res = proposal.get("food_research") or values.get("food_research")
         assert food_res is not None
+        assert food_res.get("status") == "COMPLETED"
+        assert food_res.get("reason") is None
         local_dishes = food_res.get("local_dishes", [])
         assert len(local_dishes) > 0
         dish_names = [d["name"] for d in local_dishes]
@@ -742,6 +744,11 @@ class TestTripPlannerEvidenceRunnerLifecycle:
         for d in local_dishes:
             assert d.get("is_business_venue") is False
             assert d.get("uncertainty") == "EDITORIAL_DISCOVERY"
+            assert d.get("observation_id") == str(obs_dish.id)
+            assert d.get("source_url") == "https://wbtourism.gov.in/culinary-heritage"
+            assert d.get("retrieval_time") is not None
+            assert d.get("description") is not None
+            assert "Celebrated Kolkata street food specialties include" in str(d.get("description"))
 
         dining_recs = food_res.get("dining_recommendations", [])
         dining_names = [d["name"] for d in dining_recs]
@@ -759,6 +766,8 @@ class TestTripPlannerEvidenceRunnerLifecycle:
         # Verify Accommodation Research
         accom_res = proposal.get("accommodation_research") or values.get("accommodation_research")
         assert accom_res is not None
+        assert accom_res.get("status") == "COMPLETED"
+        assert accom_res.get("reason") is None
         indicative_options = accom_res.get("indicative_options", [])
         hotel_names = [h.get("property_name") for h in indicative_options]
         assert "Heritage Inn Kolkata" in hotel_names
@@ -770,6 +779,7 @@ class TestTripPlannerEvidenceRunnerLifecycle:
         assert h_item.get("is_verified_offer") is False
         assert h_item.get("booking_confirmed") is False
         assert h_item.get("price_per_night") == 4500
+        assert h_item.get("currency") == "INR"
         assert h_item.get("source_url") == "https://hotels-aggregator.com/heritage-inn"
         assert h_item.get("retrieval_time") is not None
         assert "live_room_availability_unverified" in h_item.get("unavailable_details", [])

@@ -100,11 +100,13 @@ class PlaceExtractionService:
             artifact_ref = getattr(obs, "artifact_ref", None) or {}
             excerpt_text = str(getattr(obs, "excerpt_text", "") or "").strip()
             retrieved_at = getattr(obs, "retrieved_at", None)
-            retrieved_str = (
-                retrieved_at.isoformat()
-                if retrieved_at is not None and hasattr(retrieved_at, "isoformat")
-                else None
-            )
+            retrieved_str: str | None = None
+            if isinstance(retrieved_at, str):
+                retrieved_str = retrieved_at
+            elif hasattr(retrieved_at, "isoformat"):
+                val = retrieved_at.isoformat()
+                if isinstance(val, str):
+                    retrieved_str = val
 
             # 1. Check local place result structured metadata from SerpApi with verified GPS coordinates
             if isinstance(artifact_ref, dict):
@@ -343,36 +345,57 @@ class PlaceExtractionService:
         cls,
         observations: list[Any],
     ) -> list[dict[str, Any]]:
-        """Extracts authentic regional culinary dishes from collected search and scraping observations."""
+        """Extracts authentic regional culinary dishes from collected search and scraping observations.
+
+        Requires each published dish to trace to an actual supporting observation.
+        Does not assign regional variants or descriptions unsupported by the source.
+        """
+        import re
+
         dishes: list[dict[str, Any]] = []
         seen_names: set[str] = set()
 
-        regional_catalog = {
-            "kathi roll": ("Kathi Roll", "street_food", "Skewer roasted kebab rolled in paratha flatbread"),
-            "rosogolla": ("Rosogolla", "sweet", "Syrupy cottage cheese dumpling confection"),
-            "rasgulla": ("Rosogolla", "sweet", "Syrupy cottage cheese dumpling confection"),
-            "sandesh": ("Sandesh", "sweet", "Delicate artisanal milk fudge"),
-            "sondesh": ("Sandesh", "sweet", "Delicate artisanal milk fudge"),
-            "mishti doi": ("Mishti Doi", "sweet", "Caramelized fermented sweet curd"),
-            "macher jhol": ("Macher Jhol", "main_course", "Traditional light mustard fish curry"),
-            "kosha mangsho": ("Kosha Mangsho", "main_course", "Slow cooked rich spiced mutton curry"),
-            "phuchka": ("Phuchka", "street_food", "Crisp hollow puri filled with spiced potato and tamarind water"),
-            "puchka": ("Phuchka", "street_food", "Crisp hollow puri filled with spiced potato and tamarind water"),
-            "momos": ("Momos", "street_food", "Steamed dumplings served with spicy sesame chutney"),
-            "thukpa": ("Thukpa", "main_course", "Himalayan noodle soup with vegetables and herbs"),
-            "luchi": ("Luchi Alur Dom", "breakfast", "Deep fried puffed flatbread with spiced potato curry"),
-            "biryani": ("Kolkata Biryani", "main_course", "Fragrant saffron rice layered with meat and spiced potato"),
-            "chelo kabab": ("Chelo Kabab", "heritage_dish", "Heritage Persian style buttered rice with grilled kebabs"),
-            "daab chingri": ("Daab Chingri", "specialty", "Prawns cooked inside tender coconut with mustard paste"),
-            "shukto": ("Shukto", "traditional", "Traditional bitter sweet mixed vegetable medley"),
-        }
+        dish_definitions: list[tuple[str, str, str]] = [
+            ("kathi roll", "Kathi Roll", "street_food"),
+            ("kati roll", "Kathi Roll", "street_food"),
+            ("rosogolla", "Rosogolla", "sweet"),
+            ("rasgulla", "Rosogolla", "sweet"),
+            ("sandesh", "Sandesh", "sweet"),
+            ("sondesh", "Sandesh", "sweet"),
+            ("mishti doi", "Mishti Doi", "sweet"),
+            ("misti doi", "Mishti Doi", "sweet"),
+            ("macher jhol", "Macher Jhol", "main_course"),
+            ("kosha mangsho", "Kosha Mangsho", "main_course"),
+            ("phuchka", "Phuchka", "street_food"),
+            ("puchka", "Phuchka", "street_food"),
+            ("momos", "Momos", "street_food"),
+            ("momo", "Momos", "street_food"),
+            ("thukpa", "Thukpa", "main_course"),
+            ("luchi", "Luchi", "breakfast"),
+            ("alur dom", "Alur Dom", "side_dish"),
+            ("cholar dal", "Cholar Dal", "side_dish"),
+            ("biryani", "Biryani", "main_course"),
+            ("chelo kabab", "Chelo Kabab", "specialty"),
+            ("daab chingri", "Daab Chingri", "specialty"),
+            ("shukto", "Shukto", "traditional"),
+            ("fish fry", "Fish Fry", "snack"),
+            ("ilish bhapa", "Ilish Bhapa", "specialty"),
+        ]
 
         for obs in observations:
-            text = str(
+            obs_id = (
+                str(getattr(obs, "id", None) or (obs.get("id") if isinstance(obs, dict) else ""))
+                or None
+            )
+            raw_excerpt = str(
                 getattr(obs, "excerpt_text", None)
                 or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
                 or ""
-            ).lower()
+            )
+            if not raw_excerpt.strip():
+                continue
+
+            text_lower = raw_excerpt.lower()
             source_url = str(
                 getattr(obs, "canonical_url", None)
                 or getattr(obs, "source_url", None)
@@ -380,29 +403,59 @@ class PlaceExtractionService:
                 or (obs.get("source_url") if isinstance(obs, dict) else "")
                 or ""
             ).strip()
+            if not source_url:
+                continue
+
             retrieved_at = (
                 getattr(obs, "retrieved_at", None)
                 or (obs.get("retrieved_at") if isinstance(obs, dict) else None)
             )
-            retrieved_str = (
-                retrieved_at.isoformat()
-                if retrieved_at is not None and hasattr(retrieved_at, "isoformat")
-                else (str(retrieved_at) if retrieved_at is not None else None)
-            )
+            retrieved_str: str | None = None
+            if isinstance(retrieved_at, str):
+                retrieved_str = retrieved_at
+            elif hasattr(retrieved_at, "isoformat"):
+                val = retrieved_at.isoformat()
+                if isinstance(val, str):
+                    retrieved_str = val
 
-            for key, (dish_name, dish_type, desc) in regional_catalog.items():
-                if key in text and dish_name.lower() not in seen_names:
-                    seen_names.add(dish_name.lower())
-                    dishes.append(
-                        {
-                            "name": dish_name,
-                            "dish_type": dish_type,
-                            "description": desc,
-                            "is_business_venue": False,
-                            "source_url": source_url or None,
-                            "retrieval_time": retrieved_str,
-                            "uncertainty": "EDITORIAL_DISCOVERY",
-                        }
-                    )
+            sentences = [s.strip() for s in re.split(r"[.\n;]", raw_excerpt) if s.strip()]
+
+            for term, base_name, dish_type in dish_definitions:
+                if term not in text_lower:
+                    continue
+
+                dish_name = base_name
+                if f"kolkata {term}" in text_lower:
+                    dish_name = f"Kolkata {base_name}"
+                elif f"hyderabadi {term}" in text_lower:
+                    dish_name = f"Hyderabadi {base_name}"
+                elif f"lucknowi {term}" in text_lower:
+                    dish_name = f"Lucknowi {base_name}"
+                elif term == "luchi" and ("luchi alur dom" in text_lower or "luchi aloo dum" in text_lower):
+                    dish_name = "Luchi Alur Dom"
+
+                if dish_name.lower() in seen_names:
+                    continue
+
+                supporting_description: str | None = None
+                for sent in sentences:
+                    if term in sent.lower():
+                        if len(sent) > len(dish_name) + 5:
+                            supporting_description = sent
+                        break
+
+                seen_names.add(dish_name.lower())
+                dishes.append(
+                    {
+                        "name": dish_name,
+                        "dish_type": dish_type,
+                        "description": supporting_description,
+                        "is_business_venue": False,
+                        "source_url": source_url,
+                        "observation_id": obs_id,
+                        "retrieval_time": retrieved_str,
+                        "uncertainty": "EDITORIAL_DISCOVERY",
+                    }
+                )
 
         return dishes

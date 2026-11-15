@@ -710,6 +710,16 @@ async def ingest_claims_from_observations(
             hotel_coords = (
                 _extract_coordinates_from_dict(art_ref) if isinstance(art_ref, dict) else None
             )
+            raw_price = (
+                art_ref.get("price_per_night")
+                if isinstance(art_ref, dict)
+                else None
+            )
+            if raw_price is None and isinstance(art_ref, dict):
+                raw_price = art_ref.get("indicative_price_inr")
+            currency_val = art_ref.get("currency") if isinstance(art_ref, dict) else None
+            has_valid_indicative_price = raw_price is not None and bool(currency_val)
+
             stay_claim = ClaimCreate(
                 subject_id=hotel_norm,
                 category="LODGING",
@@ -717,10 +727,14 @@ async def ingest_claims_from_observations(
                 execution_id=execution_id,
                 typed_value={
                     "property_name": hotel_name,
-                    "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
-                    "price_per_night": art_ref.get("price_per_night"),
-                    "currency": art_ref.get("currency", "INR"),
-                    "is_indicative_search": True,
+                    "evidence_class": (
+                        EvidenceClass.INDICATIVE_SEARCH.value
+                        if has_valid_indicative_price
+                        else None
+                    ),
+                    "price_per_night": raw_price if has_valid_indicative_price else None,
+                    "currency": currency_val if has_valid_indicative_price else None,
+                    "is_indicative_search": has_valid_indicative_price,
                     "is_verified_offer": False,
                     "booking_confirmed": False,
                     "availability": "UNKNOWN",
