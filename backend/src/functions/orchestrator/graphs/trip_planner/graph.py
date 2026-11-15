@@ -136,6 +136,7 @@ class TripPlanningState(TypedDict, total=False):
     route_status: str | None
     routing_status: str | None
     route_diagnostics: list[str]
+    route_geometry: dict[str, Any] | list[Any] | None
     optimizer_task_id: str | None
     optimizer_idempotency_key: str | None
     timezone: str | None
@@ -1474,6 +1475,11 @@ async def consume_route_result_node(
             "routing_status": route_status_str,
             "route_diagnostics": route_diags,
             "optimized_schedule": schedule.model_dump(mode="json"),
+            "route_geometry": (
+                worker_output_dict.get("route_geometry")
+                or worker_output_dict.get("geometry")
+                or state.get("route_geometry")
+            ),
         }
 
     # Production Mode: Fail closed if persisted route cannot be loaded and validated
@@ -1757,6 +1763,22 @@ async def consume_route_result_node(
         is_optimal=is_optimal,
     )
 
+    road_coords: list[list[float]] = []
+    for leg in route_model.legs:
+        if leg.geometry and isinstance(leg.geometry, dict):
+            coords = leg.geometry.get("coordinates")
+            if isinstance(coords, list):
+                if road_coords and coords and coords[0] == road_coords[-1]:
+                    road_coords.extend(coords[1:])
+                else:
+                    road_coords.extend(coords)
+
+    resolved_geom = (
+        {"type": "LineString", "coordinates": road_coords}
+        if road_coords
+        else state.get("route_geometry")
+    )
+
     return {
         "current_step": "route_result_consumed",
         "route_id": str(route_id),
@@ -1764,6 +1786,7 @@ async def consume_route_result_node(
         "routing_status": route_status_str,
         "route_diagnostics": route_diags,
         "optimized_schedule": schedule.model_dump(mode="json"),
+        "route_geometry": resolved_geom,
     }
 
 
@@ -3167,6 +3190,96 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
     }
 
 
+def _extract_road_corridor_coordinates(state: TripPlanningState) -> list[Any]:
+    """Extracts ordered physical road corridor coordinates from the selected route geometry.
+
+    Conforms to spec 0007 AC-13, AC-14:
+    Uses the real road polyline geometry from route optimization. Never falls back to
+    straight lines between stops. If road geometry is unavailable, returns an empty list.
+    """
+    from functions.orchestrator.places.corridor import validate_coordinates
+    from functions.orchestrator.places.schemas import CoordinatePoint
+
+    raw_geom = state.get("route_geometry")
+    if raw_geom is None:
+        opt_sched = state.get("optimized_schedule")
+        if isinstance(opt_sched, dict):
+            raw_geom = opt_sched.get("route_geometry")
+
+    points: list[CoordinatePoint] = []
+
+    def _parse_pair(lon: Any, lat: Any) -> CoordinatePoint | None:
+        try:
+            f_lat = float(lat)
+            f_lon = float(lon)
+            is_valid, _ = validate_coordinates(f_lat, f_lon)
+            if is_valid:
+                return CoordinatePoint(lat=f_lat, lng=f_lon)
+        except Exception:
+            pass
+        return None
+
+    def _parse_coord_list(coords: Any) -> None:
+        if not isinstance(coords, list):
+            return
+        for item in coords:
+            if isinstance(item, CoordinatePoint):
+                points.append(item)
+            elif isinstance(item, dict):
+                lat = item.get("lat") or item.get("latitude")
+                lon = item.get("lng") or item.get("lon") or item.get("longitude")
+                pt = _parse_pair(lon, lat)
+                if pt:
+                    points.append(pt)
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                # GeoJSON coordinates are [lon, lat]
+                pt = _parse_pair(item[0], item[1])
+                if pt:
+                    points.append(pt)
+
+    if isinstance(raw_geom, dict):
+        g_type = str(raw_geom.get("type") or "").lower()
+        if g_type == "linestring":
+            _parse_coord_list(raw_geom.get("coordinates"))
+        elif g_type == "multilinestring":
+            for line in raw_geom.get("coordinates") or []:
+                _parse_coord_list(line)
+        elif g_type == "feature":
+            inner_geom = raw_geom.get("geometry")
+            if isinstance(inner_geom, dict):
+                g_type_inner = str(inner_geom.get("type") or "").lower()
+                if g_type_inner == "linestring":
+                    _parse_coord_list(inner_geom.get("coordinates"))
+                elif g_type_inner == "multilinestring":
+                    for line in inner_geom.get("coordinates") or []:
+                        _parse_coord_list(line)
+        elif g_type == "featurecollection":
+            for feat in raw_geom.get("features") or []:
+                if isinstance(feat, dict):
+                    inner_geom = feat.get("geometry")
+                    if isinstance(inner_geom, dict):
+                        _parse_coord_list(inner_geom.get("coordinates"))
+        elif "coordinates" in raw_geom:
+            _parse_coord_list(raw_geom.get("coordinates"))
+    elif isinstance(raw_geom, list):
+        _parse_coord_list(raw_geom)
+
+    if not points:
+        opt_sched = state.get("optimized_schedule")
+        if isinstance(opt_sched, dict):
+            legs = opt_sched.get("legs", [])
+            if isinstance(legs, list):
+                for leg in legs:
+                    if isinstance(leg, dict) and "geometry" in leg:
+                        leg_geom = leg["geometry"]
+                        if isinstance(leg_geom, dict):
+                            _parse_coord_list(leg_geom.get("coordinates"))
+                        elif isinstance(leg_geom, list):
+                            _parse_coord_list(leg_geom)
+
+    return points
+
+
 def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
     """Assembles structured road hazard and travel advisory research.
 
@@ -3174,7 +3287,7 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
     1. Extracts travel advisories, road closures, and weather warnings from observations and claims.
     2. Preserves source URL, observation ID, retrieval time, affected area, applicable time, and uncertainty.
     3. Distinguishes confirmed authoritative warnings from unverified search snippets.
-    4. Evaluates geographic relevance against trip origin, destinations, corridor, and scheduled stops.
+    4. Evaluates geographic relevance against selected road route corridor geometry.
     5. Evaluates temporal relevance against trip travel dates; classifies ended alerts as expired.
     6. Preserves conflicting reports side by side without guessing.
     7. Fail closed safety: absence of warnings NEVER evaluates to SAFE; reports ADVISORY_UNKNOWN
@@ -3191,18 +3304,21 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
     from functions.orchestrator.places.schemas import CoordinatePoint
 
     brief_data = state.get("brief", {})
-    origin_name = str(
+    raw_origin = (
         brief_data.get("origin_name")
         if isinstance(brief_data, dict)
-        else getattr(brief_data, "origin_name", "")
-    ).strip().lower()
+        else getattr(brief_data, "origin_name", None)
+    )
+    origin_name = str(raw_origin or "").strip().lower()
     raw_dests = (
         brief_data.get("destinations", [])
         if isinstance(brief_data, dict)
         else getattr(brief_data, "destinations", [])
     )
     dest_names = [
-        str(d.get("name") if isinstance(d, dict) else getattr(d, "name", "")).strip().lower()
+        str(
+            (d.get("name") if isinstance(d, dict) else getattr(d, "name", None)) or ""
+        ).strip().lower()
         for d in (raw_dests if isinstance(raw_dests, list) else [])
     ]
 
@@ -3213,61 +3329,14 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         else getattr(opt_sched, "stops", [])
     )
     stop_names = [
-        str(s.get("name") if isinstance(s, dict) else getattr(s, "name", "")).strip().lower()
+        str(
+            (s.get("name") if isinstance(s, dict) else getattr(s, "name", None)) or ""
+        ).strip().lower()
         for s in (sched_stops if isinstance(sched_stops, list) else [])
     ]
 
-    # Build corridor points dynamically from origin, destinations, and scheduled stops
-    corridor_coords: list[CoordinatePoint] = []
-    origin_lat = (
-        brief_data.get("origin_lat")
-        if isinstance(brief_data, dict)
-        else getattr(brief_data, "origin_lat", None)
-    )
-    origin_lng = (
-        brief_data.get("origin_lng")
-        if isinstance(brief_data, dict)
-        else getattr(brief_data, "origin_lng", None)
-    )
-    if origin_lat is not None and origin_lng is not None:
-        try:
-            is_valid_orig, _ = validate_coordinates(float(origin_lat), float(origin_lng))
-            if is_valid_orig:
-                corridor_coords.append(
-                    CoordinatePoint(lat=float(origin_lat), lng=float(origin_lng))
-                )
-        except Exception:
-            pass
-
-    for d in (raw_dests if isinstance(raw_dests, list) else []):
-        d_lat = d.get("latitude") if isinstance(d, dict) else getattr(d, "latitude", None)
-        d_lng = d.get("longitude") if isinstance(d, dict) else getattr(d, "longitude", None)
-        if d_lat is not None and d_lng is not None:
-            try:
-                is_valid_d, _ = validate_coordinates(float(d_lat), float(d_lng))
-                if is_valid_d:
-                    corridor_coords.append(CoordinatePoint(lat=float(d_lat), lng=float(d_lng)))
-            except Exception:
-                pass
-
-    for s in (sched_stops if isinstance(sched_stops, list) else []):
-        s_lat = (
-            s.get("lat") or s.get("latitude")
-            if isinstance(s, dict)
-            else getattr(s, "lat", getattr(s, "latitude", None))
-        )
-        s_lng = (
-            s.get("lng") or s.get("longitude")
-            if isinstance(s, dict)
-            else getattr(s, "lng", getattr(s, "longitude", None))
-        )
-        if s_lat is not None and s_lng is not None:
-            try:
-                is_valid_s, _ = validate_coordinates(float(s_lat), float(s_lng))
-                if is_valid_s:
-                    corridor_coords.append(CoordinatePoint(lat=float(s_lat), lng=float(s_lng)))
-            except Exception:
-                pass
+    # Extract physical road corridor coordinates from the selected route geometry
+    road_corridor_coords = _extract_road_corridor_coordinates(state)
 
     # Trip travel dates
     start_date_val = (
@@ -3292,15 +3361,18 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         )
         trip_end_date = trip_start_date + timedelta(days=max(stay_days, 1))
 
+    now_utc = datetime.now(UTC)
+    now_date = now_utc.date()
+
     # Relevant trip location keywords
     verified_trip_places: set[str] = set()
-    if origin_name:
+    if origin_name and origin_name != "none":
         verified_trip_places.add(origin_name)
     for dn in dest_names:
-        if dn:
+        if dn and dn != "none":
             verified_trip_places.add(dn)
     for sn in stop_names:
-        if sn:
+        if sn and sn != "none":
             verified_trip_places.add(sn)
 
     # Collect all observations
@@ -3494,15 +3566,20 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
             if age_hours > 24.0 and parsed_end is None:
                 is_stale = True
 
+        effective_start = trip_start_date if trip_start_date is not None else now_date
         is_expired = False
-        if parsed_end and trip_start_date:
-            if parsed_end.date() < trip_start_date:
+        if parsed_end is not None:
+            if parsed_end.date() < effective_start:
                 is_expired = True
 
         is_future = False
-        if parsed_start and trip_end_date:
+        if parsed_start is not None and trip_end_date is not None:
             if parsed_start.date() > trip_end_date:
                 is_future = True
+
+        interval_uncertain = False
+        if trip_start_date is None and trip_end_date is None and not is_expired and not is_undated:
+            interval_uncertain = True
 
         is_lifted = any(
             w in combined_text
@@ -3521,34 +3598,46 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
             or (art.get("point", {}).get("lng") if isinstance(art.get("point"), dict) else None)
         )
 
+        area_text = (affected_area + " " + headline + " " + excerpt).lower()
+        matched_trip_place = (
+            any(place in area_text for place in verified_trip_places if len(place) >= 3)
+            if verified_trip_places
+            else False
+        )
+
         spatial_relevance: str
-        if adv_lat is not None and adv_lng is not None and corridor_coords:
+        if adv_lat is not None and adv_lng is not None:
             try:
                 is_valid_pt, _ = validate_coordinates(float(adv_lat), float(adv_lng))
                 if is_valid_pt:
                     adv_pt = CoordinatePoint(lat=float(adv_lat), lng=float(adv_lng))
-                    dist_km = compute_corridor_distance_km(adv_pt, corridor_coords)
-                    if dist_km <= 100.0:
-                        spatial_relevance = "WITHIN_CORRIDOR"
+                    if road_corridor_coords:
+                        dist_km = compute_corridor_distance_km(adv_pt, road_corridor_coords)
+                        if dist_km <= 100.0:
+                            spatial_relevance = "WITHIN_CORRIDOR"
+                        else:
+                            spatial_relevance = "OUTSIDE_CORRIDOR"
+                    elif verified_trip_places:
+                        # Road route geometry is not available; check affected area text against trip places
+                        if matched_trip_place:
+                            spatial_relevance = "WITHIN_CORRIDOR"
+                        elif affected_area:
+                            spatial_relevance = "OUTSIDE_CORRIDOR"
+                        else:
+                            spatial_relevance = "UNKNOWN"
                     else:
-                        spatial_relevance = "OUTSIDE_CORRIDOR"
+                        spatial_relevance = "UNKNOWN"
                 else:
                     spatial_relevance = "LOCATION_EVIDENCE_INSUFFICIENT"
             except Exception:
                 spatial_relevance = "LOCATION_EVIDENCE_INSUFFICIENT"
         else:
-            area_text = (affected_area + " " + headline + " " + excerpt).lower()
-            matched_trip_place = any(
-                place in area_text for place in verified_trip_places if len(place) >= 3
-            )
             if matched_trip_place:
                 spatial_relevance = "WITHIN_CORRIDOR"
-            elif affected_area:
+            elif affected_area and verified_trip_places:
                 spatial_relevance = "OUTSIDE_CORRIDOR"
-            elif not verified_trip_places:
-                spatial_relevance = "WITHIN_CORRIDOR"
             else:
-                spatial_relevance = "LOCATION_EVIDENCE_INSUFFICIENT"
+                spatial_relevance = "UNKNOWN"
 
         # Determine status and uncertainty
         if is_lifted:
@@ -3569,6 +3658,9 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         elif is_stale:
             status_val = "STALE"
             uncertainty_val = "STALE"
+        elif interval_uncertain:
+            status_val = "UNKNOWN_INTERVAL"
+            uncertainty_val = "UNKNOWN_INTERVAL"
         elif is_auth and not is_search_snippet:
             status_val = "ACTIVE"
             uncertainty_val = "CONFIRMED_AUTHORITATIVE"
@@ -3598,11 +3690,11 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         elif spatial_relevance == "OUTSIDE_CORRIDOR":
             adv_item["relevance"] = "OUTSIDE_CORRIDOR"
             unrelated_advisories.append(adv_item)
-        elif spatial_relevance == "LOCATION_EVIDENCE_INSUFFICIENT":
+        elif spatial_relevance in ("UNKNOWN", "LOCATION_EVIDENCE_INSUFFICIENT"):
             adv_item["relevance"] = "UNKNOWN"
             adv_item["uncertainty"] = "UNKNOWN_RELEVANCE"
             unverified_advisories.append(adv_item)
-        elif status_val in ("FUTURE", "UNDATED", "STALE", "MALFORMED_DATES"):
+        elif status_val in ("FUTURE", "UNDATED", "STALE", "MALFORMED_DATES", "UNKNOWN_INTERVAL"):
             unverified_advisories.append(adv_item)
         elif uncertainty_val == "UNVERIFIED_SEARCH":
             unverified_advisories.append(adv_item)
@@ -3739,6 +3831,7 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "route_id": state.get("route_id"),
         "route_status": state.get("route_status"),
         "routing_status": state.get("routing_status"),
+        "route_geometry": state.get("route_geometry"),
         "route_diagnostics": route_diagnostics,
         "provider_diagnostics": state.get("provider_diagnostics", {}),
         "generated_at": datetime.now(UTC).isoformat(),
@@ -3755,6 +3848,7 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
             "status", WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value
         ),
         "advisories": advisory_research.get("advisories", []),
+        "route_geometry": state.get("route_geometry"),
     }
 
 

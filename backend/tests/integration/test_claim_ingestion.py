@@ -3005,3 +3005,377 @@ class TestClaimIngestionIntegration:
             assert proposal["advisory_status"] == "ADVISORIES_PRESENT"
             assert any("NH-116B" in diag for diag in proposal["route_diagnostics"])
 
+    async def test_advisory_research_road_route_bending_away_from_straight_line_distinguishes_relevance(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 7: Road route bending away from straight line distinguishes relevance."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        # Warning located on northern road detour at (lat 22.0, lng 82.0)
+        # Distance to straight line between stops (lat 20.0, lng 80.0 -> lat 20.0, lng 84.0) is > 220 km
+        # Distance to selected road route polyline is 0 km
+        obs_on_road = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://trafficpolice.gov.in/advisories/detour-closure",
+            canonical_url="https://trafficpolice.gov.in/advisories/detour-closure",
+            publisher="State Traffic Police",
+            content_hash="detour_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Landslide blocking highway detour through northern pass.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "LANDSLIDE",
+                "headline": "Northern pass landslide blocking detour",
+                "affected_area": "Northern Pass Road",
+                "severity": "CRITICAL",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-22T00:00:00Z",
+                "latitude": 22.0,
+                "longitude": 82.0,
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "City West",
+                "origin_lat": 20.0,
+                "origin_lng": 80.0,
+                "destinations": [
+                    {
+                        "name": "City East",
+                        "latitude": 20.0,
+                        "longitude": 84.0,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [80.0, 20.0],
+                    [81.0, 22.0],
+                    [83.0, 22.0],
+                    [84.0, 20.0],
+                ],
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_on_road],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        proposal = proposal_res["proposal"]
+        adv_res = proposal["advisory_research"]
+
+        assert adv_res["status"] == "ADVISORIES_PRESENT"
+        assert len(adv_res["advisories"]) == 1
+        adv = adv_res["advisories"][0]
+        assert adv["relevance"] == "WITHIN_CORRIDOR"
+        assert adv["status"] == "ACTIVE"
+        assert adv["uncertainty"] == "CONFIRMED_AUTHORITATIVE"
+        assert proposal["route_geometry"] == state["route_geometry"]
+
+    async def test_advisory_research_warning_near_straight_line_but_not_selected_road(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 8: Warning near straight line between stops but outside selected road route is excluded."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        # Warning located on straight line between stops at (lat 20.0, lng 82.0)
+        # Distance to straight line is 0 km
+        # Distance to selected road route detour (bending north to lat 22.0) is > 180 km (> 100 km threshold)
+        obs_on_straight = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://trafficpolice.gov.in/advisories/lake-corridor-closure",
+            canonical_url="https://trafficpolice.gov.in/advisories/lake-corridor-closure",
+            publisher="State Traffic Police",
+            content_hash="lake_corridor_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Flooding on direct path through valley lake.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "FLOOD",
+                "headline": "Direct valley lake flooded",
+                "affected_area": "Direct Valley",
+                "severity": "CRITICAL",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-22T00:00:00Z",
+                "latitude": 20.0,
+                "longitude": 82.0,
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "City West",
+                "origin_lat": 20.0,
+                "origin_lng": 80.0,
+                "destinations": [
+                    {
+                        "name": "City East",
+                        "latitude": 20.0,
+                        "longitude": 84.0,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": {
+                "type": "LineString",
+                "coordinates": [
+                    [80.0, 20.0],
+                    [81.0, 22.0],
+                    [83.0, 22.0],
+                    [84.0, 20.0],
+                ],
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_on_straight],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["unrelated_advisories"]) == 1
+        assert adv_res["unrelated_advisories"][0]["relevance"] == "OUTSIDE_CORRIDOR"
+        assert adv_res["status"] == "ADVISORY_UNKNOWN"
+
+    async def test_advisory_research_missing_route_geometry_and_empty_brief_reports_unknown(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 9: Missing route geometry and empty brief reports unknown relevance and advisory unknown."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_orphan = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://trafficpolice.gov.in/advisories/regional-warning",
+            canonical_url="https://trafficpolice.gov.in/advisories/regional-warning",
+            publisher="State Traffic Police",
+            content_hash="orphan_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Heavy fog across regional rural corridors.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "weather_warning",
+                "advisory_type": "WEATHER_WARNING",
+                "headline": "Regional fog advisory",
+                "affected_area": "Rural Corridors",
+                "severity": "WARNING",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-22T00:00:00Z",
+                "latitude": 22.5,
+                "longitude": 88.0,
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {},
+            "route_geometry": None,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_orphan],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["unverified_advisories"]) == 1
+        adv = adv_res["unverified_advisories"][0]
+        assert adv["relevance"] == "UNKNOWN"
+        assert adv["uncertainty"] == "UNKNOWN_RELEVANCE"
+        assert adv_res["status"] == "ADVISORY_UNKNOWN"
+
+    async def test_advisory_research_expired_warning_when_trip_start_is_missing_not_active(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 10: Expired warning when trip start is missing evaluates to expired not active."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+        past_end = now - timedelta(days=5)
+
+        obs_past = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/nh116b-cleared",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/nh116b-cleared",
+            publisher="West Bengal Traffic Police",
+            content_hash="past_hash_12345",
+            retrieved_at=now,
+            published_at=past_end,
+            excerpt_text="NH-116B temporary culvert repair completed last week.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "ROAD_CLOSURE",
+                "headline": "NH-116B repair completed",
+                "affected_area": "NH-116B Digha",
+                "severity": "CRITICAL",
+                "applicable_start": (past_end - timedelta(days=2)).isoformat(),
+                "applicable_end": past_end.isoformat(),
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "stay_days": 2,
+                    }
+                ],
+            },
+            "route_geometry": None,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_past],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        adv_res = proposal_res["proposal"]["advisory_research"]
+
+        assert len(adv_res["advisories"]) == 0
+        assert len(adv_res["expired_advisories"]) == 1
+        adv = adv_res["expired_advisories"][0]
+        assert adv["status"] == "EXPIRED"
+        assert adv["uncertainty"] == "EXPIRED"
+        assert adv_res["status"] == "ADVISORY_UNKNOWN"
+
+    async def test_advisory_research_relevant_current_authoritative_warning_on_selected_route(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 11: Relevant current authoritative warning on selected route confirmed active with geometry."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        now = datetime.now(UTC)
+
+        obs_active = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://wbtrafficpolice.gov.in/advisories/nh116b-submerged-active",
+            canonical_url="https://wbtrafficpolice.gov.in/advisories/nh116b-submerged-active",
+            publisher="West Bengal Traffic Police",
+            content_hash="active_auth_hash_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="NH-116B submerged at Nandakumar. Heavy flooding. Diversion in place.",
+            excerpt_locator="advisory:notice[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "road_closure",
+                "advisory_type": "ROAD_CLOSURE",
+                "headline": "NH-116B submerged near Nandakumar",
+                "affected_area": "NH-116B Nandakumar to Digha",
+                "severity": "CRITICAL",
+                "applicable_start": "2026-11-20T00:00:00Z",
+                "applicable_end": "2026-11-23T00:00:00Z",
+                "latitude": 22.3020,
+                "longitude": 87.9250,
+                "is_authoritative": True,
+            },
+            created_at=now,
+        )
+
+        route_geom = {
+            "type": "LineString",
+            "coordinates": [
+                [88.3639, 22.5726],
+                [87.9250, 22.3020],
+                [87.8100, 22.0600],
+                [87.5074, 21.6266],
+            ],
+        }
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Digha",
+                        "latitude": 21.6266,
+                        "longitude": 87.5074,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+            },
+            "route_geometry": route_geom,
+            "eligible_stops": [],
+            "editorial_recommendations": [],
+            "observations": [obs_active],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        proposal = proposal_res["proposal"]
+        adv_res = proposal["advisory_research"]
+
+        assert adv_res["status"] == "ADVISORIES_PRESENT"
+        assert len(adv_res["advisories"]) == 1
+        adv = adv_res["advisories"][0]
+        assert adv["is_authoritative"] is True
+        assert adv["status"] == "ACTIVE"
+        assert adv["relevance"] == "WITHIN_CORRIDOR"
+        assert adv["uncertainty"] == "CONFIRMED_AUTHORITATIVE"
+        assert adv["observation_id"] == str(obs_active.id)
+        assert adv["source_url"] == "https://wbtrafficpolice.gov.in/advisories/nh116b-submerged-active"
+        assert adv["retrieval_time"] is not None
+        assert proposal["route_geometry"] == route_geom
+        assert proposal["advisory_status"] == "ADVISORIES_PRESENT"
+        assert any("NH-116B" in diag for diag in proposal["route_diagnostics"])
+

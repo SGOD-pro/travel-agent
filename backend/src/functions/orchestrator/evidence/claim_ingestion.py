@@ -914,9 +914,16 @@ async def ingest_claims_from_observations(
             if age_hours > 24.0 and parsed_end is None:
                 is_stale = True
 
+        is_expired = False
+        if parsed_end is not None and parsed_end.date() < now.date():
+            is_expired = True
+
         if is_malformed:
             status_val = "MALFORMED_DATES"
             uncertainty_val = "MALFORMED_DATES"
+        elif is_expired:
+            status_val = "EXPIRED"
+            uncertainty_val = "EXPIRED"
         elif is_undated:
             status_val = "UNDATED"
             uncertainty_val = "UNVERIFIED_UNDATED"
