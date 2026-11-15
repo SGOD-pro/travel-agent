@@ -7,10 +7,14 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from functions.orchestrator.execution.budget import (
+    recover_abandoned_budget_reservations_in_session,
+)
 from functions.orchestrator.execution.job_events import record_job_event
 from functions.orchestrator.execution.models import (
     ExecutionModel,
@@ -322,6 +326,26 @@ class TaskRecoveryService:
             lock_timeout_seconds=lock_timeout_seconds,
         )
 
+    async def recover_abandoned_budget_reservations(
+        self,
+        execution_id: uuid.UUID,
+        task_id: uuid.UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recovers abandoned budget reservations for an execution or task."""
+        async with self._session_factory() as session:
+            async with session.begin():
+                exec_stmt = (
+                    select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
+                )
+                execution = (await session.execute(exec_stmt)).scalar_one_or_none()
+                if not execution:
+                    return []
+                return recover_abandoned_budget_reservations_in_session(
+                    execution=execution,
+                    task_id=task_id,
+                    recovery_reason="manual_recovery_sweep",
+                )
+
     async def _recover_expired_leases_impl(
         self,
         *,
@@ -418,6 +442,12 @@ class TaskRecoveryService:
 
                     # 4. Parent Cancellation check
                     if execution.status == "CANCELLED" or execution.cancelled_at is not None:
+                        recover_abandoned_budget_reservations_in_session(
+                            execution=execution,
+                            task_id=task.id,
+                            attempt=task.attempt,
+                            recovery_reason="parent_execution_cancelled",
+                        )
                         task.status = "CANCELLED"
                         task.lease_token = None
                         task.lease_expiry = None
@@ -457,6 +487,12 @@ class TaskRecoveryService:
                         "FAILED",
                         "PARTIAL",
                     ) or execution.status not in ("RUNNING", "WAITING_TASKS", "CREATED"):
+                        recover_abandoned_budget_reservations_in_session(
+                            execution=execution,
+                            task_id=task.id,
+                            attempt=task.attempt,
+                            recovery_reason=f"parent_execution_{execution.status.lower()}",
+                        )
                         task.status = "FAILED"
                         task.lease_token = None
                         task.lease_expiry = None
@@ -493,6 +529,12 @@ class TaskRecoveryService:
 
                     # 6. Deadlines check (Execution deadline or task deadline)
                     if execution.deadline_at <= current_now or task.deadline_at <= current_now:
+                        recover_abandoned_budget_reservations_in_session(
+                            execution=execution,
+                            task_id=task.id,
+                            attempt=task.attempt,
+                            recovery_reason="deadline_exceeded",
+                        )
                         task.status = "FAILED"
                         task.lease_token = None
                         task.lease_expiry = None
@@ -529,6 +571,12 @@ class TaskRecoveryService:
 
                     # 7. Context version check
                     if execution.context_version != task.context_version:
+                        recover_abandoned_budget_reservations_in_session(
+                            execution=execution,
+                            task_id=task.id,
+                            attempt=task.attempt,
+                            recovery_reason="stale_context_version",
+                        )
                         task.status = "FAILED"
                         task.lease_token = None
                         task.lease_expiry = None
@@ -581,6 +629,12 @@ class TaskRecoveryService:
                         else task.max_attempts
                     )
                     if task.attempt >= max_attempts_limit:
+                        recover_abandoned_budget_reservations_in_session(
+                            execution=execution,
+                            task_id=task.id,
+                            attempt=task.attempt,
+                            recovery_reason="max_attempts_exhausted",
+                        )
                         task.status = "FAILED"
                         task.lease_token = None
                         task.lease_expiry = None
@@ -616,6 +670,12 @@ class TaskRecoveryService:
                         continue
 
                     # 11. Eligible retry: Reset to PENDING, schedule delayed TASK_DISPATCH, DO NOT increment attempt!
+                    recover_abandoned_budget_reservations_in_session(
+                        execution=execution,
+                        task_id=task.id,
+                        attempt=task.attempt,
+                        recovery_reason="task_lease_expired_retry",
+                    )
                     calc_backoff = min(
                         self._max_backoff_seconds,
                         int(self._base_backoff_seconds * (2 ** max(0, task.attempt - 1))),

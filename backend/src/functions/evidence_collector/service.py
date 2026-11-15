@@ -30,6 +30,11 @@ from functions.evidence_collector.serpapi_adapter import (
     SerpApiAdapter,
     SerpApiAdapterError,
 )
+from functions.orchestrator.execution.budget import (
+    reconcile_budget_entry,
+    recover_abandoned_budget_reservations_in_session,
+    reserve_budget_entry,
+)
 from functions.orchestrator.execution.fencing import (
     TaskClaimResult,
     TaskQueueMessage,
@@ -149,6 +154,9 @@ class EvidenceCollectorService:
                 "reserved_cost_minor": 0,
                 "spent_tool_calls": 0,
                 "spent_cost_minor": 0,
+                "uncertain_tool_calls": 0,
+                "uncertain_cost_minor": 0,
+                "reservations": {},
             }
             await self._session.commit()
 
@@ -156,50 +164,27 @@ class EvidenceCollectorService:
         self,
         execution_id: uuid.UUID,
         cost_minor: int,
-    ) -> bool:
+        *,
+        task_id: uuid.UUID | None = None,
+        attempt: int | None = None,
+        lease_token: uuid.UUID | None = None,
+        reservation_id: str | None = None,
+    ) -> str | None:
         """Atomically checks and reserves budget from executions.budget (AC 14).
 
         Guarantees safe budget bounds across concurrent tasks prior to external dispatch.
-        Returns True if reservation succeeded, or False if limits are reached.
+        Associates reservations with execution, task, attempt, and lease token.
+        Returns reservation_id if reservation succeeded, or None if limits are reached or lease invalid.
         """
-        stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
-        res = await self._session.execute(stmt)
-        execution = res.scalar_one_or_none()
-        if not execution:
-            return False
-
-        now = datetime.now(UTC)
-        if execution.status == "CANCELLED" or execution.cancelled_at is not None:
-            return False
-        if execution.deadline_at < now:
-            return False
-
-        budget = dict(execution.budget or {})
-        remaining_calls = (
-            999999
-            if budget.get("remaining_tool_calls") is None
-            else int(budget["remaining_tool_calls"])
+        return await reserve_budget_entry(
+            self._session,
+            execution_id=execution_id,
+            cost_minor=cost_minor,
+            task_id=task_id,
+            attempt=attempt,
+            lease_token=lease_token,
+            reservation_id=reservation_id,
         )
-        remaining_cost = (
-            999999999
-            if budget.get("remaining_cost_minor") is None
-            else int(budget["remaining_cost_minor"])
-        )
-
-        reserved_calls = int(budget.get("reserved_tool_calls", 0))
-        reserved_cost = int(budget.get("reserved_cost_minor", 0))
-
-        available_calls = remaining_calls - reserved_calls
-        available_cost = remaining_cost - reserved_cost
-
-        if available_calls < 1 or available_cost < cost_minor:
-            return False
-
-        budget["reserved_tool_calls"] = reserved_calls + 1
-        budget["reserved_cost_minor"] = reserved_cost + cost_minor
-        execution.budget = budget
-        await self._session.commit()
-        return True
 
     async def reconcile_budget(
         self,
@@ -207,40 +192,25 @@ class EvidenceCollectorService:
         cost_minor: int,
         *,
         success: bool,
-    ) -> None:
-        """Reconciles durable budget reservations after external call finishes or fails (AC 14)."""
-        if not getattr(self._session, "is_active", True):
-            logger.warning("Session inactive; skipping budget reconciliation for %s", execution_id)
-            return
+        reservation_id: str | None = None,
+        task_id: uuid.UUID | None = None,
+        attempt: int | None = None,
+        lease_token: uuid.UUID | None = None,
+    ) -> bool:
+        """Reconciles durable budget reservations after external call finishes or fails (AC 14).
 
-        stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
-        res = await self._session.execute(stmt)
-        execution = res.scalar_one_or_none()
-        if not execution or not execution.budget:
-            return
-
-        budget = dict(execution.budget)
-        reserved_calls = int(budget.get("reserved_tool_calls", 0))
-        reserved_cost = int(budget.get("reserved_cost_minor", 0))
-
-        budget["reserved_tool_calls"] = max(0, reserved_calls - 1)
-        budget["reserved_cost_minor"] = max(0, reserved_cost - cost_minor)
-
-        if success:
-            spent_calls = int(budget.get("spent_tool_calls", 0))
-            spent_cost = int(budget.get("spent_cost_minor", 0))
-            budget["spent_tool_calls"] = spent_calls + 1
-            budget["spent_cost_minor"] = spent_cost + cost_minor
-
-            if "remaining_tool_calls" in budget:
-                budget["remaining_tool_calls"] = max(0, int(budget["remaining_tool_calls"]) - 1)
-            if "remaining_cost_minor" in budget:
-                budget["remaining_cost_minor"] = max(
-                    0, int(budget["remaining_cost_minor"]) - cost_minor
-                )
-
-        execution.budget = budget
-        await self._session.commit()
+        Prevents stale workers from reconciling after lease loss and guarantees idempotency.
+        """
+        return await reconcile_budget_entry(
+            self._session,
+            execution_id=execution_id,
+            cost_minor=cost_minor,
+            success=success,
+            reservation_id=reservation_id,
+            task_id=task_id,
+            attempt=attempt,
+            lease_token=lease_token,
+        )
 
     async def _safe_reconcile_budget(
         self,
@@ -248,16 +218,48 @@ class EvidenceCollectorService:
         cost_minor: int,
         *,
         success: bool,
+        reservation_id: str | None = None,
+        task_id: uuid.UUID | None = None,
+        attempt: int | None = None,
+        lease_token: uuid.UUID | None = None,
     ) -> None:
         """Reconciles budget safely in finally blocks without suppressing caller exceptions."""
         try:
-            await self.reconcile_budget(execution_id, cost_minor, success=success)
+            await self.reconcile_budget(
+                execution_id,
+                cost_minor,
+                success=success,
+                reservation_id=reservation_id,
+                task_id=task_id,
+                attempt=attempt,
+                lease_token=lease_token,
+            )
         except Exception as reconcile_err:
             logger.error(
                 "Failed to reconcile budget for execution %s: %s",
                 execution_id,
                 reconcile_err,
             )
+
+    async def recover_abandoned_reservations(
+        self,
+        execution_id: uuid.UUID,
+        task_id: uuid.UUID | None = None,
+    ) -> list[dict[str, Any]]:
+        """Recovers abandoned budget reservations for an execution or task on the active session."""
+        stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
+        res = await self._session.execute(stmt)
+        execution = res.scalar_one_or_none()
+        if not execution:
+            return []
+        recovered = recover_abandoned_budget_reservations_in_session(
+            execution=execution,
+            task_id=task_id,
+            recovery_reason="evidence_collector_recovery",
+        )
+        if recovered:
+            await self._session.commit()
+        return recovered
 
     @classmethod
     def select_eligible_search_urls(
@@ -590,8 +592,14 @@ class EvidenceCollectorService:
                     continue
 
                 # Atomically reserve budget in executions.budget
-                has_budget = await self.reserve_budget(envelope.execution_id, cost_per_call)
-                if not has_budget:
+                res_id = await self.reserve_budget(
+                    envelope.execution_id,
+                    cost_per_call,
+                    task_id=envelope.task_id,
+                    attempt=claim_result.attempt,
+                    lease_token=claim_result.lease_token,
+                )
+                if not res_id:
                     budget_exhausted = True
                     logger.info(
                         "Budget exhausted for execution %s; stopping queries", envelope.execution_id
@@ -628,6 +636,10 @@ class EvidenceCollectorService:
                         envelope.execution_id,
                         cost_per_call,
                         success=call_success,
+                        reservation_id=res_id,
+                        task_id=envelope.task_id,
+                        attempt=claim_result.attempt,
+                        lease_token=claim_result.lease_token,
                     )
 
             # 4. Process web page extractions if provided or selected from search results
@@ -671,9 +683,16 @@ class EvidenceCollectorService:
 
                     # If this is a dedicated URL task without search queries, enforce budget reservations
                     should_reserve_budget = not queries and cost_per_call > 0
+                    res_id = None
                     if should_reserve_budget:
-                        has_budget = await self.reserve_budget(envelope.execution_id, cost_per_call)
-                        if not has_budget:
+                        res_id = await self.reserve_budget(
+                            envelope.execution_id,
+                            cost_per_call,
+                            task_id=envelope.task_id,
+                            attempt=claim_result.attempt,
+                            lease_token=claim_result.lease_token,
+                        )
+                        if not res_id:
                             budget_exhausted = True
                             break
 
@@ -730,11 +749,15 @@ class EvidenceCollectorService:
                             }
                         )
                     finally:
-                        if should_reserve_budget:
+                        if should_reserve_budget and res_id is not None:
                             await self._safe_reconcile_budget(
                                 envelope.execution_id,
                                 cost_per_call,
                                 success=call_success,
+                                reservation_id=res_id,
+                                task_id=envelope.task_id,
+                                attempt=claim_result.attempt,
+                                lease_token=claim_result.lease_token,
                             )
 
                     # Bounded static extractions: stop once at least 2 static pages have been extracted

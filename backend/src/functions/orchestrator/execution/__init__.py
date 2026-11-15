@@ -1,5 +1,12 @@
 """Orchestrator execution engine module."""
 
+from functions.orchestrator.execution.budget import (
+    BudgetReservationStatus,
+    ensure_execution_budget_structure,
+    reconcile_budget_entry,
+    recover_abandoned_budget_reservations_in_session,
+    reserve_budget_entry,
+)
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
 from functions.orchestrator.execution.fencing import (
     AttemptsExhaustedError,
@@ -71,6 +78,7 @@ from functions.orchestrator.execution.transport import (
 
 __all__ = [
     "AttemptsExhaustedError",
+    "BudgetReservationStatus",
     "CompletionReceiptModel",
     "CompletionReconciliationService",
     "ControlledTransportAdapter",
@@ -124,4 +132,8 @@ __all__ = [
     "WorkerResultModel",
     "WorkerResultNotFoundError",
     "WrongWorkerError",
+    "ensure_execution_budget_structure",
+    "reconcile_budget_entry",
+    "recover_abandoned_budget_reservations_in_session",
+    "reserve_budget_entry",
 ]
