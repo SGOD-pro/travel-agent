@@ -232,16 +232,18 @@ class EvidenceCollectorService:
     ) -> None:
         """Reconciles budget safely in finally blocks without suppressing caller exceptions."""
         try:
-            await self.reconcile_budget(
-                execution_id,
-                cost_minor,
-                success=success,
-                reservation_id=reservation_id,
-                task_id=task_id,
-                attempt=attempt,
-                lease_token=lease_token,
-                dispatched=dispatched,
-                outcome=outcome,
+            await asyncio.shield(
+                self.reconcile_budget(
+                    execution_id,
+                    cost_minor,
+                    success=success,
+                    reservation_id=reservation_id,
+                    task_id=task_id,
+                    attempt=attempt,
+                    lease_token=lease_token,
+                    dispatched=dispatched,
+                    outcome=outcome,
+                )
             )
         except Exception as reconcile_err:
             logger.error(

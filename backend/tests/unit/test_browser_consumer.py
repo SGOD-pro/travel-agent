@@ -272,6 +272,32 @@ async def test_process_batch_empty_records_returns_empty_list() -> None:
 
 
 @pytest.mark.asyncio
+async def test_process_batch_timeout_during_execution_reports_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifies that a record timing out during execution is cancelled and reported as failure."""
+    import asyncio
+
+    rec = _make_sqs_record(message_id="msg-timeout-running")
+    event = {"Records": [rec]}
+
+    mock_context = MagicMock()
+    # Usable time: 5100ms - 5000ms = 100ms
+    mock_context.get_remaining_time_in_millis.return_value = 5100
+
+    async def _mock_slow_process(r: Any, sf: Any, *, adapter: Any = None) -> None:
+        await asyncio.sleep(2.0)
+
+    monkeypatch.setattr("functions.browser.consumer.process_record", _mock_slow_process)
+
+    mock_session = AsyncMock()
+    session_factory = MagicMock(return_value=DummyAsyncSessionContext(mock_session))
+
+    failures = await process_batch(event, context=mock_context, session_factory=session_factory)
+    assert failures == [{"itemIdentifier": "msg-timeout-running"}]
+
+
+@pytest.mark.asyncio
 async def test_process_batch_handles_record_with_missing_message_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
