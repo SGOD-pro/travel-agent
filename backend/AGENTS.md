@@ -16,7 +16,7 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/evidence_collector/` | Evidence collection, immutable observation snapshots, fixture adapters, and SQS consumer |
 | `src/functions/evidence_collector/scrape.py` | Scrapling adapter for web evidence retrieval |
 | `src/functions/evidence_collector/packaging.py` | Standalone Lambda packaging, dependency inclusive artifact builder, and clean environment verification |
-| `src/functions/orchestrator/execution/` | Orchestrator execution engine, worker fencing, outbox relay, lease recovery, and reconciliation |
+| `src/functions/orchestrator/execution/` | Orchestrator execution engine, worker fencing, outbox relay, lease recovery, durable budget crash recovery, and reconciliation |
 | `src/functions/orchestrator/places/` | Canonical places persistence, PostGIS geometry models, schemas, and spatial lookup |
 | `src/functions/orchestrator/evidence/` | Claim models, schemas, claim evidence junction, and verification policies |
 | `src/functions/browser/` | Browser escalation worker, Playwright adapter, live SSRF network controls, Scrapling parser, and fenced persistence |
@@ -85,6 +85,7 @@ uv run alembic upgrade head
 - Validate incoming tokens using SWYRA Auth JWKS. Reject client supplied owner identifiers. Real cryptographic OAuth 2.1 token verification validates RS256/ES256 signatures, issuer, audience, and expiration via PyJWKClient or configured public key; missing credentials fail closed in production and are strictly gated by ALLOW_DEV_LOCAL_USER in local development.
 - Route solving uses OR Tools for stop sequencing while keeping road network geometry from routing providers.
 - Orchestrator operations enforce parent first lock ordering (executions then tasks) and savepoint transaction isolation on fencing mutations.
+- Evidence budget reservations are identifiable by execution, task, attempt, and lease token inside execution.budget['reservations']. Worker crashes or lease expirations trigger safe recovery via TaskRecoveryService sweeps and recover_abandoned_budget_reservations_in_session, decrementing reserved capacity and transitioning active reservations to ABANDONED_UNCERTAIN. Interrupted external provider calls are never assumed free; spend is preserved in spent_cost_minor and uncertain_cost_minor, deducting from remaining_cost_minor so retries cannot exceed configured budget caps. Stale workers attempting reconciliation or reservation after lease loss are rejected under row locks. Recovery sweeps and duplicate reconciliations are idempotent no ops that leave budget metrics untouched. All budget reservation, reconciliation, and recovery operations enforce parent first row locking (executions before tasks) on PostgreSQL to prevent deadlocks and safely serialize concurrent workers.
 - Source observations in PostgreSQL are write once and immutable, keyed by (execution_id, canonical_url, content_hash) with zero in place mutations.
 - Evidence collection and worker fencing commit atomically in transaction 4; any failure rolls back staged observations cleanly.
 - Canonical places persist reviewed public identity with PostGIS Point geometry and GiST spatial indexes.
