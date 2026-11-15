@@ -113,10 +113,7 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     execution_manifest["queries_planned_count"] = len(planned_queries)
     execution_manifest["details"].append(f"Planned queries: {planned_queries}")
 
-    # 2. Selected Public Search Result for Worker Static Extraction
-    selected_target_url = "https://en.wikipedia.org/wiki/Victoria_Memorial,_Kolkata"
-
-    # 3. Initialize Graph and Start Execution on Isolated PostgreSQL
+    # 2. Initialize Graph and Start Execution on Isolated PostgreSQL
     owner_id = uuid.uuid4()
     trip_id = uuid.uuid4()
     exec_id = uuid.uuid4()
@@ -181,7 +178,7 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     assert len(start_res.task_ids) > 0
     collect_task_id = start_res.task_ids[0]
 
-    # Verify task in PostgreSQL and wire selected search result URL into task payload
+    # 2. Verify task in PostgreSQL with authoritative query payload (no hardcoded target URLs)
     async with session_factory() as session:
         task_record = (
             await session.execute(select(TaskModel).where(TaskModel.id == collect_task_id))
@@ -190,13 +187,16 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
         assert task_record.action == "collect"
 
         task_payload = dict(task_record.payload_ref or {})
-        task_payload["urls"] = [{"url": selected_target_url, "category": "attraction"}]
-        task_record.payload_ref = task_payload
-        await session.commit()
+        # Dispatched task payload must not contain manually injected URLs
+        assert "urls" not in task_payload or not task_payload["urls"], (
+            "Dispatched task payload must not contain hardcoded target URLs; "
+            "production worker must select URLs directly from search observations."
+        )
 
-    # 4. Exercise the Real Dispatched Evidence Worker Collection Entry Point with Live SerpAPI
+    # 3. Exercise the Real Dispatched Evidence Worker Collection Entry Point with Live SerpAPI
     # and Worker Static Extraction Path (Stage 1 and Stage 2)
-    # execute_collection_task claims task, queries SerpAPI, extracts static page, stages, and completes
+    # execute_collection_task claims task, queries SerpAPI, automatically selects eligible
+    # search result URLs, extracts static pages via Scrapling, stages observations, and completes
     live_serp_adapter = SerpApiAdapter(
         api_key=serpapi_key.strip(),
         timeout_seconds=15.0,
@@ -228,12 +228,10 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
             await session.commit()
 
         execution_manifest["live_search_status"] = "COMPLETED"
-        execution_manifest["static_extraction_status"] = "COMPLETED"
         execution_manifest["queries_executed_count"] = live_serp_adapter.call_count
         execution_manifest["details"].append(
             f"Evidence worker executed {live_serp_adapter.call_count} live SerpAPI queries "
-            f"in {live_serp_adapter.last_latency_ms:.1f}ms and static extraction on {selected_target_url}, "
-            f"staging {len(obs_ids)} observations"
+            f"in {live_serp_adapter.last_latency_ms:.1f}ms, staging {len(obs_ids)} observations"
         )
     except Exception as exc:
         execution_manifest["live_search_status"] = "FAILED"
@@ -242,7 +240,10 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
         )
         raise
 
-    # 5. Verify Persistence in Isolated PostgreSQL
+    # 4. Verify Persistence and Static Extraction in Isolated PostgreSQL
+    proven_static_obs: SourceObservationModel | None = None
+    search_result_urls: set[str] = set()
+
     async with session_factory() as session:
         persisted_obs_stmt = select(SourceObservationModel).where(
             SourceObservationModel.execution_id == exec_id
@@ -257,6 +258,33 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
             )
             if clean_url not in execution_manifest["source_urls"]:
                 execution_manifest["source_urls"].append(clean_url)
+            if po.extraction_method == "SERPAPI_SEARCH":
+                search_result_urls.add(po.canonical_url)
+            elif po.extraction_method == "SCRAPLING_HTTP":
+                if proven_static_obs is None:
+                    proven_static_obs = po
+
+    if proven_static_obs is not None:
+        execution_manifest["static_extraction_status"] = "COMPLETED"
+        execution_manifest["details"].append(
+            f"Worker selected search URL {proven_static_obs.canonical_url} and extracted statically via SCRAPLING_HTTP"
+        )
+    else:
+        execution_manifest["static_extraction_status"] = "SKIPPED"
+        execution_manifest["details"].append(
+            "Zero search result URLs extracted statically; marked SKIPPED"
+        )
+
+    # Prove provenance link 1 & 2: Search Result URL -> Successful Static Extraction
+    assert proven_static_obs is not None, (
+        "Production evidence worker must select and statically extract at least one URL from search results"
+    )
+    assert proven_static_obs.canonical_url in search_result_urls, (
+        f"Static extraction URL '{proven_static_obs.canonical_url}' must originate directly from search results"
+    )
+    proven_search_url = proven_static_obs.canonical_url
+    proven_obs_id = proven_static_obs.id
+    proven_extraction_method = proven_static_obs.extraction_method
 
     # 6. Task Completion Reconciliation
     async with session_factory() as session:
@@ -363,6 +391,25 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
         persisted_evidence = list((await session.execute(evidence_stmt)).scalars().all())
         execution_manifest["persisted_evidence_count"] = len(persisted_evidence)
 
+        # Provenance Link 3 & 4: Static Observation -> SUPPORTS link -> Persisted Claim
+        static_evidence_stmt = select(ClaimEvidenceModel).where(
+            ClaimEvidenceModel.observation_id == proven_obs_id,
+            ClaimEvidenceModel.support_type == "SUPPORTS",
+        )
+        static_evidence_links = list(
+            (await session.execute(static_evidence_stmt)).scalars().all()
+        )
+        assert len(static_evidence_links) > 0, (
+            f"Observation {proven_obs_id} ({proven_search_url}) must have a SUPPORTS link in ClaimEvidenceModel"
+        )
+        proven_link = static_evidence_links[0]
+        proven_claim_id = proven_link.claim_id
+
+        proven_claim_stmt = select(ClaimModel).where(ClaimModel.id == proven_claim_id)
+        proven_claim = (await session.execute(proven_claim_stmt)).scalar_one_or_none()
+        assert proven_claim is not None, f"Claim {proven_claim_id} must exist in ClaimModel"
+        proven_subject = proven_claim.subject_id
+
     checkpoint_config = {"configurable": {"thread_id": str(exec_id)}}
     checkpoint_state = await graph.aget_state(config=checkpoint_config)
     checkpoint_values = (
@@ -430,13 +477,22 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     print(f"8. Editorial Candidates:      {execution_manifest['editorial_candidates']}")
     print(f"9. Live Collection Proven:    {execution_manifest['live_collection_proven']}")
     print("=" * 70)
+    print("EVIDENCE PROVENANCE CHAIN PROOF:")
+    print(f"1. Search Result URL:          {proven_search_url}")
+    print(f"2. Extraction Method:          {proven_extraction_method}")
+    print(f"3. Observation ID:             {proven_obs_id}")
+    print(f"4. Evidence Link Support:      {proven_link.support_type}")
+    print(f"5. Claim ID:                   {proven_claim_id}")
+    print(f"6. Candidate Identity:         {proven_subject}")
+    print("7. Graph Eligible Candidate:   VERIFIED in eligible_stops")
+    print("=" * 70)
 
     # 11. Assertions
     assert execution_manifest["live_search_status"] == "COMPLETED"
     assert execution_manifest["static_extraction_status"] == "COMPLETED"
     assert execution_manifest["persistence_status"] == "COMPLETED"
     assert execution_manifest["runner_resume_status"] == "COMPLETED"
-    assert execution_manifest["browser_fallback_status"] in ("COMPLETED", "PENDING")
+    assert execution_manifest["browser_fallback_status"] == "PENDING"
     assert execution_manifest["graph_ingestion_and_eligibility_status"] == "COMPLETED"
     assert execution_manifest["persisted_observations_count"] > 0
     assert execution_manifest["persisted_claims_count"] > 0
@@ -446,6 +502,14 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
     # Real places verified by graph from live observations
     verified_names = [c["name"] for c in execution_manifest["verified_candidates"]]
     assert len(verified_names) > 0, "Running graph must verify at least one candidate"
+
+    # Provenance Chain Final Assertion:
+    # Candidate backed by static extraction observation MUST be verified in running graph
+    verified_names_lower = [name.lower() for name in verified_names]
+    assert proven_subject.lower() in verified_names_lower, (
+        f"Candidate '{proven_subject}' backed by static extraction observation {proven_obs_id} "
+        f"must be verified in running graph eligible_stops: {verified_names}"
+    )
 
     # Unsupported control candidate remains unverified as editorial recommendation
     assert "Fictional Cloud Observatory" in execution_manifest["editorial_candidates"]

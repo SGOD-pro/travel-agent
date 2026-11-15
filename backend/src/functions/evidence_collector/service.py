@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -257,6 +258,76 @@ class EvidenceCollectorService:
                 execution_id,
                 reconcile_err,
             )
+
+    @classmethod
+    def select_eligible_search_urls(
+        cls,
+        observations: list[RawObservation],
+        max_urls: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Selects eligible venue or attraction web URLs directly from search observations.
+
+        Filters out search engine wrappers, maps queries, and non HTML binary assets.
+        Extracts candidate place title and category from observation metadata.
+        """
+        disallowed_domains = {
+            "google.com",
+            "www.google.com",
+            "maps.google.com",
+            "serpapi.com",
+            "bing.com",
+            "yahoo.com",
+            "duckduckgo.com",
+        }
+        disallowed_extensions = (
+            ".pdf",
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".gif",
+            ".mp4",
+            ".zip",
+            ".svg",
+        )
+        selected: list[dict[str, Any]] = []
+        seen_urls: set[str] = set()
+
+        for obs in observations:
+            url = (obs.canonical_url or obs.source_url or "").strip()
+            if not url or not (url.startswith("http://") or url.startswith("https://")):
+                continue
+
+            try:
+                parsed = urlparse(url)
+                netloc = parsed.netloc.lower()
+                if any(netloc == d or netloc.endswith("." + d) for d in disallowed_domains):
+                    continue
+                path = parsed.path.lower()
+                if any(path.endswith(ext) for ext in disallowed_extensions):
+                    continue
+            except Exception:
+                continue
+
+            clean_url = url.split("?")[0] if "?" in url else url
+            if clean_url in seen_urls:
+                continue
+            seen_urls.add(clean_url)
+
+            art_ref = obs.artifact_ref if isinstance(obs.artifact_ref, dict) else {}
+            title = art_ref.get("title") or art_ref.get("place_name") or art_ref.get("name") or ""
+            category = art_ref.get("category") or "attraction"
+
+            selected.append(
+                {
+                    "url": obs.canonical_url or obs.source_url,
+                    "category": category,
+                    "title": title,
+                }
+            )
+            if len(selected) >= max_urls:
+                break
+
+        return selected
 
     async def stage_observations_and_complete(
         self,
@@ -549,39 +620,97 @@ class EvidenceCollectorService:
                         success=call_success,
                     )
 
-            # 4. Process web page extractions if provided
-            if target_urls:
-                for url_entry in target_urls:
+            # 4. Process web page extractions if provided or selected from search results
+            target_entries = list(target_urls)
+            if not target_entries and collected_observations:
+                target_entries = self.select_eligible_search_urls(
+                    collected_observations, max_urls=3
+                )
+
+            if target_entries:
+                static_extractions_successful = 0
+                for url_entry in target_entries:
                     if isinstance(url_entry, dict):
                         page_url = str(url_entry.get("url") or "")
                         page_cat = str(url_entry.get("category") or "general")
+                        page_title = str(url_entry.get("title") or "")
                     else:
                         page_url = str(url_entry)
                         page_cat = "general"
+                        page_title = ""
 
                     if not page_url:
                         continue
 
-                    has_budget = await self.reserve_budget(envelope.execution_id, cost_per_call)
-                    if not has_budget:
-                        budget_exhausted = True
-                        break
+                    # Check execution cancellation and deadline barrier
+                    now = datetime.now(UTC)
+                    stmt = select(ExecutionModel).where(ExecutionModel.id == envelope.execution_id)
+                    res = await self._session.execute(stmt)
+                    exec_model = res.scalar_one_or_none()
+                    if exec_model:
+                        if exec_model.status == "CANCELLED" or exec_model.cancelled_at is not None:
+                            logger.info("Parent execution cancelled; halting extraction loop")
+                            break
+                        if (
+                            exec_model.deadline_at
+                            and (now + timedelta(seconds=DEADLINE_ADVANCE_GUARD_SECONDS))
+                            >= exec_model.deadline_at
+                        ):
+                            logger.warning("Execution deadline approaching; halting extraction loop")
+                            break
+
+                    # If this is a dedicated URL task without search queries, enforce budget reservations
+                    should_reserve_budget = not queries and cost_per_call > 0
+                    if should_reserve_budget:
+                        has_budget = await self.reserve_budget(envelope.execution_id, cost_per_call)
+                        if not has_budget:
+                            budget_exhausted = True
+                            break
 
                     call_success = False
                     try:
                         if hasattr(active_extraction_adapter, "extract_page"):
                             obs_list, b_reqs = await active_extraction_adapter.extract_page(
-                                page_url, category=page_cat
+                                page_url, category=page_cat, title=page_title or None
                             )
-                            collected_observations.extend(obs_list)
+                            updated_obs_list: list[RawObservation] = []
+                            for ext_obs in obs_list:
+                                if page_title:
+                                    ext_art = dict(ext_obs.artifact_ref or {})
+                                    if not ext_art.get("title"):
+                                        ext_art["title"] = page_title
+                                    ext_art.setdefault("search_selected_title", page_title)
+                                    updated_obs_list.append(
+                                        replace(ext_obs, artifact_ref=ext_art)
+                                    )
+                                else:
+                                    updated_obs_list.append(ext_obs)
+                            collected_observations.extend(updated_obs_list)
                             emitted_browser_requests.extend(b_reqs)
+                            if obs_list or b_reqs:
+                                if should_reserve_budget:
+                                    calls_made += 1
+                                    cost_spent += cost_per_call
+                                call_success = True
+                                static_extractions_successful += 1
                         elif hasattr(active_extraction_adapter, "extract"):
                             extracted_obs = await active_extraction_adapter.extract(page_url)
                             if extracted_obs:
-                                collected_observations.append(extracted_obs)
-                        calls_made += 1
-                        cost_spent += cost_per_call
-                        call_success = True
+                                if page_title:
+                                    ext_art = dict(extracted_obs.artifact_ref or {})
+                                    if not ext_art.get("title"):
+                                        ext_art["title"] = page_title
+                                    ext_art.setdefault("search_selected_title", page_title)
+                                    collected_observations.append(
+                                        replace(extracted_obs, artifact_ref=ext_art)
+                                    )
+                                else:
+                                    collected_observations.append(extracted_obs)
+                                if should_reserve_budget:
+                                    calls_made += 1
+                                    cost_spent += cost_per_call
+                                call_success = True
+                                static_extractions_successful += 1
                     except Exception as e:
                         logger.warning("Extraction failed for URL '%s': %s", page_url, e)
                         unavailable_sources.append(
@@ -593,11 +722,16 @@ class EvidenceCollectorService:
                             }
                         )
                     finally:
-                        await self._safe_reconcile_budget(
-                            envelope.execution_id,
-                            cost_per_call,
-                            success=call_success,
-                        )
+                        if should_reserve_budget:
+                            await self._safe_reconcile_budget(
+                                envelope.execution_id,
+                                cost_per_call,
+                                success=call_success,
+                            )
+
+                    # Bounded static extractions: stop once at least 2 static pages have been extracted
+                    if static_extractions_successful >= 2:
+                        break
 
             usage_summary = {
                 "tool_calls_made": calls_made,

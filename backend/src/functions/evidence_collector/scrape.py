@@ -477,6 +477,7 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         url: str,
         *,
         category: str = "general",
+        title: str | None = None,
         html_override: str | None = None,
         dns_resolver: Any | None = None,
     ) -> tuple[list[RawObservation], list[dict[str, Any]]]:
@@ -492,13 +493,18 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         if html_override is not None:
             html_content = html_override
             effective_url = url
+            status_code = 200
         else:
             # safe_fetch_page validates SSRF internally on initial request and each redirect hop
-            html_content, effective_url, _ = await safe_fetch_page(
+            html_content, effective_url, status_code = await safe_fetch_page(
                 url,
                 timeout_seconds=self._timeout_seconds,
                 dns_resolver=dns_resolver,
             )
+
+        if status_code >= 400:
+            logger.info("HTTP %d for URL '%s'", status_code, url)
+            return [], []
 
         # 2. Check for dynamic JavaScript rendering requirement (AC 13)
         needs_browser, browser_reason = detect_dynamic_rendering_needed(html_content)
@@ -547,11 +553,43 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         # Fallback to general page text extraction
         page = Selector(html_content)
         main_elem = page.css("main, article, .content, #content, body").first
-        raw_text = getattr(main_elem, "text", "") if main_elem else ""
+        raw_text = (
+            main_elem.get_all_text()
+            if hasattr(main_elem, "get_all_text")
+            else getattr(main_elem, "text", "")
+        ) if main_elem else ""
         clean_text = " ".join(raw_text.split())[:1000]
 
         if not clean_text:
             return [], []
+
+        page_title = title or ""
+        if not page_title:
+            h1_elem = page.css("h1").first
+            if h1_elem:
+                h1_text = (
+                    h1_elem.get_all_text().strip()
+                    if hasattr(h1_elem, "get_all_text")
+                    else getattr(h1_elem, "text", "").strip()
+                )
+                if h1_text:
+                    page_title = h1_text
+        if not page_title:
+            title_elem = page.css("title").first
+            if title_elem:
+                raw_t = (
+                    title_elem.get_all_text().strip()
+                    if hasattr(title_elem, "get_all_text")
+                    else getattr(title_elem, "text", "").strip()
+                )
+                if raw_t:
+                    page_title = raw_t.split("|")[0].split("-")[0].strip()
+
+        artifact_metadata: dict[str, Any] = {"category": category}
+        if page_title:
+            artifact_metadata["title"] = page_title
+        if title:
+            artifact_metadata["search_selected_title"] = title
 
         obs = [
             RawObservation(
@@ -563,6 +601,7 @@ class ScraplingExtractionAdapter(WebExtractionPort):
                 excerpt_text=clean_text,
                 excerpt_locator="main:text",
                 extraction_method="SCRAPLING_HTTP",
+                artifact_ref=artifact_metadata,
             )
         ]
         return obs, []

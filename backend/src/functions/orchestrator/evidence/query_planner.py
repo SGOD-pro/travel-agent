@@ -166,16 +166,17 @@ class QueryPlanningService:
         queries: list[str],
         cost_per_call_minor: int = DEFAULT_COST_PER_CALL_MINOR,
         currency: str = DEFAULT_CURRENCY,
+        extra_tool_calls: int = 0,
     ) -> dict[str, Any]:
-        """Calculates durable collector budget matching planned queries.
+        """Calculates durable collector budget matching planned queries and extraction headroom.
 
         Conforms to durable collector schema:
-        remaining_tool_calls: count of planned queries
+        remaining_tool_calls: count of planned queries plus extraction headroom
         cost_per_call_minor: cost per query in minor currency units
         remaining_cost_minor: total reserved cost
         currency: ISO currency code
         """
-        count = len(queries)
+        count = len(queries) + max(0, extra_tool_calls)
         return {
             "remaining_tool_calls": count,
             "remaining_cost_minor": count * cost_per_call_minor,
