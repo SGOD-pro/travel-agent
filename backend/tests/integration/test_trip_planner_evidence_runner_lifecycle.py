@@ -780,6 +780,7 @@ class TestTripPlannerEvidenceRunnerLifecycle:
         assert h_item.get("booking_confirmed") is False
         assert h_item.get("price_per_night") == 4500
         assert h_item.get("currency") == "INR"
+        assert h_item.get("observation_id") == str(obs_lodging.id)
         assert h_item.get("source_url") == "https://hotels-aggregator.com/heritage-inn"
         assert h_item.get("retrieval_time") is not None
         assert "live_room_availability_unverified" in h_item.get("unavailable_details", [])

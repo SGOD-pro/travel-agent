@@ -1647,6 +1647,8 @@ class TestClaimIngestionIntegration:
             assert claim.typed_value["evidence_class"] == EvidenceClass.INDICATIVE_SEARCH.value
             assert claim.typed_value["price_per_night"] == 9500
             assert claim.typed_value["currency"] == "INR"
+            assert claim.typed_value["observation_id"] == str(obs.id)
+            assert claim.typed_value["source_url"] == "https://verified-booking-aggregator.com/the-oberoi-grand"
             assert claim.typed_value["is_indicative_search"] is True
             assert claim.typed_value["is_verified_offer"] is False
             assert claim.typed_value["booking_confirmed"] is False
@@ -1666,6 +1668,7 @@ class TestClaimIngestionIntegration:
             assert opt["property_name"] == "The Oberoi Grand Kolkata"
             assert opt["price_per_night"] == 9500
             assert opt["currency"] == "INR"
+            assert opt["observation_id"] == str(obs.id)
             assert opt["evidence_class"] == EvidenceClass.INDICATIVE_SEARCH.value
             assert opt["is_indicative_search"] is True
             assert opt["is_verified_offer"] is False
@@ -1674,4 +1677,454 @@ class TestClaimIngestionIntegration:
             assert "live_room_availability_unverified" in opt["unavailable_details"]
             assert "booking_unconfirmed" in opt["unavailable_details"]
             assert opt["source_url"] == "https://verified-booking-aggregator.com/the-oberoi-grand"
+
+    async def test_accommodation_price_attribution_rejects_similar_different_property_names(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 1: Similar but different property names do not share indicative rates through proposal path."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        cand = {
+            "category": "lodging",
+            "primary_name": "Hotel Green Palace",
+            "point": {"lat": 22.5726, "lng": 88.3639},
+            "provenance": {
+                "source_urls": ["https://hotels.example.com/green-palace"],
+                "retrieval_time": "2026-11-15T12:00:00Z",
+            },
+        }
+
+        now = datetime.now(UTC)
+        obs_annex = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://hotels.example.com/green-palace-annex",
+            canonical_url="https://hotels.example.com/green-palace-annex",
+            publisher="Aggregator",
+            content_hash="hash_green_palace_annex_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Hotel Green Palace Annex Kolkata | Room rate 6000 INR per night",
+            excerpt_locator="hotel:card[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "lodging",
+                "property_name": "Hotel Green Palace Annex",
+                "price_per_night": 6000,
+                "currency": "INR",
+                "latitude": 22.5727,
+                "longitude": 88.3640,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Kolkata",
+                        "latitude": 22.5726,
+                        "longitude": 88.3639,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+                "rooms": 1,
+                "adults": 2,
+                "budget_tier": "standard",
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [cand],
+            "observations": [obs_annex],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        proposal = proposal_res["proposal"]
+        accom_res = proposal["accommodation_research"]
+        indicative_options = accom_res["indicative_options"]
+
+        # Hotel Green Palace must not take price from Hotel Green Palace Annex
+        green_palace = next(h for h in indicative_options if h["property_name"] == "Hotel Green Palace")
+        assert green_palace["price_per_night"] is None
+        assert green_palace["currency"] is None
+        assert green_palace["observation_id"] is None
+        assert green_palace["evidence_class"] is None
+        assert green_palace["is_indicative_search"] is False
+        assert green_palace["availability_status"] == "PRICE_UNAVAILABLE"
+        assert "price_unsupported_by_source" in green_palace["unavailable_details"]
+
+        # Hotel Green Palace Annex retains its own price
+        annex = next(h for h in indicative_options if h["property_name"] == "Hotel Green Palace Annex")
+        assert annex["price_per_night"] == 6000
+        assert annex["currency"] == "INR"
+        assert annex["observation_id"] == str(obs_annex.id)
+        assert annex["evidence_class"] == EvidenceClass.INDICATIVE_SEARCH.value
+
+    async def test_accommodation_price_attribution_rejects_same_name_at_distant_locations(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 2: Same named property at distant location does not share indicative rates."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        cand_kolkata = {
+            "category": "lodging",
+            "primary_name": "Grand Heritage Hotel",
+            "point": {"lat": 22.5726, "lng": 88.3639},
+            "provenance": {
+                "source_urls": ["https://hotels.example.com/kolkata-grand-heritage"],
+                "retrieval_time": "2026-11-15T12:00:00Z",
+            },
+        }
+
+        now = datetime.now(UTC)
+        # Same hotel name located in New Delhi (> 1000 km away)
+        obs_delhi = SourceObservationModel(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            source_url="https://hotels.example.com/delhi-grand-heritage",
+            canonical_url="https://hotels.example.com/delhi-grand-heritage",
+            publisher="Aggregator",
+            content_hash="hash_grand_heritage_delhi_12345",
+            retrieved_at=now,
+            published_at=now,
+            excerpt_text="Grand Heritage Hotel New Delhi | Indicative rate 9000 INR per night",
+            excerpt_locator="hotel:card[0]",
+            extraction_method="STATIC_SCRAPLING",
+            artifact_ref={
+                "category": "lodging",
+                "property_name": "Grand Heritage Hotel",
+                "price_per_night": 9000,
+                "currency": "INR",
+                "latitude": 28.6139,
+                "longitude": 77.2090,
+            },
+            created_at=now,
+        )
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Kolkata",
+                        "latitude": 22.5726,
+                        "longitude": 88.3639,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+                "rooms": 1,
+                "adults": 2,
+                "budget_tier": "standard",
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [cand_kolkata],
+            "observations": [obs_delhi],
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        accom_res = proposal_res["proposal"]["accommodation_research"]
+        indicative_options = accom_res["indicative_options"]
+
+        # Grand Heritage Hotel in Kolkata must not take price from Delhi branch
+        kolkata_hotel = next(h for h in indicative_options if h["property_name"] == "Grand Heritage Hotel")
+        assert kolkata_hotel["price_per_night"] is None
+        assert kolkata_hotel["currency"] is None
+        assert kolkata_hotel["observation_id"] is None
+        assert kolkata_hotel["evidence_class"] is None
+        assert kolkata_hotel["is_indicative_search"] is False
+        assert kolkata_hotel["availability_status"] == "PRICE_UNAVAILABLE"
+        assert "price_unsupported_by_source" in kolkata_hotel["unavailable_details"]
+
+    async def test_accommodation_price_attribution_rejects_missing_source_url(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 3: Observation without usable source URL does not produce indicative rate."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            # Observation with price but non-http unusable source URL (e.g. URN or empty)
+            obs_no_url = SourceObservationModel(
+                id=uuid.uuid4(),
+                execution_id=exec_id,
+                source_url="urn:placeholder:unusable",
+                canonical_url="urn:placeholder:unusable",
+                publisher="Aggregator",
+                content_hash="hash_no_url_hotel_12345",
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="Boutique Residency Kolkata | Indicative rate 3500 INR",
+                excerpt_locator="hotel:card[0]",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "lodging",
+                    "property_name": "Boutique Residency Kolkata",
+                    "price_per_night": 3500,
+                    "currency": "INR",
+                    "latitude": 22.5726,
+                    "longitude": 88.3639,
+                },
+                created_at=now,
+            )
+            session.add(obs_no_url)
+            await session.commit()
+
+            # Verify claim ingestion rejects price without usable URL
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[],
+                owner_id=owner_id,
+            )
+            assert len(claims) == 1
+            claim = claims[0]
+            assert claim.category == "LODGING"
+            assert claim.typed_value["evidence_class"] is None
+            assert claim.typed_value["price_per_night"] is None
+            assert claim.typed_value["currency"] is None
+            assert claim.typed_value["is_indicative_search"] is False
+
+            # Verify proposal path rejects price without usable URL (both unusable string and None)
+            cand = {
+                "category": "lodging",
+                "primary_name": "Boutique Residency Kolkata",
+                "point": {"lat": 22.5726, "lng": 88.3639},
+            }
+            obs_dict_none_url = {
+                "id": str(uuid.uuid4()),
+                "source_url": None,
+                "canonical_url": None,
+                "retrieved_at": now.isoformat(),
+                "artifact_ref": {
+                    "category": "lodging",
+                    "property_name": "Boutique Residency Kolkata",
+                    "price_per_night": 3500,
+                    "currency": "INR",
+                    "latitude": 22.5726,
+                    "longitude": 88.3639,
+                },
+            }
+            state: dict[str, Any] = {
+                "trip_id": str(uuid.uuid4()),
+                "owner_id": str(owner_id),
+                "execution_id": str(exec_id),
+                "brief": {
+                    "origin_name": "Kolkata",
+                    "origin_lat": 22.5726,
+                    "origin_lng": 88.3639,
+                    "destinations": [
+                        {
+                            "name": "Kolkata",
+                            "latitude": 22.5726,
+                            "longitude": 88.3639,
+                            "stay_days": 2,
+                        }
+                    ],
+                    "start_date": "2026-11-20",
+                    "end_date": "2026-11-22",
+                    "rooms": 1,
+                    "adults": 2,
+                    "budget_tier": "standard",
+                },
+                "eligible_stops": [],
+                "editorial_recommendations": [cand],
+                "observations": [obs_no_url, obs_dict_none_url],
+                "task_outputs": {},
+            }
+            proposal_res = synthesize_proposal_node(state)
+            accom_res = proposal_res["proposal"]["accommodation_research"]
+            indicative_options = accom_res["indicative_options"]
+
+            opt = next(h for h in indicative_options if h["property_name"] == "Boutique Residency Kolkata")
+            assert opt["price_per_night"] is None
+            assert opt["currency"] is None
+            assert opt["observation_id"] is None
+            assert opt["evidence_class"] is None
+            assert opt["is_indicative_search"] is False
+            assert opt["availability_status"] == "PRICE_UNAVAILABLE"
+            assert "price_unsupported_by_source" in opt["unavailable_details"]
+
+    async def test_accommodation_price_attribution_valid_matching_property_and_source_backed_rate(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 4: Valid matching property and source backed rate are preserved with full provenance."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        async with session_factory() as session:
+            exec_id, owner_id = await _create_test_execution(session)
+            now = datetime.now(UTC)
+
+            obs_id = uuid.uuid4()
+            obs = SourceObservationModel(
+                id=obs_id,
+                execution_id=exec_id,
+                source_url="https://hotels.example.com/the-lalit-kolkata",
+                canonical_url="https://hotels.example.com/the-lalit-kolkata",
+                publisher="Aggregator",
+                content_hash="hash_the_lalit_kolkata_12345",
+                retrieved_at=now,
+                published_at=now,
+                excerpt_text="The Lalit Great Eastern Kolkata | Indicative standard rate 7500 INR per night",
+                excerpt_locator="hotel:card[0]",
+                extraction_method="STATIC_SCRAPLING",
+                artifact_ref={
+                    "category": "lodging",
+                    "property_name": "The Lalit Great Eastern Kolkata",
+                    "price_per_night": 7500,
+                    "currency": "INR",
+                    "latitude": 22.5698,
+                    "longitude": 88.3517,
+                },
+                created_at=now,
+            )
+            session.add(obs)
+            await session.commit()
+
+            # Verify claim ingestion
+            claims = await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                candidates=[],
+                owner_id=owner_id,
+            )
+            assert len(claims) == 1
+            claim = claims[0]
+            assert claim.category == "LODGING"
+            assert claim.typed_value["evidence_class"] == EvidenceClass.INDICATIVE_SEARCH.value
+            assert claim.typed_value["price_per_night"] == 7500
+            assert claim.typed_value["currency"] == "INR"
+            assert claim.typed_value["observation_id"] == str(obs_id)
+            assert claim.typed_value["source_url"] == "https://hotels.example.com/the-lalit-kolkata"
+            assert claim.typed_value["is_indicative_search"] is True
+
+            # Verify proposal path
+            cand = {
+                "category": "lodging",
+                "primary_name": "The Lalit Great Eastern Kolkata",
+                "point": {"lat": 22.5697, "lng": 88.3518},
+                "provenance": {
+                    "source_urls": ["https://hotels.example.com/the-lalit-kolkata"],
+                    "observation_ids": [str(obs_id)],
+                    "retrieval_time": now.isoformat(),
+                },
+            }
+            state: dict[str, Any] = {
+                "trip_id": str(uuid.uuid4()),
+                "owner_id": str(owner_id),
+                "execution_id": str(exec_id),
+                "brief": {
+                    "origin_name": "Kolkata",
+                    "origin_lat": 22.5726,
+                    "origin_lng": 88.3639,
+                    "destinations": [
+                        {
+                            "name": "Kolkata",
+                            "latitude": 22.5726,
+                            "longitude": 88.3639,
+                            "stay_days": 2,
+                        }
+                    ],
+                    "start_date": "2026-11-20",
+                    "end_date": "2026-11-22",
+                    "rooms": 1,
+                    "adults": 2,
+                    "budget_tier": "standard",
+                },
+                "eligible_stops": [],
+                "editorial_recommendations": [cand],
+                "observations": [obs],
+                "task_outputs": {},
+            }
+            proposal_res = synthesize_proposal_node(state)
+            accom_res = proposal_res["proposal"]["accommodation_research"]
+            indicative_options = accom_res["indicative_options"]
+
+            opt = next(h for h in indicative_options if h["property_name"] == "The Lalit Great Eastern Kolkata")
+            assert opt["price_per_night"] == 7500
+            assert opt["currency"] == "INR"
+            assert opt["observation_id"] == str(obs_id)
+            assert opt["source_url"] == "https://hotels.example.com/the-lalit-kolkata"
+            assert opt["evidence_class"] == EvidenceClass.INDICATIVE_SEARCH.value
+            assert opt["is_indicative_search"] is True
+            assert opt["is_verified_offer"] is False
+            assert opt["booking_confirmed"] is False
+            assert opt["availability_status"] == "INDICATIVE_SEARCH_ONLY"
+            assert "live_room_availability_unverified" in opt["unavailable_details"]
+            assert "booking_unconfirmed" in opt["unavailable_details"]
+
+    async def test_accommodation_price_attribution_unsupported_candidate_price(
+        self, session_factory: Any
+    ) -> None:
+        """Regression 5: Unsupported candidate price is preserved as price unavailable."""
+        from functions.orchestrator.graphs.trip_planner.graph import synthesize_proposal_node
+
+        cand = {
+            "category": "lodging",
+            "primary_name": "Victoria Guest House",
+            "point": {"lat": 22.5448, "lng": 88.3426},
+            "price_estimate_inr": 2500.0,
+            "provenance": {
+                "source_urls": ["https://travel-guide.example/victoria-guest-house"],
+                "retrieval_time": "2026-11-15T12:00:00Z",
+            },
+        }
+
+        state: dict[str, Any] = {
+            "trip_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "execution_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Kolkata",
+                "origin_lat": 22.5726,
+                "origin_lng": 88.3639,
+                "destinations": [
+                    {
+                        "name": "Kolkata",
+                        "latitude": 22.5726,
+                        "longitude": 88.3639,
+                        "stay_days": 2,
+                    }
+                ],
+                "start_date": "2026-11-20",
+                "end_date": "2026-11-22",
+                "rooms": 1,
+                "adults": 2,
+                "budget_tier": "standard",
+            },
+            "eligible_stops": [],
+            "editorial_recommendations": [cand],
+            "observations": [],  # No supporting observations
+            "task_outputs": {},
+        }
+
+        proposal_res = synthesize_proposal_node(state)
+        accom_res = proposal_res["proposal"]["accommodation_research"]
+        indicative_options = accom_res["indicative_options"]
+
+        opt = next(h for h in indicative_options if h["property_name"] == "Victoria Guest House")
+        assert opt["price_per_night"] is None
+        assert opt["currency"] is None
+        assert opt["observation_id"] is None
+        assert opt["evidence_class"] is None
+        assert opt["is_indicative_search"] is False
+        assert opt["availability_status"] == "PRICE_UNAVAILABLE"
+        assert "price_unsupported_by_source" in opt["unavailable_details"]
 

@@ -654,7 +654,7 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
             assert dr.get("category") in ("restaurant", "street_food", "cafe", "dining", "cuisine", "food")
             assert not PlaceExtractionService.is_culinary_dish(dr["name"])
 
-    # 2. Accommodation Research: Indicative rates must trace to actual supporting observations
+    # 2. Accommodation Research: Indicative rates must trace to the same property and supporting persisted observation
     if indicative_options:
         for opt in indicative_options:
             price = opt.get("price_per_night")
@@ -662,16 +662,24 @@ async def test_live_evidence_collection_connected_report(session_factory: Any) -
                 assert opt.get("evidence_class") == "INDICATIVE_SEARCH"
                 assert opt.get("is_indicative_search") is True
                 assert opt.get("currency") is not None
-                matching_priced_obs = any(
-                    isinstance(o.artifact_ref, dict)
-                    and (
-                        o.artifact_ref.get("price_per_night") == price
-                        or o.artifact_ref.get("indicative_price_inr") == price
-                    )
-                    and o.artifact_ref.get("currency") == opt.get("currency")
-                    for o in persisted_obs
+                obs_id = opt.get("observation_id")
+                assert obs_id is not None, f"Hotel '{opt.get('property_name')}' with price must carry observation_id"
+                assert obs_id in persisted_obs_by_id, (
+                    f"Observation {obs_id} for hotel '{opt.get('property_name')}' must be in persisted observations"
                 )
-                assert matching_priced_obs, f"Hotel '{opt.get('property_name')}' price {price} must trace to an observation"
+                supporting_obs = persisted_obs_by_id[obs_id]
+                art = supporting_obs.artifact_ref if isinstance(supporting_obs.artifact_ref, dict) else {}
+                obs_price = art.get("price_per_night") or art.get("indicative_price_inr")
+                assert obs_price == price, f"Observation price {obs_price} must match option price {price}"
+                assert art.get("currency") == opt.get("currency"), "Observation currency must match option currency"
+                assert opt.get("source_url") in (supporting_obs.canonical_url, supporting_obs.source_url)
+                obs_title = str(art.get("property_name") or art.get("title") or art.get("name") or "").strip()
+                assert obs_title, "Supporting observation must contain a property title"
+                prop_norm = PlaceExtractionService._normalize_place_name(str(opt.get("property_name")))
+                obs_title_norm = PlaceExtractionService._normalize_place_name(obs_title)
+                assert prop_norm == obs_title_norm or prop_norm in obs_title_norm or obs_title_norm in prop_norm, (
+                    f"Hotel '{opt.get('property_name')}' does not match supporting observation title '{obs_title}'"
+                )
             else:
                 assert opt.get("currency") is None
                 assert opt.get("evidence_class") is None

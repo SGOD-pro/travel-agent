@@ -718,7 +718,9 @@ async def ingest_claims_from_observations(
             if raw_price is None and isinstance(art_ref, dict):
                 raw_price = art_ref.get("indicative_price_inr")
             currency_val = art_ref.get("currency") if isinstance(art_ref, dict) else None
-            has_valid_indicative_price = raw_price is not None and bool(currency_val)
+            obs_url = str(getattr(obs, "canonical_url", None) or getattr(obs, "source_url", None) or "").strip()
+            has_usable_url = bool(obs_url and (obs_url.startswith("http://") or obs_url.startswith("https://")))
+            has_valid_indicative_price = raw_price is not None and bool(currency_val) and has_usable_url
 
             stay_claim = ClaimCreate(
                 subject_id=hotel_norm,
@@ -727,6 +729,8 @@ async def ingest_claims_from_observations(
                 execution_id=execution_id,
                 typed_value={
                     "property_name": hotel_name,
+                    "observation_id": str(obs.id) if getattr(obs, "id", None) else None,
+                    "source_url": obs_url if has_usable_url else None,
                     "evidence_class": (
                         EvidenceClass.INDICATIVE_SEARCH.value
                         if has_valid_indicative_price

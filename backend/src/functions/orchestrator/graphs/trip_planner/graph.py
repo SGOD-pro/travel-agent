@@ -2723,7 +2723,9 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
 
 def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
     """Assembles structured accommodation research strictly preserving indicative search status."""
+    from functions.orchestrator.evidence.claim_ingestion import _extract_coordinates_from_dict
     from functions.orchestrator.evidence.place_extraction import _normalize_place_name
+    from functions.orchestrator.places.corridor import haversine_distance_km
 
     task_outputs = state.get("task_outputs", {})
     raw_obs_list: list[Any] = list(state.get("observations") or [])
@@ -2740,16 +2742,87 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
             ):
                 raw_obs_list.extend(sub["observations"])
 
+    distinct_property_modifiers = frozenset(
+        {
+            "annex",
+            "wing",
+            "tower",
+            "towers",
+            "block",
+            "extension",
+            "residency",
+            "suites",
+            "suite",
+            "villa",
+            "villas",
+            "cottage",
+            "cottages",
+            "resort",
+            "resorts",
+            "heritage",
+            "boutique",
+            "express",
+            "inn",
+            "club",
+            "spa",
+            "apartment",
+            "apartments",
+            "homestay",
+            "lodge",
+            "motel",
+            "hostel",
+        }
+    )
+
     def _find_matching_priced_obs(
         prop_name: str,
-    ) -> tuple[int | None, str | None, str | None, str | None]:
+        cand_lat: float | None = None,
+        cand_lng: float | None = None,
+        cand_source_urls: list[str] | None = None,
+        cand_obs_ids: list[str] | None = None,
+    ) -> tuple[int | None, str | None, str | None, str | None, str | None]:
         norm_name = _normalize_place_name(prop_name)
+        cand_tokens = norm_name.split()
+        if not cand_tokens:
+            return None, None, None, None, None
+
+        source_urls_set = set(cand_source_urls or [])
+        obs_ids_set = set(cand_obs_ids or [])
+
         for obs in raw_obs_list:
             art = (
                 getattr(obs, "artifact_ref", None)
                 or (obs.get("artifact_ref") if isinstance(obs, dict) else {})
                 or {}
             )
+            if not isinstance(art, dict):
+                continue
+
+            # 1. Observation must have a usable source URL
+            raw_url = (
+                getattr(obs, "canonical_url", None)
+                or getattr(obs, "source_url", None)
+                or (
+                    obs.get("canonical_url") or obs.get("source_url")
+                    if isinstance(obs, dict)
+                    else None
+                )
+            )
+            src_url = str(raw_url).strip() if raw_url else ""
+            if not (src_url.startswith("http://") or src_url.startswith("https://")):
+                continue
+
+            # 2. Observation must have valid numeric price and currency
+            p_val = art.get("price_per_night") or art.get("indicative_price_inr")
+            c_val = art.get("currency")
+            if p_val is None or not c_val:
+                continue
+            try:
+                int_price = int(p_val)
+            except (ValueError, TypeError):
+                continue
+
+            # 3. Property name matching and substring protection
             title = str(
                 art.get("property_name")
                 or art.get("title")
@@ -2758,34 +2831,95 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
             ).strip()
             if not title:
                 continue
+
             norm_title = _normalize_place_name(title)
-            if norm_name == norm_title or norm_name in norm_title or norm_title in norm_name:
-                p_val = art.get("price_per_night") or art.get("indicative_price_inr")
-                c_val = art.get("currency")
-                if p_val is not None and c_val:
-                    try:
-                        int_price = int(p_val)
-                    except (ValueError, TypeError):
-                        continue
-                    src_url = (
-                        getattr(obs, "canonical_url", None)
-                        or getattr(obs, "source_url", None)
-                        or (
-                            obs.get("canonical_url") or obs.get("source_url")
-                            if isinstance(obs, dict)
-                            else None
-                        )
+            obs_tokens = norm_title.split()
+            if not obs_tokens:
+                continue
+
+            obs_id = (
+                str(getattr(obs, "id", None) or (obs.get("id") if isinstance(obs, dict) else ""))
+                or None
+            )
+
+            is_same_name = False
+            if norm_name == norm_title:
+                is_same_name = True
+            elif len(cand_tokens) == len(obs_tokens) and all(
+                a == b or a.rstrip("s") == b.rstrip("s")
+                for a, b in zip(cand_tokens, obs_tokens, strict=True)
+            ):
+                is_same_name = True
+            else:
+                extra_in_obs = set(obs_tokens) - set(cand_tokens)
+                extra_in_cand = set(cand_tokens) - set(obs_tokens)
+
+                # Distinct modifiers like annex or residency forbid substring sharing
+                if (extra_in_obs & distinct_property_modifiers) or (
+                    extra_in_cand & distinct_property_modifiers
+                ):
+                    continue
+
+                # Difference must be strictly subset with verified spatial proximity
+                obs_coords_check = _extract_coordinates_from_dict(art)
+                if obs_coords_check is None:
+                    geo_check = getattr(obs, "geographic_scope", None) or (
+                        obs.get("geographic_scope") if isinstance(obs, dict) else None
                     )
-                    r_time = getattr(obs, "retrieved_at", None) or (
-                        obs.get("retrieved_at") if isinstance(obs, dict) else None
-                    )
-                    r_str = (
-                        r_time.isoformat()
-                        if r_time is not None and hasattr(r_time, "isoformat")
-                        else (str(r_time) if r_time is not None else None)
-                    )
-                    return int_price, str(c_val), src_url, r_str
-        return None, None, None, None
+                    if isinstance(geo_check, dict):
+                        obs_coords_check = _extract_coordinates_from_dict(geo_check)
+
+                if (
+                    (set(cand_tokens).issubset(set(obs_tokens)) or set(obs_tokens).issubset(set(cand_tokens)))
+                    and cand_lat is not None
+                    and cand_lng is not None
+                    and obs_coords_check is not None
+                    and haversine_distance_km(cand_lat, cand_lng, obs_coords_check[0], obs_coords_check[1]) <= 1.0
+                ):
+                    is_same_name = True
+                else:
+                    continue
+
+            if not is_same_name:
+                continue
+
+            # 4. Spatial / Location Identity verification
+            obs_coords = _extract_coordinates_from_dict(art)
+            if obs_coords is None:
+                geo = getattr(obs, "geographic_scope", None) or (
+                    obs.get("geographic_scope") if isinstance(obs, dict) else None
+                )
+                if isinstance(geo, dict):
+                    obs_coords = _extract_coordinates_from_dict(geo)
+
+            if cand_lat is not None and cand_lng is not None and obs_coords is not None:
+                dist = haversine_distance_km(cand_lat, cand_lng, obs_coords[0], obs_coords[1])
+                if dist > 1.0:
+                    # Same named property located far away: reject
+                    continue
+            elif cand_lat is not None and cand_lng is not None and obs_coords is None:
+                # Candidate has coordinates but observation has no location evidence: require explicit provenance
+                has_provenance = (
+                    src_url in source_urls_set
+                    or (obs_id is not None and obs_id in obs_ids_set)
+                )
+                if not has_provenance:
+                    continue
+
+            r_time = getattr(obs, "retrieved_at", None) or (
+                obs.get("retrieved_at") if isinstance(obs, dict) else None
+            )
+            r_str: str | None = None
+            if isinstance(r_time, str):
+                r_str = r_time
+            elif r_time is not None and hasattr(r_time, "isoformat"):
+                val = r_time.isoformat()
+                if isinstance(val, str):
+                    r_str = val
+
+            return int_price, str(c_val), obs_id, src_url, r_str
+
+        return None, None, None, None, None
 
     editorial_recs = list(state.get("editorial_recommendations", []))
     eligible_stops = list(state.get("eligible_stops", []))
@@ -2808,22 +2942,60 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
         prov = c.get("provenance") or {}
         source_urls = list(prov.get("source_urls") or [])
         retrieval_time = prov.get("retrieval_time")
+        cand_obs_ids = list(prov.get("observation_ids") or [])
 
-        obs_price, obs_curr, obs_url, obs_time = _find_matching_priced_obs(name)
-        if obs_price is not None and obs_curr:
+        # Extract candidate coordinates
+        c_lat: float | None = None
+        c_lng: float | None = None
+        c_point = c.get("point")
+        if isinstance(c_point, dict):
+            try:
+                if c_point.get("lat") is not None and c_point.get("lng") is not None:
+                    c_lat = float(c_point["lat"])
+                    c_lng = float(c_point["lng"])
+            except (ValueError, TypeError):
+                pass
+        elif c_point is not None and hasattr(c_point, "lat") and hasattr(c_point, "lng"):
+            try:
+                p_lat = getattr(c_point, "lat", None)
+                p_lng = getattr(c_point, "lng", None)
+                if p_lat is not None and p_lng is not None:
+                    c_lat = float(p_lat)
+                    c_lng = float(p_lng)
+            except (ValueError, TypeError):
+                pass
+        if c_lat is None:
+            for k_lat, k_lng in (
+                ("latitude", "longitude"),
+                ("lat", "lng"),
+                ("estimated_latitude", "estimated_longitude"),
+            ):
+                if c.get(k_lat) is not None and c.get(k_lng) is not None:
+                    try:
+                        c_lat = float(c[k_lat])
+                        c_lng = float(c[k_lng])
+                        break
+                    except (ValueError, TypeError):
+                        pass
+
+        obs_price, obs_curr, obs_id, obs_url, obs_time = _find_matching_priced_obs(
+            name, c_lat, c_lng, source_urls, cand_obs_ids
+        )
+        if obs_price is not None and obs_curr and obs_url:
             indicative_options.append(
                 {
                     "property_name": name,
                     "price_per_night": obs_price,
                     "currency": obs_curr,
+                    "observation_id": obs_id,
+                    "source_url": obs_url,
+                    "source_urls": [obs_url] if obs_url else source_urls,
+                    "retrieval_time": obs_time or retrieval_time,
                     "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
                     "is_indicative_search": True,
                     "is_verified_offer": False,
                     "booking_confirmed": False,
                     "availability_status": "INDICATIVE_SEARCH_ONLY",
-                    "source_urls": [obs_url] if obs_url else source_urls,
-                    "source_url": obs_url or (source_urls[0] if source_urls else None),
-                    "retrieval_time": obs_time or retrieval_time,
                     "uncertainty": "INDICATIVE_SEARCH",
                     "unavailable_details": [
                         "live_room_availability_unverified",
@@ -2838,14 +3010,15 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
                     "property_name": name,
                     "price_per_night": None,
                     "currency": None,
+                    "observation_id": None,
+                    "source_url": source_urls[0] if source_urls else None,
+                    "source_urls": source_urls,
+                    "retrieval_time": retrieval_time,
                     "evidence_class": None,
                     "is_indicative_search": False,
                     "is_verified_offer": False,
                     "booking_confirmed": False,
                     "availability_status": "PRICE_UNAVAILABLE",
-                    "source_urls": source_urls,
-                    "source_url": source_urls[0] if source_urls else None,
-                    "retrieval_time": retrieval_time,
                     "uncertainty": "UNVERIFIED",
                     "unavailable_details": [
                         "price_unsupported_by_source",
@@ -2868,72 +3041,96 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
             prop_name = str(
                 art_ref.get("property_name") or art_ref.get("title") or ""
             ).strip()
-            if prop_name and prop_name.lower() not in seen_hotels:
-                seen_hotels.add(prop_name.lower())
-                src_url = (
-                    getattr(obs, "canonical_url", None)
-                    or getattr(obs, "source_url", None)
-                    or (
-                        obs.get("canonical_url") or obs.get("source_url")
-                        if isinstance(obs, dict)
-                        else None
-                    )
-                )
-                r_time = getattr(obs, "retrieved_at", None) or (
-                    obs.get("retrieved_at") if isinstance(obs, dict) else None
-                )
-                r_str = (
-                    r_time.isoformat()
-                    if r_time is not None and hasattr(r_time, "isoformat")
-                    else (str(r_time) if r_time is not None else None)
-                )
+            if not prop_name or prop_name.lower() in seen_hotels:
+                continue
+            seen_hotels.add(prop_name.lower())
 
-                obs_price, obs_curr, obs_u, obs_t = _find_matching_priced_obs(prop_name)
-                if obs_price is not None and obs_curr:
-                    indicative_options.append(
-                        {
-                            "property_name": prop_name,
-                            "price_per_night": obs_price,
-                            "currency": obs_curr,
-                            "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
-                            "is_indicative_search": True,
-                            "is_verified_offer": False,
-                            "booking_confirmed": False,
-                            "availability_status": "INDICATIVE_SEARCH_ONLY",
-                            "source_urls": [obs_u or src_url] if (obs_u or src_url) else [],
-                            "source_url": obs_u or src_url,
-                            "retrieval_time": obs_t or r_str,
-                            "uncertainty": "INDICATIVE_SEARCH",
-                            "unavailable_details": [
-                                "live_room_availability_unverified",
-                                "booking_unconfirmed",
-                            ],
-                            "conflicting_details": [],
-                        }
-                    )
-                else:
-                    indicative_options.append(
-                        {
-                            "property_name": prop_name,
-                            "price_per_night": None,
-                            "currency": None,
-                            "evidence_class": None,
-                            "is_indicative_search": False,
-                            "is_verified_offer": False,
-                            "booking_confirmed": False,
-                            "availability_status": "PRICE_UNAVAILABLE",
-                            "source_urls": [src_url] if src_url else [],
-                            "source_url": src_url,
-                            "retrieval_time": r_str,
-                            "uncertainty": "UNVERIFIED",
-                            "unavailable_details": [
-                                "price_unsupported_by_source",
-                                "live_room_availability_unverified",
-                                "booking_unconfirmed",
-                            ],
-                            "conflicting_details": [],
-                        }
-                    )
+            raw_url = (
+                getattr(obs, "canonical_url", None)
+                or getattr(obs, "source_url", None)
+                or (
+                    obs.get("canonical_url") or obs.get("source_url")
+                    if isinstance(obs, dict)
+                    else None
+                )
+            )
+            src_url = str(raw_url).strip() if raw_url else ""
+            has_usable_url = bool(
+                src_url and (src_url.startswith("http://") or src_url.startswith("https://"))
+            )
+
+            r_time = getattr(obs, "retrieved_at", None) or (
+                obs.get("retrieved_at") if isinstance(obs, dict) else None
+            )
+            r_str: str | None = None
+            if isinstance(r_time, str):
+                r_str = r_time
+            elif r_time is not None and hasattr(r_time, "isoformat"):
+                val = r_time.isoformat()
+                if isinstance(val, str):
+                    r_str = val
+
+            obs_id = (
+                str(getattr(obs, "id", None) or (obs.get("id") if isinstance(obs, dict) else ""))
+                or None
+            )
+
+            p_val = art_ref.get("price_per_night") or art_ref.get("indicative_price_inr")
+            c_val = art_ref.get("currency")
+            int_price: int | None = None
+            if p_val is not None:
+                try:
+                    int_price = int(p_val)
+                except (ValueError, TypeError):
+                    int_price = None
+
+            if has_usable_url and int_price is not None and c_val:
+                indicative_options.append(
+                    {
+                        "property_name": prop_name,
+                        "price_per_night": int_price,
+                        "currency": str(c_val),
+                        "observation_id": obs_id,
+                        "source_url": src_url,
+                        "source_urls": [src_url],
+                        "retrieval_time": r_str,
+                        "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
+                        "is_indicative_search": True,
+                        "is_verified_offer": False,
+                        "booking_confirmed": False,
+                        "availability_status": "INDICATIVE_SEARCH_ONLY",
+                        "uncertainty": "INDICATIVE_SEARCH",
+                        "unavailable_details": [
+                            "live_room_availability_unverified",
+                            "booking_unconfirmed",
+                        ],
+                        "conflicting_details": [],
+                    }
+                )
+            else:
+                indicative_options.append(
+                    {
+                        "property_name": prop_name,
+                        "price_per_night": None,
+                        "currency": None,
+                        "observation_id": None,
+                        "source_url": src_url if has_usable_url else None,
+                        "source_urls": [src_url] if has_usable_url else [],
+                        "retrieval_time": r_str,
+                        "evidence_class": None,
+                        "is_indicative_search": False,
+                        "is_verified_offer": False,
+                        "booking_confirmed": False,
+                        "availability_status": "PRICE_UNAVAILABLE",
+                        "uncertainty": "UNVERIFIED",
+                        "unavailable_details": [
+                            "price_unsupported_by_source",
+                            "live_room_availability_unverified",
+                            "booking_unconfirmed",
+                        ],
+                        "conflicting_details": [],
+                    }
+                )
 
     if not indicative_options:
         status = "UNAVAILABLE"
