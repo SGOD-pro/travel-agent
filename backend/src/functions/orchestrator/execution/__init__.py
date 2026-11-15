@@ -4,6 +4,7 @@ from functions.orchestrator.execution.budget import (
     BudgetReservationStatus,
     ensure_execution_budget_structure,
     reconcile_budget_entry,
+    recover_abandoned_budget_reservations,
     recover_abandoned_budget_reservations_in_session,
     reserve_budget_entry,
 )
@@ -134,6 +135,7 @@ __all__ = [
     "WrongWorkerError",
     "ensure_execution_budget_structure",
     "reconcile_budget_entry",
+    "recover_abandoned_budget_reservations",
     "recover_abandoned_budget_reservations_in_session",
     "reserve_budget_entry",
 ]

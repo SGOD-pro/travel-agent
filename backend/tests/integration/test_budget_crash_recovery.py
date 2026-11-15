@@ -738,3 +738,465 @@ class TestBudgetCrashRecovery:
             assert b["reserved_cost_minor"] == 0
             assert b["reservations"][res_id]["status"] == BudgetReservationStatus.ABANDONED_UNCERTAIN
             assert b["reservations"][res_id]["recovery_reason"] == "parent_execution_cancelled"
+
+    async def test_lock_wait_lease_expiry_rejects_reservation(
+        self, session_factory: Any
+    ) -> None:
+        """Lock wait re-evaluation: an expired lease must not reserve budget after waiting for row lock."""
+        exec_id, task_id = await _create_test_execution_and_task(
+            session_factory,
+            budget={"remaining_tool_calls": 3, "remaining_cost_minor": 150},
+        )
+
+        # Worker claims task with a short lease of 1 second
+        async with session_factory() as session:
+            fencing = WorkerFencingService(session)
+            claim = await fencing.claim_task(
+                message=TaskQueueMessage(task_id=task_id, execution_id=exec_id, attempt=0),
+                worker="EVIDENCE",
+                action="collect",
+                lease_seconds=1,
+            )
+
+        # We simulate a lock wait: another session holds ExecutionModel lock for 1.5 seconds.
+        # Worker attempts to reserve budget while the lock is held.
+        # By the time worker acquires lock, the 1-second lease has expired.
+        async def hold_lock():
+            async with session_factory() as s_lock:
+                async with s_lock.begin():
+                    stmt = select(ExecutionModel).where(ExecutionModel.id == exec_id).with_for_update()
+                    await s_lock.execute(stmt)
+                    await asyncio.sleep(1.5)
+
+        async def worker_reserve():
+            await asyncio.sleep(0.2)  # ensure hold_lock acquires first
+            async with session_factory() as s_worker:
+                collector = EvidenceCollectorService(s_worker)
+                return await collector.reserve_budget(
+                    exec_id,
+                    50,
+                    task_id=task_id,
+                    attempt=claim.attempt,
+                    lease_token=claim.lease_token,
+                )
+
+        _, res_id = await asyncio.gather(hold_lock(), worker_reserve())
+        assert res_id is None, "Reservation must be rejected after lease expires during lock wait"
+
+        # Verify budget was not reserved
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b.get("reserved_cost_minor", 0) == 0
+            assert b.get("reserved_tool_calls", 0) == 0
+
+    async def test_lock_wait_lease_expiry_rejects_reconciliation(
+        self, session_factory: Any
+    ) -> None:
+        """Lock wait re-evaluation: an expired lease must not reconcile budget after waiting for row lock."""
+        exec_id, task_id = await _create_test_execution_and_task(
+            session_factory,
+            budget={"remaining_tool_calls": 3, "remaining_cost_minor": 150},
+        )
+
+        async with session_factory() as session:
+            fencing = WorkerFencingService(session)
+            claim = await fencing.claim_task(
+                message=TaskQueueMessage(task_id=task_id, execution_id=exec_id, attempt=0),
+                worker="EVIDENCE",
+                action="collect",
+                lease_seconds=1,
+            )
+            collector = EvidenceCollectorService(session)
+            res_id = await collector.reserve_budget(
+                exec_id,
+                50,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert res_id is not None
+
+        # Lock ExecutionModel for 1.5s while worker attempts to reconcile
+        async def hold_lock():
+            async with session_factory() as s_lock:
+                async with s_lock.begin():
+                    stmt = select(ExecutionModel).where(ExecutionModel.id == exec_id).with_for_update()
+                    await s_lock.execute(stmt)
+                    await asyncio.sleep(1.5)
+
+        async def worker_reconcile():
+            await asyncio.sleep(0.2)
+            async with session_factory() as s_worker:
+                collector = EvidenceCollectorService(s_worker)
+                return await collector.reconcile_budget(
+                    exec_id,
+                    50,
+                    success=True,
+                    reservation_id=res_id,
+                    task_id=task_id,
+                    attempt=claim.attempt,
+                    lease_token=claim.lease_token,
+                )
+
+        _, ok_reconcile = await asyncio.gather(hold_lock(), worker_reconcile())
+        assert ok_reconcile is False, "Reconciliation must be rejected when lease expires during lock wait"
+
+        # Verify budget was not spent by stale worker
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["spent_cost_minor"] == 0
+            assert b["spent_tool_calls"] == 0
+
+    async def test_mismatched_or_missing_reservation_leaves_counters_unmodified(
+        self, session_factory: Any
+    ) -> None:
+        """Mismatched or missing reservations must not change budget counters."""
+        exec_id, task_id = await _create_test_execution_and_task(
+            session_factory,
+            budget={"remaining_tool_calls": 3, "remaining_cost_minor": 150},
+        )
+
+        async with session_factory() as session:
+            fencing = WorkerFencingService(session)
+            claim = await fencing.claim_task(
+                message=TaskQueueMessage(task_id=task_id, execution_id=exec_id, attempt=0),
+                worker="EVIDENCE",
+                action="collect",
+                lease_seconds=60,
+            )
+            collector = EvidenceCollectorService(session)
+            res_id = await collector.reserve_budget(
+                exec_id,
+                50,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert res_id is not None
+
+        # Verify reservation active
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["reserved_cost_minor"] == 50
+            assert b["reserved_tool_calls"] == 1
+
+        async with session_factory() as session:
+            collector = EvidenceCollectorService(session)
+
+            # Case A: Missing reservation ID
+            ok_missing = await collector.reconcile_budget(
+                exec_id,
+                50,
+                success=True,
+                reservation_id="nonexistent-res-id",
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert ok_missing is False
+
+            # Case B: Mismatched task ID
+            other_task_id = uuid.uuid4()
+            ok_task_mismatch = await collector.reconcile_budget(
+                exec_id,
+                50,
+                success=True,
+                reservation_id=res_id,
+                task_id=other_task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert ok_task_mismatch is False
+
+            # Case C: Mismatched attempt
+            ok_attempt_mismatch = await collector.reconcile_budget(
+                exec_id,
+                50,
+                success=True,
+                reservation_id=res_id,
+                task_id=task_id,
+                attempt=99,
+                lease_token=claim.lease_token,
+            )
+            assert ok_attempt_mismatch is False
+
+            # Case D: Mismatched lease token
+            other_token = uuid.uuid4()
+            ok_token_mismatch = await collector.reconcile_budget(
+                exec_id,
+                50,
+                success=True,
+                reservation_id=res_id,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=other_token,
+            )
+            assert ok_token_mismatch is False
+
+            # Case E: Mismatched reserved cost (reserving 50 but reconciling 100)
+            ok_cost_mismatch = await collector.reconcile_budget(
+                exec_id,
+                100,
+                success=True,
+                reservation_id=res_id,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert ok_cost_mismatch is False
+
+        # Counters MUST NOT have changed through all mismatched attempts
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["reserved_cost_minor"] == 50
+            assert b["reserved_tool_calls"] == 1
+            assert b["spent_cost_minor"] == 0
+            assert b["spent_tool_calls"] == 0
+
+        # Finally, valid reconciliation with matching parameters succeeds
+        async with session_factory() as session:
+            collector = EvidenceCollectorService(session)
+            ok_valid = await collector.reconcile_budget(
+                exec_id,
+                50,
+                success=True,
+                reservation_id=res_id,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert ok_valid is True
+
+        # Now counters are updated
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["reserved_cost_minor"] == 0
+            assert b["reserved_tool_calls"] == 0
+            assert b["spent_cost_minor"] == 50
+            assert b["spent_tool_calls"] == 1
+
+    async def test_recovery_racing_active_worker_preserves_live_reservation(
+        self, session_factory: Any
+    ) -> None:
+        """A manual or concurrent recovery sweep must verify abandonment and not recover an active worker's reservation."""
+        exec_id, task_id = await _create_test_execution_and_task(
+            session_factory,
+            budget={"remaining_tool_calls": 3, "remaining_cost_minor": 150},
+        )
+
+        async with session_factory() as session:
+            fencing = WorkerFencingService(session)
+            claim = await fencing.claim_task(
+                message=TaskQueueMessage(task_id=task_id, execution_id=exec_id, attempt=0),
+                worker="EVIDENCE",
+                action="collect",
+                lease_seconds=60,
+            )
+            collector = EvidenceCollectorService(session)
+            res_id = await collector.reserve_budget(
+                exec_id,
+                50,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert res_id is not None
+
+        # Manual recovery sweep while worker is live and active
+        recovery_svc = TaskRecoveryService(session_factory)
+        recovered = await recovery_svc.recover_abandoned_budget_reservations(exec_id, task_id)
+        assert len(recovered) == 0, "Recovery must not steal active reservation from live task"
+
+        # Verify budget still has active reservation
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["reservations"][res_id]["status"] == BudgetReservationStatus.ACTIVE
+            assert b["reserved_cost_minor"] == 50
+            assert b["uncertain_cost_minor"] == 0
+
+        # Worker finishes and reconciles successfully
+        async with session_factory() as session:
+            collector = EvidenceCollectorService(session)
+            ok = await collector.reconcile_budget(
+                exec_id,
+                50,
+                success=True,
+                reservation_id=res_id,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert ok is True
+
+        # Counters show clean reconciliation
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["reservations"][res_id]["status"] == BudgetReservationStatus.RECONCILED
+            assert b["spent_cost_minor"] == 50
+            assert b["uncertain_cost_minor"] == 0
+            assert b["reserved_cost_minor"] == 0
+
+    async def test_timeout_after_dispatch_preserves_uncertain_spend(
+        self, session_factory: Any
+    ) -> None:
+        """When an external call times out or is cancelled after dispatch, preserve uncertain spend instead of refunding."""
+        exec_id, task_id = await _create_test_execution_and_task(
+            session_factory,
+            budget={"remaining_tool_calls": 3, "remaining_cost_minor": 150},
+        )
+
+        async with session_factory() as session:
+            fencing = WorkerFencingService(session)
+            claim = await fencing.claim_task(
+                message=TaskQueueMessage(task_id=task_id, execution_id=exec_id, attempt=0),
+                worker="EVIDENCE",
+                action="collect",
+                lease_seconds=60,
+            )
+            collector = EvidenceCollectorService(session)
+            res_id = await collector.reserve_budget(
+                exec_id,
+                50,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+            )
+            assert res_id is not None
+
+            # Dispatched call timed out
+            ok = await collector.reconcile_budget(
+                exec_id,
+                50,
+                success=False,
+                reservation_id=res_id,
+                task_id=task_id,
+                attempt=claim.attempt,
+                lease_token=claim.lease_token,
+                dispatched=True,
+                outcome="TIMEOUT",
+            )
+            assert ok is True
+
+        # Verify uncertain spend is PRESERVED, not refunded!
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["reservations"][res_id]["status"] == BudgetReservationStatus.RECONCILED
+            assert b["reservations"][res_id]["settled_as"] == "TIMEOUT"
+            assert b["reserved_cost_minor"] == 0
+            assert b["spent_cost_minor"] == 50
+            assert b["uncertain_cost_minor"] == 50
+            assert b["remaining_cost_minor"] == 100
+
+    async def test_budget_ceilings_enforced_across_timeouts_and_crashes(
+        self, session_factory: Any
+    ) -> None:
+        """Budget ceilings are strictly preserved across timeouts and crashes, preventing retries from exceeding budget."""
+        # Initial budget allows exactly 2 calls of 50 minor
+        exec_id, task_id = await _create_test_execution_and_task(
+            session_factory,
+            budget={"remaining_tool_calls": 2, "remaining_cost_minor": 100},
+        )
+
+        # Call 1: Reserves 50 minor, dispatches, and times out
+        async with session_factory() as session:
+            fencing = WorkerFencingService(session)
+            claim1 = await fencing.claim_task(
+                message=TaskQueueMessage(task_id=task_id, execution_id=exec_id, attempt=0),
+                worker="EVIDENCE",
+                action="collect",
+                lease_seconds=60,
+            )
+            collector1 = EvidenceCollectorService(session)
+            res1 = await collector1.reserve_budget(
+                exec_id,
+                50,
+                task_id=task_id,
+                attempt=claim1.attempt,
+                lease_token=claim1.lease_token,
+            )
+            assert res1 is not None
+            # Reconcile timeout
+            await collector1.reconcile_budget(
+                exec_id,
+                50,
+                success=False,
+                reservation_id=res1,
+                task_id=task_id,
+                attempt=claim1.attempt,
+                lease_token=claim1.lease_token,
+                dispatched=True,
+                outcome="TIMEOUT",
+            )
+
+        # After Call 1: remaining is 50
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["remaining_cost_minor"] == 50
+            assert b["spent_cost_minor"] == 50
+            assert b["uncertain_cost_minor"] == 50
+
+        # Call 2: Reserves the remaining 50 minor with a short lease, then crashes
+        async with session_factory() as session:
+            collector2 = EvidenceCollectorService(session)
+            res2 = await collector2.reserve_budget(
+                exec_id,
+                50,
+                task_id=task_id,
+                attempt=claim1.attempt,
+                lease_token=claim1.lease_token,
+            )
+            assert res2 is not None
+
+        # Force lease expiry
+        async with session_factory() as session:
+            task = await session.get(TaskModel, task_id)
+            assert task is not None
+            task.lease_expiry = datetime.now(UTC) - timedelta(seconds=1)
+            await session.commit()
+
+        # Recovery sweeps expired lease and recovers reservation
+        recovery_svc = TaskRecoveryService(session_factory)
+        rec = await recovery_svc.recover_expired_leases(execution_id=exec_id)
+        assert task_id in rec.recovered_retried
+
+        # Remaining budget must now be 0
+        async with session_factory() as session:
+            res = await session.execute(select(ExecutionModel).where(ExecutionModel.id == exec_id))
+            b = res.scalar_one().budget
+            assert b["remaining_cost_minor"] == 0
+            assert b["spent_cost_minor"] == 100
+            assert b["uncertain_cost_minor"] == 100
+
+        # Attempt 3: Attempts to claim and reserve budget
+        # Clear backoff to test budget reservation directly
+        async with session_factory() as session:
+            task = await session.get(TaskModel, task_id)
+            assert task is not None
+            task.lease_expiry = None
+            await session.commit()
+
+            fencing = WorkerFencingService(session)
+            claim3 = await fencing.claim_task(
+                message=TaskQueueMessage(task_id=task_id, execution_id=exec_id, attempt=1),
+                worker="EVIDENCE",
+                action="collect",
+                lease_seconds=60,
+            )
+            collector3 = EvidenceCollectorService(session)
+            res3 = await collector3.reserve_budget(
+                exec_id,
+                50,
+                task_id=task_id,
+                attempt=claim3.attempt,
+                lease_token=claim3.lease_token,
+            )
+            assert res3 is None, "Budget ceiling must block further reservations when remaining is 0"

@@ -7,6 +7,7 @@ under 0001 lease fencing.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
@@ -32,7 +33,7 @@ from functions.evidence_collector.serpapi_adapter import (
 )
 from functions.orchestrator.execution.budget import (
     reconcile_budget_entry,
-    recover_abandoned_budget_reservations_in_session,
+    recover_abandoned_budget_reservations,
     reserve_budget_entry,
 )
 from functions.orchestrator.execution.fencing import (
@@ -196,6 +197,8 @@ class EvidenceCollectorService:
         task_id: uuid.UUID | None = None,
         attempt: int | None = None,
         lease_token: uuid.UUID | None = None,
+        dispatched: bool = True,
+        outcome: str | None = None,
     ) -> bool:
         """Reconciles durable budget reservations after external call finishes or fails (AC 14).
 
@@ -210,6 +213,8 @@ class EvidenceCollectorService:
             task_id=task_id,
             attempt=attempt,
             lease_token=lease_token,
+            dispatched=dispatched,
+            outcome=outcome,
         )
 
     async def _safe_reconcile_budget(
@@ -222,6 +227,8 @@ class EvidenceCollectorService:
         task_id: uuid.UUID | None = None,
         attempt: int | None = None,
         lease_token: uuid.UUID | None = None,
+        dispatched: bool = True,
+        outcome: str | None = None,
     ) -> None:
         """Reconciles budget safely in finally blocks without suppressing caller exceptions."""
         try:
@@ -233,6 +240,8 @@ class EvidenceCollectorService:
                 task_id=task_id,
                 attempt=attempt,
                 lease_token=lease_token,
+                dispatched=dispatched,
+                outcome=outcome,
             )
         except Exception as reconcile_err:
             logger.error(
@@ -247,19 +256,12 @@ class EvidenceCollectorService:
         task_id: uuid.UUID | None = None,
     ) -> list[dict[str, Any]]:
         """Recovers abandoned budget reservations for an execution or task on the active session."""
-        stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
-        res = await self._session.execute(stmt)
-        execution = res.scalar_one_or_none()
-        if not execution:
-            return []
-        recovered = recover_abandoned_budget_reservations_in_session(
-            execution=execution,
+        return await recover_abandoned_budget_reservations(
+            self._session,
+            execution_id=execution_id,
             task_id=task_id,
             recovery_reason="evidence_collector_recovery",
         )
-        if recovered:
-            await self._session.commit()
-        return recovered
 
     @classmethod
     def select_eligible_search_urls(
@@ -607,8 +609,14 @@ class EvidenceCollectorService:
                     break
 
                 # Execute provider call outside database transaction
+                dispatched = False
                 call_success = False
+                call_outcome: str | None = None
                 try:
+                    if not q or (isinstance(q, str) and not q.strip()):
+                        raise ValueError("Empty search query")
+
+                    dispatched = True
                     if isinstance(q, dict):
                         q_str = str(q.get("query") or q.get("q") or "")
                         q_extra = {k: v for k, v in q.items() if k not in ("query", "q")}
@@ -621,8 +629,24 @@ class EvidenceCollectorService:
                     calls_made += 1
                     cost_spent += cost_per_call
                     call_success = True
+                    call_outcome = "SUCCESS"
+                except TimeoutError as e:
+                    logger.warning("SerpApi search timed out for query '%s': %s", q, e)
+                    call_outcome = "TIMEOUT"
+                    unavailable_sources.append(
+                        {
+                            "source_type": "SEARCH",
+                            "query": q,
+                            "status": "UNAVAILABLE",
+                            "error": f"Search timed out: {e}",
+                        }
+                    )
+                except asyncio.CancelledError:
+                    call_outcome = "CANCELLED"
+                    raise
                 except SerpApiAdapterError as e:
                     logger.warning("SerpApi search failed for query '%s': %s", q, e)
+                    call_outcome = "PROVIDER_ERROR"
                     unavailable_sources.append(
                         {
                             "source_type": "SEARCH",
@@ -631,6 +655,10 @@ class EvidenceCollectorService:
                             "error": str(e),
                         }
                     )
+                except Exception as e:
+                    logger.warning("Search query failed for '%s': %s", q, e)
+                    call_outcome = "UNCERTAIN" if dispatched else "NOT_DISPATCHED"
+                    raise
                 finally:
                     await self._safe_reconcile_budget(
                         envelope.execution_id,
@@ -640,6 +668,8 @@ class EvidenceCollectorService:
                         task_id=envelope.task_id,
                         attempt=claim_result.attempt,
                         lease_token=claim_result.lease_token,
+                        dispatched=dispatched,
+                        outcome=call_outcome,
                     )
 
             # 4. Process web page extractions if provided or selected from search results
@@ -696,8 +726,11 @@ class EvidenceCollectorService:
                             budget_exhausted = True
                             break
 
+                    dispatched = False
                     call_success = False
+                    call_outcome = None
                     try:
+                        dispatched = True
                         if hasattr(active_extraction_adapter, "extract_page"):
                             obs_list, b_reqs = await active_extraction_adapter.extract_page(
                                 page_url, category=page_cat, title=page_title or None
@@ -720,6 +753,7 @@ class EvidenceCollectorService:
                                     calls_made += 1
                                     cost_spent += cost_per_call
                                 call_success = True
+                                call_outcome = "SUCCESS"
                                 static_extractions_successful += 1
                         elif hasattr(active_extraction_adapter, "extract"):
                             extracted_obs = await active_extraction_adapter.extract(page_url)
@@ -737,9 +771,25 @@ class EvidenceCollectorService:
                                     calls_made += 1
                                     cost_spent += cost_per_call
                                 call_success = True
+                                call_outcome = "SUCCESS"
                                 static_extractions_successful += 1
+                    except TimeoutError as e:
+                        logger.warning("Extraction timed out for URL '%s': %s", page_url, e)
+                        call_outcome = "TIMEOUT"
+                        unavailable_sources.append(
+                            {
+                                "source_type": "WEB_EXTRACTION",
+                                "url": page_url,
+                                "status": "UNAVAILABLE",
+                                "error": f"Extraction timed out: {e}",
+                            }
+                        )
+                    except asyncio.CancelledError:
+                        call_outcome = "CANCELLED"
+                        raise
                     except Exception as e:
                         logger.warning("Extraction failed for URL '%s': %s", page_url, e)
+                        call_outcome = "UNCERTAIN" if dispatched else "NOT_DISPATCHED"
                         unavailable_sources.append(
                             {
                                 "source_type": "WEB_EXTRACTION",
@@ -758,6 +808,8 @@ class EvidenceCollectorService:
                                 task_id=envelope.task_id,
                                 attempt=claim_result.attempt,
                                 lease_token=claim_result.lease_token,
+                                dispatched=dispatched,
+                                outcome=call_outcome,
                             )
 
                     # Bounded static extractions: stop once at least 2 static pages have been extracted

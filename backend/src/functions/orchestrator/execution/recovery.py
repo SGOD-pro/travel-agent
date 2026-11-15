@@ -13,6 +13,7 @@ from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from functions.orchestrator.execution.budget import (
+    recover_abandoned_budget_reservations,
     recover_abandoned_budget_reservations_in_session,
 )
 from functions.orchestrator.execution.job_events import record_job_event
@@ -331,20 +332,14 @@ class TaskRecoveryService:
         execution_id: uuid.UUID,
         task_id: uuid.UUID | None = None,
     ) -> list[dict[str, Any]]:
-        """Recovers abandoned budget reservations for an execution or task."""
+        """Recovers abandoned budget reservations for an execution or task with abandonment verification under locks."""
         async with self._session_factory() as session:
-            async with session.begin():
-                exec_stmt = (
-                    select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
-                )
-                execution = (await session.execute(exec_stmt)).scalar_one_or_none()
-                if not execution:
-                    return []
-                return recover_abandoned_budget_reservations_in_session(
-                    execution=execution,
-                    task_id=task_id,
-                    recovery_reason="manual_recovery_sweep",
-                )
+            return await recover_abandoned_budget_reservations(
+                session,
+                execution_id=execution_id,
+                task_id=task_id,
+                recovery_reason="manual_recovery_sweep",
+            )
 
     async def _recover_expired_leases_impl(
         self,
