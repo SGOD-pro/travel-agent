@@ -690,3 +690,274 @@ async def test_pre_execution_insufficient_time_fails_all_records_immediately(
 
     assert len(failures) == 2
     assert failures == [{"itemIdentifier": "msg-pre-1"}, {"itemIdentifier": "msg-pre-2"}]
+
+
+# =============================================================================
+# 7. Cancellation-resistant cleanup bounded before hard invocation deadline
+# =============================================================================
+@pytest.mark.asyncio
+async def test_cancellation_resistant_cleanup_bounded_before_hard_invocation_deadline(
+    session_factory: Any,
+) -> None:
+    """Verifies that when a record's cancellation cleanup blocks or sleeps,
+
+    the consumer bounds the cleanup window and returns before the hard invocation deadline.
+    Successful sibling records in the same batch are preserved and committed.
+    """
+    eid_fast, tid_fast = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["fast query"], "budget": {"remaining_cost_minor": 100}},
+    )
+    rec_fast = build_sqs_message(
+        message_id="msg-fast-sibling",
+        execution_id=eid_fast,
+        task_id=tid_fast,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["fast query"], "budget": {"remaining_cost_minor": 100}},
+    )
+
+    eid_slow, tid_slow = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["slow resistant query"], "budget": {"remaining_cost_minor": 100}},
+    )
+    rec_slow = build_sqs_message(
+        message_id="msg-resistant-cleanup",
+        execution_id=eid_slow,
+        task_id=tid_slow,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["slow resistant query"], "budget": {"remaining_cost_minor": 100}},
+    )
+
+    # Simulated Lambda invocation: 1000ms total, reserve 400ms => usable time is 600ms
+    ctx = SimulatedLambdaContext(total_duration_ms=1000)
+
+    class ResistantCleanupAdapter:
+        def __init__(self) -> None:
+            self.cleanup_entered = False
+            self.cleanup_completed = False
+
+        async def search(self, query: str, limit: int = 5, extra_params: Any = None) -> list[RawObservation]:
+            if "slow" in query:
+                try:
+                    await asyncio.sleep(5.0)
+                except asyncio.CancelledError:
+                    self.cleanup_entered = True
+                    # Simulate cancellation-resistant cleanup that blocks for 5.0 seconds
+                    await asyncio.sleep(5.0)
+                    self.cleanup_completed = True
+                    raise
+            await asyncio.sleep(0.02)
+            return [
+                RawObservation.create(
+                    source_url="https://example.com/fast",
+                    publisher="Fast",
+                    excerpt_text="Fast result",
+                )
+            ]
+
+    resistant_adapter = ResistantCleanupAdapter()
+    event = {"Records": [rec_fast, rec_slow]}
+
+    t0 = time.monotonic()
+    failures = await evidence_process_batch(
+        event,
+        context=ctx,
+        session_factory=session_factory,
+        adapter=resistant_adapter,
+        extraction_adapter=FixtureWebExtractionAdapter(),
+        reserve_ms=400,
+    )
+    elapsed = time.monotonic() - t0
+
+    # Strict deadline verification: must return before the 1000ms hard invocation deadline!
+    assert elapsed < 0.95, (
+        f"Consumer took {elapsed:.2f}s, failing to return before simulated 1.0s Lambda deadline"
+    )
+    assert resistant_adapter.cleanup_entered is True, "Cancellation cleanup was entered"
+    assert resistant_adapter.cleanup_completed is False, "Blocking cleanup was bounded and abandoned"
+
+    # Fast record succeeded; slow resistant record returned in batchItemFailures
+    assert len(failures) == 1
+    assert failures[0]["itemIdentifier"] == "msg-resistant-cleanup"
+
+    async with session_factory() as session:
+        fast_task = (
+            await session.execute(select(TaskModel).where(TaskModel.id == tid_fast))
+        ).scalar_one()
+        assert fast_task.status == "COMPLETED"
+
+
+# =============================================================================
+# 8. Suppressed cancellation swallowed by worker returns partial batch failure
+# =============================================================================
+@pytest.mark.asyncio
+async def test_suppressed_cancellation_swallowed_returns_partial_batch_failure(
+    session_factory: Any,
+) -> None:
+    """Verifies that if an operation catches and swallows CancelledError,
+
+    the consumer still treats the expired usable deadline as a failure and reports the message
+    in batchItemFailures so SQS redrives it rather than dropping it.
+    """
+    eid, tid = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["swallow cancel query"], "budget": {"remaining_cost_minor": 100}},
+    )
+    rec = build_sqs_message(
+        message_id="msg-swallow-cancel",
+        execution_id=eid,
+        task_id=tid,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["swallow cancel query"], "budget": {"remaining_cost_minor": 100}},
+    )
+
+    ctx = SimulatedLambdaContext(total_duration_ms=600)
+
+    class SwallowingAdapter:
+        async def search(self, query: str, limit: int = 5, extra_params: Any = None) -> list[RawObservation]:
+            try:
+                await asyncio.sleep(5.0)
+            except asyncio.CancelledError:
+                # Maliciously or accidentally swallows CancelledError and returns normally
+                return []
+            return []
+
+    failures = await evidence_process_batch(
+        {"Records": [rec]},
+        context=ctx,
+        session_factory=session_factory,
+        adapter=SwallowingAdapter(),
+        extraction_adapter=FixtureWebExtractionAdapter(),
+        reserve_ms=250,
+    )
+
+    # Must be returned in failures! Swallowed cancellation does NOT count as a success
+    assert len(failures) == 1
+    assert failures[0]["itemIdentifier"] == "msg-swallow-cancel"
+
+
+# =============================================================================
+# 9. Blocked budget reconciliation bounded and preserved for recovery sweep
+# =============================================================================
+@pytest.mark.asyncio
+async def test_blocked_reconciliation_times_out_and_preserves_budget_as_uncertain(
+    session_factory: Any,
+) -> None:
+    """Verifies that when database reconciliation blocks during cancellation cleanup:
+
+    1. _safe_reconcile_budget times out cleanly without hanging the process past the deadline.
+    2. The message is reported as a failure in batchItemFailures.
+    3. The active reservation is left intact in executions.budget and safely recovered to
+       ABANDONED_UNCERTAIN by TaskRecoveryService after lease expiry.
+    """
+    initial_budget = {
+        "remaining_tool_calls": 3,
+        "remaining_cost_minor": 300,
+        "currency": "INR",
+        "reserved_tool_calls": 0,
+        "reserved_cost_minor": 0,
+        "spent_tool_calls": 0,
+        "spent_cost_minor": 0,
+        "uncertain_tool_calls": 0,
+        "uncertain_cost_minor": 0,
+        "reservations": {},
+    }
+    eid, tid = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["blocked recon query"], "budget": {"remaining_cost_minor": 300}},
+        initial_budget=initial_budget,
+    )
+    rec = build_sqs_message(
+        message_id="msg-blocked-recon",
+        execution_id=eid,
+        task_id=tid,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["blocked recon query"], "budget": {"remaining_cost_minor": 300}},
+    )
+
+    # Context: 800ms total, reserve 300ms => usable time is 500ms
+    ctx = SimulatedLambdaContext(total_duration_ms=800)
+
+    class HangingAdapterWithBlockedReconciliation:
+        async def search(self, query: str, limit: int = 5, extra_params: Any = None) -> list[RawObservation]:
+            await asyncio.sleep(5.0)
+            return []
+
+    # Monkeypatch reconcile_budget on EvidenceCollectorService to simulate database hang
+    from functions.evidence_collector.service import EvidenceCollectorService
+    original_reconcile = EvidenceCollectorService.reconcile_budget
+
+    async def _blocked_reconcile(self: Any, *args: Any, **kwargs: Any) -> bool:
+        # Simulate PostgreSQL hang or blocked row lock wait
+        await asyncio.sleep(10.0)
+        return False
+
+    EvidenceCollectorService.reconcile_budget = _blocked_reconcile  # type: ignore[assignment]
+
+    try:
+        t0 = time.monotonic()
+        failures = await evidence_process_batch(
+            {"Records": [rec]},
+            context=ctx,
+            session_factory=session_factory,
+            adapter=HangingAdapterWithBlockedReconciliation(),
+            extraction_adapter=FixtureWebExtractionAdapter(),
+            reserve_ms=300,
+        )
+        elapsed = time.monotonic() - t0
+
+        # Bounded execution: must return before simulated 800ms invocation deadline!
+        assert elapsed < 0.78, f"Execution took {elapsed:.2f}s, did not respect deadline reserve"
+        assert len(failures) == 1
+        assert failures[0]["itemIdentifier"] == "msg-blocked-recon"
+    finally:
+        EvidenceCollectorService.reconcile_budget = original_reconcile  # type: ignore[assignment]
+
+    # Verify database state: reservation is preserved as ACTIVE because local reconciliation timed out
+    async with session_factory() as session:
+        exec_row = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == eid))
+        ).scalar_one()
+        b = exec_row.budget
+        assert b["reserved_cost_minor"] == 50
+        reservations = b.get("reservations", {})
+        assert len(reservations) == 1
+        res_entry = list(reservations.values())[0]
+        assert res_entry["status"] == "ACTIVE"
+
+        # Now simulate worker lease expiration and run background recovery sweep
+        t_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid))).scalar_one()
+        t_row.lease_expiry = datetime.now(UTC) - timedelta(seconds=10)
+        await session.commit()
+
+    # Run recovery sweep on the abandoned reservation
+    from functions.orchestrator.execution.recovery import TaskRecoveryService
+    recovery_service = TaskRecoveryService(session_factory)
+    recovered_items = await recovery_service.recover_abandoned_budget_reservations(eid, task_id=tid)
+
+    assert len(recovered_items) == 1
+    assert recovered_items[0]["status"] == "ABANDONED_UNCERTAIN"
+
+    # Inspect execution and verify fail closed conservative cost accounting
+    async with session_factory() as session:
+        exec_row = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == eid))
+        ).scalar_one()
+        b_after = exec_row.budget
+        assert b_after["reserved_cost_minor"] == 0
+        assert b_after["spent_cost_minor"] == 50
+        assert b_after["uncertain_cost_minor"] == 50
+        assert b_after["remaining_cost_minor"] == 250
+

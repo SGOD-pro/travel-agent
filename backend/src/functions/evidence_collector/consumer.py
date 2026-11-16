@@ -26,6 +26,8 @@ from functions.orchestrator.execution.fencing import (
 logger = logging.getLogger(__name__)
 
 DEFAULT_INVOCATION_RESERVE_MS: int = 3000
+DEFAULT_CLEANUP_TIMEOUT_SECONDS: float = 1.5
+SQS_RESPONSE_SAFETY_MARGIN_MS: int = 800
 
 
 def get_remaining_usable_seconds(context: Any, reserve_ms: int) -> float | None:
@@ -122,6 +124,8 @@ async def process_batch(
         else None
     )
 
+    safety_margin_ms = max(50, min(SQS_RESPONSE_SAFETY_MARGIN_MS, int(reserve_ms * 0.25)))
+
     async def _process_one(record: dict[str, Any]) -> dict[str, str] | None:
         message_id = record.get("messageId", "")
 
@@ -135,52 +139,144 @@ async def process_batch(
                 )
                 return {"itemIdentifier": message_id} if message_id else None
 
+            coro = process_record(
+                record,
+                session_factory,
+                adapter=adapter,
+                extraction_adapter=extraction_adapter,
+            )
+
+            if usable_seconds is None:
+                try:
+                    await coro
+                    return None
+                except Exception as e:
+                    logger.exception("Error processing evidence record %s: %s", message_id, e)
+                    return {"itemIdentifier": message_id} if message_id else None
+
+            task = asyncio.create_task(coro)
+            timed_out = False
+
             try:
-                if usable_seconds is not None:
-                    await asyncio.wait_for(
-                        process_record(
-                            record,
-                            session_factory,
-                            adapter=adapter,
-                            extraction_adapter=extraction_adapter,
-                        ),
-                        timeout=usable_seconds,
-                    )
-                else:
-                    await process_record(
-                        record,
-                        session_factory,
-                        adapter=adapter,
-                        extraction_adapter=extraction_adapter,
-                    )
-                return None
-            except (TimeoutError, asyncio.CancelledError):
+                await asyncio.wait_for(asyncio.shield(task), timeout=usable_seconds)
+            except TimeoutError:
+                timed_out = True
                 logger.warning(
-                    "Evidence record %s exceeded invocation deadline or was cancelled; failing for SQS redrive",
+                    "Evidence record %s exceeded usable invocation window of %.2fs; initiating cancellation",
                     message_id,
+                    usable_seconds,
                 )
-                return {"itemIdentifier": message_id} if message_id else None
+            except asyncio.CancelledError:
+                timed_out = True
+                task.cancel()
+                raise
             except Exception as e:
-                logger.exception("Error processing evidence record %s: %s", message_id, e)
+                logger.exception("Error during execution of evidence record %s: %s", message_id, e)
                 return {"itemIdentifier": message_id} if message_id else None
+
+            if timed_out:
+                task.cancel()
+                if context and hasattr(context, "get_remaining_time_in_millis"):
+                    try:
+                        rem_ms = int(context.get_remaining_time_in_millis())
+                    except Exception:
+                        rem_ms = reserve_ms
+                    cleanup_margin_ms = safety_margin_ms + max(25, int(safety_margin_ms * 0.5))
+                    available_cleanup_s = max(0.02, (rem_ms - cleanup_margin_ms) / 1000.0)
+                    cleanup_sec = min(DEFAULT_CLEANUP_TIMEOUT_SECONDS, available_cleanup_s)
+                else:
+                    cleanup_sec = DEFAULT_CLEANUP_TIMEOUT_SECONDS
+
+                try:
+                    await asyncio.wait_for(task, timeout=cleanup_sec)
+                except (TimeoutError, asyncio.CancelledError):
+                    logger.warning(
+                        "Evidence record %s cleanup exceeded bounded window of %.2fs; abandoning task to protect invocation deadline",
+                        message_id,
+                        cleanup_sec,
+                    )
+                except Exception as cleanup_err:
+                    logger.warning(
+                        "Evidence record %s cleanup encountered exception: %s",
+                        message_id,
+                        cleanup_err,
+                    )
+
+                return {"itemIdentifier": message_id} if message_id else None
+
+            if task.done() and not task.cancelled():
+                task_exc = task.exception()
+                if task_exc is not None:
+                    if isinstance(
+                        task_exc,
+                        (
+                            TaskClaimConflictError,
+                            TaskLeaseActiveError,
+                            TaskAlreadyTerminalError,
+                            StaleQueueMessageError,
+                        ),
+                    ):
+                        logger.info("Safely discarding task dispatch for %s: %s", message_id, task_exc)
+                        return None
+                    logger.exception("Error processing evidence record %s: %s", message_id, task_exc)
+                    return {"itemIdentifier": message_id} if message_id else None
+
+            return None
 
         if sem is not None:
             async with sem:
                 return await _exec()
         return await _exec()
 
-    results = await asyncio.gather(
-        *[_process_one(r) for r in records],
-        return_exceptions=True,
-    )
+    if context and hasattr(context, "get_remaining_time_in_millis"):
+        try:
+            total_rem_ms = int(context.get_remaining_time_in_millis())
+            available_batch_ms = total_rem_ms - safety_margin_ms
+            batch_hard_timeout_s = (
+                max(0.05, available_batch_ms / 1000.0) if available_batch_ms > 0 else 0.05
+            )
+        except Exception:
+            batch_hard_timeout_s = None
+    else:
+        batch_hard_timeout_s = None
 
     failures: list[dict[str, str]] = []
-    for i, res in enumerate(results):
-        if isinstance(res, dict) and "itemIdentifier" in res:
-            failures.append(res)
-        elif isinstance(res, Exception):
+    record_tasks = [asyncio.create_task(_process_one(r)) for r in records]
+
+    try:
+        if batch_hard_timeout_s is not None:
+            results = await asyncio.wait_for(
+                asyncio.gather(*record_tasks, return_exceptions=True),
+                timeout=batch_hard_timeout_s,
+            )
+        else:
+            results = await asyncio.gather(*record_tasks, return_exceptions=True)
+    except (TimeoutError, asyncio.CancelledError):
+        logger.warning(
+            "Batch execution reached invocation hard deadline guard (safety margin %dms); returning partial batch failures immediately",
+            safety_margin_ms,
+        )
+        for t in record_tasks:
+            if not t.done():
+                t.cancel()
+        for i, t in enumerate(record_tasks):
             mid = records[i].get("messageId", "")
-            logger.exception("Unexpected exception in evidence record %s: %s", mid, res)
+            if not mid:
+                continue
+            if t.done() and not t.cancelled() and t.exception() is None:
+                task_res = t.result()
+                if isinstance(task_res, dict) and "itemIdentifier" in task_res:
+                    failures.append(task_res)
+            else:
+                failures.append({"itemIdentifier": mid})
+        return failures
+
+    for i, item in enumerate(results):
+        if isinstance(item, dict) and "itemIdentifier" in item:
+            failures.append(item)
+        elif isinstance(item, BaseException):
+            mid = records[i].get("messageId", "")
+            logger.exception("Unexpected exception in evidence record %s: %s", mid, item)
             if mid:
                 failures.append({"itemIdentifier": mid})
 

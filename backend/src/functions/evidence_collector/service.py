@@ -229,21 +229,32 @@ class EvidenceCollectorService:
         lease_token: uuid.UUID | None = None,
         dispatched: bool = True,
         outcome: str | None = None,
+        timeout_seconds: float = 1.5,
     ) -> None:
-        """Reconciles budget safely in finally blocks without suppressing caller exceptions."""
+        """Reconciles budget safely in finally blocks with bounded timeout."""
         try:
-            await asyncio.shield(
-                self.reconcile_budget(
-                    execution_id,
-                    cost_minor,
-                    success=success,
-                    reservation_id=reservation_id,
-                    task_id=task_id,
-                    attempt=attempt,
-                    lease_token=lease_token,
-                    dispatched=dispatched,
-                    outcome=outcome,
-                )
+            await asyncio.wait_for(
+                asyncio.shield(
+                    self.reconcile_budget(
+                        execution_id,
+                        cost_minor,
+                        success=success,
+                        reservation_id=reservation_id,
+                        task_id=task_id,
+                        attempt=attempt,
+                        lease_token=lease_token,
+                        dispatched=dispatched,
+                        outcome=outcome,
+                    )
+                ),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            logger.warning(
+                "Budget reconciliation timed out after %.2fs for execution %s task %s; reservation preserved for recovery sweep",
+                timeout_seconds,
+                execution_id,
+                task_id,
             )
         except Exception as reconcile_err:
             logger.error(

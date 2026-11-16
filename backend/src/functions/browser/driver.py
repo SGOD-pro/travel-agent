@@ -673,19 +673,25 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                 for task in list(background_tasks):
                     if not task.done():
                         task.cancel()
-                await asyncio.gather(*background_tasks, return_exceptions=True)
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*background_tasks, return_exceptions=True),
+                        timeout=1.0,
+                    )
+                except Exception as exc:
+                    logger.debug("Error awaiting background tasks: %s", exc)
             if page is not None and hasattr(page, "is_closed") and not page.is_closed():
                 try:
-                    await page.close()
+                    await asyncio.wait_for(page.close(), timeout=1.0)
                 except Exception as exc:
                     logger.debug("Error closing page: %s", exc)
             if context is not None:
                 try:
-                    await context.close()
+                    await asyncio.wait_for(context.close(), timeout=1.0)
                 except Exception as exc:
                     logger.debug("Error closing context: %s", exc)
             if proxy_started_here and proxy is not None:
                 try:
-                    await proxy.stop()
+                    await asyncio.wait_for(proxy.stop(), timeout=1.0)
                 except Exception as exc:
                     logger.debug("Error stopping egress proxy: %s", exc)
