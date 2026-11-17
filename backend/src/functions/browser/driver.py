@@ -214,13 +214,20 @@ def get_descendant_pids(root_pid: int) -> list[int]:
                 except Exception:
                     continue
     else:
-        try:
-            out = subprocess.check_output(["pgrep", "-P", str(root_pid)], stderr=subprocess.DEVNULL)
-            for line in out.decode().splitlines():
-                if line.strip().isdigit():
-                    children_map.setdefault(root_pid, []).append(int(line.strip()))
-        except Exception:
-            pass
+        fallback_descendants: list[int] = []
+        fallback_queue = [root_pid]
+        while fallback_queue:
+            curr = fallback_queue.pop(0)
+            try:
+                out = subprocess.check_output(["pgrep", "-P", str(curr)], stderr=subprocess.DEVNULL)
+                for line in out.decode().splitlines():
+                    if line.strip().isdigit():
+                        child = int(line.strip())
+                        fallback_descendants.append(child)
+                        fallback_queue.append(child)
+            except Exception:
+                pass
+        return fallback_descendants
 
     descendants: list[int] = []
     queue = [root_pid]
@@ -267,7 +274,6 @@ def force_kill_process_tree(root_pid: int) -> None:
 
     # Allow kernel brief interval to deschedule and reap terminated processes
     for _ in range(10):
-        time.sleep(0.02)
         for pid in all_pids:
             try:
                 os.waitpid(pid, os.WNOHANG)
@@ -275,6 +281,7 @@ def force_kill_process_tree(root_pid: int) -> None:
                 pass
         if not any(is_pid_alive(p) for p in all_pids):
             break
+        time.sleep(0.02)
 
 
 def terminate_all_browser_processes() -> None:
