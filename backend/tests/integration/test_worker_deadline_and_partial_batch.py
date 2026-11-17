@@ -1981,3 +1981,502 @@ class TestAdapter(PlaywrightBrowserAdapter):
         t2_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid2))).scalar_one()
         assert t2_row.status == "COMPLETED"
 
+
+@pytest.mark.asyncio
+async def test_browser_lambda_handler_production_dns_saturation_recovery_across_invocations(
+    session_factory: Any,
+) -> None:
+    """Reproduces and verifies production browser DNS saturation recovery across warm Lambda invocations.
+
+    Uses the real browser lambda_handler, real PlaywrightBrowserAdapter (no custom process cleanup override),
+    real dnspython async UDP resolution against a controlled local UDP DNS server, and real PostgreSQL:
+    - Invocation 1 stalls two real DNS lookups (stalled-1 and stalled-2) until their DNS timeouts fire.
+    - Invocation 2 runs in the same process with the same max_workers=2 container executor and executes
+      a healthy lookup (healthy.example.test) through PlaywrightBrowserAdapter, RouteSecurityInterceptor,
+      and SecureEgressProxy, completing cleanly well within its deadline with zero container executor threads leaked.
+    """
+    eid1, tid1 = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://stalled-1.example.test/page",
+            "canonical_url": "https://stalled-1.example.test/page",
+            "category": "lodging",
+            "reason": "DNS_SATURATION_TEST",
+        },
+    )
+    eid2, tid2 = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://stalled-2.example.test/page",
+            "canonical_url": "https://stalled-2.example.test/page",
+            "category": "lodging",
+            "reason": "DNS_SATURATION_TEST",
+        },
+    )
+    eid3, tid3 = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://healthy.example.test/resort",
+            "canonical_url": "https://healthy.example.test/resort",
+            "category": "lodging",
+            "reason": "DNS_SATURATION_TEST",
+        },
+    )
+    msg1 = build_sqs_message(
+        message_id="msg-dns-stalled-1",
+        execution_id=eid1,
+        task_id=tid1,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://stalled-1.example.test/page",
+            "canonical_url": "https://stalled-1.example.test/page",
+            "category": "lodging",
+            "reason": "DNS_SATURATION_TEST",
+        },
+    )
+    msg2 = build_sqs_message(
+        message_id="msg-dns-stalled-2",
+        execution_id=eid2,
+        task_id=tid2,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://stalled-2.example.test/page",
+            "canonical_url": "https://stalled-2.example.test/page",
+            "category": "lodging",
+            "reason": "DNS_SATURATION_TEST",
+        },
+    )
+    msg3 = build_sqs_message(
+        message_id="msg-dns-healthy-3",
+        execution_id=eid3,
+        task_id=tid3,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://healthy.example.test/resort",
+            "canonical_url": "https://healthy.example.test/resort",
+            "category": "lodging",
+            "reason": "DNS_SATURATION_TEST",
+        },
+    )
+
+    adapter_code = """
+from unittest.mock import AsyncMock, MagicMock
+import dns.message
+import dns.rcode
+import dns.rdataclass
+import dns.rdatatype
+import dns.rrset
+from functions.browser.consumer import get_container_executor
+from functions.browser.driver import PlaywrightBrowserAdapter
+
+class _SubprocessDNSProtocol(asyncio.DatagramProtocol):
+    def __init__(self) -> None:
+        self.transport = None
+        self.queries = []
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr) -> None:
+        req = dns.message.from_wire(data)
+        q = req.question[0]
+        qname = q.name.to_text().rstrip(".").lower()
+        rdtype = dns.rdatatype.to_text(q.rdtype)
+        self.queries.append((qname, rdtype))
+        if qname.startswith("stalled"):
+            return  # Blackhole: never reply
+        resp = dns.message.make_response(req)
+        if qname == "healthy.example.test":
+            if q.rdtype == dns.rdatatype.A:
+                resp.answer.append(
+                    dns.rrset.from_text(q.name, 60, dns.rdataclass.IN, dns.rdatatype.A, "93.184.216.34")
+                )
+        else:
+            resp.set_rcode(dns.rcode.NXDOMAIN)
+        self.transport.sendto(resp.to_wire(), addr)
+
+_DNS_READY = threading.Event()
+_DNS_PORT = {"port": 0}
+_DNS_QUERIES = []
+
+def _run_local_dns():
+    srv_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(srv_loop)
+    proto = _SubprocessDNSProtocol()
+    transport, _ = srv_loop.run_until_complete(
+        srv_loop.create_datagram_endpoint(lambda: proto, local_addr=("127.0.0.1", 0))
+    )
+    _DNS_PORT["port"] = transport.get_extra_info("sockname")[1]
+    _DNS_READY.set()
+    # Keep daemon DNS server alive until process exits cleanly via sys.exit(0)
+    srv_loop.run_forever()
+
+_DNS_THREAD = threading.Thread(target=_run_local_dns, daemon=True)
+_DNS_THREAD.start()
+assert _DNS_READY.wait(timeout=2.0)
+
+def _build_mock_browser():
+    mock_browser = MagicMock()
+    mock_context = MagicMock()
+    mock_page = MagicMock()
+    registered_handler = {}
+
+    async def _capture_route(pattern, handler):
+        registered_handler["fn"] = handler
+
+    async def _goto(url, timeout=None, wait_until=None):
+        # Invoke the real registered RouteSecurityInterceptor in flight during navigation
+        if "fn" in registered_handler:
+            fake_route = MagicMock()
+            fake_route.request = MagicMock(url=url, resource_type="document", headers={})
+            fake_route.abort = AsyncMock()
+            fake_route.continue_ = AsyncMock()
+            await registered_handler["fn"](fake_route)
+            assert fake_route.continue_.await_count == 1
+        return MagicMock(status=200)
+
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+    mock_context.route = AsyncMock(side_effect=_capture_route)
+    mock_context.add_init_script = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_context.close = AsyncMock()
+    mock_page.close = AsyncMock()
+    mock_page.url = "https://healthy.example.test/resort"
+    mock_page.goto = AsyncMock(side_effect=_goto)
+    mock_body = MagicMock()
+    mock_body.inner_text = AsyncMock(return_value="Healthy Resort INR 5000")
+    mock_page.title = AsyncMock(return_value="Healthy Resort")
+    mock_page.query_selector = AsyncMock(return_value=mock_body)
+    mock_page.content = AsyncMock(
+        return_value="<html><body><div class='hotel-card'>Healthy Resort INR 5000</div></body></html>"
+    )
+    return mock_browser
+
+class TestAdapter(PlaywrightBrowserAdapter):
+    def __init__(self, invoc_num: int) -> None:
+        super().__init__(
+            browser=_build_mock_browser(),
+            dns_timeout=0.25,
+            dns_nameservers=["127.0.0.1"],
+            dns_port=_DNS_PORT["port"],
+        )
+        self.invoc_num = invoc_num
+
+    def check_post_invocation(self):
+        exec_pool = get_container_executor()
+        return {
+            "executor_id": id(exec_pool),
+            "executor_thread_count": len(getattr(exec_pool, "_threads", ())),
+            "executor_max_workers": getattr(exec_pool, "_max_workers", None),
+        }
+"""
+
+    out = run_two_successive_invocations_in_subprocess(
+        worker_type="browser",
+        event1={"Records": [msg1, msg2]},
+        event2={"Records": [msg3]},
+        duration_ms1=4000,
+        duration_ms2=3000,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=10.0,
+    )
+
+    # Invocation 1: both stalled DNS lookups timed out cleanly via underlying dnspython deadlines
+    assert out["res1"] == {"batchItemFailures": []}
+    assert out["elapsed1"] < 2.0, f"Invocation 1 took {out['elapsed1']:.2f}s"
+
+    # Invocation 2: healthy lookup executed immediately in same process with SAME unchanged container executor
+    assert out["res2"] == {"batchItemFailures": []}
+    assert out["elapsed2"] < 1.0, f"Invocation 2 took {out['elapsed2']:.2f}s"
+
+    # Verify container executor was neither replaced nor expanded, and ZERO executor threads were consumed by DNS
+    assert out["post_invoc1"]["executor_id"] == out["post_invoc2"]["executor_id"]
+    assert out["post_invoc2"]["executor_max_workers"] == 2
+    assert out["post_invoc1"]["executor_thread_count"] == 0
+    assert out["post_invoc2"]["executor_thread_count"] == 0
+
+    # Database verification: stalled tasks recorded TIMED_OUT cleanly, healthy task COMPLETED with SUCCESS
+    async with session_factory() as session:
+        t1_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid1))).scalar_one()
+        t2_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid2))).scalar_one()
+        t3_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid3))).scalar_one()
+        assert t1_row.status == "COMPLETED" and t1_row.result_id is not None
+        assert t2_row.status == "COMPLETED" and t2_row.result_id is not None
+        assert t3_row.status == "COMPLETED" and t3_row.result_id is not None
+        r1_row = (
+            await session.execute(select(WorkerResultModel).where(WorkerResultModel.id == t1_row.result_id))
+        ).scalar_one()
+        r2_row = (
+            await session.execute(select(WorkerResultModel).where(WorkerResultModel.id == t2_row.result_id))
+        ).scalar_one()
+        r3_row = (
+            await session.execute(select(WorkerResultModel).where(WorkerResultModel.id == t3_row.result_id))
+        ).scalar_one()
+        assert r1_row.output_ref is not None
+        assert r1_row.output_ref["status"] == "TIMED_OUT"
+        assert (
+            "Pre navigation DNS resolution timed out"
+            in r1_row.output_ref["unavailable_sources"][0]["reason"]
+        )
+        assert r2_row.output_ref is not None
+        assert r2_row.output_ref["status"] == "TIMED_OUT"
+        assert (
+            "Pre navigation DNS resolution timed out"
+            in r2_row.output_ref["unavailable_sources"][0]["reason"]
+        )
+        assert r3_row.output_ref is not None
+        assert r3_row.output_ref["status"] == "SUCCESS"
+        assert r3_row.output_ref["observation_id"] is not None
+
+
+@pytest.mark.asyncio
+async def test_browser_lambda_handler_invocation_deadline_cancels_stalled_production_dns_and_recovers(
+    session_factory: Any,
+) -> None:
+    """Verifies invocation deadline cancels stalled production DNS, returns batchItemFailures, and recovers.
+
+    When dns_timeout exceeds remaining invocation usable time:
+    - Invocation 1 receives a fast-completed record plus two stalled DNS records, cancels the stalled
+      production dnspython lookup at the invocation deadline, preserves the completed sibling, and
+      returns only unfinished message IDs in batchItemFailures.
+    - Invocation 2 runs in the same process with the unchanged max_workers=2 container executor and
+      completes a healthy production DNS lookup well within its deadline with zero executor threads leaked.
+    """
+    eid_fast, tid_fast = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://healthy.example.test/sibling",
+            "canonical_url": "https://healthy.example.test/sibling",
+            "category": "lodging",
+            "reason": "DNS_DEADLINE_TEST",
+        },
+    )
+    eid_stall1, tid_stall1 = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://stalled-1.example.test/hang",
+            "canonical_url": "https://stalled-1.example.test/hang",
+            "category": "lodging",
+            "reason": "DNS_DEADLINE_TEST",
+        },
+    )
+    eid_stall2, tid_stall2 = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://stalled-2.example.test/hang",
+            "canonical_url": "https://stalled-2.example.test/hang",
+            "category": "lodging",
+            "reason": "DNS_DEADLINE_TEST",
+        },
+    )
+    eid_next, tid_next = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://healthy.example.test/next-invoc",
+            "canonical_url": "https://healthy.example.test/next-invoc",
+            "category": "lodging",
+            "reason": "DNS_DEADLINE_TEST",
+        },
+    )
+
+    msg_fast = build_sqs_message(
+        message_id="msg-dns-sibling-fast",
+        execution_id=eid_fast,
+        task_id=tid_fast,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://healthy.example.test/sibling",
+            "canonical_url": "https://healthy.example.test/sibling",
+            "category": "lodging",
+            "reason": "DNS_DEADLINE_TEST",
+        },
+    )
+    msg_stall1 = build_sqs_message(
+        message_id="msg-dns-hang-1",
+        execution_id=eid_stall1,
+        task_id=tid_stall1,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://stalled-1.example.test/hang",
+            "canonical_url": "https://stalled-1.example.test/hang",
+            "category": "lodging",
+            "reason": "DNS_DEADLINE_TEST",
+        },
+    )
+    msg_stall2 = build_sqs_message(
+        message_id="msg-dns-hang-2",
+        execution_id=eid_stall2,
+        task_id=tid_stall2,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://stalled-2.example.test/hang",
+            "canonical_url": "https://stalled-2.example.test/hang",
+            "category": "lodging",
+            "reason": "DNS_DEADLINE_TEST",
+        },
+    )
+    msg_next = build_sqs_message(
+        message_id="msg-dns-next-healthy",
+        execution_id=eid_next,
+        task_id=tid_next,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "https://healthy.example.test/next-invoc",
+            "canonical_url": "https://healthy.example.test/next-invoc",
+            "category": "lodging",
+            "reason": "DNS_DEADLINE_TEST",
+        },
+    )
+
+    adapter_code = """
+from unittest.mock import AsyncMock, MagicMock
+import dns.message
+import dns.rcode
+import dns.rdataclass
+import dns.rdatatype
+import dns.rrset
+from functions.browser.consumer import get_container_executor
+from functions.browser.driver import PlaywrightBrowserAdapter
+
+class _SubprocessDNSProtocol(asyncio.DatagramProtocol):
+    def __init__(self) -> None:
+        self.transport = None
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr) -> None:
+        req = dns.message.from_wire(data)
+        q = req.question[0]
+        qname = q.name.to_text().rstrip(".").lower()
+        if qname.startswith("stalled"):
+            return
+        resp = dns.message.make_response(req)
+        if qname == "healthy.example.test":
+            if q.rdtype == dns.rdatatype.A:
+                resp.answer.append(
+                    dns.rrset.from_text(q.name, 60, dns.rdataclass.IN, dns.rdatatype.A, "93.184.216.34")
+                )
+        else:
+            resp.set_rcode(dns.rcode.NXDOMAIN)
+        self.transport.sendto(resp.to_wire(), addr)
+
+_DNS_READY = threading.Event()
+_DNS_PORT = {"port": 0}
+
+def _run_local_dns():
+    srv_loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(srv_loop)
+    transport, _ = srv_loop.run_until_complete(
+        srv_loop.create_datagram_endpoint(_SubprocessDNSProtocol, local_addr=("127.0.0.1", 0))
+    )
+    _DNS_PORT["port"] = transport.get_extra_info("sockname")[1]
+    _DNS_READY.set()
+    srv_loop.run_forever()
+
+_DNS_THREAD = threading.Thread(target=_run_local_dns, daemon=True)
+_DNS_THREAD.start()
+assert _DNS_READY.wait(timeout=2.0)
+
+def _build_mock_browser():
+    mock_browser = MagicMock()
+    mock_context = MagicMock()
+    mock_page = MagicMock()
+    mock_body = MagicMock()
+    mock_body.inner_text = AsyncMock(return_value="Healthy Resort INR 5000")
+    mock_browser.new_context = AsyncMock(return_value=mock_context)
+    mock_context.route = AsyncMock()
+    mock_context.add_init_script = AsyncMock()
+    mock_context.new_page = AsyncMock(return_value=mock_page)
+    mock_context.close = AsyncMock()
+    mock_page.close = AsyncMock()
+    mock_page.url = "https://healthy.example.test/ok"
+    mock_page.goto = AsyncMock(return_value=MagicMock(status=200))
+    mock_page.title = AsyncMock(return_value="Healthy Resort")
+    mock_page.query_selector = AsyncMock(return_value=mock_body)
+    mock_page.content = AsyncMock(
+        return_value="<html><body><div class='hotel-card'>Healthy Resort INR 5000</div></body></html>"
+    )
+    return mock_browser
+
+class TestAdapter(PlaywrightBrowserAdapter):
+    def __init__(self, invoc_num: int) -> None:
+        super().__init__(
+            browser=_build_mock_browser(),
+            dns_timeout=5.0,
+            dns_nameservers=["127.0.0.1"],
+            dns_port=_DNS_PORT["port"],
+        )
+        self.invoc_num = invoc_num
+
+    def check_post_invocation(self):
+        exec_pool = get_container_executor()
+        return {
+            "executor_id": id(exec_pool),
+            "executor_thread_count": len(getattr(exec_pool, "_threads", ())),
+            "executor_max_workers": getattr(exec_pool, "_max_workers", None),
+        }
+"""
+
+    out = run_two_successive_invocations_in_subprocess(
+        worker_type="browser",
+        event1={"Records": [msg_fast, msg_stall1, msg_stall2]},
+        event2={"Records": [msg_next]},
+        duration_ms1=2500,
+        duration_ms2=2500,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=10.0,
+    )
+
+    # Invocation 1 preserved fast sibling and returned only stalled/unstarted message IDs for SQS retry
+    assert out["elapsed1"] < 2.48, f"Invocation 1 took {out['elapsed1']:.2f}s"
+    assert out["res1"] == {
+        "batchItemFailures": [
+            {"itemIdentifier": "msg-dns-hang-1"},
+            {"itemIdentifier": "msg-dns-hang-2"},
+        ]
+    }
+
+    # Invocation 2 succeeded immediately on the exact same container executor with zero DNS threads
+    assert out["res2"] == {"batchItemFailures": []}
+    assert out["elapsed2"] < 1.0, f"Invocation 2 took {out['elapsed2']:.2f}s"
+    assert out["post_invoc1"]["executor_id"] == out["post_invoc2"]["executor_id"]
+    assert out["post_invoc2"]["executor_max_workers"] == 2
+    assert out["post_invoc1"]["executor_thread_count"] == 0
+    assert out["post_invoc2"]["executor_thread_count"] == 0
+
+    async with session_factory() as session:
+        t_fast = (await session.execute(select(TaskModel).where(TaskModel.id == tid_fast))).scalar_one()
+        t_s1 = (await session.execute(select(TaskModel).where(TaskModel.id == tid_stall1))).scalar_one()
+        t_s2 = (await session.execute(select(TaskModel).where(TaskModel.id == tid_stall2))).scalar_one()
+        t_next = (await session.execute(select(TaskModel).where(TaskModel.id == tid_next))).scalar_one()
+        assert t_fast.status == "COMPLETED"
+        assert t_s1.status != "COMPLETED"
+        assert t_s2.status != "COMPLETED"
+        assert t_next.status == "COMPLETED"
+
+
+

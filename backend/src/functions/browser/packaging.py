@@ -285,6 +285,12 @@ def build_isolated_browser_artifact(
         if tool_dir.exists():
             shutil.rmtree(tool_dir, ignore_errors=True)
 
+    # Clean out non runtime test suites and C compile headers from third party wheels
+    for non_runtime_rel in [("sqlalchemy", "testing"), ("lxml", "includes")]:
+        non_runtime_dir = output_dir.joinpath(*non_runtime_rel)
+        if non_runtime_dir.exists():
+            shutil.rmtree(non_runtime_dir, ignore_errors=True)
+
     # Exclude boto3 and botocore if present since they are provided by the Lambda runtime
     for preinstalled in ["boto3", "botocore", "s3transfer", "urllib3"]:
         target_pre = output_dir / preinstalled

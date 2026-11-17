@@ -14,10 +14,16 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
+import threading
+import time
 from collections.abc import Callable
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import dns.message
+import dns.rdataclass
+import dns.rdatatype
+import dns.rrset
 import pytest
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
@@ -27,6 +33,7 @@ from contracts.browser import (
     BrowserTaskPayload,
     BrowserWaitUntil,
 )
+from functions.browser.consumer import get_container_executor
 from functions.browser.driver import PlaywrightBrowserAdapter
 from functions.browser.network import (
     BrowserSecurityError,
@@ -34,6 +41,7 @@ from functions.browser.network import (
     SecureEgressProxy,
     is_ip_allowed,
     resolve_and_validate_host,
+    resolve_and_validate_host_async,
     validate_navigation_url,
 )
 
@@ -306,8 +314,8 @@ class TestRouteSecurityInterceptor:
         assert "restricted IP 169.254.169.254" in interceptor.blocked_requests[0]["reason"]
 
     @pytest.mark.asyncio
-    async def test_route_interceptor_offloads_dns_resolution_via_asyncio_to_thread(self) -> None:
-        """Verifies RouteSecurityInterceptor uses asyncio.to_thread for non blocking DNS calls."""
+    async def test_route_interceptor_resolves_dns_without_container_thread_pool(self) -> None:
+        """Verifies RouteSecurityInterceptor resolves DNS asynchronously without using asyncio.to_thread."""
         interceptor = RouteSecurityInterceptor(
             dns_resolver=_mock_dns_resolver_for_ips("93.184.216.34")
         )
@@ -322,10 +330,11 @@ class TestRouteSecurityInterceptor:
         route.continue_ = AsyncMock()
 
         with patch(
-            "functions.browser.network.asyncio.to_thread", wraps=asyncio.to_thread
+            "functions.browser.network.asyncio.to_thread",
+            side_effect=AssertionError("DNS resolution must not consume container executor threads"),
         ) as mock_to_thread:
             await interceptor(route)
-            mock_to_thread.assert_awaited_once()
+            mock_to_thread.assert_not_called()
 
         route.continue_.assert_awaited_once()
         route.abort.assert_not_awaited()
@@ -805,3 +814,369 @@ class TestSecureEgressProxy:
             await proxy.stop()
             target_server.close()
             await target_server.wait_closed()
+
+
+class _ControlledDNSProtocol(asyncio.DatagramProtocol):
+    """Local wire-protocol UDP DNS server for controlled stall and recovery testing."""
+
+    def __init__(
+        self,
+        records: dict[str, dict[str, list[str]]],
+        stalled_hosts: set[str],
+    ) -> None:
+        self.records = records
+        self.stalled_hosts = stalled_hosts
+        self.transport: asyncio.DatagramTransport | None = None
+        self.received_queries: list[tuple[str, str]] = []
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        assert isinstance(transport, asyncio.DatagramTransport)
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
+        req = dns.message.from_wire(data)
+        question = req.question[0]
+        qname = question.name.to_text().rstrip(".").lower()
+        rdtype_text = dns.rdatatype.to_text(question.rdtype)
+        self.received_queries.append((qname, rdtype_text))
+
+        if qname in self.stalled_hosts or qname.startswith("stalled"):
+            # Drop packet silently to simulate a stalled upstream DNS server
+            return
+
+        resp = dns.message.make_response(req)
+        host_records = self.records.get(qname)
+        if host_records is None:
+            resp.set_rcode(dns.rcode.NXDOMAIN)
+        else:
+            ips = host_records.get(rdtype_text, [])
+            if ips:
+                rrset = dns.rrset.from_text(
+                    question.name,
+                    60,
+                    dns.rdataclass.IN,
+                    question.rdtype,
+                    *ips,
+                )
+                resp.answer.append(rrset)
+        if self.transport is not None:
+            self.transport.sendto(resp.to_wire(), addr)
+
+
+class TestProductionBoundedAsyncDNS:
+    """Verifies production dnspython async DNS avoids thread pool saturation and preserves SSRF invariants."""
+
+    def test_production_dns_recovery_after_two_stalled_lookups_route_interceptor(self) -> None:
+        """Stalls two real UDP DNS lookups in Invocation 1, then proves Invocation 2 healthy lookup succeeds."""
+        records = {
+            "healthy.example.test": {"A": ["93.184.216.34"]},
+        }
+        stalled = {"stalled-1.example.test", "stalled-2.example.test"}
+
+        # Start a local UDP DNS server in a dedicated background thread loop so it stays up across
+        # Invocation 1 and Invocation 2 event loop lifecycles.
+        dns_ready = threading.Event()
+        dns_port_holder: dict[str, int] = {}
+        dns_stop = threading.Event()
+
+        def _run_dns_server() -> None:
+            srv_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(srv_loop)
+            transport, _ = srv_loop.run_until_complete(
+                srv_loop.create_datagram_endpoint(
+                    lambda: _ControlledDNSProtocol(records=records, stalled_hosts=stalled),
+                    local_addr=("127.0.0.1", 0),
+                )
+            )
+            dns_port_holder["port"] = transport.get_extra_info("sockname")[1]
+            dns_ready.set()
+            while not dns_stop.is_set():
+                srv_loop.run_until_complete(asyncio.sleep(0.02))
+            transport.close()
+            srv_loop.close()
+
+        dns_thread = threading.Thread(target=_run_dns_server, daemon=True)
+        dns_thread.start()
+        assert dns_ready.wait(timeout=2.0)
+        dns_port = dns_port_holder["port"]
+
+        def _make_route(url: str) -> MagicMock:
+            r = MagicMock()
+            r.request = MagicMock(url=url, resource_type="document", headers={})
+            r.abort = AsyncMock()
+            r.continue_ = AsyncMock()
+            return r
+
+        container_exec = get_container_executor(max_workers=2)
+        threads_before = threading.active_count()
+
+        try:
+            # Invocation 1: two stalled production DNS lookups time out on container_exec loop
+            loop1 = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop1)
+            loop1.set_default_executor(container_exec)
+            interceptor1 = RouteSecurityInterceptor(
+                dns_timeout=0.2,
+                dns_nameservers=["127.0.0.1"],
+                dns_port=dns_port,
+            )
+            r1 = _make_route("https://stalled-1.example.test/page")
+            r2 = _make_route("https://stalled-2.example.test/page")
+            t0 = time.monotonic()
+            loop1.run_until_complete(asyncio.gather(interceptor1(r1), interceptor1(r2)))
+            elapsed1 = time.monotonic() - t0
+            loop1._default_executor = None  # type: ignore[attr-defined]
+            loop1.close()
+
+            assert elapsed1 < 0.8
+            r1.abort.assert_awaited_once_with("blockedbyclient")
+            r2.abort.assert_awaited_once_with("blockedbyclient")
+            assert len(interceptor1.blocked_requests) == 2
+
+            # Invocation 2: same container_exec (not replaced, max_workers unchanged), healthy lookup succeeds fast
+            loop2 = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop2)
+            loop2.set_default_executor(container_exec)
+            interceptor2 = RouteSecurityInterceptor(
+                dns_timeout=0.5,
+                dns_nameservers=["127.0.0.1"],
+                dns_port=dns_port,
+            )
+            r_healthy = _make_route("https://healthy.example.test/resort")
+            t1 = time.monotonic()
+            loop2.run_until_complete(interceptor2(r_healthy))
+            elapsed2 = time.monotonic() - t1
+            loop2._default_executor = None  # type: ignore[attr-defined]
+            loop2.close()
+
+            assert elapsed2 < 0.25, f"Healthy lookup took too long ({elapsed2:.2f}s)"
+            r_healthy.continue_.assert_awaited_once()
+            r_healthy.abort.assert_not_awaited()
+            assert len(interceptor2.blocked_requests) == 0
+            # Production DNS did not spawn any new executor threads
+            assert threading.active_count() == threads_before
+        finally:
+            dns_stop.set()
+            dns_thread.join(timeout=2.0)
+
+    @pytest.mark.asyncio
+    async def test_production_dns_recovery_and_validated_ip_binding_secure_egress_proxy(
+        self,
+    ) -> None:
+        """Proves SecureEgressProxy recovers after two stalled DNS lookups and binds to validated IP."""
+        received_requests: list[str] = []
+
+        async def handle_target(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+            line = await r.readline()
+            received_requests.append(line.decode("latin1"))
+            w.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 7\r\n\r\nHEALTHY")
+            await w.drain()
+            w.close()
+            await w.wait_closed()
+
+        target_server = await asyncio.start_server(handle_target, "127.0.0.1", 0)
+        target_port = target_server.sockets[0].getsockname()[1]
+
+        loop = asyncio.get_running_loop()
+        dns_transport, _ = await loop.create_datagram_endpoint(
+            lambda: _ControlledDNSProtocol(
+                records={
+                    "healthy-local.example.test": {"A": ["127.0.0.1"]},
+                    "rebind-meta.example.test": {"A": ["169.254.169.254"]},
+                },
+                stalled_hosts={"stalled-1.example.test", "stalled-2.example.test"},
+            ),
+            local_addr=("127.0.0.1", 0),
+        )
+        dns_port = dns_transport.get_extra_info("sockname")[1]
+
+        proxy = SecureEgressProxy(
+            ip_validator=lambda ip: str(ip) != "169.254.169.254",
+            dns_timeout=0.2,
+            dns_nameservers=["127.0.0.1"],
+            dns_port=dns_port,
+        )
+        proxy_port = await proxy.start()
+
+        async def _send_proxy_get(host: str, port: int, path: str) -> bytes:
+            reader, writer = await asyncio.open_connection("127.0.0.1", proxy_port)
+            req = f"GET http://{host}:{port}{path} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n".encode(
+                "latin1"
+            )
+            writer.write(req)
+            await writer.drain()
+            resp = await reader.read(4096)
+            writer.close()
+            await writer.wait_closed()
+            return resp
+
+        try:
+            # 1. Stall two controlled DNS lookups concurrently through production SecureEgressProxy
+            resp1, resp2 = await asyncio.gather(
+                _send_proxy_get("stalled-1.example.test", target_port, "/slow1"),
+                _send_proxy_get("stalled-2.example.test", target_port, "/slow2"),
+            )
+            assert b"504 Gateway Timeout" in resp1
+            assert b"504 Gateway Timeout" in resp2
+
+            # 2. Healthy lookup executes immediately and binds to validated IP 127.0.0.1
+            t0 = time.monotonic()
+            resp_healthy = await _send_proxy_get("healthy-local.example.test", target_port, "/ok")
+            elapsed_healthy = time.monotonic() - t0
+            assert elapsed_healthy < 0.25
+            assert b"200 OK" in resp_healthy
+            assert b"HEALTHY" in resp_healthy
+            assert len(received_requests) == 1
+            assert "GET /ok HTTP/1.1" in received_requests[0]
+
+            # 3. SSRF restriction remains enforced (AWS metadata blocked with HTTP 403)
+            resp_meta = await _send_proxy_get("rebind-meta.example.test", 80, "/latest/meta-data/")
+            assert b"403 Forbidden" in resp_meta
+        finally:
+            await proxy.stop()
+            dns_transport.close()
+            target_server.close()
+            await target_server.wait_closed()
+
+    @pytest.mark.asyncio
+    async def test_production_dns_repeated_timeouts_redirect_ssrf_and_mixed_ipv6_rejection(
+        self,
+    ) -> None:
+        """Verifies repeated DNS timeouts do not leak threads and preserve redirect/SSRF/mixed-record checks."""
+        loop = asyncio.get_running_loop()
+        dns_transport, _ = await loop.create_datagram_endpoint(
+            lambda: _ControlledDNSProtocol(
+                records={
+                    "healthy.example.test": {"A": ["93.184.216.34"]},
+                    "rebind-meta.example.test": {"A": ["169.254.169.254"]},
+                    "mixed-v6.example.test": {
+                        "A": ["93.184.216.34"],
+                        "AAAA": ["fd00:ec2::254"],
+                    },
+                },
+                stalled_hosts={f"stalled-{i}.example.test" for i in range(6)},
+            ),
+            local_addr=("127.0.0.1", 0),
+        )
+        dns_port = dns_transport.get_extra_info("sockname")[1]
+
+        interceptor = RouteSecurityInterceptor(
+            dns_timeout=0.15,
+            dns_nameservers=["127.0.0.1"],
+            dns_port=dns_port,
+        )
+        threads_before = threading.active_count()
+
+        try:
+            # 6 repeated timed-out lookups in waves of 3
+            for wave in range(2):
+                routes = []
+                for idx in range(3):
+                    r = MagicMock()
+                    r.request = MagicMock(
+                        url=f"https://stalled-{wave * 3 + idx}.example.test/",
+                        resource_type="document",
+                        headers={},
+                    )
+                    r.abort = AsyncMock()
+                    r.continue_ = AsyncMock()
+                    routes.append(r)
+                await asyncio.gather(*(interceptor(r) for r in routes))
+                for r in routes:
+                    r.abort.assert_awaited_once_with("blockedbyclient")
+
+            assert threading.active_count() == threads_before
+
+            # Healthy lookup succeeds immediately after 6 timeouts
+            t0 = time.monotonic()
+            ips = await resolve_and_validate_host_async(
+                "healthy.example.test",
+                timeout=0.5,
+                dns_nameservers=["127.0.0.1"],
+                dns_port=dns_port,
+            )
+            assert ips == ["93.184.216.34"]
+            assert (time.monotonic() - t0) < 0.2
+
+            # Redirect to restricted metadata target is blocked and closes page
+            mock_page = MagicMock()
+            mock_page.is_closed = MagicMock(return_value=False)
+            mock_page.close = AsyncMock()
+            mock_resp = MagicMock(
+                status=302,
+                url="https://healthy.example.test/start",
+                headers={"location": "http://rebind-meta.example.test/latest/meta-data/"},
+            )
+            await interceptor.check_response(mock_resp, page=mock_page)
+            mock_page.close.assert_awaited_once()
+
+            # localhost and *.localhost are always rejected without network DNS
+            with pytest.raises(BrowserSecurityError, match="restricted IP"):
+                await resolve_and_validate_host_async(
+                    "localhost",
+                    timeout=0.5,
+                    dns_nameservers=["127.0.0.1"],
+                    dns_port=dns_port,
+                )
+
+            # Mixed public IPv4 + restricted metadata IPv6 is strictly rejected
+            with pytest.raises(BrowserSecurityError, match="restricted IP fd00:ec2::254"):
+                await resolve_and_validate_host_async(
+                    "mixed-v6.example.test",
+                    timeout=0.5,
+                    dns_nameservers=["127.0.0.1"],
+                    dns_port=dns_port,
+                )
+        finally:
+            dns_transport.close()
+
+    @pytest.mark.asyncio
+    async def test_production_dns_succeeds_even_when_container_executor_threads_are_saturated(
+        self,
+    ) -> None:
+        """Proves production DNS does not wait on a saturated max_workers=2 container executor."""
+        loop = asyncio.get_running_loop()
+        dns_transport, _ = await loop.create_datagram_endpoint(
+            lambda: _ControlledDNSProtocol(
+                records={"healthy.example.test": {"A": ["93.184.216.34"]}},
+                stalled_hosts=set(),
+            ),
+            local_addr=("127.0.0.1", 0),
+        )
+        dns_port = dns_transport.get_extra_info("sockname")[1]
+
+        container_exec = get_container_executor(max_workers=2)
+        release_event = threading.Event()
+        started_count = 0
+        started_lock = threading.Lock()
+        both_started = threading.Event()
+
+        def _occupy_worker() -> None:
+            nonlocal started_count
+            with started_lock:
+                started_count += 1
+                if started_count == 2:
+                    both_started.set()
+            release_event.wait(timeout=3.0)
+
+        f1 = container_exec.submit(_occupy_worker)
+        f2 = container_exec.submit(_occupy_worker)
+        assert both_started.wait(timeout=2.0)
+
+        try:
+            t0 = time.monotonic()
+            ips = await resolve_and_validate_host_async(
+                "healthy.example.test",
+                timeout=0.5,
+                dns_nameservers=["127.0.0.1"],
+                dns_port=dns_port,
+            )
+            elapsed = time.monotonic() - t0
+            assert ips == ["93.184.216.34"]
+            assert elapsed < 0.25, f"Production DNS waited on saturated executor ({elapsed:.2f}s)"
+        finally:
+            release_event.set()
+            f1.result(timeout=2.0)
+            f2.result(timeout=2.0)
+            dns_transport.close()
+

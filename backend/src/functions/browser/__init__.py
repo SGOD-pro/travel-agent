@@ -10,7 +10,9 @@ from functions.browser.network import (
     SecureEgressProxy,
     is_ip_allowed,
     resolve_and_validate_host,
+    resolve_and_validate_host_async,
     validate_navigation_url,
+    validate_navigation_url_async,
 )
 from functions.browser.parser import parse_rendered_entities
 from functions.browser.service import (
@@ -35,5 +37,7 @@ __all__ = [
     "process_batch",
     "process_record",
     "resolve_and_validate_host",
+    "resolve_and_validate_host_async",
     "validate_navigation_url",
+    "validate_navigation_url_async",
 ]

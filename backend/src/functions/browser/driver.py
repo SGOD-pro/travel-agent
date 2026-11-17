@@ -19,7 +19,7 @@ import shutil
 import signal
 import subprocess
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +48,7 @@ from functions.browser.network import (
     BrowserSecurityError,
     RouteSecurityInterceptor,
     SecureEgressProxy,
-    validate_navigation_url,
+    validate_navigation_url_async,
 )
 from functions.browser.parser import parse_rendered_entities
 
@@ -298,13 +298,16 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         self,
         *,
         browser: Browser | None = None,
-        dns_resolver: Callable[[str, int], list[Any]] | None = None,
+        dns_resolver: Callable[[str, int], Any] | None = None,
         ip_validator: Callable[[Any], bool] | None = None,
         chromium_path: str | None = None,
         launch_args: list[str] | None = None,
         headless: bool = True,
         egress_proxy: SecureEgressProxy | None = None,
         enable_egress_proxy: bool = True,
+        dns_timeout: float = 2.0,
+        dns_nameservers: Sequence[str] | None = None,
+        dns_port: int = 53,
     ) -> None:
         self._injected_browser = browser
         self._dns_resolver = dns_resolver
@@ -314,6 +317,9 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         self._headless = headless
         self._egress_proxy = egress_proxy
         self._enable_egress_proxy = enable_egress_proxy
+        self._dns_timeout = dns_timeout
+        self._dns_nameservers = dns_nameservers
+        self._dns_port = dns_port
         self._active_driver_pids: set[int] = set()
 
     def terminate_residual_processes(self) -> None:
@@ -327,12 +333,32 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         """Renders dynamic web page content under strict timeouts and network controls."""
         start_time = time.monotonic()
 
-        # 1. Pre navigation URL and DNS address validation (AC-4)
+        # 1. Pre navigation URL and DNS address validation (AC-4, bounded async DNS without executor threads)
         try:
-            validate_navigation_url(
+            await validate_navigation_url_async(
                 payload.url,
+                timeout=self._dns_timeout,
                 dns_resolver=self._dns_resolver,
                 ip_validator=self._ip_validator,
+                dns_nameservers=self._dns_nameservers,
+                dns_port=self._dns_port,
+            )
+        except TimeoutError as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.warning("Pre navigation DNS resolution timed out for %s: %s", payload.url, exc)
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.TIMED_OUT,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason=f"Pre navigation DNS resolution timed out: {exc}",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
             )
         except BrowserSecurityError as exc:
             duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -428,6 +454,9 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         interceptor = RouteSecurityInterceptor(
             dns_resolver=self._dns_resolver,
             ip_validator=self._ip_validator,
+            dns_timeout=self._dns_timeout,
+            dns_nameservers=self._dns_nameservers,
+            dns_port=self._dns_port,
         )
         proxy: SecureEgressProxy | None = None
         proxy_started_here = False
@@ -435,6 +464,9 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
             proxy = self._egress_proxy or SecureEgressProxy(
                 dns_resolver=self._dns_resolver,
                 ip_validator=self._ip_validator,
+                dns_timeout=self._dns_timeout,
+                dns_nameservers=self._dns_nameservers,
+                dns_port=self._dns_port,
             )
             if proxy.server is None:
                 await proxy.start()

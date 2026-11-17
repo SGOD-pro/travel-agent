@@ -19,12 +19,18 @@ rebinding to private IP addresses. Connection safety requires:
 from __future__ import annotations
 
 import asyncio
+import inspect
 import ipaddress
 import logging
 import socket
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
+
+import dns.asyncresolver
+import dns.exception
+import dns.resolver
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +73,235 @@ def is_ip_allowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         return False
 
     return True
+
+
+def _lookup_etc_hosts(hostname: str, *, include_hosts_file: bool = True) -> list[str]:
+    """Resolves localhost (RFC 6761) and optional /etc/hosts entries without blocking DNS threads."""
+    target = hostname.strip().rstrip(".").lower()
+    if not target:
+        return []
+
+    found: list[str] = []
+    if include_hosts_file:
+        hosts_path = Path("/etc/hosts")
+        try:
+            if hosts_path.exists():
+                for raw_line in hosts_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    line = raw_line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+                    parts = line.split()
+                    if len(parts) < 2:
+                        continue
+                    ip_candidate = parts[0]
+                    aliases = [alias.rstrip(".").lower() for alias in parts[1:]]
+                    if target in aliases and ip_candidate not in found:
+                        try:
+                            ipaddress.ip_address(ip_candidate)
+                            found.append(ip_candidate)
+                        except ValueError:
+                            continue
+        except OSError:
+            pass
+
+    if not found and (target == "localhost" or target.endswith(".localhost")):
+        return ["127.0.0.1", "::1"]
+
+    return found
+
+
+def _validate_resolved_ips(
+    cleaned_host: str,
+    raw_ips: Sequence[str],
+    check_ip: Callable[[ipaddress.IPv4Address | ipaddress.IPv6Address], bool],
+) -> list[str]:
+    """Validates every resolved IP string against security policy, preserving order."""
+    resolved_ips: list[str] = []
+    for ip_str in raw_ips:
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+        except ValueError as err:
+            raise BrowserSecurityError(f"Invalid resolved IP address {ip_str}") from err
+
+        if not check_ip(ip_obj):
+            raise BrowserSecurityError(f"Host {cleaned_host} resolved to restricted IP {ip_str}")
+        if ip_str not in resolved_ips:
+            resolved_ips.append(ip_str)
+
+    if not resolved_ips:
+        raise BrowserSecurityError(f"Host {cleaned_host} resolved to zero IP addresses")
+
+    return resolved_ips
+
+
+async def _resolve_host_via_async_dns(
+    cleaned_host: str,
+    *,
+    timeout: float,
+    nameservers: Sequence[str] | None = None,
+    port: int = 53,
+) -> list[str]:
+    """Performs genuinely bounded async A and AAAA DNS resolution on the event loop via dnspython.
+
+    Uses native asyncio UDP/TCP sockets with real underlying socket deadlines (lifetime=timeout),
+    requiring zero container executor threads and releasing transports immediately on timeout or cancellation.
+    """
+    effective_timeout = max(0.05, float(timeout))
+    resolver = dns.asyncresolver.Resolver(configure=nameservers is None)
+    if nameservers is not None:
+        resolver.nameservers = list(nameservers)
+        resolver.port = int(port)
+    resolver.timeout = min(effective_timeout, 1.0)
+    resolver.lifetime = effective_timeout
+
+    async def _query(rdtype: str) -> list[str]:
+        answer = await resolver.resolve(cleaned_host, rdtype, lifetime=effective_timeout)
+        return [str(getattr(rdata, "address", rdata.to_text())) for rdata in answer]
+
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                _query("A"),
+                _query("AAAA"),
+                return_exceptions=True,
+            ),
+            timeout=effective_timeout + 0.1,
+        )
+    except TimeoutError as exc:
+        raise TimeoutError(f"DNS resolution timed out for host {cleaned_host}") from exc
+
+    raw_ips: list[str] = []
+    non_empty_errors: list[BaseException] = []
+    empty_family_errors: list[BaseException] = []
+
+    for res in results:
+        if isinstance(res, BaseException):
+            if isinstance(
+                res,
+                (dns.resolver.LifetimeTimeout, dns.exception.Timeout, TimeoutError),
+            ):
+                raise TimeoutError(f"DNS resolution timed out for host {cleaned_host}") from res
+            if isinstance(res, (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN)):
+                empty_family_errors.append(res)
+            else:
+                non_empty_errors.append(res)
+        else:
+            raw_ips.extend(res)
+
+    if non_empty_errors:
+        raise BrowserSecurityError(
+            f"DNS resolution failed for host {cleaned_host}: {non_empty_errors[0]}"
+        ) from non_empty_errors[0]
+
+    if not raw_ips:
+        if empty_family_errors:
+            raise BrowserSecurityError(
+                f"DNS resolution failed for host {cleaned_host}: {empty_family_errors[0]}"
+            ) from empty_family_errors[0]
+        raise BrowserSecurityError(f"Host {cleaned_host} resolved to zero IP addresses")
+
+    return raw_ips
+
+
+async def resolve_and_validate_host_async(
+    hostname: str,
+    port: int | None = None,
+    *,
+    timeout: float = 2.0,
+    dns_resolver: Callable[[str, int], Any] | None = None,
+    ip_validator: Callable[[ipaddress.IPv4Address | ipaddress.IPv6Address], bool] | None = None,
+    dns_nameservers: Sequence[str] | None = None,
+    dns_port: int = 53,
+) -> list[str]:
+    """Resolves hostname asynchronously with real underlying deadlines and validates all resolved IPs.
+
+    In production (dns_resolver is None), executes native asyncio DNS resolution via dnspython
+    without touching the container thread pool executor. Raises TimeoutError when DNS resolution
+    exceeds timeout and BrowserSecurityError if resolution fails or any resolved IP is restricted.
+    """
+    check_ip = ip_validator or is_ip_allowed
+    cleaned_host = hostname.strip().strip("[]")
+    if not cleaned_host:
+        raise BrowserSecurityError("Host name cannot be empty")
+
+    # Fast path: direct IP literal (no network I/O, no threads)
+    try:
+        ip_obj = ipaddress.ip_address(cleaned_host)
+        if not check_ip(ip_obj):
+            raise BrowserSecurityError(
+                f"Direct IP address {cleaned_host} is in a restricted or private range"
+            )
+        return [str(ip_obj)]
+    except ValueError:
+        pass
+
+    effective_port = port or 80
+
+    if dns_resolver is not None:
+        try:
+            raw_result = dns_resolver(cleaned_host, effective_port)
+            if inspect.isawaitable(raw_result):
+                addr_info = await asyncio.wait_for(raw_result, timeout=max(0.05, float(timeout)))
+            else:
+                addr_info = raw_result
+        except socket.gaierror as exc:
+            raise BrowserSecurityError(
+                f"DNS resolution failed for host {cleaned_host}: {exc}"
+            ) from exc
+
+        raw_ips = [sockaddr[0] for _family, _, _, _, sockaddr in addr_info]
+        return _validate_resolved_ips(cleaned_host, raw_ips, check_ip)
+
+    # Local hosts fast path (localhost always rejected/validated; /etc/hosts when using system resolver)
+    local_ips = _lookup_etc_hosts(cleaned_host, include_hosts_file=dns_nameservers is None)
+    if local_ips:
+        return _validate_resolved_ips(cleaned_host, local_ips, check_ip)
+
+    raw_ips = await _resolve_host_via_async_dns(
+        cleaned_host,
+        timeout=timeout,
+        nameservers=dns_nameservers,
+        port=dns_port,
+    )
+    return _validate_resolved_ips(cleaned_host, raw_ips, check_ip)
+
+
+async def validate_navigation_url_async(
+    url: str,
+    *,
+    allowed_schemes: tuple[str, ...] = ("http", "https"),
+    timeout: float = 2.0,
+    dns_resolver: Callable[[str, int], Any] | None = None,
+    ip_validator: Callable[[ipaddress.IPv4Address | ipaddress.IPv6Address], bool] | None = None,
+    dns_nameservers: Sequence[str] | None = None,
+    dns_port: int = 53,
+) -> str:
+    """Validates top level navigation URL scheme and destination host asynchronously with bounded DNS."""
+    if not url or not isinstance(url, str):
+        raise BrowserSecurityError("URL must be a non empty string")
+
+    parsed = urlparse(url.strip())
+    scheme = parsed.scheme.lower()
+    if scheme not in allowed_schemes:
+        raise BrowserSecurityError(
+            f"Scheme '{scheme}' is not permitted for browser navigation; allowed schemes are {allowed_schemes}"
+        )
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise BrowserSecurityError(f"URL '{url}' does not contain a valid hostname")
+
+    effective_port = parsed.port or (443 if scheme == "https" else 80)
+    await resolve_and_validate_host_async(
+        hostname,
+        port=effective_port,
+        timeout=timeout,
+        dns_resolver=dns_resolver,
+        ip_validator=ip_validator,
+        dns_nameservers=dns_nameservers,
+        dns_port=dns_port,
+    )
+    return url.strip()
 
 
 def resolve_and_validate_host(
@@ -179,13 +414,17 @@ class RouteSecurityInterceptor:
     def __init__(
         self,
         *,
-        dns_resolver: Callable[[str, int], list[Any]] | None = None,
+        dns_resolver: Callable[[str, int], Any] | None = None,
         ip_validator: Callable[[ipaddress.IPv4Address | ipaddress.IPv6Address], bool] | None = None,
         dns_timeout: float = 2.0,
+        dns_nameservers: Sequence[str] | None = None,
+        dns_port: int = 53,
     ) -> None:
         self.dns_resolver = dns_resolver
         self.ip_validator = ip_validator
         self.dns_timeout = dns_timeout
+        self.dns_nameservers = dns_nameservers
+        self.dns_port = dns_port
         self.blocked_requests: list[dict[str, Any]] = []
 
     async def __call__(self, route: Any) -> None:
@@ -251,15 +490,14 @@ class RouteSecurityInterceptor:
 
         port = parsed.port or (443 if scheme == "https" else 80)
         try:
-            await asyncio.wait_for(
-                asyncio.to_thread(
-                    resolve_and_validate_host,
-                    hostname,
-                    port=port,
-                    dns_resolver=self.dns_resolver,
-                    ip_validator=self.ip_validator,
-                ),
+            await resolve_and_validate_host_async(
+                hostname,
+                port=port,
                 timeout=self.dns_timeout,
+                dns_resolver=self.dns_resolver,
+                ip_validator=self.ip_validator,
+                dns_nameservers=self.dns_nameservers,
+                dns_port=self.dns_port,
             )
         except TimeoutError:
             msg = f"DNS resolution timed out for {url}"
@@ -292,14 +530,13 @@ class RouteSecurityInterceptor:
             if location:
                 resolved_url = urljoin(getattr(response, "url", ""), location)
                 try:
-                    await asyncio.wait_for(
-                        asyncio.to_thread(
-                            validate_navigation_url,
-                            resolved_url,
-                            dns_resolver=self.dns_resolver,
-                            ip_validator=self.ip_validator,
-                        ),
+                    await validate_navigation_url_async(
+                        resolved_url,
                         timeout=self.dns_timeout,
+                        dns_resolver=self.dns_resolver,
+                        ip_validator=self.ip_validator,
+                        dns_nameservers=self.dns_nameservers,
+                        dns_port=self.dns_port,
                     )
                 except (TimeoutError, BrowserSecurityError) as exc:
                     msg = f"Redirect target blocked by security policy: {exc} ({resolved_url})"
@@ -345,15 +582,19 @@ class SecureEgressProxy:
 
     def __init__(
         self,
-        dns_resolver: Callable[[str, int], list[Any]] | None = None,
+        dns_resolver: Callable[[str, int], Any] | None = None,
         ip_validator: Callable[[ipaddress.IPv4Address | ipaddress.IPv6Address], bool] | None = None,
         port: int = 0,
         dns_timeout: float = 2.0,
+        dns_nameservers: Sequence[str] | None = None,
+        dns_port: int = 53,
     ) -> None:
         self.dns_resolver = dns_resolver
         self.ip_validator = ip_validator
         self.port = port
         self.dns_timeout = dns_timeout
+        self.dns_nameservers = dns_nameservers
+        self.dns_port = dns_port
         self.server: asyncio.Server | None = None
         self.blocked_requests: list[dict[str, str]] = []
         self._active_tasks: set[asyncio.Task[Any]] = set()
@@ -451,15 +692,14 @@ class SecureEgressProxy:
 
             # Validate host and resolve all candidate IPs
             try:
-                allowed_ips = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        resolve_and_validate_host,
-                        host,
-                        port=port,
-                        dns_resolver=self.dns_resolver,
-                        ip_validator=self.ip_validator,
-                    ),
+                allowed_ips = await resolve_and_validate_host_async(
+                    host,
+                    port=port,
                     timeout=self.dns_timeout,
+                    dns_resolver=self.dns_resolver,
+                    ip_validator=self.ip_validator,
+                    dns_nameservers=self.dns_nameservers,
+                    dns_port=self.dns_port,
                 )
             except TimeoutError:
                 msg = f"Egress proxy DNS resolution timed out for {target}"

@@ -7,3 +7,4 @@ asyncpg>=0.29.0
 scrapling>=0.4.15
 playwright>=1.40.0
 orjson>=3.10.0
+dnspython>=2.6.0
