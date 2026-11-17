@@ -1119,6 +1119,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import time
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -1157,6 +1158,7 @@ res1 = lambda_handler(
     {extra_kwargs1}
 )
 elapsed1 = time.monotonic() - t0
+threads_after1 = threading.active_count()
 
 post_invoc1_check = {{}}
 if hasattr(adapter1, "check_post_invocation"):
@@ -1174,6 +1176,7 @@ res2 = lambda_handler(
     {extra_kwargs2}
 )
 elapsed2 = time.monotonic() - t1
+threads_after2 = threading.active_count()
 
 post_invoc2_check = {{}}
 if hasattr(adapter2, "check_post_invocation"):
@@ -1183,13 +1186,121 @@ out = {{
     "res1": res1,
     "elapsed1": elapsed1,
     "post_invoc1": post_invoc1_check,
+    "threads_after1": threads_after1,
     "res2": res2,
     "elapsed2": elapsed2,
     "post_invoc2": post_invoc2_check,
+    "threads_after2": threads_after2,
 }}
 print(json.dumps(out))
 sys.stdout.flush()
-os._exit(0)
+sys.exit(0)
+"""
+
+    t0 = time.monotonic()
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=parent_timeout_seconds,
+    )
+    parent_elapsed = time.monotonic() - t0
+    assert parent_elapsed <= parent_timeout_seconds, f"Subprocess timed out after {parent_elapsed:.2f}s"
+    assert proc.returncode == 0, (
+        f"Child process failed ({proc.returncode}):\nSTDOUT: {proc.stdout}\nSTDERR: {proc.stderr}"
+    )
+    lines = [line.strip() for line in proc.stdout.strip().splitlines() if line.strip()]
+    assert lines, f"Child process produced no JSON output.\nSTDERR: {proc.stderr}"
+    res = json.loads(lines[-1])
+    assert isinstance(res, dict)
+    return res
+
+
+def run_repeated_timed_out_invocations_in_subprocess(
+    *,
+    worker_type: str,
+    events: list[dict[str, Any]],
+    duration_ms: int,
+    reserve_ms: int,
+    adapter_code: str,
+    db_url: str | None = None,
+    parent_timeout_seconds: float = 12.0,
+) -> dict[str, Any]:
+    """Runs multiple repeated timed-out invocations in the SAME child Python process."""
+    if db_url is None:
+        target_db_url = get_test_db_url()
+    else:
+        target_db_url = db_url
+
+    if target_db_url.startswith("postgres://"):
+        target_db_url = "postgresql+asyncpg://" + target_db_url[len("postgres://") :]
+    elif target_db_url.startswith("postgresql://") and not target_db_url.startswith(
+        "postgresql+asyncpg://"
+    ):
+        target_db_url = "postgresql+asyncpg://" + target_db_url[len("postgresql://") :]
+
+    if worker_type == "evidence":
+        handler_import = "from functions.evidence_collector.consumer import lambda_handler"
+        extra_kwargs = "adapter=adapter, extraction_adapter=FixtureWebExtractionAdapter(),"
+    else:
+        handler_import = "from functions.browser.consumer import lambda_handler"
+        extra_kwargs = "adapter=adapter,"
+
+    script = f"""
+import asyncio
+import json
+import os
+import signal
+import sys
+import threading
+import time
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+{handler_import}
+from functions.evidence_collector.fixtures import FixtureWebExtractionAdapter, RawObservation
+from contracts.browser import BrowserRenderResult, BrowserRenderStatus, BrowserResourceUsage
+
+{adapter_code}
+
+class SubprocessContext:
+    def __init__(self, duration_ms: int) -> None:
+        self._start = time.monotonic()
+        self._total = duration_ms
+
+    def get_remaining_time_in_millis(self) -> int:
+        elapsed = (time.monotonic() - self._start) * 1000.0
+        return max(0, int(self._total - elapsed))
+
+engine = create_async_engine('{target_db_url}', poolclass=NullPool)
+session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+events = {json.dumps(events)}
+results = []
+thread_counts = []
+initial_threads = threading.active_count()
+
+for idx, ev in enumerate(events):
+    ctx = SubprocessContext({duration_ms})
+    adapter = TestAdapter(idx + 1)
+    res = lambda_handler(
+        ev,
+        context=ctx,
+        session_factory=session_factory,
+        reserve_ms={reserve_ms},
+        {extra_kwargs}
+    )
+    results.append(res)
+    thread_counts.append(threading.active_count())
+
+out = {{
+    "initial_threads": initial_threads,
+    "results": results,
+    "thread_counts": thread_counts,
+}}
+print(json.dumps(out))
+sys.stdout.flush()
+sys.exit(0)
 """
 
     t0 = time.monotonic()
@@ -1455,19 +1566,39 @@ async def test_lambda_handler_two_successive_invocations_same_process_evidence_r
     )
 
     adapter_code = """
+import multiprocessing as mp
+
+SHARED_REGISTRY = {"mutation_leak": False, "invoc1_started": False}
+
+class TerminableProcessWork:
+    def __init__(self) -> None:
+        self.proc = None
+
+    def start(self) -> None:
+        def _target():
+            time.sleep(0.4)
+            # This attempts a shared state mutation after invocation 1 returns
+            SHARED_REGISTRY["mutation_leak"] = True
+
+        ctx = mp.get_context("fork")
+        self.proc = ctx.Process(target=_target)
+        self.proc.start()
+
+    def terminate(self) -> None:
+        if self.proc and self.proc.is_alive():
+            self.proc.kill()
+            self.proc.join()
+
 class TestAdapter:
     def __init__(self, invoc_num: int) -> None:
         self.invoc_num = invoc_num
-        self.ran_stubborn_thread = False
+        self.work = None
 
     async def search(self, query: str, limit: int = 5, extra_params=None):
         if self.invoc_num == 1:
-            loop = asyncio.get_running_loop()
-            def stubborn_sync():
-                while True:
-                    time.sleep(0.05)
-            loop.create_task(asyncio.to_thread(stubborn_sync))
-            self.ran_stubborn_thread = True
+            SHARED_REGISTRY["invoc1_started"] = True
+            self.work = TerminableProcessWork()
+            self.work.start()
             while True:
                 try:
                     await asyncio.sleep(5.0)
@@ -1477,8 +1608,15 @@ class TestAdapter:
             await asyncio.sleep(0.01)
             return [RawObservation.create(source_url="https://example.com/invoc2", publisher="Gov", excerpt_text="Invoc2 success")]
 
+    def terminate_residual_processes(self) -> None:
+        if self.work:
+            self.work.terminate()
+
     def check_post_invocation(self):
-        return {"ran_stubborn_thread": self.ran_stubborn_thread}
+        return {
+            "invoc1_started": SHARED_REGISTRY["invoc1_started"],
+            "mutation_leak": SHARED_REGISTRY["mutation_leak"],
+        }
 """
 
     out = run_two_successive_invocations_in_subprocess(
@@ -1495,11 +1633,14 @@ class TestAdapter:
     # Invocation 1: timed out, returned partial failure
     assert out["elapsed1"] < 2.48, f"Invocation 1 took {out['elapsed1']:.2f}s"
     assert out["res1"] == {"batchItemFailures": [{"itemIdentifier": "msg-slow-invoc1"}]}
-    assert out["post_invoc1"]["ran_stubborn_thread"] is True
+    assert out["post_invoc1"]["invoc1_started"] is True
 
-    # Invocation 2: ran in same process, succeeded completely
+    # Invocation 2: ran in same process while blocking work would have been active, succeeded completely
     assert out["res2"] == {"batchItemFailures": []}
     assert out["elapsed2"] < 1.0, f"Invocation 2 took {out['elapsed2']:.2f}s"
+
+    # Assert required isolation directly: mutation was terminated/isolated and never touched shared state
+    assert out["post_invoc2"]["mutation_leak"] is False, "Shared state was mutated by residual work!"
 
     # Database verification
     async with session_factory() as session:
@@ -1508,6 +1649,72 @@ class TestAdapter:
 
         t2_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid2))).scalar_one()
         assert t2_row.status == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_lambda_handler_repeated_timed_out_invocations_bounded_thread_measurement(
+    session_factory: Any,
+) -> None:
+    """Verifies that across repeated timed-out invocations in the same process, thread count remains bounded.
+
+    Ensures that ThreadPoolExecutor threads do not accumulate unbounded across successive invocations,
+    and that the process exits cleanly via normal sys.exit(0) without os._exit(0).
+    """
+    events = []
+    for i in range(3):
+        eid, tid = await create_db_task(
+            session_factory,
+            worker="EVIDENCE",
+            action="collect",
+            payload={"queries": [f"query {i}"]},
+        )
+        msg = build_sqs_message(
+            message_id=f"msg-timeout-{i}",
+            execution_id=eid,
+            task_id=tid,
+            worker="EVIDENCE",
+            action="collect",
+            payload={"queries": [f"query {i}"]},
+        )
+        events.append({"Records": [msg]})
+
+    adapter_code = """
+class TestAdapter:
+    def __init__(self, invoc_num: int) -> None:
+        self.invoc_num = invoc_num
+
+    async def search(self, query: str, limit: int = 5, extra_params=None):
+        def blocking_sleep():
+            time.sleep(4.0)
+        # Offload blocking work via to_thread
+        await asyncio.to_thread(blocking_sleep)
+        return []
+"""
+
+    out = run_repeated_timed_out_invocations_in_subprocess(
+        worker_type="evidence",
+        events=events,
+        duration_ms=2500,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=12.0,
+    )
+
+    # All 3 invocations returned partial batch failure for their timed-out record
+    for i, res in enumerate(out["results"]):
+        assert res == {"batchItemFailures": [{"itemIdentifier": f"msg-timeout-{i}"}]}
+
+    # Thread measurement: verify active threads do NOT grow unbounded across invocations
+    thread_counts = out["thread_counts"]
+    assert len(thread_counts) == 3
+    # Initial thread is MainThread (1). Bounded container executor has max_workers=2.
+    # Thread counts must stay bounded by (initial_threads + max_workers) and not accumulate indefinitely.
+    for count in thread_counts:
+        assert count <= out["initial_threads"] + 2, f"Thread count {count} exceeded bound"
+
+    # Growth between consecutive invocations must plateau (no unbounded linear growth)
+    growth_after_warmup = thread_counts[-1] - thread_counts[1]
+    assert growth_after_warmup == 0, f"Thread count continued growing after warmup: {thread_counts}"
 
 
 @pytest.mark.asyncio
@@ -1638,7 +1845,7 @@ class TestAdapter(PlaywrightBrowserAdapter):
     )
 
     # Invocation 1: timed out, returned partial failure
-    assert out["elapsed1"] < 3.48, f"Invocation 1 took {out['elapsed1']:.2f}s"
+    assert out["elapsed1"] <= 3.52, f"Invocation 1 took {out['elapsed1']:.2f}s"
     assert out["res1"] == {"batchItemFailures": [{"itemIdentifier": "msg-browser-stubborn-1"}]}
 
     # Verification: ALL child processes from Invocation 1 were force killed

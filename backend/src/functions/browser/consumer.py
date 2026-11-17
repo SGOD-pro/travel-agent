@@ -7,8 +7,12 @@ canonical places, or graph runner workflows.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import concurrent.futures.thread as cft
 import logging
-from typing import Any
+import threading
+import weakref
+from typing import Any, cast
 
 from config.db import get_session_factory
 from contracts.browser import BrowserExtractionPort
@@ -30,6 +34,49 @@ logger = logging.getLogger(__name__)
 DEFAULT_INVOCATION_RESERVE_MS: int = 5000
 DEFAULT_CLEANUP_TIMEOUT_SECONDS: float = 2.0
 SQS_RESPONSE_SAFETY_MARGIN_MS: int = 1000
+
+
+class BoundedDaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
+    """Container scoped thread pool creating daemon threads to prevent unbounded thread leaks and exit hangs."""
+
+    def _adjust_thread_count(self) -> None:
+        if getattr(self, "_idle_semaphore", None) and self._idle_semaphore.acquire(timeout=0):
+            return
+
+        def weakref_cb(_: Any, q: Any = self._work_queue) -> None:
+            q.put(None)
+
+        num_threads = len(self._threads)
+        if num_threads < self._max_workers:
+            thread_name = f"{self._thread_name_prefix or self}_{num_threads}"
+            t = threading.Thread(
+                name=thread_name,
+                target=cft._worker,
+                args=(
+                    weakref.ref(self, weakref_cb),
+                    self._work_queue,
+                    self._initializer,
+                    self._initargs,
+                ),
+                daemon=True,
+            )
+            t.start()
+            cast(set[Any], self._threads).add(t)
+            cast(dict[Any, Any], cft._threads_queues).pop(t, None)
+
+
+_CONTAINER_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+
+
+def get_container_executor(max_workers: int = 2) -> concurrent.futures.ThreadPoolExecutor:
+    """Returns a container scoped bounded executor with daemon threads."""
+    global _CONTAINER_EXECUTOR
+    if _CONTAINER_EXECUTOR is None or getattr(_CONTAINER_EXECUTOR, "_shutdown", False):
+        _CONTAINER_EXECUTOR = BoundedDaemonThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="browser_worker",
+        )
+    return _CONTAINER_EXECUTOR
 
 
 def get_remaining_usable_seconds(context: Any, reserve_ms: int) -> float | None:
@@ -303,6 +350,8 @@ def lambda_handler(
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
+    container_exec = get_container_executor()
+    loop.set_default_executor(container_exec)
 
     failures: list[dict[str, str]] = []
     try:
@@ -393,12 +442,27 @@ def lambda_handler(
 
         return {"batchItemFailures": failures}
     finally:
-        executor = getattr(loop, "_default_executor", None)
-        if executor is not None:
+        if container_exec is not None:
             try:
-                executor.shutdown(wait=False, cancel_futures=True)
+                work_q = getattr(container_exec, "_work_queue", None)
+                if work_q is not None:
+                    while not work_q.empty():
+                        try:
+                            work_item = work_q.get_nowait()
+                            fut = getattr(work_item, "future", None)
+                            if fut is not None:
+                                fut.cancel()
+                        except Exception:
+                            break
             except Exception as exc:
-                logger.debug("Error shutting down default executor: %s", exc)
+                logger.debug("Error draining container executor: %s", exc)
+
+        custom_executor = getattr(loop, "_default_executor", None)
+        if custom_executor is not None and custom_executor is not container_exec:
+            try:
+                custom_executor.shutdown(wait=False, cancel_futures=True)
+            except Exception as exc:
+                logger.debug("Error shutting down custom executor: %s", exc)
         adapter = kwargs.get("adapter")
         if adapter is not None and hasattr(adapter, "terminate_residual_processes"):
             try:
@@ -410,6 +474,7 @@ def lambda_handler(
         except Exception as exc:
             logger.debug("Error terminating residual browser processes: %s", exc)
         try:
+            loop._default_executor = None  # type: ignore[attr-defined]
             loop.close()
         except Exception as exc:
             logger.warning("Error closing event loop: %s", exc)
