@@ -235,6 +235,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 8A bounded search backed vertical slice: [2026-11-07-main.md](../reviews/2026-11-07-main.md) (Approve)
    - [x] Non-hallucinatory search query planning, place discovery via SerpAPI with real geolocation coordinates, multi-site consensus ranking, and API timing middleware: [2026-11-14-main.md](../reviews/2026-11-14-main.md) (Approve)
    - [x] Slice 8 worker shutdown and residual work isolation: [2026-11-17-worker-shutdown-residual-work.md](../reviews/2026-11-17-worker-shutdown-residual-work.md) (Approve with nits)
+   - [x] Slice 8 residual thread isolation and bounded container executor: [2026-11-17-residual-thread-isolation.md](../reviews/2026-11-17-residual-thread-isolation.md) (Approve with nits)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 
