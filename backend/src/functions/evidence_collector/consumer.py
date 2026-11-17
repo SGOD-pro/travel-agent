@@ -35,7 +35,11 @@ SQS_RESPONSE_SAFETY_MARGIN_MS: int = 800
 
 
 class BoundedDaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
-    """Container scoped thread pool creating daemon threads to prevent unbounded thread leaks and exit hangs."""
+    """Container scoped thread pool creating daemon threads to prevent unbounded thread leaks and exit hangs.
+
+    Relies on CPython ThreadPoolExecutor internals (_worker, _idle_semaphore, _work_queue, _threads_queues)
+    and defensively unlinks threads from _threads_queues so normal process exit never joins daemon threads.
+    """
 
     def _adjust_thread_count(self) -> None:
         if getattr(self, "_idle_semaphore", None) and self._idle_semaphore.acquire(timeout=0):
@@ -60,6 +64,7 @@ class BoundedDaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
             )
             t.start()
             cast(set[Any], self._threads).add(t)
+            # Defensive unlink: _adjust_thread_count omits _threads_queues registration so atexit won't join
             cast(dict[Any, Any], cft._threads_queues).pop(t, None)
 
 
@@ -450,6 +455,9 @@ def lambda_handler(
                     while not work_q.empty():
                         try:
                             work_item = work_q.get_nowait()
+                            if work_item is None:
+                                work_q.put(None)
+                                break
                             fut = getattr(work_item, "future", None)
                             if fut is not None:
                                 fut.cancel()
@@ -464,13 +472,19 @@ def lambda_handler(
                 custom_executor.shutdown(wait=False, cancel_futures=True)
             except Exception as exc:
                 logger.debug("Error shutting down custom executor: %s", exc)
-        extraction_adapter = kwargs.get("extraction_adapter")
-        if extraction_adapter is not None and hasattr(extraction_adapter, "terminate_residual_processes"):
-            try:
-                extraction_adapter.terminate_residual_processes()
-            except Exception as exc:
-                logger.debug("Error terminating residual extraction processes: %s", exc)
+        for adapter_key in ("adapter", "extraction_adapter"):
+            adapter_obj = kwargs.get(adapter_key)
+            if adapter_obj is not None and hasattr(adapter_obj, "terminate_residual_processes"):
+                try:
+                    adapter_obj.terminate_residual_processes()
+                except Exception as exc:
+                    logger.debug(
+                        "Error terminating residual processes on %s: %s",
+                        adapter_key,
+                        exc,
+                    )
         try:
+            # CPython 3.12+ BaseEventLoop.close() shuts down _default_executor; unlink to keep container pool alive
             loop._default_executor = None  # type: ignore[attr-defined]
             loop.close()
         except Exception as exc:

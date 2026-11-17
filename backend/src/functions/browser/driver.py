@@ -281,7 +281,7 @@ def force_kill_process_tree(root_pid: int) -> None:
                 pass
         if not any(is_pid_alive(p) for p in all_pids):
             break
-        time.sleep(0.02)
+        time.sleep(0.005)
 
 
 def terminate_all_browser_processes() -> None:

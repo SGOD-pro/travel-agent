@@ -30,6 +30,7 @@ import sys
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -1057,7 +1058,7 @@ res = lambda_handler(
 elapsed = time.monotonic() - t0
 print(json.dumps({{"res": res, "elapsed": elapsed}}))
 sys.stdout.flush()
-os._exit(0)
+sys.exit(0)
 """
 
     t0 = time.monotonic()
@@ -1240,7 +1241,10 @@ def run_repeated_timed_out_invocations_in_subprocess(
         target_db_url = "postgresql+asyncpg://" + target_db_url[len("postgresql://") :]
 
     if worker_type == "evidence":
-        handler_import = "from functions.evidence_collector.consumer import lambda_handler"
+        handler_import = (
+            "from functions.evidence_collector.consumer import lambda_handler\n"
+            "from functions.evidence_collector.fixtures import FixtureWebExtractionAdapter"
+        )
         extra_kwargs = "adapter=adapter, extraction_adapter=FixtureWebExtractionAdapter(),"
     else:
         handler_import = "from functions.browser.consumer import lambda_handler"
@@ -1249,8 +1253,6 @@ def run_repeated_timed_out_invocations_in_subprocess(
     script = f"""
 import asyncio
 import json
-import os
-import signal
 import sys
 import threading
 import time
@@ -1258,8 +1260,6 @@ import time
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 {handler_import}
-from functions.evidence_collector.fixtures import FixtureWebExtractionAdapter, RawObservation
-from contracts.browser import BrowserRenderResult, BrowserRenderStatus, BrowserResourceUsage
 
 {adapter_code}
 
@@ -1293,10 +1293,13 @@ for idx, ev in enumerate(events):
     results.append(res)
     thread_counts.append(threading.active_count())
 
+post_check = post_loop_check() if "post_loop_check" in globals() else {{}}
+
 out = {{
     "initial_threads": initial_threads,
     "results": results,
     "thread_counts": thread_counts,
+    "post_check": post_check,
 }}
 print(json.dumps(out))
 sys.stdout.flush()
@@ -1529,13 +1532,19 @@ class TestAdapter:
 @pytest.mark.asyncio
 async def test_lambda_handler_two_successive_invocations_same_process_evidence_residual_thread_isolation(
     session_factory: Any,
+    tmp_path: Path,
 ) -> None:
     """Verifies that two successive evidence collector invocations in the same process remain isolated.
 
-    Invocation 1 starts a cancellation-resistant thread operation, times out, and returns its partial batch response.
-    Invocation 2 runs in the same process, completes its task successfully, and verifies that the thread from
-    Invocation 1 cannot access or mutate Invocation 2 resources or database state.
+    Invocation 1 starts finite blocking work in an owned terminable child process that sleeps past
+    Invocation 1 full duration (2.7s > 2.5s) before attempting genuine cross-process shared state mutations
+    (a disk marker file and multiprocessing.Value). Invocation 1 times out, calls
+    adapter.terminate_residual_processes() in finally, and returns its partial batch response.
+    Invocation 2 runs in the same process across the window where the child would have mutated state,
+    completes its task successfully, and verifies that the child PID is dead and shared state is untouched.
     """
+    marker_file = tmp_path / "residual_mutation.marker"
+
     eid1, tid1 = await create_db_task(
         session_factory,
         worker="EVIDENCE",
@@ -1565,38 +1574,54 @@ async def test_lambda_handler_two_successive_invocations_same_process_evidence_r
         payload={"queries": ["fast sibling query"]},
     )
 
-    adapter_code = """
+    adapter_code = f"""
 import multiprocessing as mp
+from functions.browser.driver import is_pid_alive
 
-SHARED_REGISTRY = {"mutation_leak": False, "invoc1_started": False}
+MARKER_PATH = {json.dumps(str(marker_file))}
+_MP_CTX = mp.get_context("fork")
+SHARED_VAL = _MP_CTX.Value("i", 0)
+INVOC1_STARTED = False
 
 class TerminableProcessWork:
     def __init__(self) -> None:
         self.proc = None
+        self.pid = None
 
     def start(self) -> None:
+        started_event = _MP_CTX.Event()
+
         def _target():
-            time.sleep(0.4)
-            # This attempts a shared state mutation after invocation 1 returns
-            SHARED_REGISTRY["mutation_leak"] = True
+            started_event.set()
+            # Sleep past Invocation 1 full duration (2.5s) so mutation fires during Invocation 2 if not killed
+            time.sleep(2.7)
+            SHARED_VAL.value = 1
+            with open(MARKER_PATH, "w", encoding="utf-8") as fh:
+                fh.write("MUTATED")
 
-        ctx = mp.get_context("fork")
-        self.proc = ctx.Process(target=_target)
+        self.proc = _MP_CTX.Process(target=_target)
         self.proc.start()
+        self.pid = self.proc.pid
+        started_event.wait(timeout=2.0)
 
-    def terminate(self) -> None:
-        if self.proc and self.proc.is_alive():
+    def terminate(self) -> bool:
+        was_alive = bool(self.proc and self.proc.is_alive())
+        if was_alive and self.proc:
             self.proc.kill()
-            self.proc.join()
+            self.proc.join(timeout=2.0)
+        return was_alive
 
 class TestAdapter:
     def __init__(self, invoc_num: int) -> None:
         self.invoc_num = invoc_num
         self.work = None
+        self.terminate_called = False
+        self.was_alive_at_terminate = False
 
     async def search(self, query: str, limit: int = 5, extra_params=None):
+        global INVOC1_STARTED
         if self.invoc_num == 1:
-            SHARED_REGISTRY["invoc1_started"] = True
+            INVOC1_STARTED = True
             self.work = TerminableProcessWork()
             self.work.start()
             while True:
@@ -1605,18 +1630,27 @@ class TestAdapter:
                 except asyncio.CancelledError:
                     pass
         else:
-            await asyncio.sleep(0.01)
+            # Wait past the 2.7s mark from child start so an unkilled child would have written shared state
+            await asyncio.sleep(0.5)
             return [RawObservation.create(source_url="https://example.com/invoc2", publisher="Gov", excerpt_text="Invoc2 success")]
 
     def terminate_residual_processes(self) -> None:
+        self.terminate_called = True
         if self.work:
-            self.work.terminate()
+            self.was_alive_at_terminate = self.work.terminate()
 
     def check_post_invocation(self):
-        return {
-            "invoc1_started": SHARED_REGISTRY["invoc1_started"],
-            "mutation_leak": SHARED_REGISTRY["mutation_leak"],
-        }
+        child_pid = self.work.pid if self.work else None
+        child_alive = is_pid_alive(child_pid) if child_pid is not None else False
+        return {{
+            "invoc1_started": INVOC1_STARTED,
+            "terminate_called": self.terminate_called,
+            "was_alive_at_terminate": self.was_alive_at_terminate,
+            "child_pid": child_pid,
+            "child_alive_after_invoc1": child_alive,
+            "shared_val": SHARED_VAL.value,
+            "marker_exists": os.path.exists(MARKER_PATH),
+        }}
 """
 
     out = run_two_successive_invocations_in_subprocess(
@@ -1627,20 +1661,27 @@ class TestAdapter:
         duration_ms2=2500,
         reserve_ms=1500,
         adapter_code=adapter_code,
-        parent_timeout_seconds=8.0,
+        parent_timeout_seconds=10.0,
     )
 
-    # Invocation 1: timed out, returned partial failure
+    # Invocation 1: timed out, returned partial failure, and handler killed the live child in finally
     assert out["elapsed1"] < 2.48, f"Invocation 1 took {out['elapsed1']:.2f}s"
     assert out["res1"] == {"batchItemFailures": [{"itemIdentifier": "msg-slow-invoc1"}]}
     assert out["post_invoc1"]["invoc1_started"] is True
+    assert out["post_invoc1"]["terminate_called"] is True, "lambda_handler did not invoke terminate_residual_processes()"
+    assert out["post_invoc1"]["was_alive_at_terminate"] is True, "Child already exited before terminate_residual_processes() ran!"
+    assert out["post_invoc1"]["child_pid"] is not None
+    assert out["post_invoc1"]["child_alive_after_invoc1"] is False, "Child process survived Invocation 1 exit!"
+    assert out["post_invoc1"]["shared_val"] == 0
 
-    # Invocation 2: ran in same process while blocking work would have been active, succeeded completely
+    # Invocation 2: ran in same process across the mutation window and succeeded completely
     assert out["res2"] == {"batchItemFailures": []}
-    assert out["elapsed2"] < 1.0, f"Invocation 2 took {out['elapsed2']:.2f}s"
+    assert out["elapsed2"] < 1.5, f"Invocation 2 took {out['elapsed2']:.2f}s"
 
-    # Assert required isolation directly: mutation was terminated/isolated and never touched shared state
-    assert out["post_invoc2"]["mutation_leak"] is False, "Shared state was mutated by residual work!"
+    # Assert required isolation directly: genuine cross-process shared state remained untouched
+    assert out["post_invoc2"]["shared_val"] == 0, "Cross-process shared memory was mutated by residual work!"
+    assert out["post_invoc2"]["marker_exists"] is False, "Shared marker file was created by residual work!"
+    assert not marker_file.exists(), "Shared marker file exists on disk!"
 
     # Database verification
     async with session_factory() as session:
@@ -1652,49 +1693,118 @@ class TestAdapter:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("worker_type", ["evidence", "browser"])
 async def test_lambda_handler_repeated_timed_out_invocations_bounded_thread_measurement(
     session_factory: Any,
+    worker_type: str,
 ) -> None:
-    """Verifies that across repeated timed-out invocations in the same process, thread count remains bounded.
+    """Verifies bounded thread counts and queued future cancellation across repeated timed-out invocations.
 
-    Ensures that ThreadPoolExecutor threads do not accumulate unbounded across successive invocations,
-    and that the process exits cleanly via normal sys.exit(0) without os._exit(0).
+    Parameterized across both evidence and browser consumers:
+    - ThreadPoolExecutor threads plateau at initial_threads + max_workers (2) without unbounded linear growth.
+    - An unstarted 3rd queued blocking callback is cancelled by the handler drain loop and never executes
+      even after earlier worker threads finish and return to the work queue.
+    - The process exits cleanly via normal sys.exit(0) without os._exit(0).
     """
     events = []
     for i in range(3):
-        eid, tid = await create_db_task(
-            session_factory,
-            worker="EVIDENCE",
-            action="collect",
-            payload={"queries": [f"query {i}"]},
-        )
-        msg = build_sqs_message(
-            message_id=f"msg-timeout-{i}",
-            execution_id=eid,
-            task_id=tid,
-            worker="EVIDENCE",
-            action="collect",
-            payload={"queries": [f"query {i}"]},
-        )
+        if worker_type == "evidence":
+            eid, tid = await create_db_task(
+                session_factory,
+                worker="EVIDENCE",
+                action="collect",
+                payload={"queries": [f"query {i}"]},
+            )
+            msg = build_sqs_message(
+                message_id=f"msg-timeout-{i}",
+                execution_id=eid,
+                task_id=tid,
+                worker="EVIDENCE",
+                action="collect",
+                payload={"queries": [f"query {i}"]},
+            )
+        else:
+            eid, tid = await create_db_task(
+                session_factory,
+                worker="BROWSER",
+                action="render",
+                payload={
+                    "url": f"http://example.com/slow-{i}",
+                    "canonical_url": f"http://example.com/slow-{i}",
+                    "category": "lodging",
+                    "reason": "TEST_REASON",
+                },
+            )
+            msg = build_sqs_message(
+                message_id=f"msg-timeout-{i}",
+                execution_id=eid,
+                task_id=tid,
+                worker="BROWSER",
+                action="render",
+                payload={
+                    "url": f"http://example.com/slow-{i}",
+                    "canonical_url": f"http://example.com/slow-{i}",
+                    "category": "lodging",
+                    "reason": "TEST_REASON",
+                },
+            )
         events.append({"Records": [msg]})
 
-    adapter_code = """
+    if worker_type == "evidence":
+        adapter_code = """
+QUEUED_CALLBACK_EXECUTED = False
+
 class TestAdapter:
     def __init__(self, invoc_num: int) -> None:
         self.invoc_num = invoc_num
 
     async def search(self, query: str, limit: int = 5, extra_params=None):
-        def blocking_sleep():
-            time.sleep(4.0)
-        # Offload blocking work via to_thread
-        await asyncio.to_thread(blocking_sleep)
+        if self.invoc_num in (1, 2):
+            def blocking_sleep():
+                time.sleep(3.0)
+            await asyncio.to_thread(blocking_sleep)
+        else:
+            def queued_callback():
+                global QUEUED_CALLBACK_EXECUTED
+                QUEUED_CALLBACK_EXECUTED = True
+            await asyncio.to_thread(queued_callback)
         return []
+
+def post_loop_check():
+    # Wait past Thread 1 completion (3.0s from start) so Thread 1 re-enters the queue loop
+    time.sleep(1.1)
+    return {"queued_callback_executed": QUEUED_CALLBACK_EXECUTED}
+"""
+    else:
+        adapter_code = """
+QUEUED_CALLBACK_EXECUTED = False
+
+class TestAdapter:
+    def __init__(self, invoc_num: int) -> None:
+        self.invoc_num = invoc_num
+
+    async def render_page(self, payload):
+        if self.invoc_num in (1, 2):
+            def blocking_sleep():
+                time.sleep(3.0)
+            await asyncio.to_thread(blocking_sleep)
+        else:
+            def queued_callback():
+                global QUEUED_CALLBACK_EXECUTED
+                QUEUED_CALLBACK_EXECUTED = True
+            await asyncio.to_thread(queued_callback)
+        return None
+
+def post_loop_check():
+    # Wait past Thread 1 completion (3.0s from start) so Thread 1 re-enters the queue loop
+    time.sleep(1.1)
+    return {"queued_callback_executed": QUEUED_CALLBACK_EXECUTED}
 """
 
     out = run_repeated_timed_out_invocations_in_subprocess(
-        worker_type="evidence",
+        worker_type=worker_type,
         events=events,
-        duration_ms=2500,
+        duration_ms=2200,
         reserve_ms=1500,
         adapter_code=adapter_code,
         parent_timeout_seconds=12.0,
@@ -1710,11 +1820,16 @@ class TestAdapter:
     # Initial thread is MainThread (1). Bounded container executor has max_workers=2.
     # Thread counts must stay bounded by (initial_threads + max_workers) and not accumulate indefinitely.
     for count in thread_counts:
-        assert count <= out["initial_threads"] + 2, f"Thread count {count} exceeded bound"
+        assert count <= out["initial_threads"] + 2, f"Thread count {count} exceeded bound ({thread_counts})"
 
     # Growth between consecutive invocations must plateau (no unbounded linear growth)
     growth_after_warmup = thread_counts[-1] - thread_counts[1]
     assert growth_after_warmup == 0, f"Thread count continued growing after warmup: {thread_counts}"
+
+    # Unstarted queued future in _work_queue was cancelled during drain and never ran
+    assert out["post_check"]["queued_callback_executed"] is False, (
+        "Queued 3rd callback executed despite container executor work queue draining!"
+    )
 
 
 @pytest.mark.asyncio
@@ -1844,8 +1959,8 @@ class TestAdapter(PlaywrightBrowserAdapter):
         parent_timeout_seconds=10.0,
     )
 
-    # Invocation 1: timed out, returned partial failure
-    assert out["elapsed1"] <= 3.52, f"Invocation 1 took {out['elapsed1']:.2f}s"
+    # Invocation 1: timed out, returned partial failure strictly under 3.50s deadline
+    assert out["elapsed1"] < 3.48, f"Invocation 1 took {out['elapsed1']:.2f}s"
     assert out["res1"] == {"batchItemFailures": [{"itemIdentifier": "msg-browser-stubborn-1"}]}
 
     # Verification: ALL child processes from Invocation 1 were force killed

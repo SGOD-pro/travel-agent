@@ -37,7 +37,11 @@ SQS_RESPONSE_SAFETY_MARGIN_MS: int = 1000
 
 
 class BoundedDaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
-    """Container scoped thread pool creating daemon threads to prevent unbounded thread leaks and exit hangs."""
+    """Container scoped thread pool creating daemon threads to prevent unbounded thread leaks and exit hangs.
+
+    Relies on CPython ThreadPoolExecutor internals (_worker, _idle_semaphore, _work_queue, _threads_queues)
+    and defensively unlinks threads from _threads_queues so normal process exit never joins daemon threads.
+    """
 
     def _adjust_thread_count(self) -> None:
         if getattr(self, "_idle_semaphore", None) and self._idle_semaphore.acquire(timeout=0):
@@ -62,6 +66,7 @@ class BoundedDaemonThreadPoolExecutor(concurrent.futures.ThreadPoolExecutor):
             )
             t.start()
             cast(set[Any], self._threads).add(t)
+            # Defensive unlink: _adjust_thread_count omits _threads_queues registration so atexit won't join
             cast(dict[Any, Any], cft._threads_queues).pop(t, None)
 
 
@@ -373,10 +378,10 @@ def lambda_handler(
                 ]
             }
 
-        # Calculate handler execution timeout reserving time for loop shutdown
+        # Calculate handler execution timeout reserving time for loop shutdown and browser process cleanup
         if rem_ms is not None:
-            # Reserve 200ms for handler loop task cancellation, asyncgens shutdown, and SQS response return
-            handler_exec_timeout_s = max(0.05, (rem_ms - 200) / 1000.0)
+            # Reserve 250ms for handler loop task cancellation, asyncgens shutdown, SIGKILL teardown, and SQS return
+            handler_exec_timeout_s = max(0.05, (rem_ms - 250) / 1000.0)
         else:
             handler_exec_timeout_s = None
 
@@ -414,8 +419,8 @@ def lambda_handler(
                 try:
                     cur_rem = int(context.get_remaining_time_in_millis())
                 except Exception:
-                    cur_rem = 50
-                shutdown_s = max(0.01, min(0.5, (cur_rem - 50) / 1000.0)) if cur_rem > 50 else 0.01
+                    cur_rem = 150
+                shutdown_s = max(0.01, min(0.5, (cur_rem - 150) / 1000.0)) if cur_rem > 150 else 0.01
             else:
                 shutdown_s = 0.5
 
@@ -449,6 +454,9 @@ def lambda_handler(
                     while not work_q.empty():
                         try:
                             work_item = work_q.get_nowait()
+                            if work_item is None:
+                                work_q.put(None)
+                                break
                             fut = getattr(work_item, "future", None)
                             if fut is not None:
                                 fut.cancel()
@@ -474,6 +482,7 @@ def lambda_handler(
         except Exception as exc:
             logger.debug("Error terminating residual browser processes: %s", exc)
         try:
+            # CPython 3.12+ BaseEventLoop.close() shuts down _default_executor; unlink to keep container pool alive
             loop._default_executor = None  # type: ignore[attr-defined]
             loop.close()
         except Exception as exc:
