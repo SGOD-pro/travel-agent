@@ -283,11 +283,11 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         finally:
             if browser is not None:
                 try:
-                    await browser.close()
+                    await asyncio.wait_for(browser.close(), timeout=1.0)
                 except Exception as exc:
                     logger.debug("Error closing browser: %s", exc)
             try:
-                await playwright.stop()
+                await asyncio.wait_for(playwright.stop(), timeout=1.0)
             except Exception as exc:
                 logger.debug("Error stopping playwright: %s", exc)
 

@@ -188,13 +188,15 @@ async def process_batch(
                     cleanup_sec = DEFAULT_CLEANUP_TIMEOUT_SECONDS
 
                 try:
-                    await asyncio.wait_for(task, timeout=cleanup_sec)
-                except (TimeoutError, asyncio.CancelledError):
-                    logger.warning(
-                        "Evidence record %s cleanup exceeded bounded window of %.2fs; abandoning task to protect invocation deadline",
-                        message_id,
-                        cleanup_sec,
+                    done_clean, pending_clean = await asyncio.wait(
+                        {task}, timeout=cleanup_sec
                     )
+                    if pending_clean:
+                        logger.warning(
+                            "Evidence record %s cleanup exceeded bounded window of %.2fs; abandoning task to protect invocation deadline",
+                            message_id,
+                            cleanup_sec,
+                        )
                 except Exception as cleanup_err:
                     logger.warning(
                         "Evidence record %s cleanup encountered exception: %s",
@@ -245,45 +247,162 @@ async def process_batch(
 
     try:
         if batch_hard_timeout_s is not None:
-            results = await asyncio.wait_for(
-                asyncio.gather(*record_tasks, return_exceptions=True),
+            done_batch, pending_batch = await asyncio.wait(
+                set(record_tasks),
                 timeout=batch_hard_timeout_s,
             )
         else:
-            results = await asyncio.gather(*record_tasks, return_exceptions=True)
-    except (TimeoutError, asyncio.CancelledError):
+            done_batch, pending_batch = await asyncio.wait(set(record_tasks))
+    except Exception as batch_err:
+        logger.warning(
+            "Batch execution encountered error during task wait: %s",
+            batch_err,
+        )
+        done_batch, pending_batch = set(), set(record_tasks)
+
+    if pending_batch:
         logger.warning(
             "Batch execution reached invocation hard deadline guard (safety margin %dms); returning partial batch failures immediately",
             safety_margin_ms,
         )
-        for t in record_tasks:
-            if not t.done():
-                t.cancel()
-        for i, t in enumerate(record_tasks):
-            mid = records[i].get("messageId", "")
-            if not mid:
-                continue
-            if t.done() and not t.cancelled() and t.exception() is None:
+        for t in pending_batch:
+            t.cancel()
+
+    for i, t in enumerate(record_tasks):
+        mid = records[i].get("messageId", "")
+        if not mid:
+            continue
+        if t in done_batch and not t.cancelled():
+            task_exc = t.exception()
+            if task_exc is not None:
+                logger.exception("Unexpected exception in evidence record %s: %s", mid, task_exc)
+                failures.append({"itemIdentifier": mid})
+            else:
                 task_res = t.result()
                 if isinstance(task_res, dict) and "itemIdentifier" in task_res:
                     failures.append(task_res)
-            else:
-                failures.append({"itemIdentifier": mid})
-        return failures
-
-    for i, item in enumerate(results):
-        if isinstance(item, dict) and "itemIdentifier" in item:
-            failures.append(item)
-        elif isinstance(item, BaseException):
-            mid = records[i].get("messageId", "")
-            logger.exception("Unexpected exception in evidence record %s: %s", mid, item)
-            if mid:
-                failures.append({"itemIdentifier": mid})
+        else:
+            failures.append({"itemIdentifier": mid})
 
     return failures
 
 
-def lambda_handler(event: dict[str, Any], context: Any = None) -> dict[str, Any]:
-    """Standard AWS Lambda entrypoint for evidence collector consumer."""
-    failures = asyncio.run(process_batch(event, context))
-    return {"batchItemFailures": failures}
+def lambda_handler(
+    event: dict[str, Any],
+    context: Any = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Standard AWS Lambda entrypoint for evidence collector consumer.
+
+    Enforces a strict wall clock bound on batch execution and event loop shutdown,
+    ensuring that partial batch failure responses are returned to SQS before the
+    invocation deadline even if records or background tasks suppress cancellation.
+    """
+    records = event.get("Records", []) if isinstance(event, dict) else []
+    if not records:
+        return {"batchItemFailures": []}
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    failures: list[dict[str, str]] = []
+    try:
+        rem_ms: int | None = None
+        if context and hasattr(context, "get_remaining_time_in_millis"):
+            try:
+                rem_ms = int(context.get_remaining_time_in_millis())
+            except Exception:
+                rem_ms = None
+
+        if rem_ms is not None and rem_ms <= 100:
+            logger.warning(
+                "Lambda invocation remaining time (%dms) below critical threshold; failing all records for SQS retry",
+                rem_ms,
+            )
+            return {
+                "batchItemFailures": [
+                    {"itemIdentifier": r["messageId"]} for r in records if r.get("messageId")
+                ]
+            }
+
+        # Calculate handler execution timeout reserving time for loop shutdown
+        if rem_ms is not None:
+            # Reserve 200ms for handler loop task cancellation, asyncgens shutdown, and SQS response return
+            handler_exec_timeout_s = max(0.05, (rem_ms - 200) / 1000.0)
+        else:
+            handler_exec_timeout_s = None
+
+        batch_task = loop.create_task(process_batch(event, context, **kwargs))
+        try:
+            if handler_exec_timeout_s is not None:
+                done_b, pending_b = loop.run_until_complete(
+                    asyncio.wait({batch_task}, timeout=handler_exec_timeout_s)
+                )
+                if pending_b:
+                    batch_task.cancel()
+                    logger.warning(
+                        "Handler execution reached invocation deadline guard; returning batchItemFailures immediately"
+                    )
+                    failures = [
+                        {"itemIdentifier": r["messageId"]} for r in records if r.get("messageId")
+                    ]
+                else:
+                    failures = batch_task.result()
+            else:
+                failures = loop.run_until_complete(batch_task)
+        except Exception as e:
+            logger.exception("Unexpected exception in handler execution: %s", e)
+            failures = [
+                {"itemIdentifier": r["messageId"]} for r in records if r.get("messageId")
+            ]
+
+        # Bounded shutdown of all lingering tasks on this invocation's event loop
+        pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+        if pending:
+            for t in pending:
+                t.cancel()
+
+            if rem_ms is not None and hasattr(context, "get_remaining_time_in_millis"):
+                try:
+                    cur_rem = int(context.get_remaining_time_in_millis())
+                except Exception:
+                    cur_rem = 50
+                shutdown_s = max(0.01, min(0.5, (cur_rem - 50) / 1000.0)) if cur_rem > 50 else 0.01
+            else:
+                shutdown_s = 0.5
+
+            try:
+                done, still_pending = loop.run_until_complete(
+                    asyncio.wait(set(pending), timeout=shutdown_s)
+                )
+                if still_pending:
+                    logger.warning(
+                        "Handler task cancellation exceeded shutdown budget of %.2fs; abandoning %d pending tasks",
+                        shutdown_s,
+                        len(still_pending),
+                    )
+            except Exception as e:
+                logger.warning("Handler task cancellation encountered error: %s", e)
+
+        # Shutdown async generators and default executor cleanly
+        try:
+            loop.run_until_complete(
+                asyncio.wait_for(loop.shutdown_asyncgens(), timeout=0.05)
+            )
+        except Exception:
+            pass
+
+        try:
+            loop.run_until_complete(
+                asyncio.wait_for(loop.shutdown_default_executor(), timeout=0.05)
+            )
+        except Exception:
+            pass
+
+        return {"batchItemFailures": failures}
+    finally:
+        try:
+            loop.close()
+        except Exception as exc:
+            logger.warning("Error closing event loop: %s", exc)
+        asyncio.set_event_loop(None)

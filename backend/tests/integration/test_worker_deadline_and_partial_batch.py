@@ -24,6 +24,9 @@ Execution Environment Note:
 from __future__ import annotations
 
 import asyncio
+import json
+import subprocess
+import sys
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -51,7 +54,7 @@ from functions.evidence_collector.fixtures import (
     RawObservation,
 )
 from functions.evidence_collector.models import SourceObservationModel
-from functions.orchestrator.execution.fencing import (
+from functions.orchestrator.execution.models import (
     ExecutionModel,
     TaskModel,
     WorkerResultModel,
@@ -904,7 +907,7 @@ async def test_blocked_reconciliation_times_out_and_preserves_budget_as_uncertai
         await asyncio.sleep(10.0)
         return False
 
-    EvidenceCollectorService.reconcile_budget = _blocked_reconcile  # type: ignore[assignment]
+    EvidenceCollectorService.reconcile_budget = _blocked_reconcile  # type: ignore[method-assign]
 
     try:
         t0 = time.monotonic()
@@ -923,7 +926,7 @@ async def test_blocked_reconciliation_times_out_and_preserves_budget_as_uncertai
         assert len(failures) == 1
         assert failures[0]["itemIdentifier"] == "msg-blocked-recon"
     finally:
-        EvidenceCollectorService.reconcile_budget = original_reconcile  # type: ignore[assignment]
+        EvidenceCollectorService.reconcile_budget = original_reconcile  # type: ignore[method-assign]
 
     # Verify database state: reservation is preserved as ACTIVE because local reconciliation timed out
     async with session_factory() as session:
@@ -960,4 +963,303 @@ async def test_blocked_reconciliation_times_out_and_preserves_budget_as_uncertai
         assert b_after["spent_cost_minor"] == 50
         assert b_after["uncertain_cost_minor"] == 50
         assert b_after["remaining_cost_minor"] == 250
+
+
+# =============================================================================
+# 9. Lambda handler lifecycle and loop shutdown bounding (Subprocess isolation)
+# =============================================================================
+def run_lambda_handler_in_subprocess(
+    *,
+    worker_type: str,
+    event: dict[str, Any],
+    total_duration_ms: int,
+    reserve_ms: int,
+    adapter_code: str,
+    db_url: str | None = None,
+    parent_timeout_seconds: float = 6.0,
+) -> tuple[dict[str, Any], float]:
+    """Runs synchronous lambda_handler in an isolated child Python process under a parent-enforced timeout."""
+    if db_url is None:
+        from tests.integration.conftest import get_isolated_test_database_url
+
+        target_db_url = get_isolated_test_database_url()
+    else:
+        target_db_url = db_url
+
+    if target_db_url.startswith("postgres://"):
+        target_db_url = "postgresql+asyncpg://" + target_db_url[len("postgres://") :]
+    elif target_db_url.startswith("postgresql://") and not target_db_url.startswith(
+        "postgresql+asyncpg://"
+    ):
+        target_db_url = "postgresql+asyncpg://" + target_db_url[len("postgresql://") :]
+
+    if worker_type == "evidence":
+        handler_import = "from functions.evidence_collector.consumer import lambda_handler"
+        extra_kwargs = (
+            "adapter=TestAdapter(), extraction_adapter=FixtureWebExtractionAdapter(),"
+        )
+    else:
+        handler_import = "from functions.browser.consumer import lambda_handler"
+        extra_kwargs = "adapter=TestAdapter(),"
+
+    script = f"""
+import asyncio
+import json
+import sys
+import time
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+{handler_import}
+from functions.evidence_collector.fixtures import FixtureWebExtractionAdapter, RawObservation
+
+{adapter_code}
+
+class SubprocessContext:
+    def __init__(self, duration_ms: int) -> None:
+        self._start = time.monotonic()
+        self._total = duration_ms
+
+    def get_remaining_time_in_millis(self) -> int:
+        elapsed = (time.monotonic() - self._start) * 1000.0
+        return max(0, int(self._total - elapsed))
+
+engine = create_async_engine('{target_db_url}', poolclass=NullPool)
+session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+ctx = SubprocessContext({total_duration_ms})
+event = json.loads(sys.stdin.read())
+
+t0 = time.monotonic()
+res = lambda_handler(
+    event,
+    context=ctx,
+    session_factory=session_factory,
+    reserve_ms={reserve_ms},
+    {extra_kwargs}
+)
+elapsed = time.monotonic() - t0
+print(json.dumps({{"res": res, "elapsed": elapsed}}))
+"""
+
+    t0 = time.monotonic()
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        input=json.dumps(event),
+        capture_output=True,
+        text=True,
+        timeout=parent_timeout_seconds,
+    )
+    parent_elapsed = time.monotonic() - t0
+    assert parent_elapsed <= parent_timeout_seconds
+    assert proc.returncode == 0, (
+        f"Child process failed ({proc.returncode}):\nSTDOUT: {proc.stdout}\nSTDERR: {proc.stderr}"
+    )
+    lines = [line.strip() for line in proc.stdout.strip().splitlines() if line.strip()]
+    assert lines, f"Child process produced no JSON output.\nSTDERR: {proc.stderr}"
+    out = json.loads(lines[-1])
+    return out["res"], out["elapsed"]
+
+
+@pytest.mark.asyncio
+async def test_lambda_handler_cooperative_cancellation_returns_before_deadline(
+    session_factory: Any,
+) -> None:
+    """Verifies that lambda_handler handles cooperative task cancellation cleanly before deadline."""
+    eid, tid = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["cooperative slow query"]},
+    )
+    msg = build_sqs_message(
+        message_id="msg-cooperative-handler",
+        execution_id=eid,
+        task_id=tid,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["cooperative slow query"]},
+    )
+    event = {"Records": [msg]}
+
+    adapter_code = """
+class TestAdapter:
+    async def search(self, query: str, limit: int = 5, extra_params=None):
+        await asyncio.sleep(10.0)
+        return []
+"""
+    # 2500ms total, 1500ms reserve => usable time is 1000ms (1.0s)
+    res, elapsed = run_lambda_handler_in_subprocess(
+        worker_type="evidence",
+        event=event,
+        total_duration_ms=2500,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=5.0,
+    )
+    assert elapsed < 2.3, f"Execution took {elapsed:.2f}s, did not respect deadline reserve"
+    assert res == {"batchItemFailures": [{"itemIdentifier": "msg-cooperative-handler"}]}
+
+
+@pytest.mark.asyncio
+async def test_lambda_handler_repeated_cancellation_suppression_bounded_and_returns(
+    session_factory: Any,
+) -> None:
+    """Verifies that lambda_handler bounds shutdown and returns partial batch when a record suppresses cancellation."""
+    eid, tid = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["stubborn cancellation resistant query"]},
+    )
+    msg = build_sqs_message(
+        message_id="msg-stubborn-handler",
+        execution_id=eid,
+        task_id=tid,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["stubborn cancellation resistant query"]},
+    )
+    event = {"Records": [msg]}
+
+    adapter_code = """
+class TestAdapter:
+    async def search(self, query: str, limit: int = 5, extra_params=None):
+        while True:
+            try:
+                await asyncio.sleep(5.0)
+            except asyncio.CancelledError:
+                pass
+"""
+    # 2500ms total, 1500ms reserve => usable time is 1000ms
+    res, elapsed = run_lambda_handler_in_subprocess(
+        worker_type="evidence",
+        event=event,
+        total_duration_ms=2500,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=5.0,
+    )
+    assert elapsed < 2.48, f"Execution took {elapsed:.2f}s, exceeded invocation deadline"
+    assert res == {"batchItemFailures": [{"itemIdentifier": "msg-stubborn-handler"}]}
+
+    # Verify reservation remained in DB as ACTIVE (not refunded)
+    async with session_factory() as session:
+        exec_row = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == eid))
+        ).scalar_one()
+        reservations = exec_row.budget.get("reservations", {})
+        assert len(reservations) == 1
+        res_entry = list(reservations.values())[0]
+        assert res_entry["status"] == "ACTIVE"
+
+
+@pytest.mark.asyncio
+async def test_lambda_handler_blocked_cleanup_abandoned_and_returns_partial_batch(
+    session_factory: Any,
+) -> None:
+    """Verifies that when task cleanup blocks, lambda_handler abandons it and returns batchItemFailures before timeout."""
+    eid, tid = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["blocked cleanup query"]},
+    )
+    msg = build_sqs_message(
+        message_id="msg-blocked-cleanup-handler",
+        execution_id=eid,
+        task_id=tid,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["blocked cleanup query"]},
+    )
+    event = {"Records": [msg]}
+
+    adapter_code = """
+class TestAdapter:
+    async def search(self, query: str, limit: int = 5, extra_params=None):
+        try:
+            await asyncio.sleep(5.0)
+        finally:
+            while True:
+                try:
+                    await asyncio.sleep(5.0)
+                except asyncio.CancelledError:
+                    pass
+"""
+    res, elapsed = run_lambda_handler_in_subprocess(
+        worker_type="evidence",
+        event=event,
+        total_duration_ms=2500,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=5.0,
+    )
+    assert elapsed < 2.48, f"Execution took {elapsed:.2f}s, exceeded invocation deadline"
+    assert res == {"batchItemFailures": [{"itemIdentifier": "msg-blocked-cleanup-handler"}]}
+
+
+@pytest.mark.asyncio
+async def test_lambda_handler_successful_siblings_preserved_with_stubborn_record(
+    session_factory: Any,
+) -> None:
+    """Verifies that successful sibling records are committed and omitted from batchItemFailures while stubborn sibling is failed."""
+    eid_fast, tid_fast = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["fast sibling query"]},
+    )
+    eid_slow, tid_slow = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["stubborn sibling query"]},
+    )
+    msg_fast = build_sqs_message(
+        message_id="msg-fast-sibling",
+        execution_id=eid_fast,
+        task_id=tid_fast,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["fast sibling query"]},
+    )
+    msg_slow = build_sqs_message(
+        message_id="msg-stubborn-sibling",
+        execution_id=eid_slow,
+        task_id=tid_slow,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["stubborn sibling query"]},
+    )
+    event = {"Records": [msg_fast, msg_slow]}
+
+    adapter_code = """
+class TestAdapter:
+    async def search(self, query: str, limit: int = 5, extra_params=None):
+        if "fast" in query:
+            await asyncio.sleep(0.01)
+            return [RawObservation.create(source_url="https://example.com/ok", publisher="Gov", excerpt_text="Fast success")]
+        while True:
+            try:
+                await asyncio.sleep(5.0)
+            except asyncio.CancelledError:
+                pass
+"""
+    res, elapsed = run_lambda_handler_in_subprocess(
+        worker_type="evidence",
+        event=event,
+        total_duration_ms=2500,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=5.0,
+    )
+    assert elapsed < 2.48, f"Execution took {elapsed:.2f}s, exceeded invocation deadline"
+    assert res == {"batchItemFailures": [{"itemIdentifier": "msg-stubborn-sibling"}]}
+
+    # Verify fast task is completed in DB
+    async with session_factory() as session:
+        t_fast_row = (
+            await session.execute(select(TaskModel).where(TaskModel.id == tid_fast))
+        ).scalar_one()
+        assert t_fast_row.status == "COMPLETED"
 

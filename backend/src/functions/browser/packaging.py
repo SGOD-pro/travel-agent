@@ -234,7 +234,7 @@ def build_isolated_browser_artifact(
     (dest_exec / "__init__.py").write_text("", encoding="utf-8")
 
     exec_src = src_dir / "functions" / "orchestrator" / "execution"
-    for f_name in ["fencing.py", "models.py", "job_events.py"]:
+    for f_name in ["fencing.py", "models.py", "job_events.py", "budget.py"]:
         shutil.copy2(exec_src / f_name, dest_exec / f_name)
 
     # Staging config
