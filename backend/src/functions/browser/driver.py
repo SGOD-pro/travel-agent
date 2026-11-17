@@ -16,6 +16,7 @@ import hashlib
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import time
 from collections.abc import Callable
@@ -192,6 +193,97 @@ def ensure_sparticuz_chromium(
         return None
 
 
+_ACTIVE_BROWSER_PIDS: set[int] = set()
+
+
+def get_descendant_pids(root_pid: int) -> list[int]:
+    """Finds all child and descendant PIDs of root_pid."""
+    children_map: dict[int, list[int]] = {}
+    proc_dir = Path("/proc")
+    if proc_dir.is_dir():
+        for entry in proc_dir.iterdir():
+            if entry.name.isdigit():
+                try:
+                    stat_content = (entry / "stat").read_text()
+                    rparen = stat_content.rfind(")")
+                    if rparen != -1:
+                        fields = stat_content[rparen + 1 :].split()
+                        ppid = int(fields[1])
+                        pid = int(entry.name)
+                        children_map.setdefault(ppid, []).append(pid)
+                except Exception:
+                    continue
+    else:
+        try:
+            out = subprocess.check_output(["pgrep", "-P", str(root_pid)], stderr=subprocess.DEVNULL)
+            for line in out.decode().splitlines():
+                if line.strip().isdigit():
+                    children_map.setdefault(root_pid, []).append(int(line.strip()))
+        except Exception:
+            pass
+
+    descendants: list[int] = []
+    queue = [root_pid]
+    while queue:
+        curr = queue.pop(0)
+        for child in children_map.get(curr, []):
+            descendants.append(child)
+            queue.append(child)
+    return descendants
+
+
+def is_pid_alive(pid: int) -> bool:
+    """Returns True if the process exists and is actively running (not terminated or zombie)."""
+    stat_file = Path(f"/proc/{pid}/stat")
+    if not stat_file.exists():
+        try:
+            os.kill(pid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+    try:
+        content = stat_file.read_text()
+        rparen = content.rfind(")")
+        if rparen != -1:
+            state = content[rparen + 1 :].split()[0]
+            if state in ("Z", "X"):
+                return False
+        return True
+    except Exception:
+        return False
+
+
+def force_kill_process_tree(root_pid: int) -> None:
+    """Terminates root_pid and all its descendant processes via SIGKILL and reaps zombies."""
+    descendants = get_descendant_pids(root_pid)
+    all_pids = descendants + [root_pid]
+    for pid in all_pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        except Exception as exc:
+            logger.debug("Error killing process %d: %s", pid, exc)
+
+    # Allow kernel brief interval to deschedule and reap terminated processes
+    for _ in range(10):
+        time.sleep(0.02)
+        for pid in all_pids:
+            try:
+                os.waitpid(pid, os.WNOHANG)
+            except (ChildProcessError, ProcessLookupError, PermissionError):
+                pass
+        if not any(is_pid_alive(p) for p in all_pids):
+            break
+
+
+def terminate_all_browser_processes() -> None:
+    """Forcibly terminates any tracked Playwright driver and Chromium processes."""
+    for pid in list(_ACTIVE_BROWSER_PIDS):
+        force_kill_process_tree(pid)
+    _ACTIVE_BROWSER_PIDS.clear()
+
+
 class PlaywrightBrowserAdapter(BrowserExtractionPort):
     """Playwright extraction adapter executing dynamic page rendering with live network guards."""
 
@@ -215,6 +307,14 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         self._headless = headless
         self._egress_proxy = egress_proxy
         self._enable_egress_proxy = enable_egress_proxy
+        self._active_driver_pids: set[int] = set()
+
+    def terminate_residual_processes(self) -> None:
+        """Terminates any tracked Playwright or Chromium processes remaining from abandoned operations."""
+        for pid in list(self._active_driver_pids):
+            force_kill_process_tree(pid)
+            _ACTIVE_BROWSER_PIDS.discard(pid)
+        self._active_driver_pids.clear()
 
     async def render_page(self, payload: BrowserTaskPayload) -> BrowserRenderResult:
         """Renders dynamic web page content under strict timeouts and network controls."""
@@ -253,6 +353,19 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         playwright_cm = async_playwright()
         playwright = await playwright_cm.start()
         browser: Browser | None = None
+        driver_pid: int | None = None
+        try:
+            impl_obj = getattr(playwright, "_impl_obj", None)
+            conn = getattr(impl_obj, "_connection", None)
+            transport = getattr(conn, "_transport", None)
+            proc = getattr(transport, "_proc", None)
+            if proc and hasattr(proc, "pid") and isinstance(proc.pid, int):
+                driver_pid = proc.pid
+                self._active_driver_pids.add(driver_pid)
+                _ACTIVE_BROWSER_PIDS.add(driver_pid)
+        except Exception as exc:
+            logger.debug("Could not determine driver PID: %s", exc)
+
         try:
             executable_path = self._chromium_path
             if not executable_path:
@@ -290,6 +403,10 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                 await asyncio.wait_for(playwright.stop(), timeout=1.0)
             except Exception as exc:
                 logger.debug("Error stopping playwright: %s", exc)
+            if driver_pid is not None:
+                force_kill_process_tree(driver_pid)
+                self._active_driver_pids.discard(driver_pid)
+                _ACTIVE_BROWSER_PIDS.discard(driver_pid)
 
     async def _render_with_browser(
         self,

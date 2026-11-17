@@ -384,7 +384,7 @@ def lambda_handler(
             except Exception as e:
                 logger.warning("Handler task cancellation encountered error: %s", e)
 
-        # Shutdown async generators and default executor cleanly
+        # Shutdown async generators cleanly
         try:
             loop.run_until_complete(
                 asyncio.wait_for(loop.shutdown_asyncgens(), timeout=0.05)
@@ -392,15 +392,20 @@ def lambda_handler(
         except Exception:
             pass
 
-        try:
-            loop.run_until_complete(
-                asyncio.wait_for(loop.shutdown_default_executor(), timeout=0.05)
-            )
-        except Exception:
-            pass
-
         return {"batchItemFailures": failures}
     finally:
+        executor = getattr(loop, "_default_executor", None)
+        if executor is not None:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except Exception as exc:
+                logger.debug("Error shutting down default executor: %s", exc)
+        extraction_adapter = kwargs.get("extraction_adapter")
+        if extraction_adapter is not None and hasattr(extraction_adapter, "terminate_residual_processes"):
+            try:
+                extraction_adapter.terminate_residual_processes()
+            except Exception as exc:
+                logger.debug("Error terminating residual extraction processes: %s", exc)
         try:
             loop.close()
         except Exception as exc:

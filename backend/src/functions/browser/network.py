@@ -181,9 +181,11 @@ class RouteSecurityInterceptor:
         *,
         dns_resolver: Callable[[str, int], list[Any]] | None = None,
         ip_validator: Callable[[ipaddress.IPv4Address | ipaddress.IPv6Address], bool] | None = None,
+        dns_timeout: float = 2.0,
     ) -> None:
         self.dns_resolver = dns_resolver
         self.ip_validator = ip_validator
+        self.dns_timeout = dns_timeout
         self.blocked_requests: list[dict[str, Any]] = []
 
     async def __call__(self, route: Any) -> None:
@@ -249,13 +251,22 @@ class RouteSecurityInterceptor:
 
         port = parsed.port or (443 if scheme == "https" else 80)
         try:
-            await asyncio.to_thread(
-                resolve_and_validate_host,
-                hostname,
-                port=port,
-                dns_resolver=self.dns_resolver,
-                ip_validator=self.ip_validator,
+            await asyncio.wait_for(
+                asyncio.to_thread(
+                    resolve_and_validate_host,
+                    hostname,
+                    port=port,
+                    dns_resolver=self.dns_resolver,
+                    ip_validator=self.ip_validator,
+                ),
+                timeout=self.dns_timeout,
             )
+        except TimeoutError:
+            msg = f"DNS resolution timed out for {url}"
+            logger.warning(msg)
+            self.blocked_requests.append({"url": url, "reason": msg})
+            await route.abort("blockedbyclient")
+            return
         except BrowserSecurityError as exc:
             msg = f"SSRF security policy blocked request to {url}: {exc}"
             logger.warning(msg)
@@ -281,13 +292,16 @@ class RouteSecurityInterceptor:
             if location:
                 resolved_url = urljoin(getattr(response, "url", ""), location)
                 try:
-                    await asyncio.to_thread(
-                        validate_navigation_url,
-                        resolved_url,
-                        dns_resolver=self.dns_resolver,
-                        ip_validator=self.ip_validator,
+                    await asyncio.wait_for(
+                        asyncio.to_thread(
+                            validate_navigation_url,
+                            resolved_url,
+                            dns_resolver=self.dns_resolver,
+                            ip_validator=self.ip_validator,
+                        ),
+                        timeout=self.dns_timeout,
                     )
-                except BrowserSecurityError as exc:
+                except (TimeoutError, BrowserSecurityError) as exc:
                     msg = f"Redirect target blocked by security policy: {exc} ({resolved_url})"
                     logger.warning(msg)
                     self.blocked_requests.append({"url": resolved_url, "reason": msg})
@@ -334,10 +348,12 @@ class SecureEgressProxy:
         dns_resolver: Callable[[str, int], list[Any]] | None = None,
         ip_validator: Callable[[ipaddress.IPv4Address | ipaddress.IPv6Address], bool] | None = None,
         port: int = 0,
+        dns_timeout: float = 2.0,
     ) -> None:
         self.dns_resolver = dns_resolver
         self.ip_validator = ip_validator
         self.port = port
+        self.dns_timeout = dns_timeout
         self.server: asyncio.Server | None = None
         self.blocked_requests: list[dict[str, str]] = []
         self._active_tasks: set[asyncio.Task[Any]] = set()
@@ -435,13 +451,26 @@ class SecureEgressProxy:
 
             # Validate host and resolve all candidate IPs
             try:
-                allowed_ips = await asyncio.to_thread(
-                    resolve_and_validate_host,
-                    host,
-                    port=port,
-                    dns_resolver=self.dns_resolver,
-                    ip_validator=self.ip_validator,
+                allowed_ips = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        resolve_and_validate_host,
+                        host,
+                        port=port,
+                        dns_resolver=self.dns_resolver,
+                        ip_validator=self.ip_validator,
+                    ),
+                    timeout=self.dns_timeout,
                 )
+            except TimeoutError:
+                msg = f"Egress proxy DNS resolution timed out for {target}"
+                logger.warning(msg)
+                self.blocked_requests.append({"url": target, "reason": msg})
+                client_writer.write(
+                    b"HTTP/1.1 504 Gateway Timeout\r\nContent-Type: text/plain\r\n\r\nDNS resolution timed out\r\n"
+                )
+                await client_writer.drain()
+                client_writer.close()
+                return
             except BrowserSecurityError as exc:
                 msg = f"Egress proxy blocked connection to {target}: {exc}"
                 logger.warning(msg)

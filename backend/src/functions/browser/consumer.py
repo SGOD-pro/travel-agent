@@ -12,7 +12,7 @@ from typing import Any
 
 from config.db import get_session_factory
 from contracts.browser import BrowserExtractionPort
-from functions.browser.driver import PlaywrightBrowserAdapter
+from functions.browser.driver import PlaywrightBrowserAdapter, terminate_all_browser_processes
 from functions.browser.service import (
     BrowserWorkerService,
     parse_browser_dispatch_message,
@@ -383,7 +383,7 @@ def lambda_handler(
             except Exception as e:
                 logger.warning("Handler task cancellation encountered error: %s", e)
 
-        # Shutdown async generators and default executor cleanly
+        # Shutdown async generators cleanly
         try:
             loop.run_until_complete(
                 asyncio.wait_for(loop.shutdown_asyncgens(), timeout=0.05)
@@ -391,15 +391,24 @@ def lambda_handler(
         except Exception:
             pass
 
-        try:
-            loop.run_until_complete(
-                asyncio.wait_for(loop.shutdown_default_executor(), timeout=0.05)
-            )
-        except Exception:
-            pass
-
         return {"batchItemFailures": failures}
     finally:
+        executor = getattr(loop, "_default_executor", None)
+        if executor is not None:
+            try:
+                executor.shutdown(wait=False, cancel_futures=True)
+            except Exception as exc:
+                logger.debug("Error shutting down default executor: %s", exc)
+        adapter = kwargs.get("adapter")
+        if adapter is not None and hasattr(adapter, "terminate_residual_processes"):
+            try:
+                adapter.terminate_residual_processes()
+            except Exception as exc:
+                logger.debug("Error terminating residual processes on adapter: %s", exc)
+        try:
+            terminate_all_browser_processes()
+        except Exception as exc:
+            logger.debug("Error terminating residual browser processes: %s", exc)
         try:
             loop.close()
         except Exception as exc:

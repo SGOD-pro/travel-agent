@@ -968,6 +968,24 @@ async def test_blocked_reconciliation_times_out_and_preserves_budget_as_uncertai
 # =============================================================================
 # 9. Lambda handler lifecycle and loop shutdown bounding (Subprocess isolation)
 # =============================================================================
+def get_test_db_url() -> str:
+    import os
+
+    from acceptance_database import validate_isolated_database_url
+    from config.config import settings
+
+    test_url = (
+        os.environ.get("TEST_DATABASE_URL")
+        or getattr(settings, "TEST_DATABASE_URL", None)
+        or settings.ACCEPTANCE_DATABASE_URL
+    )
+    return validate_isolated_database_url(
+        test_url,
+        settings.DATABASE_URL,
+        label="Integration test database",
+    )
+
+
 def run_lambda_handler_in_subprocess(
     *,
     worker_type: str,
@@ -980,9 +998,7 @@ def run_lambda_handler_in_subprocess(
 ) -> tuple[dict[str, Any], float]:
     """Runs synchronous lambda_handler in an isolated child Python process under a parent-enforced timeout."""
     if db_url is None:
-        from tests.integration.conftest import get_isolated_test_database_url
-
-        target_db_url = get_isolated_test_database_url()
+        target_db_url = get_test_db_url()
     else:
         target_db_url = db_url
 
@@ -1005,6 +1021,7 @@ def run_lambda_handler_in_subprocess(
     script = f"""
 import asyncio
 import json
+import os
 import sys
 import time
 
@@ -1039,6 +1056,8 @@ res = lambda_handler(
 )
 elapsed = time.monotonic() - t0
 print(json.dumps({{"res": res, "elapsed": elapsed}}))
+sys.stdout.flush()
+os._exit(0)
 """
 
     t0 = time.monotonic()
@@ -1058,6 +1077,138 @@ print(json.dumps({{"res": res, "elapsed": elapsed}}))
     assert lines, f"Child process produced no JSON output.\nSTDERR: {proc.stderr}"
     out = json.loads(lines[-1])
     return out["res"], out["elapsed"]
+
+
+def run_two_successive_invocations_in_subprocess(
+    *,
+    worker_type: str,
+    event1: dict[str, Any],
+    event2: dict[str, Any],
+    duration_ms1: int,
+    duration_ms2: int,
+    reserve_ms: int,
+    adapter_code: str,
+    db_url: str | None = None,
+    parent_timeout_seconds: float = 10.0,
+) -> dict[str, Any]:
+    """Runs two successive lambda_handler invocations in the SAME child Python process."""
+    if db_url is None:
+        target_db_url = get_test_db_url()
+    else:
+        target_db_url = db_url
+
+    if target_db_url.startswith("postgres://"):
+        target_db_url = "postgresql+asyncpg://" + target_db_url[len("postgres://") :]
+    elif target_db_url.startswith("postgresql://") and not target_db_url.startswith(
+        "postgresql+asyncpg://"
+    ):
+        target_db_url = "postgresql+asyncpg://" + target_db_url[len("postgresql://") :]
+
+    if worker_type == "evidence":
+        handler_import = "from functions.evidence_collector.consumer import lambda_handler"
+        extra_kwargs1 = "adapter=adapter1, extraction_adapter=FixtureWebExtractionAdapter(),"
+        extra_kwargs2 = "adapter=adapter2, extraction_adapter=FixtureWebExtractionAdapter(),"
+    else:
+        handler_import = "from functions.browser.consumer import lambda_handler"
+        extra_kwargs1 = "adapter=adapter1,"
+        extra_kwargs2 = "adapter=adapter2,"
+
+    script = f"""
+import asyncio
+import json
+import os
+import signal
+import sys
+import time
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+{handler_import}
+from functions.evidence_collector.fixtures import FixtureWebExtractionAdapter, RawObservation
+from contracts.browser import BrowserRenderResult, BrowserRenderStatus, BrowserResourceUsage
+from functions.browser.driver import get_descendant_pids
+
+{adapter_code}
+
+class SubprocessContext:
+    def __init__(self, duration_ms: int) -> None:
+        self._start = time.monotonic()
+        self._total = duration_ms
+
+    def get_remaining_time_in_millis(self) -> int:
+        elapsed = (time.monotonic() - self._start) * 1000.0
+        return max(0, int(self._total - elapsed))
+
+engine = create_async_engine('{target_db_url}', poolclass=NullPool)
+session_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+ctx1 = SubprocessContext({duration_ms1})
+event1 = {json.dumps(event1)}
+event2 = {json.dumps(event2)}
+
+# --- INVOCATION 1 ---
+adapter1 = TestAdapter(1)
+t0 = time.monotonic()
+res1 = lambda_handler(
+    event1,
+    context=ctx1,
+    session_factory=session_factory,
+    reserve_ms={reserve_ms},
+    {extra_kwargs1}
+)
+elapsed1 = time.monotonic() - t0
+
+post_invoc1_check = {{}}
+if hasattr(adapter1, "check_post_invocation"):
+    post_invoc1_check = adapter1.check_post_invocation()
+
+# --- INVOCATION 2 in same process ---
+ctx2 = SubprocessContext({duration_ms2})
+adapter2 = TestAdapter(2)
+t1 = time.monotonic()
+res2 = lambda_handler(
+    event2,
+    context=ctx2,
+    session_factory=session_factory,
+    reserve_ms={reserve_ms},
+    {extra_kwargs2}
+)
+elapsed2 = time.monotonic() - t1
+
+post_invoc2_check = {{}}
+if hasattr(adapter2, "check_post_invocation"):
+    post_invoc2_check = adapter2.check_post_invocation()
+
+out = {{
+    "res1": res1,
+    "elapsed1": elapsed1,
+    "post_invoc1": post_invoc1_check,
+    "res2": res2,
+    "elapsed2": elapsed2,
+    "post_invoc2": post_invoc2_check,
+}}
+print(json.dumps(out))
+sys.stdout.flush()
+os._exit(0)
+"""
+
+    t0 = time.monotonic()
+    proc = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        timeout=parent_timeout_seconds,
+    )
+    parent_elapsed = time.monotonic() - t0
+    assert parent_elapsed <= parent_timeout_seconds, f"Subprocess timed out after {parent_elapsed:.2f}s"
+    assert proc.returncode == 0, (
+        f"Child process failed ({proc.returncode}):\nSTDOUT: {proc.stdout}\nSTDERR: {proc.stderr}"
+    )
+    lines = [line.strip() for line in proc.stdout.strip().splitlines() if line.strip()]
+    assert lines, f"Child process produced no JSON output.\nSTDERR: {proc.stderr}"
+    res = json.loads(lines[-1])
+    assert isinstance(res, dict)
+    return res
 
 
 @pytest.mark.asyncio
@@ -1262,4 +1413,249 @@ class TestAdapter:
             await session.execute(select(TaskModel).where(TaskModel.id == tid_fast))
         ).scalar_one()
         assert t_fast_row.status == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_lambda_handler_two_successive_invocations_same_process_evidence_residual_thread_isolation(
+    session_factory: Any,
+) -> None:
+    """Verifies that two successive evidence collector invocations in the same process remain isolated.
+
+    Invocation 1 starts a cancellation-resistant thread operation, times out, and returns its partial batch response.
+    Invocation 2 runs in the same process, completes its task successfully, and verifies that the thread from
+    Invocation 1 cannot access or mutate Invocation 2 resources or database state.
+    """
+    eid1, tid1 = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["slow stubborn query"]},
+    )
+    eid2, tid2 = await create_db_task(
+        session_factory,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["fast sibling query"]},
+    )
+    msg1 = build_sqs_message(
+        message_id="msg-slow-invoc1",
+        execution_id=eid1,
+        task_id=tid1,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["slow stubborn query"]},
+    )
+    msg2 = build_sqs_message(
+        message_id="msg-fast-invoc2",
+        execution_id=eid2,
+        task_id=tid2,
+        worker="EVIDENCE",
+        action="collect",
+        payload={"queries": ["fast sibling query"]},
+    )
+
+    adapter_code = """
+class TestAdapter:
+    def __init__(self, invoc_num: int) -> None:
+        self.invoc_num = invoc_num
+        self.ran_stubborn_thread = False
+
+    async def search(self, query: str, limit: int = 5, extra_params=None):
+        if self.invoc_num == 1:
+            loop = asyncio.get_running_loop()
+            def stubborn_sync():
+                while True:
+                    time.sleep(0.05)
+            loop.create_task(asyncio.to_thread(stubborn_sync))
+            self.ran_stubborn_thread = True
+            while True:
+                try:
+                    await asyncio.sleep(5.0)
+                except asyncio.CancelledError:
+                    pass
+        else:
+            await asyncio.sleep(0.01)
+            return [RawObservation.create(source_url="https://example.com/invoc2", publisher="Gov", excerpt_text="Invoc2 success")]
+
+    def check_post_invocation(self):
+        return {"ran_stubborn_thread": self.ran_stubborn_thread}
+"""
+
+    out = run_two_successive_invocations_in_subprocess(
+        worker_type="evidence",
+        event1={"Records": [msg1]},
+        event2={"Records": [msg2]},
+        duration_ms1=2500,
+        duration_ms2=2500,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=8.0,
+    )
+
+    # Invocation 1: timed out, returned partial failure
+    assert out["elapsed1"] < 2.48, f"Invocation 1 took {out['elapsed1']:.2f}s"
+    assert out["res1"] == {"batchItemFailures": [{"itemIdentifier": "msg-slow-invoc1"}]}
+    assert out["post_invoc1"]["ran_stubborn_thread"] is True
+
+    # Invocation 2: ran in same process, succeeded completely
+    assert out["res2"] == {"batchItemFailures": []}
+    assert out["elapsed2"] < 1.0, f"Invocation 2 took {out['elapsed2']:.2f}s"
+
+    # Database verification
+    async with session_factory() as session:
+        t1_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid1))).scalar_one()
+        assert t1_row.status != "COMPLETED"
+
+        t2_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid2))).scalar_one()
+        assert t2_row.status == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_lambda_handler_two_successive_invocations_same_process_browser_residual_process_cleanup(
+    session_factory: Any,
+) -> None:
+    """Verifies that two successive browser worker invocations in the same process clean up child processes.
+
+    Invocation 1 launches Playwright/Chromium and blocks past usable time; the handler shuts down,
+    force-kills all descendant Playwright and Chromium processes, and returns partial batch failure.
+    Invocation 2 executes a fast browser task in the same process, completes successfully, and verifies zero residual processes.
+    """
+    eid1, tid1 = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "http://127.0.0.1:9/stubborn",
+            "canonical_url": "http://127.0.0.1:9/stubborn",
+            "category": "lodging",
+            "reason": "TEST_REASON",
+        },
+    )
+    eid2, tid2 = await create_db_task(
+        session_factory,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "http://example.com/fast",
+            "canonical_url": "http://example.com/fast",
+            "category": "lodging",
+            "reason": "TEST_REASON",
+        },
+    )
+    msg1 = build_sqs_message(
+        message_id="msg-browser-stubborn-1",
+        execution_id=eid1,
+        task_id=tid1,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "http://127.0.0.1:9/stubborn",
+            "canonical_url": "http://127.0.0.1:9/stubborn",
+            "category": "lodging",
+            "reason": "TEST_REASON",
+        },
+    )
+    msg2 = build_sqs_message(
+        message_id="msg-browser-fast-2",
+        execution_id=eid2,
+        task_id=tid2,
+        worker="BROWSER",
+        action="render",
+        payload={
+            "url": "http://example.com/fast",
+            "canonical_url": "http://example.com/fast",
+            "category": "lodging",
+            "reason": "TEST_REASON",
+        },
+    )
+
+    adapter_code = """
+from functions.browser.driver import PlaywrightBrowserAdapter, get_descendant_pids, is_pid_alive
+from contracts.browser import BrowserRenderResult, BrowserRenderStatus, BrowserResourceUsage
+
+class TestAdapter(PlaywrightBrowserAdapter):
+    def __init__(self, invoc_num: int) -> None:
+        super().__init__()
+        self.invoc_num = invoc_num
+        self.tracked_driver_pid = None
+
+    async def render_page(self, payload):
+        if self.invoc_num == 1:
+            from playwright.async_api import async_playwright
+            pw = await async_playwright().start()
+            impl = getattr(pw, "_impl_obj", None)
+            conn = getattr(impl, "_connection", None)
+            transport = getattr(conn, "_transport", None)
+            proc = getattr(transport, "_proc", None)
+            if proc and hasattr(proc, "pid"):
+                self.tracked_driver_pid = proc.pid
+                self._active_driver_pids.add(proc.pid)
+            browser = await pw.chromium.launch(headless=True)
+            while True:
+                try:
+                    await asyncio.sleep(5.0)
+                except asyncio.CancelledError:
+                    pass
+        else:
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.SUCCESS,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash="mock-browser-hash",
+                excerpt_text="Fast browser excerpt",
+                excerpt_locator="body",
+                rendered_html_snippet="<html><body>Fast browser content</body></html>",
+                render_duration_ms=10,
+                unavailable_reason=None,
+                usage=BrowserResourceUsage(duration_ms=10, memory_mb=128),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
+            )
+
+    def check_post_invocation(self):
+        alive_driver = False
+        alive_descendants = []
+        if self.tracked_driver_pid is not None:
+            alive_driver = is_pid_alive(self.tracked_driver_pid)
+            descendants = get_descendant_pids(self.tracked_driver_pid)
+            alive_descendants = [d for d in descendants if is_pid_alive(d)]
+        return {
+            "driver_pid": self.tracked_driver_pid,
+            "alive_driver": alive_driver,
+            "alive_descendants": alive_descendants,
+        }
+"""
+
+    out = run_two_successive_invocations_in_subprocess(
+        worker_type="browser",
+        event1={"Records": [msg1]},
+        event2={"Records": [msg2]},
+        duration_ms1=3500,
+        duration_ms2=2500,
+        reserve_ms=1500,
+        adapter_code=adapter_code,
+        parent_timeout_seconds=10.0,
+    )
+
+    # Invocation 1: timed out, returned partial failure
+    assert out["elapsed1"] < 3.48, f"Invocation 1 took {out['elapsed1']:.2f}s"
+    assert out["res1"] == {"batchItemFailures": [{"itemIdentifier": "msg-browser-stubborn-1"}]}
+
+    # Verification: ALL child processes from Invocation 1 were force killed
+    post1 = out["post_invoc1"]
+    assert post1["driver_pid"] is not None
+    assert post1["alive_driver"] is False, f"Driver PID {post1['driver_pid']} is still alive!"
+    assert post1["alive_descendants"] == [], f"Chromium descendant PIDs still alive: {post1['alive_descendants']}"
+
+    # Invocation 2: succeeded cleanly in the same process
+    assert out["res2"] == {"batchItemFailures": []}
+    assert out["elapsed2"] < 1.0, f"Invocation 2 took {out['elapsed2']:.2f}s"
+
+    # Database verification
+    async with session_factory() as session:
+        t1_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid1))).scalar_one()
+        assert t1_row.status != "COMPLETED"
+
+        t2_row = (await session.execute(select(TaskModel).where(TaskModel.id == tid2))).scalar_one()
+        assert t2_row.status == "COMPLETED"
 
