@@ -237,6 +237,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 8 worker shutdown and residual work isolation: [2026-11-17-worker-shutdown-residual-work.md](../reviews/2026-11-17-worker-shutdown-residual-work.md) (Approve with nits)
    - [x] Slice 8 residual thread isolation and bounded container executor: [2026-11-17-residual-thread-isolation.md](../reviews/2026-11-17-residual-thread-isolation.md) (Approve with nits)
    - [x] Slice 8 production browser DNS saturation correction: [2026-11-18-production-dns-saturation.md](../reviews/2026-11-18-production-dns-saturation.md) (Approve with nits)
+   - [x] Slice 8 API to runner start contract correction: [2026-11-18-api-to-runner-start-contract.md](../reviews/2026-11-18-api-to-runner-start-contract.md) · [2026-11-19-api-to-runner-start-contract.md](../reviews/2026-11-19-api-to-runner-start-contract.md) (Approve with nits)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 
