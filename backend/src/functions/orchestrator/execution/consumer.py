@@ -28,42 +28,73 @@ async def process_record(record: dict[str, Any], runner: GraphRunnerService) -> 
     try:
         body = json.loads(body_str)
     except json.JSONDecodeError as e:
-        logger.error(f"Malformed SQS message body: {body_str}")
+        logger.error("Malformed SQS message body: %s", body_str)
         raise ValueError("Malformed JSON") from e
 
     kind = body.get("kind")
     execution_id_str = body.get("execution_id")
     if not kind or not execution_id_str:
-        logger.error(f"Missing required fields 'kind' or 'execution_id' in body: {body}")
+        logger.error("Missing required fields 'kind' or 'execution_id' in body: %s", body)
         raise ValueError("Missing required fields")
 
-    execution_id = uuid.UUID(execution_id_str)
-    event_id = uuid.UUID(body["id"]) if "id" in body else None
+    execution_id = uuid.UUID(str(execution_id_str))
+    raw_event_id = body.get("event_id") or body.get("id")
+    event_id = uuid.UUID(str(raw_event_id)) if raw_event_id else None
+
+    raw_payload = body.get("payload")
+    if raw_payload is None:
+        raw_payload = body.get("payload_ref")
+    if raw_payload is not None and not isinstance(raw_payload, dict):
+        logger.warning(
+            "Non-dict payload encountered in SQS message for execution %s: %s",
+            execution_id,
+            type(raw_payload).__name__,
+        )
+    payload_dict = raw_payload if isinstance(raw_payload, dict) else {}
+
+    raw_workflow = body.get("workflow") or payload_dict.get("workflow")
+    if not raw_workflow:
+        logger.warning(
+            "Workflow not specified in SQS record body or payload for execution %s; defaulting to 'TRAVEL'",
+            execution_id,
+        )
+        workflow = "TRAVEL"
+    else:
+        workflow = str(raw_workflow)
+
+    raw_context_version = body.get("context_version")
+    if raw_context_version is None:
+        raw_context_version = payload_dict.get("context_version", 1)
+    context_version = int(raw_context_version)
 
     if kind == "EXECUTION_START":
-        payload_ref = body.get("payload_ref")
-        # Initialize execution start event
         event_start = ExecutionStartEvent(
             execution_id=execution_id,
             event_id=event_id,
-            workflow=body.get("workflow", "TRAVEL"),
-            context_version=body.get("context_version", 1),
-            payload=payload_ref,
+            workflow=workflow,
+            context_version=context_version,
+            payload=raw_payload if isinstance(raw_payload, dict) else None,
         )
         await runner.handle_execution_start(event=event_start)
 
     elif kind == "EXECUTION_RESUME":
-        task_id = body.get("task_id")
+        raw_task_id = (
+            body.get("task_id")
+            or payload_dict.get("triggered_by_task_id")
+            or payload_dict.get("task_id")
+        )
+        action = str(body.get("action") or payload_dict.get("action") or "resume_graph")
         event_resume = ExecutionResumeEvent(
             execution_id=execution_id,
             event_id=event_id,
-            triggered_by_task_id=uuid.UUID(task_id) if task_id else None,
-            context_version=body.get("context_version", 1),
+            triggered_by_task_id=uuid.UUID(str(raw_task_id)) if raw_task_id else None,
+            action=action,
+            context_version=context_version,
         )
         await runner.handle_execution_resume(event=event_resume)
 
     else:
-        logger.error(f"Unsupported event kind: {kind}")
+        logger.error("Unsupported event kind: %s", kind)
         raise ValueError(f"Unsupported kind: {kind}")
 
 

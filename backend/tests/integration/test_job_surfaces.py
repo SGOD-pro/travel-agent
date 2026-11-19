@@ -23,7 +23,7 @@ from sqlalchemy.pool import NullPool
 from config.config import settings
 from config.db import get_session
 from functions.api.app import app
-from functions.api.models import TripModel
+from functions.api.models import TripModel, TripVersionModel
 from functions.orchestrator.execution import (
     CompletionReconciliationService,
     ExecutionModel,
@@ -94,7 +94,23 @@ async def test_acceptance_status_url_resolves_successfully(session_factory) -> N
     trip_id = uuid.uuid4()
     now = datetime.now(UTC)
 
-    # Seed TripModel for the owner
+    # Seed TripModel and its v1 brief snapshot for the owner
+    brief_v1 = {
+        "origin_name": "Bengaluru",
+        "origin_lat": 12.9716,
+        "origin_lng": 77.5946,
+        "destinations": [
+            {
+                "name": "Mysuru",
+                "latitude": 12.2958,
+                "longitude": 76.6394,
+                "stay_days": 2,
+            }
+        ],
+        "start_date": "2026-12-01",
+        "end_date": "2026-12-02",
+        "adults": 2,
+    }
     async with session_factory() as session:
         trip = TripModel(
             id=trip_id,
@@ -104,7 +120,15 @@ async def test_acceptance_status_url_resolves_successfully(session_factory) -> N
             created_at=now,
             updated_at=now,
         )
-        session.add(trip)
+        trip_version = TripVersionModel(
+            trip_id=trip_id,
+            version=1,
+            brief_json=brief_v1,
+            schema_version=1,
+            command_id=uuid.uuid4(),
+            created_at=now,
+        )
+        session.add_all([trip, trip_version])
         await session.commit()
 
     async def override_get_session():

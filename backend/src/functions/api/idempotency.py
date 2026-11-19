@@ -5,6 +5,7 @@ Conforms strictly to spec 0001 Transaction 1: Job acceptance and idempotency res
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import uuid
@@ -47,6 +48,8 @@ class IdempotencyRepository:
         workflow: str = "TRAVEL",
         deadline_seconds: int = 3600,
         expiry_seconds: int = 86400,
+        start_payload: dict[str, Any] | None = None,
+        execution_budget: dict[str, Any] | None = None,
         test_fail_after_idempotency_insert: bool = False,
         test_fail_after_execution_insert: bool = False,
         test_fail_after_outbox_insert: bool = False,
@@ -120,6 +123,7 @@ class IdempotencyRepository:
                     status="CREATED",
                     context_version=1,
                     deadline_at=deadline_at,
+                    budget=dict(execution_budget) if execution_budget is not None else None,
                     created_at=now,
                     updated_at=now,
                 )
@@ -129,7 +133,12 @@ class IdempotencyRepository:
                 if test_fail_after_execution_insert:
                     raise RuntimeError("Simulated failure after executions insert")
 
-                # Insert EXECUTION_START outbox event
+                # Insert EXECUTION_START outbox event with durable start payload when supplied
+                outbox_payload = (
+                    copy.deepcopy(start_payload)
+                    if start_payload is not None
+                    else dict(response_json)
+                )
                 outbox_event = OutboxEventModel(
                     id=uuid.uuid4(),
                     execution_id=execution_id,
@@ -137,8 +146,8 @@ class IdempotencyRepository:
                     task_id=None,
                     kind="EXECUTION_START",
                     event_type="EXECUTION_START",
-                    payload_ref=response_json,
-                    payload=response_json,
+                    payload_ref=outbox_payload,
+                    payload=outbox_payload,
                     due_at=now,
                     attempts=0,
                     created_at=now,
@@ -147,15 +156,19 @@ class IdempotencyRepository:
                 await self._session.flush()
 
                 # Insert initial JOB_ACCEPTED timeline event in job_events
+                accepted_safe_payload: dict[str, Any] = {
+                    "status": "CREATED",
+                    "workflow": workflow,
+                    "trip_id": str(trip_id) if trip_id else None,
+                }
+                if start_payload is not None and "version" in start_payload:
+                    accepted_safe_payload["trip_version"] = start_payload["version"]
+
                 await record_job_event(
                     self._session,
                     execution_id=execution_id,
                     event_type="JOB_ACCEPTED",
-                    safe_payload={
-                        "status": "CREATED",
-                        "workflow": workflow,
-                        "trip_id": str(trip_id) if trip_id else None,
-                    },
+                    safe_payload=accepted_safe_payload,
                 )
 
                 if test_fail_after_outbox_insert:

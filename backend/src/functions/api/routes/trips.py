@@ -6,7 +6,7 @@ import uuid
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,8 +15,10 @@ from contracts.jobs import Job, JobStatus
 from contracts.routing import RouteMapGeoJsonResponse
 from contracts.trips import Trip, TripBrief, TripState
 from functions.api.idempotency import IdempotencyConflictError, IdempotencyRepository
-from functions.api.models import TripModel
+from functions.api.models import TripModel, TripVersionModel
 from functions.api.repository import SqlAlchemyUnitOfWork, TripVersionConflictError
+from functions.orchestrator.evidence.query_planner import QueryPlanningService
+from functions.orchestrator.execution.budget import ensure_execution_budget_structure
 from functions.orchestrator.execution.models import ExecutionModel
 from functions.orchestrator.graphs.trip_planner.graph import trip_planning_workflow
 from functions.orchestrator.routing.geojson import assemble_route_map_geojson
@@ -103,7 +105,14 @@ class PlanJobResponse(BaseModel):
 
 
 class StartPlanRequest(BaseModel):
-    planning_options: dict[str, Any] = Field(default_factory=dict)
+    planning_options: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Client planning options reserved for future preferences; currently has no "
+            "effect on budget or execution behavior, which are authoritatively derived "
+            "from the trip brief."
+        ),
+    )
     workflow: str = "TRAVEL"
 
 
@@ -276,11 +285,21 @@ async def start_trip_plan(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> AcceptedPlanResponse:
-    """Accepts a trip planning job with owner-scoped idempotency reservation."""
+    """Accepts a trip planning job with owner-scoped idempotency reservation.
+
+    Collector budget is derived authoritatively from the accepted brief snapshot through
+    QueryPlanningService; client planning_options cannot alter budget or execution identity.
+    """
     if not idempotency_key or not idempotency_key.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Idempotency-Key header is required for job acceptance.",
+        )
+
+    if request.workflow != "TRAVEL":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported workflow '{request.workflow}'. Only 'TRAVEL' is supported.",
         )
 
     trip_stmt = select(TripModel).where(TripModel.id == trip_id)
@@ -291,6 +310,39 @@ async def start_trip_plan(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Trip {trip_id} not found",
         )
+
+    version_stmt = select(TripVersionModel).where(
+        TripVersionModel.trip_id == trip.id,
+        TripVersionModel.version == trip.current_version,
+    )
+    trip_version = (await session.execute(version_stmt)).scalar_one_or_none()
+    if trip_version is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Trip {trip_id} has no valid brief snapshot for version {trip.current_version}",
+        )
+
+    try:
+        validated_brief = TripBrief.model_validate(trip_version.brief_json)
+    except (ValidationError, ValueError, TypeError) as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Trip {trip_id} version {trip_version.version} has an invalid brief snapshot: {e}",
+        ) from e
+
+    brief_snapshot = validated_brief.model_dump(mode="json")
+    planned_queries = QueryPlanningService.plan_destination_queries(validated_brief)
+    collector_budget = QueryPlanningService.calculate_collector_budget(planned_queries)
+    execution_budget = ensure_execution_budget_structure(collector_budget)
+
+    start_payload: dict[str, Any] = {
+        "trip_id": str(trip.id),
+        "owner_id": str(current_user.id),
+        "version": trip_version.version,
+        "brief": brief_snapshot,
+        "workflow": request.workflow,
+        "context_version": 1,
+    }
 
     idempotency_repo = IdempotencyRepository(session)
     payload_dict = {
@@ -305,6 +357,8 @@ async def start_trip_plan(
             payload=payload_dict,
             trip_id=trip_id,
             workflow=request.workflow,
+            start_payload=start_payload,
+            execution_budget=execution_budget,
         )
     except IdempotencyConflictError as e:
         raise HTTPException(

@@ -19,8 +19,10 @@ from tests.integration.test_graph_runner import (
 def mock_create_graph(postgres_checkpointer):
     """Mocks the graph creation to use our test graph."""
     graph = build_test_runner_graph(postgres_checkpointer)
-    with patch("functions.orchestrator.execution.consumer.build_trip_planning_graph") as mock:
-        mock.return_value.compile.return_value = graph
+    with patch(
+        "functions.orchestrator.execution.consumer.compile_trip_planning_workflow",
+        return_value=graph,
+    ) as mock:
         yield mock
 
 

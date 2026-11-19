@@ -49,6 +49,18 @@ class GraphExecutionTimeoutError(GraphRunnerError):
     """Raised when graph execution exceeds runtime limit."""
 
 
+class ExecutionIdentityMismatchError(GraphRunnerError):
+    """Base exception for execution start identity mismatches."""
+
+
+class ExecutionOwnerMismatchError(ExecutionIdentityMismatchError, PermissionError):
+    """Raised when start payload owner_id does not match execution record."""
+
+
+class ExecutionTripMismatchError(ExecutionIdentityMismatchError, ValueError):
+    """Raised when start payload trip_id does not match execution record."""
+
+
 @dataclass
 class TaskSpec:
     """Specification for a task produced by a LangGraph node."""
@@ -185,6 +197,10 @@ class GraphRunnerService:
         now = datetime.now(UTC)
         runner_lease = uuid.uuid4()
         workflow_name = event_obj.workflow
+        # Forward declarations to carry authoritative execution identity out of the
+        # Phase 1 database transaction without holding the lock during LangGraph execution.
+        execution_owner_id: uuid.UUID
+        execution_trip_id: uuid.UUID | None
 
         # Phase 1: Lock execution and evaluate barriers
         async with self._session_factory() as session:
@@ -197,6 +213,26 @@ class GraphRunnerService:
                 execution = (await session.execute(exec_stmt)).scalar_one_or_none()
                 if execution is None:
                     raise ExecutionNotFoundError(f"Execution {execution_id} not found")
+
+                raw_payload = event_obj.payload if isinstance(event_obj.payload, dict) else {}
+                payload_owner_id = raw_payload.get("owner_id")
+                if payload_owner_id is not None and str(payload_owner_id) != str(
+                    execution.owner_id
+                ):
+                    raise ExecutionOwnerMismatchError(
+                        f"Execution start payload owner_id {payload_owner_id} does not match "
+                        f"execution {execution_id} owner_id {execution.owner_id}"
+                    )
+                payload_trip_id = raw_payload.get("trip_id")
+                if (
+                    execution.trip_id is not None
+                    and payload_trip_id is not None
+                    and str(payload_trip_id) != str(execution.trip_id)
+                ):
+                    raise ExecutionTripMismatchError(
+                        f"Execution start payload trip_id {payload_trip_id} does not match "
+                        f"execution {execution_id} trip_id {execution.trip_id}"
+                    )
 
                 # Cancellation barrier
                 if execution.status == "CANCELLED" or execution.cancelled_at is not None:
@@ -261,6 +297,8 @@ class GraphRunnerService:
                         graph_advanced=False,
                     )
 
+                execution_owner_id = execution.owner_id
+                execution_trip_id = execution.trip_id
                 workflow_name = execution.workflow or workflow_name
                 # Acquire lease and mark RUNNING
                 execution.status = "RUNNING"
@@ -299,14 +337,22 @@ class GraphRunnerService:
                 "checkpointer": checkpointer,
             }
         }
-        initial_state = {
+        payload_state = dict(event_obj.payload) if isinstance(event_obj.payload, dict) else {}
+        initial_state: dict[str, Any] = {
+            **payload_state,
             "status": "RUNNING",
             "current_step": "start",
             "accepted_result_ids": [],
             "task_outputs": {},
+            "pending_tasks": [],
+            "errors": [],
             "execution_id": str(execution_id),
-            **(event_obj.payload or {}),
+            "owner_id": str(execution_owner_id),
         }
+        if execution_trip_id is not None:
+            initial_state["trip_id"] = str(execution_trip_id)
+        elif "trip_id" in initial_state:
+            del initial_state["trip_id"]
 
         try:
             # Check if thread state already exists in checkpointer
