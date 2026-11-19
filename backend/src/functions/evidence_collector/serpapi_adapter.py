@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -41,6 +42,50 @@ def _safe_url_for_logging(url: str | httpx.URL) -> str:
         return "[URL_REDACTED]"
 
 
+def _redact_text(text: str) -> str:
+    """Redacts api_key parameter from string values."""
+    if "api_key=" in text:
+        return re.sub(r"api_key=[^&\s\'\"]+", "api_key=[REDACTED]", text)
+    return text
+
+
+def _redact_arg(arg: Any) -> Any:
+    """Redacts api_key parameter from individual log record arguments."""
+    if isinstance(arg, str):
+        return _redact_text(arg)
+    if isinstance(arg, httpx.URL):
+        return _safe_url_for_logging(arg)
+    if isinstance(arg, dict):
+        return {k: _redact_arg(v) for k, v in arg.items()}
+    arg_str = str(arg)
+    if "api_key=" in arg_str:
+        return _redact_text(arg_str)
+    return arg
+
+
+class CredentialRedactionFilter(logging.Filter):
+    """Redacts api_key and other secret tokens from log records, checking both msg and args."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.msg, str):
+            record.msg = _redact_text(record.msg)
+        if record.args:
+            if isinstance(record.args, tuple):
+                record.args = tuple(_redact_arg(a) for a in record.args)
+            elif isinstance(record.args, dict):
+                record.args = {k: _redact_arg(v) for k, v in record.args.items()}
+        return True
+
+
+def configure_http_client_logging() -> None:
+    """Configures credential redaction and restricts verbose request logging from HTTP client libraries."""
+    for lib_name in ("httpx", "httpcore"):
+        lib_logger = logging.getLogger(lib_name)
+        if not any(isinstance(f, CredentialRedactionFilter) for f in lib_logger.filters):
+            lib_logger.addFilter(CredentialRedactionFilter())
+        lib_logger.setLevel(logging.WARNING)
+
+
 class SerpApiAdapterError(Exception):
     """Base exception for SerpAPI adapter failures."""
 
@@ -51,6 +96,32 @@ class SerpApiRateLimitError(SerpApiAdapterError):
 
 class SerpApiTimeoutError(SerpApiAdapterError):
     """Raised when SerpAPI query times out."""
+
+
+def apply_query_metadata(
+    artifact_metadata: dict[str, Any],
+    *,
+    query_purpose: str | None = None,
+    query_dest: str | None = None,
+    selected_engine: str | None = None,
+    overwrite: bool = True,
+) -> dict[str, Any]:
+    """Apply query purpose, destination, and engine metadata to artifact ref."""
+    if query_purpose:
+        if overwrite or "query_purpose" not in artifact_metadata:
+            artifact_metadata["query_purpose"] = query_purpose
+        if overwrite or "purpose" not in artifact_metadata:
+            artifact_metadata["purpose"] = query_purpose
+        if query_purpose == "advisory":
+            if overwrite or "category" not in artifact_metadata:
+                artifact_metadata["category"] = "advisory"
+    if query_dest:
+        if overwrite or "destination" not in artifact_metadata:
+            artifact_metadata["destination"] = query_dest
+    if selected_engine:
+        if overwrite or "engine" not in artifact_metadata:
+            artifact_metadata["engine"] = selected_engine
+    return artifact_metadata
 
 
 class SerpApiAdapter:
@@ -84,6 +155,8 @@ class SerpApiAdapter:
         self.total_cost_minor: int = 0
         self.last_latency_ms: float = 0.0
 
+        configure_http_client_logging()
+
     async def _throttle_if_needed(self) -> None:
         """Enforces minimum interval between consecutive outgoing requests."""
         async with self._rate_limit_lock:
@@ -102,6 +175,10 @@ class SerpApiAdapter:
         self,
         organic_items: list[dict[str, Any]],
         retrieved_at: datetime,
+        *,
+        query_purpose: str | None = None,
+        query_dest: str | None = None,
+        selected_engine: str | None = None,
     ) -> list[RawObservation]:
         """Maps SerpAPI organic search items to normalized RawObservation instances."""
         observations: list[RawObservation] = []
@@ -118,11 +195,17 @@ class SerpApiAdapter:
             canonical_link = normalize_url(link)
             content_hash = compute_content_hash(excerpt_text)
 
-            artifact_metadata = {
+            artifact_metadata: dict[str, Any] = {
                 "position": item.get("position", idx + 1),
                 "title": title,
                 "displayed_link": item.get("displayed_link"),
             }
+            apply_query_metadata(
+                artifact_metadata,
+                query_purpose=query_purpose,
+                query_dest=query_dest,
+                selected_engine=selected_engine,
+            )
 
             observations.append(
                 RawObservation(
@@ -143,6 +226,10 @@ class SerpApiAdapter:
         self,
         places_data: Any,
         retrieved_at: datetime,
+        *,
+        query_purpose: str | None = None,
+        query_dest: str | None = None,
+        selected_engine: str | None = None,
     ) -> list[RawObservation]:
         """Maps SerpAPI local or places items to normalized RawObservation instances."""
         observations: list[RawObservation] = []
@@ -181,7 +268,7 @@ class SerpApiAdapter:
             publisher = self._extract_publisher(place_link)
             content_hash = compute_content_hash(excerpt_text)
 
-            artifact_metadata = {
+            artifact_metadata: dict[str, Any] = {
                 "place_id": place.get("place_id"),
                 "data_id": place.get("data_id"),
                 "title": title,
@@ -191,6 +278,12 @@ class SerpApiAdapter:
                 "rating": rating,
                 "reviews": reviews,
             }
+            apply_query_metadata(
+                artifact_metadata,
+                query_purpose=query_purpose,
+                query_dest=query_dest,
+                selected_engine=selected_engine,
+            )
 
             observations.append(
                 RawObservation(
@@ -226,17 +319,34 @@ class SerpApiAdapter:
                 "SERPAPI_API_KEY is not configured; live search requires valid credentials"
             )
 
+        query_purpose = (
+            (extra_params or {}).get("purpose")
+            or (extra_params or {}).get("query_purpose")
+        )
+        query_dest = (extra_params or {}).get("destination")
         selected_engine = (
             (extra_params or {}).get("engine")
             or (self._default_engine if engine == "google" else engine)
             or "google"
         )
+        serpapi_param_keys = {
+            "location",
+            "hl",
+            "gl",
+            "google_domain",
+            "start",
+            "device",
+            "safe",
+        }
+        filtered_extra = {
+            k: v for k, v in (extra_params or {}).items() if k in serpapi_param_keys
+        }
         params: dict[str, Any] = {
+            **filtered_extra,
             "engine": selected_engine,
             "q": query,
             "api_key": self._api_key,
             "num": limit,
-            **(extra_params or {}),
         }
         if location:
             params["location"] = location
@@ -292,12 +402,28 @@ class SerpApiAdapter:
             # 1. Parse place or local results first to capture structured POIs with verified coordinates
             local_raw = data.get("local_results") or data.get("places_results")
             if local_raw:
-                results.extend(self._parse_place_results(local_raw, retrieved_at))
+                results.extend(
+                    self._parse_place_results(
+                        local_raw,
+                        retrieved_at,
+                        query_purpose=query_purpose,
+                        query_dest=query_dest,
+                        selected_engine=selected_engine,
+                    )
+                )
 
             # 2. Parse organic results to capture web articles and multi-publisher consensus citations
             organic_raw = data.get("organic_results", [])
             if isinstance(organic_raw, list):
-                results.extend(self._parse_organic_results(organic_raw, retrieved_at))
+                results.extend(
+                    self._parse_organic_results(
+                        organic_raw,
+                        retrieved_at,
+                        query_purpose=query_purpose,
+                        query_dest=query_dest,
+                        selected_engine=selected_engine,
+                    )
+                )
 
             return results[:limit]
 

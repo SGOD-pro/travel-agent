@@ -30,6 +30,7 @@ from functions.evidence_collector.scrapling_adapter import (
 from functions.evidence_collector.serpapi_adapter import (
     SerpApiAdapter,
     SerpApiAdapterError,
+    apply_query_metadata,
 )
 from functions.orchestrator.execution.budget import (
     reconcile_budget_entry,
@@ -636,6 +637,21 @@ class EvidenceCollectorService:
                         results = await active_adapter.search(
                             q_str, limit=5, extra_params=q_extra or None
                         )
+                        q_purpose = q.get("purpose") or q.get("query_purpose")
+                        q_dest = q.get("destination")
+                        q_engine = q.get("engine")
+                        tagged_results: list[RawObservation] = []
+                        for obs in results:
+                            ref = dict(obs.artifact_ref) if obs.artifact_ref else {}
+                            apply_query_metadata(
+                                ref,
+                                query_purpose=q_purpose,
+                                query_dest=q_dest,
+                                selected_engine=q_engine,
+                                overwrite=False,
+                            )
+                            tagged_results.append(replace(obs, artifact_ref=ref))
+                        results = tagged_results
                     else:
                         results = await active_adapter.search(q, limit=5)
                     collected_observations.extend(results)

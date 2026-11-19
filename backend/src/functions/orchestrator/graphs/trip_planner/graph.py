@@ -50,6 +50,7 @@ from contracts.llm import (
     PlaceProposal,
     RankingRequest,
     ResearchRequest,
+    ResearchResponse,
 )
 from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import (
@@ -86,7 +87,10 @@ from functions.orchestrator.decision.repository import (
 from functions.orchestrator.evidence.eligibility import (
     DeterministicEvidenceEligibilityGate,
 )
-from functions.orchestrator.evidence.query_planner import QueryPlanningService
+from functions.orchestrator.evidence.query_planner import (
+    DEFAULT_MAX_QUERIES,
+    QueryPlanningService,
+)
 from functions.orchestrator.llm.factory import create_llm_client
 from functions.orchestrator.llm.port import HostedLlmClientPort
 from functions.orchestrator.places.candidate_service import (
@@ -150,6 +154,10 @@ class TripPlanningState(TypedDict, total=False):
     advisory_status: str | None
     advisories: list[dict[str, Any]]
     observations: list[dict[str, Any]]
+    planned_search_queries: list[Any]
+    covered_destinations: list[str]
+    uncovered_destinations: list[str]
+    coverage_reason: str | None
     _llm_client: HostedLlmClientPort
     _weather_client: WeatherClientPort
     _laya_adapter: LayaDecisionPort
@@ -287,6 +295,7 @@ async def discover_candidates_node(
         transport_mode=pref_mode,
     )
 
+    research_resp: ResearchResponse | None = None
     try:
         research_resp = await llm_client.research_places(research_req)
         for prop in research_resp.candidate_places:
@@ -324,6 +333,18 @@ async def discover_candidates_node(
         "discovered_places": discovered,
         "provider_diagnostics": provider_diagnostics,
     }
+    planned_from_research = getattr(research_resp, "planned_queries", None) if research_resp is not None else None
+    if planned_from_research:
+        result["planned_search_queries"] = planned_from_research
+        covered = getattr(research_resp, "covered_destinations", None) or getattr(planned_from_research, "covered_destinations", None)
+        if covered:
+            result["covered_destinations"] = list(covered)
+        uncovered = getattr(research_resp, "uncovered_destinations", None) or getattr(planned_from_research, "uncovered_destinations", None)
+        if uncovered is not None:
+            result["uncovered_destinations"] = list(uncovered)
+        cov_reason = getattr(research_resp, "coverage_reason", None) or getattr(planned_from_research, "coverage_reason", None)
+        if cov_reason:
+            result["coverage_reason"] = cov_reason
     if errors:
         result["errors"] = errors
     return result
@@ -4816,7 +4837,21 @@ async def route_evidence_decision_node(
                     valid_persisted_count += 1
 
         if destinations_info:
-            validated_evidence_satisfied = len(matched_destinations) == len(destinations_info)
+            raw_uncovered = state.get("uncovered_destinations")
+            uncovered_in_state = (
+                set(raw_uncovered)
+                if isinstance(raw_uncovered, (list, tuple, set))
+                else set()
+            )
+            expected_destinations = [
+                d for d in destinations_info if d["name"] not in uncovered_in_state
+            ]
+            if expected_destinations:
+                validated_evidence_satisfied = all(
+                    d["name"] in matched_destinations for d in expected_destinations
+                )
+            else:
+                validated_evidence_satisfied = len(matched_destinations) == len(destinations_info)
         else:
             validated_evidence_satisfied = valid_persisted_count > 0
 
@@ -4839,9 +4874,24 @@ async def route_evidence_decision_node(
                                 valid_persisted_count += 1
 
         if destinations_info:
-            validated_evidence_satisfied = (
-                len(offline_matched) == len(destinations_info) and valid_persisted_count > 0
+            raw_uncovered = state.get("uncovered_destinations")
+            uncovered_in_state = (
+                set(raw_uncovered)
+                if isinstance(raw_uncovered, (list, tuple, set))
+                else set()
             )
+            expected_destinations = [
+                d for d in destinations_info if d["name"] not in uncovered_in_state
+            ]
+            if expected_destinations:
+                validated_evidence_satisfied = (
+                    all(d["name"] in offline_matched for d in expected_destinations)
+                    and valid_persisted_count > 0
+                )
+            else:
+                validated_evidence_satisfied = (
+                    len(offline_matched) == len(destinations_info) and valid_persisted_count > 0
+                )
         else:
             validated_evidence_satisfied = valid_persisted_count > 0
 
@@ -5053,18 +5103,57 @@ async def route_evidence_decision_node(
     # 8. Action enactment
     if envelope.allowed_choice == DecisionAction.DISPATCH_EVIDENCE_SEARCH:
         dest_hash = hashlib.sha256(dest_name.encode("utf-8")).hexdigest()
-        llm_for_queries = state.get("_llm_client") or configurable.get("llm_client")
-        planned_queries = await QueryPlanningService.plan_queries_with_llm(
-            brief, llm_client=llm_for_queries, max_queries=4
-        )
+        existing_planned = state.get("planned_search_queries")
+        planned_queries: Any
+        if isinstance(existing_planned, list) and existing_planned:
+            planned_queries = existing_planned
+        else:
+            llm_for_queries = state.get("_llm_client") or configurable.get("llm_client")
+            planned_queries = await QueryPlanningService.plan_queries_with_llm(
+                brief, llm_client=llm_for_queries, max_queries=DEFAULT_MAX_QUERIES
+            )
+
         budget_dict = QueryPlanningService.calculate_collector_budget(planned_queries)
+        planned_covered = getattr(planned_queries, "covered_destinations", None)
+        raw_state_covered = state.get("covered_destinations")
+        covered_dests = (
+            list(planned_covered)
+            if planned_covered is not None
+            else (
+                list(raw_state_covered)
+                if isinstance(raw_state_covered, (list, tuple, set))
+                else [d["name"] for d in destinations_info]
+            )
+        )
+        planned_uncovered = getattr(planned_queries, "uncovered_destinations", None)
+        raw_state_uncovered = state.get("uncovered_destinations")
+        uncovered_dests = (
+            list(planned_uncovered)
+            if planned_uncovered is not None
+            else (
+                list(raw_state_uncovered)
+                if isinstance(raw_state_uncovered, (list, tuple, set))
+                else []
+            )
+        )
+        cov_reason = (
+            getattr(planned_queries, "coverage_reason", None)
+            or state.get("coverage_reason")
+        )
+
         search_task = {
             "worker": "EVIDENCE",
             "action": "collect",
             "payload": {
-                "queries": planned_queries,
+                "queries": [dict(q) if isinstance(q, dict) else q for q in planned_queries],
                 "budget": budget_dict,
                 "destination": dest_name,
+                "destinations": [d["name"] for d in destinations_info]
+                if destinations_info
+                else [dest_name],
+                "covered_destinations": covered_dests,
+                "uncovered_destinations": uncovered_dests,
+                "coverage_reason": cov_reason,
                 "origin": brief.get("origin_name", "")
                 if isinstance(brief, dict)
                 else getattr(brief, "origin_name", ""),
@@ -5079,6 +5168,9 @@ async def route_evidence_decision_node(
             "current_step": "evidence_search_routed",
             "evidence_routing_action": DecisionAction.DISPATCH_EVIDENCE_SEARCH.value,
             "laya_decisions": updated_decisions,
+            "covered_destinations": covered_dests,
+            "uncovered_destinations": uncovered_dests,
+            "coverage_reason": cov_reason,
         }
 
     elif envelope.allowed_choice == DecisionAction.DISPATCH_BROWSER_ESCALATION:

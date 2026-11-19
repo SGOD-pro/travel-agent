@@ -180,6 +180,22 @@ class ResearchResponse(BaseModel):
         default="fixture",
         description="Name of language model client adapter that generated response",
     )
+    planned_queries: list[dict[str, Any]] | list[str] = Field(
+        default_factory=list,
+        description="Planned search queries formulated during research discovery",
+    )
+    covered_destinations: list[str] = Field(
+        default_factory=list,
+        description="Destinations covered by planned research queries",
+    )
+    uncovered_destinations: list[str] = Field(
+        default_factory=list,
+        description="Destinations left uncovered due to budget constraints",
+    )
+    coverage_reason: str | None = Field(
+        default=None,
+        description="Explanation when coverage is partial or constrained",
+    )
 
 
 class RankingRequest(BaseModel):

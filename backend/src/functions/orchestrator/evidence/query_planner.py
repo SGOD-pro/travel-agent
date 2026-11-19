@@ -1,15 +1,19 @@
 """Deterministic query planning service for evidence research tasks.
 
 Conforms to spec 0007 AC-13:
-1. Formulates bounded research queries from trip brief destinations.
+1. Formulates bounded research queries distributed across trip brief destinations.
 2. Covers destination attractions, authentic local dining, affordable accommodation, and travel advisories.
-3. Enforces a strict ceiling of 4 queries per collection batch.
-4. Maps query limits to durable collector budgets (4 tool calls, 200 minor units INR).
+3. Carries explicit query purpose and destination association through dispatch to the collector.
+4. Routes road/advisory queries to web search (engine="google") and venue discovery to place search (engine="google_maps").
+5. Enforces a strict ceiling of 4 queries per collection batch.
+6. Maps query limits to durable collector budgets (4 tool calls, 200 minor units INR).
+7. Records uncovered destinations and explicit budget reasons when destinations exceed budget.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import date as dt_date
 from typing import Any
 
 from contracts.trips import TripBrief
@@ -21,6 +25,86 @@ DEFAULT_COST_PER_CALL_MINOR: int = 50
 DEFAULT_CURRENCY: str = "INR"
 
 
+class PlannedQuery(dict[str, Any]):
+    """Planned research query carrying explicit purpose, destination, and target engine."""
+
+    def __init__(
+        self,
+        query: str,
+        *,
+        purpose: str = "attractions",
+        destination: str = "",
+        engine: str = "google_maps",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            query=query,
+            purpose=purpose,
+            destination=destination,
+            engine=engine,
+            **kwargs,
+        )
+
+    @property
+    def query(self) -> str:
+        return str(self.get("query", ""))
+
+    @property
+    def purpose(self) -> str:
+        return str(self.get("purpose", "attractions"))
+
+    @property
+    def destination(self) -> str:
+        return str(self.get("destination", ""))
+
+    @property
+    def engine(self) -> str:
+        return str(self.get("engine", "google_maps"))
+
+    def __str__(self) -> str:
+        return str(self.get("query", ""))
+
+    def mentions(self, text: str) -> bool:
+        """Check whether text appears in query string (case insensitive)."""
+        return text.lower() in str(self.get("query", "")).lower()
+
+
+class PlannedQueryList(list[PlannedQuery]):
+    """List of planned research queries with coverage metadata."""
+
+    def __init__(
+        self,
+        queries: list[PlannedQuery] | None = None,
+        *,
+        covered_destinations: list[str] | None = None,
+        uncovered_destinations: list[str] | None = None,
+        coverage_reason: str | None = None,
+        is_complete_coverage: bool | None = None,
+    ) -> None:
+        super().__init__(queries or [])
+        self.covered_destinations: list[str] = list(covered_destinations or [])
+        self.uncovered_destinations: list[str] = list(uncovered_destinations or [])
+        self.coverage_reason: str | None = coverage_reason
+        if is_complete_coverage is not None:
+            self.is_complete_coverage: bool = is_complete_coverage
+        else:
+            self.is_complete_coverage = (
+                len(self.covered_destinations) > 0 and len(self.uncovered_destinations) == 0
+            )
+
+    def __getitem__(self, item: Any) -> Any:
+        res = super().__getitem__(item)
+        if isinstance(item, slice):
+            return PlannedQueryList(
+                res,
+                covered_destinations=self.covered_destinations,
+                uncovered_destinations=self.uncovered_destinations,
+                coverage_reason=self.coverage_reason,
+                is_complete_coverage=self.is_complete_coverage,
+            )
+        return res
+
+
 class QueryPlanningService:
     """Service that deterministically plans research queries and collector budgets from a trip brief."""
 
@@ -29,16 +113,17 @@ class QueryPlanningService:
         cls,
         brief: dict[str, Any] | TripBrief,
         max_queries: int = DEFAULT_MAX_QUERIES,
-    ) -> list[str]:
-        """Formulates bounded research queries from trip brief inputs.
+    ) -> PlannedQueryList:
+        """Formulates bounded research queries distributed across trip brief destinations.
 
         Generates queries covering:
-        1. Destination attractions and sightseeing activities
-        2. Local authentic dining and regional food specialties
-        3. Affordable accommodation and budget lodging
-        4. Route travel advisories, road conditions, or highway alerts
+        1. Destination attractions and sightseeing activities (engine="google_maps")
+        2. Local authentic dining and regional food specialties (engine="google_maps")
+        3. Affordable accommodation and budget lodging (engine="google_maps")
+        4. Route travel advisories, road conditions, or highway alerts (engine="google")
 
         Guarantees that total queries never exceed the specified ceiling.
+        When destinations exceed available slots, records uncovered destinations with explicit reason.
         """
         ceiling = min(max_queries, DEFAULT_MAX_QUERIES)
 
@@ -59,8 +144,11 @@ class QueryPlanningService:
             traveler_prefs = list(brief.dietary_preferences) + list(brief.accessibility_requirements)
             start_date_val = brief.start_date
             if brief.target_budget is not None:
-                # If budget is provided as Money
-                budget_tier = "BUDGET" if getattr(brief.target_budget, "amount_minor", 0) < 500000 else "MODERATE"
+                budget_tier = (
+                    "BUDGET"
+                    if getattr(brief.target_budget, "amount_minor", 0) < 500000
+                    else "MODERATE"
+                )
         elif isinstance(brief, dict):
             origin = str(brief.get("origin_name") or "").strip()
             raw_dests = brief.get("destinations", [])
@@ -87,8 +175,6 @@ class QueryPlanningService:
             start_date_val = brief.get("start_date")
             budget_tier = str(brief.get("budget_tier") or "MODERATE").upper()
 
-        primary_dest = destinations[0] if destinations else "Unknown Destination"
-
         # Date context for seasonal/stay relevance
         date_context = ""
         if start_date_val is not None:
@@ -96,7 +182,6 @@ class QueryPlanningService:
                 date_context = f" {start_date_val.strftime('%B')}"
             elif isinstance(start_date_val, str) and len(start_date_val) >= 7:
                 try:
-                    from datetime import date as dt_date
                     parsed_d = dt_date.fromisoformat(start_date_val[:10])
                     date_context = f" {parsed_d.strftime('%B')}"
                 except Exception:
@@ -107,7 +192,14 @@ class QueryPlanningService:
         if dietary:
             diet_context = f" {dietary[0]}"
         elif traveler_prefs:
-            food_terms = [p for p in traveler_prefs if any(k in p.lower() for k in ("food", "dining", "cuisine", "street", "sweet", "veg"))]
+            food_terms = [
+                p
+                for p in traveler_prefs
+                if any(
+                    k in p.lower()
+                    for k in ("food", "dining", "cuisine", "street", "sweet", "veg")
+                )
+            ]
             if food_terms:
                 diet_context = f" {food_terms[0]}"
 
@@ -118,28 +210,350 @@ class QueryPlanningService:
         elif budget_tier == "MODERATE":
             hotel_tier = "budget "
 
-        # Formulate ordered candidate queries
-        query_candidates: list[str] = [
-            f"{primary_dest} top attractions sightseeing places to visit",
-            f"{primary_dest}{diet_context} authentic local food restaurants",
-            f"{primary_dest} {hotel_tier}hotels affordable accommodation{date_context}".strip(),
-        ]
+        query_candidates: list[PlannedQuery] = []
+        covered_destinations: list[str] = []
+        uncovered_destinations: list[str] = []
+        coverage_reason: str | None = None
 
-        if origin:
+        dest_count = len(destinations)
+
+        if dest_count == 0:
+            primary = "Unknown Destination"
+            coverage_reason = "No destinations provided in trip brief."
             query_candidates.append(
-                f"{origin} to {primary_dest} road travel advisory route conditions weather road closures{date_context}".strip()
+                PlannedQuery(
+                    f"{primary} top attractions sightseeing places to visit",
+                    purpose="attractions",
+                    destination=primary,
+                    engine="google_maps",
+                )
             )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary}{diet_context} authentic local food restaurants",
+                    purpose="dining",
+                    destination=primary,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary} {hotel_tier}hotels affordable accommodation{date_context}".strip(),
+                    purpose="lodging",
+                    destination=primary,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary} road travel advisory route conditions weather warnings road closures{date_context}".strip(),
+                    purpose="advisory",
+                    destination=primary,
+                    engine="google",
+                )
+            )
+
+        elif dest_count == 1:
+            primary = destinations[0]
+            covered_destinations.append(primary)
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary} top attractions sightseeing places to visit",
+                    purpose="attractions",
+                    destination=primary,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary}{diet_context} authentic local food restaurants",
+                    purpose="dining",
+                    destination=primary,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary} {hotel_tier}hotels affordable accommodation{date_context}".strip(),
+                    purpose="lodging",
+                    destination=primary,
+                    engine="google_maps",
+                )
+            )
+            if origin:
+                adv_query = f"{origin} to {primary} road travel advisory route conditions weather road closures{date_context}".strip()
+            else:
+                adv_query = f"{primary} road travel advisory route conditions weather warnings road closures{date_context}".strip()
+            query_candidates.append(
+                PlannedQuery(
+                    adv_query,
+                    purpose="advisory",
+                    destination=primary,
+                    engine="google",
+                )
+            )
+
+        elif dest_count == 2:
+            d0, d1 = destinations[0], destinations[1]
+            covered_destinations.extend([d0, d1])
+            # Slot 1: Destination 0 attractions
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0} top attractions sightseeing places to visit",
+                    purpose="attractions",
+                    destination=d0,
+                    engine="google_maps",
+                )
+            )
+            # Slot 2: Destination 1 attractions
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d1} top attractions sightseeing places to visit",
+                    purpose="attractions",
+                    destination=d1,
+                    engine="google_maps",
+                )
+            )
+            # Slot 3: Food / dining for primary destination
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0}{diet_context} authentic local food restaurants",
+                    purpose="dining",
+                    destination=d0,
+                    engine="google_maps",
+                )
+            )
+            # Slot 4: Road travel advisory covering the route
+            if origin:
+                adv_query = f"{origin} to {d0} and {d1} road travel advisory route conditions weather road closures{date_context}".strip()
+            else:
+                adv_query = f"{d0} to {d1} road travel advisory route conditions weather road closures{date_context}".strip()
+            query_candidates.append(
+                PlannedQuery(
+                    adv_query,
+                    purpose="advisory",
+                    destination=f"{d0}, {d1}",
+                    engine="google",
+                )
+            )
+
         else:
+            # dest_count >= 3: Allocate available destination slots (max 3 for ceiling 4) + 1 advisory slot
+            dest_slots = max(1, ceiling - 1)
+            for dest_name_str in destinations[:dest_slots]:
+                covered_destinations.append(dest_name_str)
+                query_candidates.append(
+                    PlannedQuery(
+                        f"{dest_name_str} top attractions sightseeing places to visit",
+                        purpose="attractions",
+                        destination=dest_name_str,
+                        engine="google_maps",
+                    )
+                )
+            if dest_count > dest_slots:
+                uncovered_destinations = list(destinations[dest_slots:])
+                coverage_reason = (
+                    f"Destination count ({dest_count}) exceeds available research query slots ({dest_slots}). "
+                    f"Uncovered destinations: {', '.join(uncovered_destinations)} due to collector query ceiling ({ceiling})."
+                )
+            if origin:
+                adv_query = f"{origin} to {', '.join(destinations[:dest_slots])} road travel advisory route conditions weather road closures{date_context}".strip()
+            else:
+                adv_query = f"{' to '.join(destinations[:dest_slots])} road travel advisory route conditions weather road closures{date_context}".strip()
             query_candidates.append(
-                f"{primary_dest} road travel advisory route conditions weather warnings road closures{date_context}".strip()
+                PlannedQuery(
+                    adv_query,
+                    purpose="advisory",
+                    destination=", ".join(destinations[:dest_slots]),
+                    engine="google",
+                )
             )
 
-        # If multiple destinations exist and room permits, add secondary destination query
-        if len(destinations) > 1 and len(query_candidates) < ceiling:
-            sec_dest = destinations[1]
-            query_candidates.append(f"{sec_dest} top attractions places to visit")
+        final_queries = query_candidates[:ceiling]
+        if dest_count > 0:
+            covered_destinations = [
+                d
+                for d in destinations
+                if any(
+                    q.destination == d or d in [x.strip() for x in q.destination.split(",")]
+                    for q in final_queries
+                    if q.purpose != "advisory"
+                )
+            ]
+            uncovered_destinations = [d for d in destinations if d not in covered_destinations]
+            if uncovered_destinations and not coverage_reason:
+                dest_slots = len([q for q in final_queries if q.purpose != "advisory"])
+                coverage_reason = (
+                    f"Destination count ({dest_count}) exceeds available research query slots ({dest_slots}). "
+                    f"Uncovered destinations: {', '.join(uncovered_destinations)} due to collector query ceiling ({ceiling})."
+                )
+        return PlannedQueryList(
+            final_queries,
+            covered_destinations=covered_destinations,
+            uncovered_destinations=uncovered_destinations,
+            coverage_reason=coverage_reason,
+        )
 
-        return query_candidates[:ceiling]
+    @classmethod
+    def structure_and_validate_queries(
+        cls,
+        queries: list[Any],
+        destinations: list[str],
+        origin: str = "",
+        max_queries: int = DEFAULT_MAX_QUERIES,
+    ) -> PlannedQueryList:
+        """Validates and structures raw or LLM-generated search queries.
+
+        Enforces:
+        1. Query ceiling constraint (at most max_queries).
+        2. Road advisory queries route to web search (engine="google").
+        3. Venue discovery queries route to place search (engine="google_maps").
+        4. Destination coverage: checks that brief destinations are represented up to budget.
+        5. Records uncovered destinations and explicit budget reason if destination count > slots.
+        """
+        ceiling = min(max_queries, DEFAULT_MAX_QUERIES)
+        clean_dests = [d.strip() for d in destinations if d and d.strip()]
+        dest_count = len(clean_dests)
+        dest_slots = max(1, ceiling - 1) if dest_count > 0 else ceiling
+
+        structured: list[PlannedQuery] = []
+        covered_set: set[str] = set()
+
+        for q_item in queries:
+            if len(structured) >= ceiling:
+                break
+
+            q_text = str(q_item.get("query") if isinstance(q_item, dict) else q_item).strip()
+            if not q_text:
+                continue
+
+            q_lower = q_text.lower()
+            explicit_purpose = q_item.get("purpose") if isinstance(q_item, dict) else None
+            explicit_engine = q_item.get("engine") if isinstance(q_item, dict) else None
+            explicit_dest = q_item.get("destination") if isinstance(q_item, dict) else None
+
+            # Detect advisory
+            is_advisory = False
+            if explicit_purpose:
+                is_advisory = explicit_purpose == "advisory"
+            else:
+                is_advisory = any(
+                    k in q_lower
+                    for k in (
+                        "advisory",
+                        "road condition",
+                        "road closures",
+                        "highway alert",
+                        "traffic",
+                    )
+                )
+
+            if is_advisory:
+                purpose = "advisory"
+                engine = explicit_engine or "google"
+                matched_dests = [d for d in clean_dests if d.lower() in q_lower]
+                dest_str = explicit_dest or (
+                    ", ".join(matched_dests)
+                    if matched_dests
+                    else (clean_dests[0] if clean_dests else "corridor")
+                )
+            else:
+                engine = explicit_engine or "google_maps"
+                if explicit_purpose:
+                    purpose = explicit_purpose
+                elif any(k in q_lower for k in ("food", "restaurant", "dining", "cuisine")):
+                    purpose = "dining"
+                elif any(
+                    k in q_lower
+                    for k in ("hotel", "resort", "lodging", "stay", "accommodation")
+                ):
+                    purpose = "lodging"
+                else:
+                    purpose = "attractions"
+
+                matched_dests = [d for d in clean_dests if d.lower() in q_lower]
+                dest_str = explicit_dest or (
+                    matched_dests[0] if matched_dests else (clean_dests[0] if clean_dests else "")
+                )
+                if dest_str:
+                    covered_set.add(dest_str)
+
+            structured.append(
+                PlannedQuery(
+                    q_text,
+                    purpose=purpose,
+                    destination=dest_str,
+                    engine=engine,
+                )
+            )
+
+        # Coverage enforcement: check if any destination in clean_dests up to dest_slots is missing
+        missing_dests = [d for d in clean_dests[:dest_slots] if d not in covered_set]
+        if missing_dests:
+            for missing_d in missing_dests:
+                new_q = PlannedQuery(
+                    f"{missing_d} top attractions sightseeing places to visit",
+                    purpose="attractions",
+                    destination=missing_d,
+                    engine="google_maps",
+                )
+                if len(structured) < ceiling:
+                    structured.append(new_q)
+                    covered_set.add(missing_d)
+                else:
+                    # Replace a duplicate query from an already covered destination
+                    replaced = False
+                    for idx, existing_q in enumerate(structured):
+                        if (
+                            existing_q.purpose != "advisory"
+                            and existing_q.destination in covered_set
+                            and existing_q.destination != missing_d
+                        ):
+                            dup_count = sum(
+                                1
+                                for x in structured
+                                if x.destination == existing_q.destination
+                                and x.purpose != "advisory"
+                            )
+                            if dup_count > 1:
+                                structured[idx] = new_q
+                                covered_set.add(missing_d)
+                                replaced = True
+                                break
+                    if not replaced:
+                        # Replace the last non-advisory query
+                        for idx in range(len(structured) - 1, -1, -1):
+                            if structured[idx].purpose != "advisory":
+                                structured[idx] = new_q
+                                covered_set.add(missing_d)
+                                break
+
+        final_queries = structured[:ceiling]
+        covered_destinations = [
+            d
+            for d in clean_dests
+            if any(
+                q.destination == d or d in [x.strip() for x in q.destination.split(",")]
+                for q in final_queries
+                if q.purpose != "advisory"
+            )
+        ]
+        uncovered_destinations = [d for d in clean_dests if d not in covered_destinations]
+        coverage_reason = None
+        if uncovered_destinations:
+            coverage_reason = (
+                f"Destination count ({dest_count}) exceeds available research query slots ({dest_slots}). "
+                f"Uncovered destinations: {', '.join(uncovered_destinations)} due to collector query ceiling ({ceiling})."
+            )
+        elif dest_count == 0:
+            coverage_reason = "No destinations provided in trip brief."
+
+        return PlannedQueryList(
+            final_queries,
+            covered_destinations=covered_destinations,
+            uncovered_destinations=uncovered_destinations,
+            coverage_reason=coverage_reason,
+        )
 
     @classmethod
     async def plan_queries_with_llm(
@@ -147,7 +561,7 @@ class QueryPlanningService:
         brief: dict[str, Any] | TripBrief,
         llm_client: Any | None = None,
         max_queries: int = DEFAULT_MAX_QUERIES,
-    ) -> list[str]:
+    ) -> PlannedQueryList:
         """Plans queries using configured LLM client with fallback to deterministic templates."""
         if llm_client is not None and hasattr(llm_client, "generate_search_queries"):
             try:
@@ -191,10 +605,14 @@ class QueryPlanningService:
                     budget_tier=budget_tier,
                     transport_mode=mode,
                 )
-                queries = await llm_client.generate_search_queries(req)
+                queries = await llm_client.generate_search_queries(req, max_queries=max_queries)
                 if queries:
-                    queries_list: list[str] = [str(q) for q in queries]
-                    return queries_list[: min(max_queries, DEFAULT_MAX_QUERIES)]
+                    return cls.structure_and_validate_queries(
+                        queries=list(queries),
+                        destinations=destinations,
+                        origin=origin,
+                        max_queries=max_queries,
+                    )
             except Exception as exc:
                 logger.warning("LLM query planning failed (%s); using deterministic fallback", exc)
 
@@ -203,7 +621,7 @@ class QueryPlanningService:
     @classmethod
     def calculate_collector_budget(
         cls,
-        queries: list[str],
+        queries: list[Any],
         cost_per_call_minor: int = DEFAULT_COST_PER_CALL_MINOR,
         currency: str = DEFAULT_CURRENCY,
         extra_tool_calls: int = 0,

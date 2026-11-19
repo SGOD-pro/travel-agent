@@ -196,7 +196,7 @@ class BedrockLlmClient(HostedLlmClientPort):
         self,
         request: ResearchRequest,
         max_queries: int = 4,
-    ) -> list[str]:
+    ) -> list[Any]:
         """Formulates targeted search queries for web evidence discovery using Bedrock."""
         system_prompt = (
             "You are an expert India travel research query planner. "
@@ -215,6 +215,9 @@ class BedrockLlmClient(HostedLlmClientPort):
             f"- Preferences: {', '.join(request.traveler_preferences) if request.traveler_preferences else 'General sights, scenic stops'}\n"
             f"- Budget Tier: {request.budget_tier}\n"
             f"- Transport Mode: {request.transport_mode}\n\n"
+            "Requirements:\n"
+            f"1. Distribute queries across destinations: {', '.join(request.destination_names)} so each destination has research coverage.\n"
+            "2. Include 1 road travel advisory query covering route conditions, weather warnings, or road closures.\n"
             'Return JSON matching: {"search_queries": ["..."]}'
         )
 
@@ -231,19 +234,26 @@ class BedrockLlmClient(HostedLlmClientPort):
             logger.warning("Bedrock query planning converse failed: %s", exc)
             queries = []
 
-        if not queries:
-            primary_dest = (
-                request.destination_names[0] if request.destination_names else "Destination"
-            )
-            pref_tag = f" {request.traveler_preferences[0]}" if request.traveler_preferences else ""
-            queries = [
-                f"{primary_dest}{pref_tag} top sights attractions places to visit",
-                f"{primary_dest} authentic local food dining restaurants",
-                f"{primary_dest} budget hotels affordable accommodation",
-                f"{request.origin_name} to {primary_dest} road travel advisory route conditions",
-            ]
+        from functions.orchestrator.evidence.query_planner import QueryPlanningService
 
-        return queries[:max_queries]
+        if queries:
+            return QueryPlanningService.structure_and_validate_queries(
+                queries=queries,
+                destinations=request.destination_names,
+                origin=request.origin_name,
+                max_queries=max_queries,
+            )
+
+        # Deterministic fallback respecting destination coverage and purpose constraints
+        return QueryPlanningService.plan_destination_queries(
+            brief={
+                "origin_name": request.origin_name,
+                "destinations": [{"name": d} for d in request.destination_names],
+                "traveler_preferences": request.traveler_preferences,
+                "budget_tier": request.budget_tier,
+            },
+            max_queries=max_queries,
+        )
 
     async def research_places(self, request: ResearchRequest) -> ResearchResponse:
         """Formulates web discovery queries and regional notes for search-backed discovery."""
@@ -254,6 +264,10 @@ class BedrockLlmClient(HostedLlmClientPort):
             regional_travel_notes=notes,
             recommended_pace="MODERATE",
             provider="bedrock",
+            planned_queries=queries,
+            covered_destinations=getattr(queries, "covered_destinations", []),
+            uncovered_destinations=getattr(queries, "uncovered_destinations", []),
+            coverage_reason=getattr(queries, "coverage_reason", None),
         )
 
     async def rank_places(self, request: RankingRequest) -> RankingResponse:

@@ -693,8 +693,12 @@ async def test_brief_update_after_acceptance_preserves_accepted_version_snapshot
                 )
             ).scalar_one()
             assert task.payload_ref["destination"] == "Mysuru"
-            assert all("Ooty" not in q for q in task.payload_ref["queries"])
-            assert any("Mysuru" in q for q in task.payload_ref["queries"])
+            query_texts = [
+                q.get("query", "") if isinstance(q, dict) else str(q)
+                for q in task.payload_ref["queries"]
+            ]
+            assert all("Ooty" not in q_text for q_text in query_texts)
+            assert any("Mysuru" in q_text for q_text in query_texts)
     finally:
         app.dependency_overrides.clear()
 

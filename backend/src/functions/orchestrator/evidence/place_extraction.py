@@ -19,6 +19,15 @@ from contracts.llm import PlaceProposal
 logger = logging.getLogger(__name__)
 
 
+def extract_observation_purpose(artifact_ref: Any) -> str:
+    """Extract normalized observation query purpose from artifact metadata."""
+    if not isinstance(artifact_ref, dict):
+        return ""
+    return str(
+        artifact_ref.get("query_purpose") or artifact_ref.get("purpose") or ""
+    ).lower().strip()
+
+
 @dataclass
 class PlaceEvidenceAccumulator:
     """Internal accumulator tracking appearance across distinct web sources."""
@@ -95,11 +104,28 @@ class PlaceExtractionService:
         accumulators: list[PlaceEvidenceAccumulator] = []
 
         for obs in observations:
-            publisher = str(getattr(obs, "publisher", "") or "web").strip().lower()
-            source_url = str(getattr(obs, "source_url", "") or "").strip()
-            artifact_ref = getattr(obs, "artifact_ref", None) or {}
-            excerpt_text = str(getattr(obs, "excerpt_text", "") or "").strip()
-            retrieved_at = getattr(obs, "retrieved_at", None)
+            publisher = str(
+                (obs.get("publisher") if isinstance(obs, dict) else getattr(obs, "publisher", ""))
+                or "web"
+            ).strip().lower()
+            source_url = str(
+                (obs.get("source_url") if isinstance(obs, dict) else getattr(obs, "source_url", ""))
+                or ""
+            ).strip()
+            artifact_ref = (
+                obs.get("artifact_ref")
+                if isinstance(obs, dict)
+                else getattr(obs, "artifact_ref", None)
+            ) or {}
+            excerpt_text = str(
+                (obs.get("excerpt_text") if isinstance(obs, dict) else getattr(obs, "excerpt_text", ""))
+                or ""
+            ).strip()
+            retrieved_at = (
+                obs.get("retrieved_at")
+                if isinstance(obs, dict)
+                else getattr(obs, "retrieved_at", None)
+            )
             retrieved_str: str | None = None
             if isinstance(retrieved_at, str):
                 retrieved_str = retrieved_at
@@ -110,6 +136,10 @@ class PlaceExtractionService:
 
             # 1. Check local place result structured metadata from SerpApi with verified GPS coordinates
             if isinstance(artifact_ref, dict):
+                if extract_observation_purpose(artifact_ref) == "advisory":
+                    # Advisory results must remain road disruptions/alerts and cannot become sightseeing candidates
+                    continue
+
                 gps = artifact_ref.get("gps_coordinates") or artifact_ref.get("gps") or {}
                 raw_title = str(artifact_ref.get("title") or "").strip()
                 if not raw_title and excerpt_text.startswith("Place: "):

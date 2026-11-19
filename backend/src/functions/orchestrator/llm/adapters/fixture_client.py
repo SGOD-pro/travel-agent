@@ -75,7 +75,7 @@ class FixtureLlmClient(HostedLlmClientPort):
         self,
         request: ResearchRequest,
         max_queries: int = 4,
-    ) -> list[str]:
+    ) -> list[Any]:
         """Generates deterministic targeted search queries for web evidence collection."""
         if self.simulate_timeout:
             raise TimeoutError("Simulated LLM client socket timeout")
@@ -83,15 +83,17 @@ class FixtureLlmClient(HostedLlmClientPort):
         if self.simulate_error is not None:
             raise self.simulate_error
 
-        primary = request.destination_names[0] if request.destination_names else "Destination"
-        pref = f" {request.traveler_preferences[0]}" if request.traveler_preferences else ""
-        queries = [
-            f"{primary}{pref} top sights attractions",
-            f"{primary} authentic local food dining",
-            f"{primary} budget hotels accommodation",
-            f"{request.origin_name} to {primary} road travel advisory",
-        ]
-        return queries[:max_queries]
+        from functions.orchestrator.evidence.query_planner import QueryPlanningService
+
+        return QueryPlanningService.plan_destination_queries(
+            brief={
+                "origin_name": request.origin_name,
+                "destinations": [{"name": d} for d in request.destination_names],
+                "traveler_preferences": request.traveler_preferences,
+                "budget_tier": request.budget_tier,
+            },
+            max_queries=max_queries,
+        )
 
     async def research_places(self, request: ResearchRequest) -> ResearchResponse:
         """Returns deterministic candidate places based on research request."""

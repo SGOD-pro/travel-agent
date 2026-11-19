@@ -23,6 +23,9 @@ from contracts.candidate import RegisteredCandidate
 from contracts.evidence import EvidenceClass
 from functions.evidence_collector.models import SourceObservationModel
 from functions.orchestrator.evidence.models import ClaimModel
+from functions.orchestrator.evidence.place_extraction import (
+    extract_observation_purpose,
+)
 from functions.orchestrator.evidence.schemas import (
     ClaimCategory,
     ClaimCreate,
@@ -320,6 +323,10 @@ def _match_observation_entity(
     title_tokens = obs_title_norm.split() if obs_title_norm else []
 
     art_ref = getattr(obs, "artifact_ref", None)
+    if extract_observation_purpose(art_ref) == "advisory":
+        # Road advisory observations cannot match candidate place existence
+        return False, False, None
+
     art_category = ""
     art_types: list[str] = []
     art_title_norm = ""
@@ -781,7 +788,8 @@ async def ingest_claims_from_observations(
             else ""
         )
 
-        is_advisory = any(
+        obs_purpose = extract_observation_purpose(art_ref)
+        is_advisory = obs_purpose == "advisory" or any(
             k in cat
             for k in (
                 "advisory",

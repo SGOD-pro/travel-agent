@@ -100,7 +100,7 @@ class TestBedrockLlmClient:
         queries = await adapter.generate_search_queries(req)
 
         assert len(queries) == 4
-        assert "street food" in queries[0]
+        assert "street food" in queries[0].query
         assert mock_boto.converse.call_count == 1
 
     @pytest.mark.asyncio
@@ -332,7 +332,7 @@ class TestBedrockLlmClient:
 
         queries = await adapter.generate_search_queries(req)
         assert len(queries) == 2
-        assert "Digha" in queries[0]
+        assert "Digha" in queries[0].query
         assert mock_boto.converse.call_count == 2
         # Second call should have prefixed with apac.
         assert mock_boto.converse.call_args_list[1][1]["modelId"] == "apac.amazon.nova-lite-v1:0"
@@ -375,4 +375,4 @@ async def test_fixture_llm_client_generate_search_queries() -> None:
     )
     queries = await client.generate_search_queries(req, max_queries=2)
     assert len(queries) == 2
-    assert "Kolkata" in queries[0]
+    assert "Kolkata" in queries[0].query

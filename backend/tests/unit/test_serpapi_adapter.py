@@ -6,6 +6,8 @@ minor unit spend tracking, timeout handling, rate limiting (HTTP 429), and offli
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 import pytest
 
@@ -230,3 +232,36 @@ class TestSerpApiAdapter:
         assert secret_key not in err_msg
         assert "[REDACTED]" in err_msg
         await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_extra_params_cannot_override_api_key_or_core_params(self) -> None:
+        """Verifies that caller extra_params cannot override api_key or core query params."""
+        captured_params: dict[str, Any] = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_params.update(request.url.params)
+            return httpx.Response(200, json={"organic_results": []})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        adapter = SerpApiAdapter(api_key="real_configured_key", client=client)
+
+        await adapter.search(
+            "test query",
+            limit=3,
+            extra_params={
+                "api_key": "injected_override_key",
+                "q": "injected_query",
+                "num": 99,
+                "hl": "en",
+                "gl": "in",
+            },
+        )
+
+        assert captured_params["api_key"] == "real_configured_key"
+        assert captured_params["q"] == "test query"
+        assert captured_params["num"] == "3"
+        assert captured_params["hl"] == "en"
+        assert captured_params["gl"] == "in"
+        await client.aclose()
+

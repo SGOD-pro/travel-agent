@@ -33,10 +33,10 @@ def test_plan_destination_queries_from_trip_brief() -> None:
     queries = QueryPlanningService.plan_destination_queries(brief, max_queries=4)
 
     assert len(queries) <= 4
-    assert any("Darjeeling" in q and "attractions" in q for q in queries)
-    assert any("Darjeeling" in q and "food" in q for q in queries)
-    assert any("Darjeeling" in q and "hotels" in q for q in queries)
-    assert any("travel advisory" in q or "route conditions" in q for q in queries)
+    assert any("Darjeeling" in q.query and "attractions" in q.query for q in queries)
+    assert any("Darjeeling" in q.query and "food" in q.query for q in queries)
+    assert any("Darjeeling" in q.query and "hotels" in q.query for q in queries)
+    assert any("travel advisory" in q.query or "route conditions" in q.query for q in queries)
 
 
 def test_plan_destination_queries_from_dict() -> None:
@@ -49,8 +49,8 @@ def test_plan_destination_queries_from_dict() -> None:
     queries = QueryPlanningService.plan_destination_queries(brief_dict, max_queries=4)
 
     assert len(queries) == 4
-    assert any("Gangtok" in q and "attractions" in q for q in queries)
-    assert any("Gangtok" in q and "hotels" in q for q in queries)
+    assert any("Gangtok" in q.query and "attractions" in q.query for q in queries)
+    assert any("Gangtok" in q.query and "hotels" in q.query for q in queries)
 
 
 def test_plan_destination_queries_enforces_ceiling() -> None:
@@ -97,10 +97,10 @@ def test_plan_destination_queries_incorporates_dates_preferences_and_budget() ->
 
     assert len(queries) == 4
     # Food query incorporates culinary preference
-    assert any("Shillong" in q and "cuisine" in q and "food" in q for q in queries)
+    assert any("Shillong" in q.query and "cuisine" in q.query and "food" in q.query for q in queries)
     # Accommodation query incorporates luxury budget tier and November date context
-    assert any("Shillong" in q and "luxury" in q and "hotels" in q and "November" in q for q in queries)
+    assert any("Shillong" in q.query and "luxury" in q.query and "hotels" in q.query and "November" in q.query for q in queries)
     # Attractions and route conditions present
-    assert any("Shillong" in q and "attractions" in q for q in queries)
-    assert any("road travel advisory" in q for q in queries)
+    assert any("Shillong" in q.query and "attractions" in q.query for q in queries)
+    assert any("road travel advisory" in q.query for q in queries)
 
