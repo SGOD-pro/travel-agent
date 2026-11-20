@@ -265,3 +265,154 @@ class TestSerpApiAdapter:
         assert captured_params["gl"] == "in"
         await client.aclose()
 
+    @pytest.mark.asyncio
+    async def test_transport_error_redacts_credentials_in_logs_and_tracebacks(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verifies transport errors do not leak request credentials in formatted logs or tracebacks."""
+        fake_secret = "FAKE_SECRET_TRANSPORT_KEY_12345"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ConnectError(
+                f"Failed to connect to host on {request.url}", request=request
+            )
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        adapter = SerpApiAdapter(api_key=fake_secret, client=client)
+
+        with caplog.at_level("DEBUG"):
+            with pytest.raises(SerpApiAdapterError) as exc_info:
+                await adapter.search("test connectivity")
+
+        # 1. Secret must not appear in raised exception message
+        err_str = str(exc_info.value)
+        assert fake_secret not in err_str
+        assert "ConnectError" in err_str or "Failed to connect" in err_str
+
+        # 2. Secret must not appear in caplog formatted records
+        assert fake_secret not in caplog.text
+        assert "[REDACTED]" in caplog.text
+
+        # 3. Subsequent caller traceback formatting must not leak secret
+        import traceback
+
+        formatted_tb = "".join(traceback.format_exception(exc_info.value))
+        assert fake_secret not in formatted_tb
+        assert "[REDACTED]" in formatted_tb
+        await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_redacts_credentials_in_logs_and_tracebacks(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verifies timeout errors do not leak request credentials in logs or chained exceptions."""
+        fake_secret = "FAKE_SECRET_TIMEOUT_KEY_67890"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise httpx.ReadTimeout(
+                f"Timed out waiting for response from {request.url}", request=request
+            )
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        adapter = SerpApiAdapter(api_key=fake_secret, timeout_seconds=2.0, client=client)
+
+        with caplog.at_level("DEBUG"):
+            with pytest.raises(SerpApiTimeoutError) as exc_info:
+                await adapter.search("timeout query")
+
+        assert fake_secret not in str(exc_info.value)
+        assert fake_secret not in caplog.text
+        assert "timed out after" in str(exc_info.value).lower()
+
+        import traceback
+
+        formatted_tb = "".join(traceback.format_exception(exc_info.value))
+        assert fake_secret not in formatted_tb
+        await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_redacts_credentials_in_logs_and_tracebacks(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Verifies unexpected errors sanitize credentials before logger.exception outputs traceback."""
+        fake_secret = "FAKE_SECRET_UNEXPECTED_KEY_99999"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise RuntimeError(f"Unexpected socket crash with key {fake_secret}")
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        adapter = SerpApiAdapter(api_key=fake_secret, client=client)
+
+        with caplog.at_level("DEBUG"):
+            with pytest.raises(SerpApiAdapterError) as exc_info:
+                await adapter.search("crash query")
+
+        assert fake_secret not in str(exc_info.value)
+        assert "[REDACTED]" in str(exc_info.value)
+        assert fake_secret not in caplog.text
+        assert "[REDACTED]" in caplog.text
+
+        import traceback
+
+        formatted_tb = "".join(traceback.format_exception(exc_info.value))
+        assert fake_secret not in formatted_tb
+        assert "[REDACTED]" in formatted_tb
+        await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_adapter_engine_selection_enforces_purpose_over_conflicting_engine(self) -> None:
+        """Verifies explicit purpose dictates permitted engine at adapter boundary."""
+        captured_requests: list[dict[str, Any]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured_requests.append(dict(request.url.params))
+            return httpx.Response(200, json={"organic_results": []})
+
+        transport = httpx.MockTransport(handler)
+        client = httpx.AsyncClient(transport=transport)
+        adapter = SerpApiAdapter(api_key="test_key", client=client)
+
+        # 1. Advisory with conflicting engine="google_maps" -> normalized to "google"
+        await adapter.search(
+            "Bengaluru to Mysuru advisory",
+            extra_params={"purpose": "advisory", "engine": "google_maps"},
+        )
+        assert captured_requests[-1]["engine"] == "google"
+
+        # 2. Venue discovery with conflicting engine="google" -> normalized to "google_maps"
+        await adapter.search(
+            "Mysuru Palace",
+            extra_params={"purpose": "attractions", "engine": "google"},
+        )
+        assert captured_requests[-1]["engine"] == "google_maps"
+
+        # 3. Dining with unsupported engine="bing" -> normalized to "google_maps"
+        await adapter.search(
+            "Mysuru Dosa",
+            extra_params={"purpose": "dining", "engine": "bing"},
+        )
+        assert captured_requests[-1]["engine"] == "google_maps"
+        await client.aclose()
+
+    def test_sanitize_exception_handles_cyclic_exception_chains(self) -> None:
+        """Verifies _sanitize_exception breaks cyclic __cause__ and __context__ references."""
+        from functions.evidence_collector.serpapi_adapter import _sanitize_exception
+
+        exc1 = RuntimeError("error 1 with api_key=secret_val_123")
+        exc2 = ValueError("error 2 with api_key=secret_val_456")
+
+        # Create cycle
+        exc1.__cause__ = exc2
+        exc2.__cause__ = exc1
+
+        # Must not raise RecursionError
+        _sanitize_exception(exc1)
+        assert "secret_val_123" not in str(exc1.args)
+        assert "secret_val_456" not in str(exc2.args)
+        assert "[REDACTED]" in str(exc1.args)
+        assert "[REDACTED]" in str(exc2.args)
+
+

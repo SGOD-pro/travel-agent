@@ -499,4 +499,266 @@ def test_plan_destination_queries_constrained_budget_derives_correct_coverage() 
     assert "Uncovered destinations: Madikeri" in queries.coverage_reason
 
 
+def test_query_policy_normalizes_conflicting_metadata_and_unsupported_engines() -> None:
+    """Verifies that explicit purpose governs engine selection and normalizes conflicting/unsupported values."""
+    # 1. PlannedQuery __init__ direct normalization
+    pq_adv = PlannedQuery("route advisory", purpose="advisory", engine="google_maps")
+    assert pq_adv.purpose == "advisory"
+    assert pq_adv.engine == "google"
+
+    pq_venue = PlannedQuery("palace visit", purpose="attractions", engine="google")
+    assert pq_venue.purpose == "attractions"
+    assert pq_venue.engine == "google_maps"
+
+    pq_bad = PlannedQuery("local craft", purpose="unsupported_craft", engine="unsupported_engine")
+    assert pq_bad.purpose == "attractions"
+    assert pq_bad.engine == "google_maps"
+
+    # 2. structure_and_validate_queries normalization
+    raw_queries = [
+        {"query": "Bengaluru to Mysuru road advisory", "purpose": "advisory", "engine": "google_maps"},
+        {"query": "Mysuru palace", "purpose": "attractions", "engine": "google"},
+        {"query": "Madikeri homestay", "purpose": "lodging", "engine": "bing"},
+        {"query": "Mysuru dosa", "purpose": "invalid_dining_tag", "engine": "yahoo"},
+    ]
+    res = QueryPlanningService.structure_and_validate_queries(
+        queries=raw_queries,
+        destinations=["Mysuru", "Madikeri"],
+        origin="Bengaluru",
+        max_queries=4,
+    )
+
+    assert res[0].purpose == "advisory"
+    assert res[0].engine == "google"
+
+    assert res[1].purpose == "attractions"
+    assert res[1].engine == "google_maps"
+
+    assert res[2].purpose == "lodging"
+    assert res[2].engine == "google_maps"
+
+    assert res[3].purpose == "attractions"
+    assert res[3].engine == "google_maps"
+
+
+def test_query_policy_misleading_venue_and_advisory_keywords() -> None:
+    """Verifies that explicit purpose takes authority over misleading keyword tokens."""
+    raw_queries = [
+        # Venue query containing road/traffic keyword: must remain attractions, engine=google_maps
+        {
+            "query": "Bengaluru Traffic Police Museum and Road Safety Park",
+            "purpose": "attractions",
+            "destination": "Bengaluru",
+        },
+        # Advisory query containing venue/dining keyword: must remain advisory, engine=google
+        {
+            "query": "Bengaluru to Mysuru highway road advisory and restaurant closures",
+            "purpose": "advisory",
+            "destination": "Bengaluru, Mysuru",
+        },
+    ]
+
+    res = QueryPlanningService.structure_and_validate_queries(
+        queries=raw_queries,
+        destinations=["Bengaluru", "Mysuru"],
+        origin="Bengaluru",
+        max_queries=4,
+    )
+
+    venue_q = next(q for q in res if "Traffic Police Museum" in q.query)
+    assert venue_q.purpose == "attractions"
+    assert venue_q.engine == "google_maps"
+
+    adv_q = next(q for q in res if "restaurant closures" in q.query)
+    assert adv_q.purpose == "advisory"
+    assert adv_q.engine == "google"
+
+    # Verify place extraction respects purpose: venue is extracted, advisory is excluded
+    obs_venue = {
+        "artifact_ref": {
+            "title": "Traffic Police Museum",
+            "purpose": venue_q.purpose,
+            "query_purpose": venue_q.purpose,
+            "gps": {"latitude": 12.9716, "longitude": 77.5946},
+        },
+        "publisher": "bengalurupolicemuseum.org",
+        "canonical_url": "https://bengalurupolicemuseum.org/visit",
+        "excerpt_text": "Place: Traffic Police Museum | Road safety exhibits",
+    }
+    extracted_places = PlaceExtractionService.extract_candidates_from_observations([obs_venue])
+    assert len(extracted_places) == 1
+    assert extracted_places[0].name == "Traffic Police Museum"
+
+    obs_adv = {
+        "artifact_ref": {
+            "title": "Highway Restaurant Closure Warning",
+            "purpose": adv_q.purpose,
+            "query_purpose": adv_q.purpose,
+            "category": "advisory",
+            "gps": {"latitude": 12.5, "longitude": 76.8},
+        },
+        "publisher": "trafficpolice.gov.in",
+        "canonical_url": "https://trafficpolice.gov.in/advisory",
+        "excerpt_text": "Road advisory: restaurants on highway closed due to flooding",
+    }
+    extracted_advisories = PlaceExtractionService.extract_candidates_from_observations([obs_adv])
+    assert len(extracted_advisories) == 0
+
+
+def test_query_policy_legacy_plain_string_responses() -> None:
+    """Verifies that legacy plain string queries without metadata are safely normalized."""
+    legacy_strings = [
+        "Mysuru Palace entry tickets timings",
+        "Madikeri coffee estate tours",
+        "Bengaluru to Mysuru road travel advisory route conditions",
+    ]
+
+    res = QueryPlanningService.structure_and_validate_queries(
+        queries=legacy_strings,
+        destinations=["Mysuru", "Madikeri"],
+        origin="Bengaluru",
+        max_queries=3,
+    )
+
+    # 1. Venue strings safely fallback to attractions and google_maps
+    assert res[0].purpose == "attractions"
+    assert res[0].engine == "google_maps"
+    assert res[0].destination == "Mysuru"
+
+    assert res[1].purpose == "attractions"
+    assert res[1].engine == "google_maps"
+    assert res[1].destination == "Madikeri"
+
+    # 2. Road travel advisory string safely falls back to advisory and google
+    assert res[2].purpose == "advisory"
+    assert res[2].engine == "google"
+
+    assert "Mysuru" in res.covered_destinations
+    assert "Madikeri" in res.covered_destinations
+
+
+@pytest.mark.asyncio
+async def test_query_policy_bedrock_structured_and_legacy_response_parsing() -> None:
+    """Verifies Bedrock adapter parses structured responses and legacy string lists safely."""
+    from contracts.llm import ResearchRequest
+    from functions.orchestrator.llm.adapters.bedrock import BedrockLlmClient
+
+    client = BedrockLlmClient(model_id="anthropic.claude-v2")
+    req = ResearchRequest(
+        origin_name="Bengaluru",
+        destination_names=["Mysuru", "Madikeri"],
+        brief_summary="Cultural trip to Mysuru and Madikeri",
+        traveler_preferences=["palaces", "nature"],
+    )
+
+    # 1. Structured Bedrock response with purpose and destination metadata
+    structured_json = {
+        "search_queries": [
+            {"query": "Mysuru palace history", "purpose": "attractions", "destination": "Mysuru"},
+            {"query": "Madikeri plantation walks", "purpose": "attractions", "destination": "Madikeri"},
+            {
+                "query": "Bengaluru to Mysuru road conditions advisory",
+                "purpose": "advisory",
+                "destination": "Bengaluru, Mysuru",
+            },
+        ]
+    }
+    with patch.object(client, "_call_converse_async", return_value=structured_json):
+        res_structured = await client.generate_search_queries(req, max_queries=3)
+        assert len(res_structured) == 3
+        assert res_structured[0].purpose == "attractions"
+        assert res_structured[0].engine == "google_maps"
+        assert res_structured[2].purpose == "advisory"
+        assert res_structured[2].engine == "google"
+
+    # 2. Legacy Bedrock response with plain string list
+    legacy_json = {
+        "search_queries": [
+            "Mysuru palace entry fee",
+            "Madikeri abbey falls visit",
+            "Bengaluru to Mysuru road travel advisory route conditions",
+        ]
+    }
+    with patch.object(client, "_call_converse_async", return_value=legacy_json):
+        res_legacy = await client.generate_search_queries(req, max_queries=3)
+        assert len(res_legacy) == 3
+        assert res_legacy[0].purpose == "attractions"
+        assert res_legacy[0].engine == "google_maps"
+        assert res_legacy[2].purpose == "advisory"
+        assert res_legacy[2].engine == "google"
+
+    # 3. Alternative key "queries" parsed resiliently
+    alt_json = {
+        "queries": [
+            {"query": "Mysuru palace entry fee", "purpose": "attractions", "destination": "Mysuru"},
+        ]
+    }
+    with patch.object(client, "_call_converse_async", return_value=alt_json):
+        res_alt = await client.generate_search_queries(req, max_queries=1)
+        assert len(res_alt) == 1
+        assert res_alt[0].purpose == "attractions"
+
+
+@pytest.mark.asyncio
+async def test_query_policy_reused_plans_validation_in_laya_evidence_dispatch() -> None:
+    """Verifies that reused planned_search_queries are validated before dispatch in graph."""
+    from functions.orchestrator.graphs.trip_planner.graph import (
+        TripPlanningState,
+        route_evidence_decision_node,
+    )
+
+    # State with unnormalized/conflicting reused planned queries
+    reused_unvalidated_queries = [
+        {"query": "Mysuru Palace sightseeing", "purpose": "attractions", "engine": "google"},
+        {"query": "Madikeri viewpoint", "purpose": "unsupported_tag", "engine": "bing"},
+        {
+            "query": "Bengaluru to Mysuru road advisory",
+            "purpose": "advisory",
+            "engine": "google_maps",
+        },
+    ]
+
+    state: TripPlanningState = {
+        "execution_id": "11111111-2222-3333-4444-555555555555",
+        "trip_id": "66666666-7777-8888-9999-000000000000",
+        "brief": {
+            "origin_name": "Bengaluru",
+            "destinations": [{"name": "Mysuru"}, {"name": "Madikeri"}],
+            "dietary_preferences": [],
+            "accessibility_requirements": [],
+        },
+        "planned_search_queries": reused_unvalidated_queries,
+        "laya_decisions": [],
+        "task_outputs": {},
+    }
+
+    result = await route_evidence_decision_node(state)
+    pending = result.get("pending_tasks", [])
+    assert len(pending) == 1
+    evidence_task = pending[0]
+    assert evidence_task["worker"] == "EVIDENCE"
+    assert evidence_task["action"] == "collect"
+
+    task_queries = evidence_task["payload"]["queries"]
+    # 1. Conflicting engine on attractions normalized to google_maps
+    q0 = task_queries[0]
+    assert q0["purpose"] == "attractions"
+    assert q0["engine"] == "google_maps"
+
+    # 2. Unsupported tag normalized to attractions and google_maps
+    q1 = task_queries[1]
+    assert q1["purpose"] == "attractions"
+    assert q1["engine"] == "google_maps"
+
+    # 3. Conflicting engine on advisory normalized to google
+    q2 = task_queries[2]
+    assert q2["purpose"] == "advisory"
+    assert q2["engine"] == "google"
+
+    # 4. Ceiling and budget intact
+    assert len(task_queries) <= 4
+    assert evidence_task["payload"]["budget"]["remaining_tool_calls"] == len(task_queries)
+
+
+
 

@@ -5106,7 +5106,22 @@ async def route_evidence_decision_node(
         existing_planned = state.get("planned_search_queries")
         planned_queries: Any
         if isinstance(existing_planned, list) and existing_planned:
-            planned_queries = existing_planned
+            clean_dests_for_val = (
+                [d["name"] for d in destinations_info]
+                if destinations_info
+                else ([dest_name] if dest_name else [])
+            )
+            origin_name_for_val = (
+                brief.get("origin_name", "")
+                if isinstance(brief, dict)
+                else getattr(brief, "origin_name", "")
+            )
+            planned_queries = QueryPlanningService.structure_and_validate_queries(
+                queries=existing_planned,
+                destinations=clean_dests_for_val,
+                origin=origin_name_for_val,
+                max_queries=DEFAULT_MAX_QUERIES,
+            )
         else:
             llm_for_queries = state.get("_llm_client") or configurable.get("llm_client")
             planned_queries = await QueryPlanningService.plan_queries_with_llm(

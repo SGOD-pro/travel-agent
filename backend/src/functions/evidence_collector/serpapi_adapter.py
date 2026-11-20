@@ -56,15 +56,83 @@ def _redact_arg(arg: Any) -> Any:
     if isinstance(arg, httpx.URL):
         return _safe_url_for_logging(arg)
     if isinstance(arg, dict):
-        return {k: _redact_arg(v) for k, v in arg.items()}
+        sanitized_dict = {}
+        for k, v in arg.items():
+            if str(k).lower() in ("api_key", "token", "secret", "password", "authorization"):
+                sanitized_dict[k] = "[REDACTED]"
+            else:
+                sanitized_dict[k] = _redact_arg(v)
+        return sanitized_dict
+    if isinstance(arg, (list, tuple)):
+        sanitized_seq = [_redact_arg(x) for x in arg]
+        return tuple(sanitized_seq) if isinstance(arg, tuple) else sanitized_seq
     arg_str = str(arg)
     if "api_key=" in arg_str:
         return _redact_text(arg_str)
     return arg
 
 
+def _sanitize_exception(
+    exc: BaseException | None,
+    api_key: str | None = None,
+    visited: set[int] | None = None,
+) -> None:
+    """Sanitizes exception arguments, request URLs, and chained causes to prevent credential leaks."""
+    if exc is None:
+        return
+
+    if visited is None:
+        visited = set()
+    exc_id = id(exc)
+    if exc_id in visited:
+        return
+    visited.add(exc_id)
+
+    # 1. Sanitize exception args
+    if hasattr(exc, "args") and exc.args:
+        sanitized_args: list[Any] = []
+        for a in exc.args:
+            if isinstance(a, str):
+                s = _redact_text(a)
+                if api_key and api_key in s:
+                    s = s.replace(api_key, "[REDACTED]")
+                sanitized_args.append(s)
+            elif isinstance(a, httpx.URL):
+                sanitized_args.append(_safe_url_for_logging(a))
+            else:
+                s = str(a)
+                if "api_key=" in s or (api_key and api_key in s):
+                    s = _redact_text(s)
+                    if api_key and api_key in s:
+                        s = s.replace(api_key, "[REDACTED]")
+                    sanitized_args.append(s)
+                else:
+                    sanitized_args.append(a)
+        try:
+            exc.args = tuple(sanitized_args)
+        except Exception:
+            pass
+
+    # 2. Sanitize request URL if attached to exception
+    req = getattr(exc, "request", None)
+    if req is not None and hasattr(req, "url"):
+        try:
+            req.url = httpx.URL(_safe_url_for_logging(req.url))
+        except Exception:
+            pass
+
+    # 3. Recurse into cause and context with cycle protection
+    cause = getattr(exc, "__cause__", None)
+    if cause is not None and cause is not exc:
+        _sanitize_exception(cause, api_key, visited)
+
+    context = getattr(exc, "__context__", None)
+    if context is not None and context is not exc:
+        _sanitize_exception(context, api_key, visited)
+
+
 class CredentialRedactionFilter(logging.Filter):
-    """Redacts api_key and other secret tokens from log records, checking both msg and args."""
+    """Redacts api_key and other secret tokens from log records, checking msg, args, and exc_info."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
@@ -74,16 +142,21 @@ class CredentialRedactionFilter(logging.Filter):
                 record.args = tuple(_redact_arg(a) for a in record.args)
             elif isinstance(record.args, dict):
                 record.args = {k: _redact_arg(v) for k, v in record.args.items()}
+        if record.exc_info and len(record.exc_info) >= 2 and record.exc_info[1] is not None:
+            _sanitize_exception(record.exc_info[1])
+        if record.exc_text:
+            record.exc_text = _redact_text(record.exc_text)
         return True
 
 
 def configure_http_client_logging() -> None:
     """Configures credential redaction and restricts verbose request logging from HTTP client libraries."""
-    for lib_name in ("httpx", "httpcore"):
+    for lib_name in ("httpx", "httpcore", __name__, "functions.evidence_collector.serpapi_adapter"):
         lib_logger = logging.getLogger(lib_name)
         if not any(isinstance(f, CredentialRedactionFilter) for f in lib_logger.filters):
             lib_logger.addFilter(CredentialRedactionFilter())
-        lib_logger.setLevel(logging.WARNING)
+        if lib_name in ("httpx", "httpcore"):
+            lib_logger.setLevel(logging.WARNING)
 
 
 class SerpApiAdapterError(Exception):
@@ -323,12 +396,30 @@ class SerpApiAdapter:
             (extra_params or {}).get("purpose")
             or (extra_params or {}).get("query_purpose")
         )
+        if query_purpose:
+            query_purpose = str(query_purpose).strip().lower()
+
         query_dest = (extra_params or {}).get("destination")
-        selected_engine = (
-            (extra_params or {}).get("engine")
-            or (self._default_engine if engine == "google" else engine)
-            or "google"
-        )
+
+        # Explicit purpose determines the permitted search engine
+        if query_purpose == "advisory":
+            # Road travel advisory MUST route to web search (engine="google").
+            # Reject or safely normalize advisory + google_maps and unsupported values.
+            selected_engine = "google"
+        elif query_purpose in ("attractions", "dining", "lodging"):
+            # Venue discovery MUST route to place search (engine="google_maps").
+            # Reject or safely normalize venue + google and unsupported values.
+            selected_engine = "google_maps"
+        else:
+            # Fallback when purpose is missing or unsupported
+            passed_engine = (
+                (extra_params or {}).get("engine")
+                or (self._default_engine if engine == "google" else engine)
+                or "google"
+            )
+            selected_engine = (
+                passed_engine if passed_engine in ("google", "google_maps") else "google"
+            )
         serpapi_param_keys = {
             "location",
             "hl",
@@ -430,6 +521,7 @@ class SerpApiAdapter:
         except httpx.TimeoutException as e:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             self.last_latency_ms = elapsed_ms
+            _sanitize_exception(e, self._api_key)
             logger.warning(
                 "SerpAPI query '%s' timed out after %.2fms (limit %.1fs)",
                 query,
@@ -446,7 +538,8 @@ class SerpApiAdapter:
         except Exception as e:
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             self.last_latency_ms = elapsed_ms
-            clean_err = str(e)
+            _sanitize_exception(e, self._api_key)
+            clean_err = _redact_text(str(e))
             if self._api_key:
                 clean_err = clean_err.replace(self._api_key, "[REDACTED]")
             logger.exception("Unexpected error executing SerpAPI query '%s': %s", query, clean_err)

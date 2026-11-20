@@ -31,9 +31,11 @@ from functions.orchestrator.llm.port import HostedLlmClientPort
 logger = logging.getLogger(__name__)
 
 
-def _extract_json_payload(text: str) -> dict[str, Any]:
-    """Extracts and parses a JSON object from raw LLM text or markdown code fence."""
-    cleaned = text.strip()
+def _extract_json_payload(text: str | dict[str, Any]) -> dict[str, Any]:
+    """Extracts and parses a JSON object from raw LLM text, markdown code fence, or dictionary."""
+    if isinstance(text, dict):
+        return text
+    cleaned = str(text).strip()
     match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", cleaned)
     if match:
         cleaned = match.group(1).strip()
@@ -203,12 +205,12 @@ class BedrockLlmClient(HostedLlmClientPort):
             "You formulate targeted search engine queries to discover authentic points of interest, "
             "regional dining spots, cultural attractions, and travel advisories from real web sources. "
             "You must return ONLY a single valid JSON object strictly matching this schema: "
-            '{"search_queries": ["query 1", "query 2", "query 3", "query 4"]}. '
+            '{"search_queries": [{"query": "search query text", "purpose": "attractions|dining|lodging|advisory", "destination": "city name"}]}. '
             "Do not include conversational preamble or markdown commentary outside the JSON block."
         )
 
         user_content = (
-            f"Formulate 3 to 4 high-signal web search queries for this travel corridor:\n"
+            f"Formulate 3 to 4 high-signal search queries for this travel corridor:\n"
             f"- Origin: {request.origin_name}\n"
             f"- Destinations: {', '.join(request.destination_names)}\n"
             f"- Summary: {request.brief_summary}\n"
@@ -218,7 +220,8 @@ class BedrockLlmClient(HostedLlmClientPort):
             "Requirements:\n"
             f"1. Distribute queries across destinations: {', '.join(request.destination_names)} so each destination has research coverage.\n"
             "2. Include 1 road travel advisory query covering route conditions, weather warnings, or road closures.\n"
-            'Return JSON matching: {"search_queries": ["..."]}'
+            "3. Each item in search_queries must be an object with query, purpose (attractions, dining, lodging, or advisory), and destination fields.\n"
+            'Return JSON matching: {"search_queries": [{"query": "...", "purpose": "attractions|dining|lodging|advisory", "destination": "..."}]}'
         )
 
         messages = [{"role": "user", "content": [{"text": user_content}]}]
@@ -227,7 +230,17 @@ class BedrockLlmClient(HostedLlmClientPort):
         try:
             raw_response = await self._call_converse_async(messages, system)
             parsed = _extract_json_payload(raw_response)
-            queries = [str(q).strip() for q in parsed.get("search_queries", []) if str(q).strip()]
+            raw_items = parsed.get("search_queries") or parsed.get("queries") or []
+            queries: list[Any] = []
+            if isinstance(raw_items, list):
+                for item in raw_items:
+                    if isinstance(item, dict):
+                        q_str = str(item.get("query") or item.get("q") or "").strip()
+                        if q_str:
+                            queries.append(item)
+                    elif isinstance(item, str) and item.strip():
+                        # Legacy plain string response from Bedrock
+                        queries.append(item.strip())
         except TimeoutError:
             raise
         except Exception as exc:

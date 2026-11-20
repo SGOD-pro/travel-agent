@@ -225,6 +225,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 8 real runner execution, bounded research query planning, evidence task dispatch, browser fallback, and resume reconciliation: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL runner lifecycle integration suite, and connected evidence report)
    - [x] Non-hallucinatory search query planning, place discovery via SerpAPI with real geolocation coordinates, multi-site consensus ranking, and API timing middleware: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live connected AWS Bedrock and SerpAPI integration test, clean ruff linting, and strict mypy verification)
    - [x] Bounded destination research coverage and search routing: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL dispatch integration suite, clean ruff linting, and strict mypy verification)
+   - [x] Research policy enforcement and credential safe logging: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL dispatch and contract integration suite, clean ruff linting, and strict mypy verification)
 - [x] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
@@ -240,6 +241,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Slice 8 production browser DNS saturation correction: [2026-11-18-production-dns-saturation.md](../reviews/2026-11-18-production-dns-saturation.md) (Approve with nits)
    - [x] Slice 8 API to runner start contract correction: [2026-11-18-api-to-runner-start-contract.md](../reviews/2026-11-18-api-to-runner-start-contract.md) · [2026-11-19-api-to-runner-start-contract.md](../reviews/2026-11-19-api-to-runner-start-contract.md) (Approve with nits)
    - [x] Bounded destination research coverage and search routing: [2026-11-19-destination-research-coverage.md](../reviews/2026-11-19-destination-research-coverage.md) · [2026-11-20-destination-research-coverage.md](../reviews/2026-11-20-destination-research-coverage.md) (Approve with nits)
+   - [x] Research policy enforcement and credential safe logging: [2026-11-20-research-policy-and-credential-safety.md](../reviews/2026-11-20-research-policy-and-credential-safety.md) · [2026-11-20-research-policy-re-review.md](../reviews/2026-11-20-research-policy-re-review.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

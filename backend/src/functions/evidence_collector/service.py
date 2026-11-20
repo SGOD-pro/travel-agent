@@ -634,12 +634,20 @@ class EvidenceCollectorService:
                     if isinstance(q, dict):
                         q_str = str(q.get("query") or q.get("q") or "")
                         q_extra = {k: v for k, v in q.items() if k not in ("query", "q")}
-                        results = await active_adapter.search(
-                            q_str, limit=5, extra_params=q_extra or None
-                        )
                         q_purpose = q.get("purpose") or q.get("query_purpose")
                         q_dest = q.get("destination")
                         q_engine = q.get("engine")
+                        if q_purpose:
+                            p_clean = str(q_purpose).strip().lower()
+                            if p_clean == "advisory":
+                                q_engine = "google"
+                            elif p_clean in ("attractions", "dining", "lodging"):
+                                q_engine = "google_maps"
+                        if q_engine:
+                            q_extra["engine"] = q_engine
+                        results = await active_adapter.search(
+                            q_str, limit=5, extra_params=q_extra or None
+                        )
                         tagged_results: list[RawObservation] = []
                         for obs in results:
                             ref = dict(obs.artifact_ref) if obs.artifact_ref else {}

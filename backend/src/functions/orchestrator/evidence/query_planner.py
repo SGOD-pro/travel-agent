@@ -34,14 +34,24 @@ class PlannedQuery(dict[str, Any]):
         *,
         purpose: str = "attractions",
         destination: str = "",
-        engine: str = "google_maps",
+        engine: str | None = None,
         **kwargs: Any,
     ) -> None:
+        clean_purpose = str(purpose or "attractions").strip().lower()
+        if clean_purpose not in ("attractions", "dining", "lodging", "advisory"):
+            clean_purpose = "attractions"
+
+        # Explicit purpose determines permitted search engine
+        if clean_purpose == "advisory":
+            target_engine = "google"
+        else:
+            target_engine = "google_maps"
+
         super().__init__(
             query=query,
-            purpose=purpose,
-            destination=destination,
-            engine=engine,
+            purpose=clean_purpose,
+            destination=str(destination or "").strip(),
+            engine=target_engine,
             **kwargs,
         )
 
@@ -429,54 +439,62 @@ class QueryPlanningService:
 
             q_lower = q_text.lower()
             explicit_purpose = q_item.get("purpose") if isinstance(q_item, dict) else None
-            explicit_engine = q_item.get("engine") if isinstance(q_item, dict) else None
             explicit_dest = q_item.get("destination") if isinstance(q_item, dict) else None
 
-            # Detect advisory
-            is_advisory = False
-            if explicit_purpose:
-                is_advisory = explicit_purpose == "advisory"
+            # 1. Purpose determination:
+            # Explicit purpose is authoritative. Keyword inference must NOT be the authority.
+            if explicit_purpose is not None:
+                norm_purpose = str(explicit_purpose).strip().lower()
+                if norm_purpose in ("attractions", "dining", "lodging", "advisory"):
+                    purpose = norm_purpose
+                else:
+                    # Unsupported purpose value -> safely normalize to attractions
+                    purpose = "attractions"
             else:
-                is_advisory = any(
-                    k in q_lower
-                    for k in (
-                        "advisory",
+                # Legacy plain string fallback (no explicit purpose metadata):
+                # Only if the query explicitly indicates road conditions/advisories does it fallback to advisory;
+                # otherwise safe default fallback is attractions (venue discovery).
+                if any(
+                    phrase in q_lower
+                    for phrase in (
+                        "road travel advisory",
                         "road condition",
                         "road closures",
                         "highway alert",
-                        "traffic",
+                        "traffic advisory",
+                        "route condition",
                     )
-                )
-
-            if is_advisory:
-                purpose = "advisory"
-                engine = explicit_engine or "google"
-                matched_dests = [d for d in clean_dests if d.lower() in q_lower]
-                dest_str = explicit_dest or (
-                    ", ".join(matched_dests)
-                    if matched_dests
-                    else (clean_dests[0] if clean_dests else "corridor")
-                )
-            else:
-                engine = explicit_engine or "google_maps"
-                if explicit_purpose:
-                    purpose = explicit_purpose
-                elif any(k in q_lower for k in ("food", "restaurant", "dining", "cuisine")):
-                    purpose = "dining"
-                elif any(
-                    k in q_lower
-                    for k in ("hotel", "resort", "lodging", "stay", "accommodation")
                 ):
-                    purpose = "lodging"
+                    purpose = "advisory"
                 else:
                     purpose = "attractions"
 
+            # 2. Explicit purpose determines permitted search engine:
+            if purpose == "advisory":
+                engine = "google"
+            else:
+                engine = "google_maps"
+
+            # 3. Destination determination:
+            if explicit_dest:
+                dest_str = str(explicit_dest).strip()
+            else:
                 matched_dests = [d for d in clean_dests if d.lower() in q_lower]
-                dest_str = explicit_dest or (
-                    matched_dests[0] if matched_dests else (clean_dests[0] if clean_dests else "")
-                )
-                if dest_str:
-                    covered_set.add(dest_str)
+                if purpose == "advisory":
+                    dest_str = (
+                        ", ".join(matched_dests)
+                        if matched_dests
+                        else (", ".join(clean_dests) if clean_dests else "corridor")
+                    )
+                else:
+                    dest_str = (
+                        matched_dests[0]
+                        if matched_dests
+                        else (clean_dests[0] if clean_dests else "")
+                    )
+
+            if purpose != "advisory" and dest_str in clean_dests:
+                covered_set.add(dest_str)
 
             structured.append(
                 PlannedQuery(
