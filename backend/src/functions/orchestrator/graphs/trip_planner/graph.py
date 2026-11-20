@@ -158,6 +158,9 @@ class TripPlanningState(TypedDict, total=False):
     covered_destinations: list[str]
     uncovered_destinations: list[str]
     coverage_reason: str | None
+    max_locations: int
+    max_matrix_cells: int
+    provider_limits: dict[str, Any]
     _llm_client: HostedLlmClientPort
     _weather_client: WeatherClientPort
     _laya_adapter: LayaDecisionPort
@@ -831,6 +834,161 @@ def _parse_window_time(w_val: Any) -> time | None:
     return None
 
 
+ACCOMMODATION_CATEGORIES: set[str] = {
+    "hotel",
+    "lodging",
+    "resort",
+    "homestay",
+    "hostel",
+    "motel",
+    "guest_house",
+    "stay",
+    "accommodation",
+    "inn",
+    "bed_and_breakfast",
+}
+
+DINING_CATEGORIES: set[str] = {
+    "restaurant",
+    "dining",
+    "food",
+    "cafe",
+    "bakery",
+    "bar",
+    "eatery",
+    "street_food",
+    "dhaba",
+    "bistro",
+    "pub",
+}
+
+ADVISORY_CATEGORIES: set[str] = {
+    "advisory",
+    "alert",
+    "road_closure",
+    "hazard",
+    "weather",
+    "transit",
+    "traffic",
+    "highway",
+}
+
+SERVICE_CATEGORIES: set[str] = {
+    "service",
+    "gas_station",
+    "petrol_pump",
+    "fuel_station",
+    "charging_station",
+    "parking",
+    "rest_stop",
+    "toll_booth",
+}
+
+
+def _classify_candidate_category(category_raw: str | None, name_raw: str | None) -> str:
+    """Classifies place into accommodation, dining, advisory, service, or sightseeing."""
+    cat = (category_raw or "").strip().lower().replace(" ", "_").replace("-", "_")
+    name = (name_raw or "").strip().lower()
+
+    # 1. Explicit category authority
+    if cat in ADVISORY_CATEGORIES:
+        return "advisory"
+    if cat in DINING_CATEGORIES:
+        return "dining"
+    if cat in ACCOMMODATION_CATEGORIES:
+        return "accommodation"
+    if cat in SERVICE_CATEGORIES:
+        return "service"
+
+    # 2. Keyword fallback when category is generic or missing
+    if any(
+        w in name
+        for w in (
+            "road advisory",
+            "expressway advisory",
+            "traffic alert",
+            "road closure",
+            "weather alert",
+        )
+    ):
+        return "advisory"
+    if any(
+        w in name
+        for w in (
+            "hotel",
+            "resort",
+            "homestay",
+            "hostel",
+            "motel",
+            "guest house",
+            "lodge",
+            "inn",
+        )
+    ):
+        return "accommodation"
+    if any(
+        w in name
+        for w in (
+            "restaurant",
+            "cafe",
+            "bakery",
+            "dhaba",
+            "eatery",
+            "bistro",
+        )
+    ):
+        return "dining"
+    if any(
+        w in name
+        for w in (
+            "petrol pump",
+            "gas station",
+            "fuel station",
+            "charging station",
+        )
+    ):
+        return "service"
+    return "sightseeing"
+
+
+def _compute_dest_day_offsets(brief: TripBrief) -> dict[str, int]:
+    """Computes deterministic day offset for each brief destination."""
+    offsets: dict[str, int] = {}
+    total_days = max(1, (brief.end_date - brief.start_date).days + 1)
+    current_offset = 0
+    for d in brief.destinations:
+        norm = d.name.strip().lower()
+        if d.visit_date is not None:
+            off = (d.visit_date - brief.start_date).days
+            offsets[norm] = max(0, min(off, total_days - 1))
+            current_offset = offsets[norm] + max(1, d.stay_days)
+        elif d.day_offset is not None:
+            offsets[norm] = max(0, min(d.day_offset, total_days - 1))
+            current_offset = offsets[norm] + max(1, d.stay_days)
+        else:
+            offsets[norm] = min(current_offset, total_days - 1)
+            current_offset += max(1, d.stay_days)
+    return offsets
+
+
+def _find_nearest_brief_destination(
+    cand_lat: float,
+    cand_lng: float,
+    brief: TripBrief,
+) -> DestinationPoint | None:
+    """Finds the geographically closest brief destination for a candidate coordinate."""
+    if not brief.destinations:
+        return None
+    best_dest: DestinationPoint | None = None
+    min_dist_sq = float("inf")
+    for d in brief.destinations:
+        dist_sq = (cand_lat - float(d.latitude)) ** 2 + (cand_lng - float(d.longitude)) ** 2
+        if dist_sq < min_dist_sq:
+            min_dist_sq = dist_sq
+            best_dest = d
+    return best_dest
+
+
 def _resolve_stop_window(
     stop_data: dict[str, Any],
     brief: TripBrief,
@@ -841,15 +999,22 @@ def _resolve_stop_window(
 
     Supports:
     - Multi-day trip offsets: respects brief_dest.visit_date or day_offset, or stop_data visit_date / day_offset.
+    - Automatic destination matching: if brief_dest is None, resolves closest brief destination by coordinates or name.
     - Date boundaries / midnight crossing: if window_end <= window_start, closing extends to the next calendar day.
-    - India-local and target IANA timezones: combines in local timezone first, then converts via .astimezone(UTC).
+    - Daily opening-hour constraints: venues are bounded by their daily opening hours on the resolved visit date.
     """
+    dest_offsets = _compute_dest_day_offsets(brief)
     visit_date: date | None = None
+
     if brief_dest is not None:
         if brief_dest.visit_date is not None:
             visit_date = brief_dest.visit_date
         elif brief_dest.day_offset is not None:
             visit_date = brief.start_date + timedelta(days=brief_dest.day_offset)
+        else:
+            norm_name = brief_dest.name.strip().lower()
+            if norm_name in dest_offsets:
+                visit_date = brief.start_date + timedelta(days=dest_offsets[norm_name])
 
     if visit_date is None:
         raw_vd = stop_data.get("visit_date")
@@ -868,6 +1033,32 @@ def _resolve_stop_window(
                 visit_date = brief.start_date + timedelta(days=int(raw_offset))
             except Exception:
                 pass
+
+    if visit_date is None:
+        # Match via destination name or geographic proximity to brief destinations
+        dest_hint = str(
+            stop_data.get("destination")
+            or stop_data.get("destination_name")
+            or (stop_data.get("provenance", {}).get("destination") if isinstance(stop_data.get("provenance"), dict) else "")
+            or ""
+        ).strip().lower()
+        if dest_hint and dest_hint in dest_offsets:
+            visit_date = brief.start_date + timedelta(days=dest_offsets[dest_hint])
+        else:
+            pt = stop_data.get("point", {})
+            raw_lat = pt.get("lat") if isinstance(pt, dict) else getattr(pt, "lat", None)
+            raw_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", None)
+            if raw_lat is not None and raw_lng is not None:
+                try:
+                    cand_lat_f = float(raw_lat)
+                    cand_lng_f = float(raw_lng)
+                    nearest = _find_nearest_brief_destination(cand_lat_f, cand_lng_f, brief)
+                    if nearest is not None:
+                        nearest_norm = nearest.name.strip().lower()
+                        if nearest_norm in dest_offsets:
+                            visit_date = brief.start_date + timedelta(days=dest_offsets[nearest_norm])
+                except (ValueError, TypeError):
+                    pass
 
     if visit_date is None:
         visit_date = brief.start_date
@@ -908,14 +1099,24 @@ def _resolve_stop_window(
 def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
     """Formulates RouteRequest and emits pending task specification for route optimizer worker.
 
-    Conforms to spec 0007 AC-3, AC-4, AC-9:
-    1. Only verified places enter RouteRequest.stops (unverified candidate proposals and unverified
-       brief destinations are strictly excluded from the solver stops and preserved in editorial recommendations).
-    2. Contradicted places are excluded entirely.
-    3. Verified places with unknown opening hours enter with assumed daytime window (09:00 to 18:00)
-       explicitly labeled with hours_status=HOURS_ASSUMED.
-    4. Verified places with verified opening hours enter with exact window timestamps on departure date.
-    5. Emits task specification for worker OPTIMIZER with action solve, idempotency_key, and deadline.
+    Conforms to spec 0007 AC-3, AC-4, AC-9, and optimizer dispatch requirements:
+    1. Verified existence alone does not make a place mandatory.
+       Origin and brief destinations are mandatory anchors (is_must_visit=True).
+       Discovered candidate places are optional recommendations (is_must_visit=False).
+    2. Categorizes candidates semantically:
+       - Lodging/accommodation places are preserved in editorial recommendations with explicit reason.
+       - Dining places are preserved in editorial recommendations with explicit reason.
+       - Advisory observations and road alerts are excluded from daytime route stops with explicit reason.
+       - Service facilities are preserved with explicit reason.
+       - Sightseeing attractions are scheduled as optional route stops.
+    3. Respects multi-day trip dates, local timezone, daily opening windows, and dwell durations.
+       Multi-day itineraries are distributed across trip dates instead of compressed into Day 1.
+    4. Bounds provider requests using verified endpoint capabilities:
+       Distinguishes location limits from matrix-cell limits (effective_max_stops = min(max_locations, isqrt(max_matrix_cells))).
+       Does not hardcode 'nine stops plus origin'.
+    5. Preserves mandatory anchors. If limits prevent scheduling mandatory anchors, reports explicit diagnostic.
+       Deterministically prioritizes optional candidates up to remaining capacity and preserves excess in editorial recommendations.
+    6. Eliminates duplicate unverified recommendations in editorial_recommendations.
     """
     brief = TripBrief.model_validate(state["brief"])
     trip_tz = resolve_trip_timezone(brief, state)
@@ -923,6 +1124,25 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
     dest_by_norm_name: dict[str, DestinationPoint] = {
         d.name.strip().lower(): d for d in brief.destinations
     }
+
+    # Endpoint capability resolution
+    cfg_settings = get_settings()
+    limits_obj: Any = state.get("provider_limits")
+    limits_container: dict[str, Any] = limits_obj if isinstance(limits_obj, dict) else {}
+    raw_loc: Any = state.get("max_locations") or limits_container.get("max_locations")
+    max_locations = (
+        int(raw_loc)
+        if raw_loc is not None
+        else int(getattr(cfg_settings, "VALHALLA_MAX_LOCATIONS", 100))
+    )
+    raw_cells: Any = state.get("max_matrix_cells") or limits_container.get("max_matrix_cells")
+    max_matrix_cells = (
+        int(raw_cells)
+        if raw_cells is not None
+        else int(getattr(cfg_settings, "VALHALLA_MAX_MATRIX_CELLS", 100))
+    )
+    max_from_cells = int(math.isqrt(max_matrix_cells)) if max_matrix_cells > 0 else 10
+    effective_max_stops = min(max_locations, max_from_cells)
 
     excluded_candidates = state.get("excluded_candidates", [])
     excluded_names = {
@@ -951,13 +1171,20 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
 
     route_stops: list[RouteStopInput] = []
     editorial_recs = list(state.get("editorial_recommendations", []))
+    existing_rec_names = {
+        str(r.get("primary_name") if isinstance(r, dict) else getattr(r, "primary_name", "") or "")
+        .strip()
+        .lower()
+        for r in editorial_recs
+        if r is not None
+    }
 
     dep_date = brief.start_date
     dep_time = time(9, 0)
     departure_local = datetime.combine(dep_date, dep_time, tzinfo=trip_tz)
     departure_dt = departure_local.astimezone(UTC)
 
-    # 1. Origin stop
+    # 1. Mandatory origin stop
     route_stops.append(
         RouteStopInput(
             name=brief.origin_name,
@@ -971,7 +1198,7 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
         )
     )
 
-    # 2. Brief destinations
+    # 2. Mandatory brief destinations
     for d in brief.destinations:
         d_name_norm = d.name.strip().lower()
         if d_name_norm in excluded_names:
@@ -1004,68 +1231,177 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
                 "Brief destination %s lacks verified existence evidence; retained in editorial recommendations",
                 d.name,
             )
-            editorial_recs.append(
-                {
-                    "primary_name": d.name,
-                    "category": "destination",
-                    "point": {"lat": float(d.latitude), "lng": float(d.longitude)},
-                    "uncertainty": "EDITORIAL_DISCOVERY",
-                    "is_candidate": True,
-                    "existence_status": CandidateExistenceStatus.UNVERIFIED.value,
-                    "hours_status": CandidateHoursStatus.USER_SUPPLIED_UNVERIFIED.value,
-                    "is_hours_assumed": True,
-                    "diagnostics": {
-                        "rejection_reason": "User supplied brief destination lacks verified existence evidence; excluded from solver schedule"
-                    },
-                }
-            )
+            if d_name_norm not in existing_rec_names:
+                editorial_recs.append(
+                    {
+                        "primary_name": d.name,
+                        "category": "destination",
+                        "point": {"lat": float(d.latitude), "lng": float(d.longitude)},
+                        "uncertainty": "EDITORIAL_DISCOVERY",
+                        "is_candidate": True,
+                        "existence_status": CandidateExistenceStatus.UNVERIFIED.value,
+                        "hours_status": CandidateHoursStatus.USER_SUPPLIED_UNVERIFIED.value,
+                        "is_hours_assumed": True,
+                        "diagnostics": {
+                            "rejection_reason": "User supplied brief destination lacks verified existence evidence; excluded from solver schedule"
+                        },
+                    }
+                )
+                existing_rec_names.add(d_name_norm)
+
+    mandatory_count = len(route_stops)
+    provider_diagnostics = dict(state.get("provider_diagnostics", {}))
+
+    if mandatory_count > effective_max_stops:
+        msg = (
+            f"Mandatory anchors (count={mandatory_count}) exceed provider capacity "
+            f"(effective_max_stops={effective_max_stops}, matrix_cells_limit={max_matrix_cells}, "
+            f"location_limit={max_locations})"
+        )
+        logger.warning(msg)
+        provider_diagnostics["optimizer_capacity"] = msg
 
     # 3. Discovered candidates with verified existence
     if eligible_stops_data is not None:
+        sightseeing_candidates: list[dict[str, Any]] = []
+
         for s in eligible_stops_data:
-            s_name = (
-                str(
-                    s.get("primary_name")
-                    if isinstance(s, dict)
-                    else getattr(s, "primary_name", "") or ""
-                )
-                .strip()
-                .lower()
-            )
-            if s_name in brief_names or s_name in excluded_names:
+            s_dict = s if isinstance(s, dict) else s.model_dump(mode="json")
+            s_name = str(s_dict.get("primary_name") or s_dict.get("name") or "").strip()
+            s_name_norm = s_name.lower()
+            if not s_name or s_name_norm in brief_names or s_name_norm in excluded_names:
                 continue
-            exist_st = s.get("existence_status")
+
+            exist_st = s_dict.get("existence_status")
             if exist_st and exist_st not in (
                 CandidateExistenceStatus.VERIFIED,
                 CandidateExistenceStatus.VERIFIED.value,
             ):
                 continue
+
+            cat_raw = str(s_dict.get("category") or "")
+            semantic_cat = _classify_candidate_category(cat_raw, s_name)
+
+            # Semantic partitioning
+            if semantic_cat == "accommodation":
+                if s_name_norm not in existing_rec_names:
+                    rec_item = dict(s_dict)
+                    rec_item["category"] = cat_raw or "hotel"
+                    rec_item["uncertainty"] = "EDITORIAL_DISCOVERY"
+                    rec_item["is_candidate"] = True
+                    rec_item.setdefault("diagnostics", {})["deferral_reason"] = (
+                        "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop"
+                    )
+                    editorial_recs.append(rec_item)
+                    existing_rec_names.add(s_name_norm)
+                continue
+
+            if semantic_cat == "dining":
+                if s_name_norm not in existing_rec_names:
+                    rec_item = dict(s_dict)
+                    rec_item["category"] = cat_raw or "restaurant"
+                    rec_item["uncertainty"] = "EDITORIAL_DISCOVERY"
+                    rec_item["is_candidate"] = True
+                    rec_item.setdefault("diagnostics", {})["deferral_reason"] = (
+                        "Deferred: dining choice preserved for dining recommendations rather than daytime route stop"
+                    )
+                    editorial_recs.append(rec_item)
+                    existing_rec_names.add(s_name_norm)
+                continue
+
+            if semantic_cat == "advisory":
+                if s_name_norm not in existing_rec_names:
+                    rec_item = dict(s_dict)
+                    rec_item["category"] = cat_raw or "advisory"
+                    rec_item["uncertainty"] = "EDITORIAL_DISCOVERY"
+                    rec_item["is_candidate"] = False
+                    rec_item.setdefault("diagnostics", {})["rejection_reason"] = (
+                        "Excluded: advisory observation preserved for route alerts rather than route stops"
+                    )
+                    editorial_recs.append(rec_item)
+                    existing_rec_names.add(s_name_norm)
+                continue
+
+            if semantic_cat == "service":
+                if s_name_norm not in existing_rec_names:
+                    rec_item = dict(s_dict)
+                    rec_item["category"] = cat_raw or "service"
+                    rec_item["uncertainty"] = "EDITORIAL_DISCOVERY"
+                    rec_item["is_candidate"] = True
+                    rec_item.setdefault("diagnostics", {})["deferral_reason"] = (
+                        "Deferred: service facility preserved for transit needs rather than sightseeing stop"
+                    )
+                    editorial_recs.append(rec_item)
+                    existing_rec_names.add(s_name_norm)
+                continue
+
+            # Semantic category is sightseeing
+            sightseeing_candidates.append(s_dict)
+
+        # Candidate capacity enforcement: deterministically schedule top candidates up to available slots
+        for s in sightseeing_candidates:
+            s_name = str(s.get("primary_name") or s.get("name") or "").strip()
+            s_name_norm = s_name.lower()
             pt = s.get("point", {})
             raw_lat = pt.get("lat") if isinstance(pt, dict) else getattr(pt, "lat", 0.0)
             raw_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", 0.0)
-            lat_val = float(raw_lat) if raw_lat is not None else 0.0
-            lng_val = float(raw_lng) if raw_lng is not None else 0.0
+            try:
+                lat_val = float(raw_lat) if raw_lat is not None else 0.0
+                lng_val = float(raw_lng) if raw_lng is not None else 0.0
+            except (ValueError, TypeError):
+                lat_val = 0.0
+                lng_val = 0.0
 
             dt_w_start, dt_w_end = _resolve_stop_window(s, brief, None, trip_tz)
+            dwell_s = int(s.get("suggested_stay_minutes", 60)) * 60
 
-            p_id = s.get("place_id")
-            route_stops.append(
-                RouteStopInput(
-                    place_id=uuid.UUID(str(p_id)) if p_id else None,
-                    name=s["primary_name"],
-                    location=Point(latitude=lat_val, longitude=lng_val),
-                    stop_type=StopType.DESTINATION,
-                    is_must_visit=True,
-                    dwell_seconds=s.get("suggested_stay_minutes", 60) * 60,
-                    window_start=dt_w_start,
-                    window_end=dt_w_end,
+            # Check if dwell exceeds daily opening window
+            if dt_w_start and dt_w_end:
+                win_len = int((dt_w_end - dt_w_start).total_seconds())
+                if dwell_s > win_len:
+                    if s_name_norm not in existing_rec_names:
+                        rec_item = dict(s)
+                        rec_item["uncertainty"] = "EDITORIAL_DISCOVERY"
+                        rec_item["is_candidate"] = True
+                        rec_item.setdefault("diagnostics", {})["deferral_reason"] = (
+                            f"Deferred: suggested dwell ({dwell_s}s) exceeds available daily opening window ({win_len}s)"
+                        )
+                        editorial_recs.append(rec_item)
+                        existing_rec_names.add(s_name_norm)
+                    continue
+
+            if len(route_stops) < effective_max_stops:
+                p_id = s.get("place_id")
+                route_stops.append(
+                    RouteStopInput(
+                        place_id=uuid.UUID(str(p_id)) if p_id else None,
+                        name=s_name,
+                        location=Point(latitude=lat_val, longitude=lng_val),
+                        stop_type=StopType.DESTINATION,
+                        is_must_visit=False,  # Discovered candidate places are optional recommendations
+                        dwell_seconds=dwell_s,
+                        window_start=dt_w_start,
+                        window_end=dt_w_end,
+                    )
                 )
-            )
+            else:
+                # Excess candidate beyond provider capacity
+                if s_name_norm not in existing_rec_names:
+                    rec_item = dict(s)
+                    rec_item["uncertainty"] = "EDITORIAL_DISCOVERY"
+                    rec_item["is_candidate"] = True
+                    rec_item.setdefault("diagnostics", {})["deferral_reason"] = (
+                        f"Deferred: candidate exceeds provider matrix cell capacity for route optimization "
+                        f"(capacity={effective_max_stops} stops, max cells={max_matrix_cells})"
+                    )
+                    editorial_recs.append(rec_item)
+                    existing_rec_names.add(s_name_norm)
     else:
         discovered = state.get("discovered_places", [])
         for p in discovered:
             p_name = p.get("name", "")
-            if p_name.strip().lower() not in brief_names:
+            p_name_norm = p_name.strip().lower()
+            if p_name_norm not in brief_names and p_name_norm not in existing_rec_names:
                 editorial_recs.append(
                     {
                         "primary_name": p_name,
@@ -1076,6 +1412,7 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
                         },
                     }
                 )
+                existing_rec_names.add(p_name_norm)
 
     owner_id_raw = state.get("owner_id")
     trip_id_raw = state.get("trip_id")
@@ -1112,7 +1449,7 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
         "max_attempts": 3,
     }
 
-    return {
+    result_out: dict[str, Any] = {
         "current_step": "route_optimizer_dispatched",
         "status": "RUNNING",
         "pending_tasks": [task_spec],
@@ -1121,6 +1458,9 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
         "optimizer_idempotency_key": idemp_key,
         "timezone": str(trip_tz),
     }
+    if provider_diagnostics:
+        result_out["provider_diagnostics"] = provider_diagnostics
+    return result_out
 
 
 def await_route_results_node(state: TripPlanningState) -> dict[str, Any]:

@@ -200,6 +200,19 @@ class Settings(BaseSettings):
         le=120,
         description="Maximum calculation budget allocated to OR Tools before yielding best feasible result",
     )
+    VALHALLA_MAX_LOCATIONS: int = Field(
+        default=100,
+        ge=2,
+        description=(
+            "Maximum total locations permitted by Valhalla routing provider endpoint "
+            "(maps to Valhalla /sources_to_targets 'Exceeded max locations' limit)"
+        ),
+    )
+    VALHALLA_MAX_MATRIX_CELLS: int = Field(
+        default=100,
+        ge=4,
+        description="Maximum matrix cells (sources x targets) permitted by Valhalla /sources_to_targets endpoint",
+    )
     VALHALLA_CONNECT_TIMEOUT_SECONDS: float = Field(
         default=2.0,
         ge=0.1,
