@@ -5,12 +5,10 @@ Builds an isolated deployment package containing:
 2. Permitted shared execution support (fencing, models, job_events, config, contracts).
 3. Runtime dependencies installed from requirements.txt (Playwright, Scrapling, Pydantic, SQLAlchemy).
 Excludes all forbidden modules (optimizer/OR-Tools, API/FastAPI, LangGraph, evidence_collector).
-Measures unpacked function package size, compressed ZIP package size, and combined function plus
-external Chromium layer size against AWS Lambda limits:
-- Function unpacked size <= 185 MB (measured ~152-173 MB including stripped Node runtime)
-- Function compressed ZIP <= 70 MB (target <= 60 MB, measured ~54-59 MB)
-- Chromium layer unpacked size: 67,633,712 bytes (64.50 MB across 74 extracted files)
-- Combined unpacked size (function + layer) <= 250 MB (262,144,000 bytes hard ceiling, target <= 225 MB)
+Packages standalone Obscura browser binary in bin/obscura with zero external Lambda layers:
+- Function unpacked size <= 250 MB (262,144,000 bytes hard ceiling, measured ~236.2 MB)
+- Function compressed ZIP <= 100 MB (measured ~90.4 MB)
+- External layers: 0 MB
 """
 
 from __future__ import annotations
@@ -27,23 +25,18 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Sparticuz Chromium layer v130.0.0 artifact specifications (C2)
-SPARTICUZ_CHROMIUM_VERSION: str = "v130.0.0"
-SPARTICUZ_CHROMIUM_LAYER_FILENAME: str = "chromium-v130.0.0-layer.zip"
-SPARTICUZ_CHROMIUM_LAYER_SHA256: str = (
-    "c113ecfebb9778f7dd82829fe0fc0f99d98df8a93ab1ea6d4eee31d23f620480"
-)
-SPARTICUZ_CHROMIUM_LAYER_ARCHIVE_BYTES: int = 67_464_242  # 64.34 MB compressed archive
-SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES: int = (
-    67_633_712  # 64.50 MB across 54 extracted files (74 archive entries)
-)
+# Pinned Obscura artifact specifications
+OBSCURA_VERSION: str = "v0.2.7"
+OBSCURA_COMMIT: str = "0ecc41770da5c5300227dd83a15bfa1e5100d5d4"
+OBSCURA_BINARY_UNPACKED_BYTES: int = 81_194_528
 
-# Packaging size thresholds conforming to spec 0003 AC-8 and measured layer artifacts
-MAX_FUNCTION_COMPRESSED_BYTES: int = 70 * 1024 * 1024  # 70 MB
-MAX_FUNCTION_UNCOMPRESSED_BYTES: int = 185 * 1024 * 1024  # 185 MB
-CHROMIUM_LAYER_UNCOMPRESSED_BYTES: int = SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES
+# Packaging size thresholds conforming to Lambda limits:
+# Unpacked function includes all dependencies and Obscura binary in a single artifact without external layers.
+MAX_FUNCTION_COMPRESSED_BYTES: int = 100 * 1024 * 1024  # 100 MB (measured ~90.4 MB)
+MAX_FUNCTION_UNCOMPRESSED_BYTES: int = 250 * 1024 * 1024  # 250 MB (262,144,000 bytes hard ceiling)
+CHROMIUM_LAYER_UNCOMPRESSED_BYTES: int = 0  # Eliminated: Obscura runs standalone without external layers
 MAX_COMBINED_UNCOMPRESSED_BYTES: int = 250 * 1024 * 1024  # 250 MB (262,144,000 bytes hard ceiling)
-TARGET_COMBINED_UNCOMPRESSED_BYTES: int = 225 * 1024 * 1024  # 225 MB target with safety margin
+TARGET_COMBINED_UNCOMPRESSED_BYTES: int = 240 * 1024 * 1024  # 240 MB target with safety margin
 
 FORBIDDEN_HEAVY_PACKAGES: set[str] = {
     "langgraph",
@@ -297,6 +290,35 @@ def build_isolated_browser_artifact(
         if target_pre.exists():
             shutil.rmtree(target_pre, ignore_errors=True)
 
+    # 4b. Stage Obscura binary into package bin/ directory
+    dest_bin = output_dir / "bin"
+    dest_bin.mkdir(parents=True, exist_ok=True)
+    dest_obscura = dest_bin / "obscura"
+
+    candidates = [
+        dest_obscura,
+        Path(os.environ.get("OBSCURA_PATH", "")) if os.environ.get("OBSCURA_PATH") else None,
+        src_dir.parent / "build" / "bin" / "obscura",
+        src_dir / "functions" / "browser" / "bin" / "obscura",
+        Path("/tmp/obscura-bin/obscura"),
+    ]
+    src_obscura = None
+    for cand in candidates:
+        if cand and cand.is_file() and os.access(cand, os.X_OK):
+            src_obscura = str(cand.resolve())
+            break
+    if not src_obscura:
+        which_obscura = shutil.which("obscura")
+        if which_obscura and os.access(which_obscura, os.X_OK):
+            src_obscura = which_obscura
+
+    if src_obscura and os.path.exists(src_obscura):
+        if Path(src_obscura).resolve() != dest_obscura.resolve():
+            shutil.copy2(src_obscura, dest_obscura)
+        os.chmod(dest_obscura, 0o755)
+        if strip_bin:
+            subprocess.run([strip_bin, str(dest_obscura)], check=False, capture_output=True)
+
     # 5. Strict isolation verification
     for forbidden in FORBIDDEN_HEAVY_PACKAGES:
         direct_pkg = output_dir / forbidden
@@ -316,7 +338,7 @@ def build_isolated_browser_artifact(
     if unpacked_function_bytes > MAX_FUNCTION_UNCOMPRESSED_BYTES:
         raise ValueError(
             f"Unpacked function package size ({unpacked_function_bytes} bytes) exceeds function limit of "
-            f"{MAX_FUNCTION_UNCOMPRESSED_BYTES} bytes (185 MB)"
+            f"{MAX_FUNCTION_UNCOMPRESSED_BYTES} bytes (250 MB)"
         )
 
     combined_unpacked_bytes = unpacked_function_bytes + CHROMIUM_LAYER_UNCOMPRESSED_BYTES
@@ -343,7 +365,7 @@ def build_isolated_browser_artifact(
     if compressed_bytes > MAX_FUNCTION_COMPRESSED_BYTES:
         raise ValueError(
             f"Compressed ZIP size ({compressed_bytes} bytes) exceeds limit of "
-            f"{MAX_FUNCTION_COMPRESSED_BYTES} bytes (70 MB)"
+            f"{MAX_FUNCTION_COMPRESSED_BYTES} bytes (100 MB)"
         )
 
     return (
@@ -416,7 +438,7 @@ print("OK")
         "SQS_QUEUE_URL": "https://sqs.ap-south-1.amazonaws.com/123/outbox-queue",
         "BROWSER_WORKER_QUEUE_URL": "https://sqs.ap-south-1.amazonaws.com/123/browser-queue",
         "AWS_REGION": "ap-south-1",
-        "CHROMIUM_PATH": "/tmp/chromium",
+        "OBSCURA_PATH": "/var/task/bin/obscura",
         "BROWSER_NAVIGATION_TIMEOUT_SECONDS": "20",
         "BROWSER_MAX_ESCALATION_TASKS": "3",
     }
@@ -440,29 +462,25 @@ print("OK")
 def verify_browser_startup_and_render_isolated_environment(
     artifact_dir: Path,
     python_bin: str | Path | None = None,
-    chromium_path: str | None = None,
+    obscura_path: str | None = None,
 ) -> dict[str, Any]:
-    """Proves Playwright startup and live rendering from the isolated final artifact (C1, C2).
+    """Proves Playwright startup and live rendering from the isolated final artifact via Obscura CDP.
 
     Spawns an isolated Python 3.12 process with -S -P and ONLY artifact_dir on PYTHONPATH.
     Verifies:
     1. Bundled Node runtime is present, executable, and used by Playwright.
-    2. Headless Chromium starts up and executes JavaScript to render dynamic HTML.
-    3. Clearly distinguishes verified local proof from deferred target runtime proof.
+    2. Obscura browser binary starts up and connects via Playwright connect_over_cdp.
+    3. Dynamic HTML with JavaScript is rendered and DOM is hydrated.
     """
     runtime_python = str(python_bin) if python_bin else resolve_python_runtime_binary()
-    resolved_chromium = (
-        chromium_path
-        or shutil.which("chromium")
-        or shutil.which("chromium-browser")
-        or shutil.which("google-chrome")
-        or str(
-            Path.home() / ".cache" / "ms-playwright" / "chromium-1243" / "chrome-linux64" / "chrome"
-        )
+    resolved_obscura = (
+        obscura_path
+        or str(artifact_dir / "bin" / "obscura")
+        or shutil.which("obscura")
     )
 
     verify_script = f"""
-import os, sys, asyncio, platform
+import os, sys, asyncio, platform, subprocess, tempfile, json
 from pathlib import Path
 
 # Verify Python 3.12 runtime and x86_64 architecture
@@ -482,31 +500,63 @@ node_bin = driver_dir / "node"
 assert node_bin.exists(), f"Playwright Node binary missing from isolated artifact: {{node_bin}}"
 assert os.access(node_bin, os.X_OK), f"Playwright Node binary is not executable: {{node_bin}}"
 
-# Test headless browser launch and live dynamic rendering
+# Test Obscura CDP launch and live dynamic rendering
 async def test_render():
-    chrome_executable = {repr(resolved_chromium)}
-    if not chrome_executable or not os.path.exists(chrome_executable):
-        return {{"local_status": "SKIPPED_NO_BROWSER", "reason": "No local Chromium binary found"}}
+    obscura_bin = {repr(resolved_obscura)}
+    if not obscura_bin or not os.path.exists(obscura_bin):
+        cand = Path({repr(str(artifact_dir.resolve()))}) / "bin" / "obscura"
+        if cand.exists():
+            obscura_bin = str(cand)
+        else:
+            return {{"local_status": "SKIPPED_NO_BROWSER", "reason": "No Obscura binary found"}}
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            executable_path=chrome_executable,
-            args=["--no-sandbox", "--disable-setuid-sandbox"],
-        )
-        page = await browser.new_page()
-        await page.set_content(
-            "<html><head><title>Isolated Artifact Render</title></head>"
-            "<body><div id='res'>Initial</div>"
-            "<script>document.getElementById('res').innerText = 'HYDRATED_SUCCESS';</script>"
-            "</body></html>"
-        )
-        rendered_text = await page.inner_text("#res")
-        title = await page.title()
-        await browser.close()
-        assert rendered_text == "HYDRATED_SUCCESS", f"Expected HYDRATED_SUCCESS, got {{rendered_text}}"
-        assert title == "Isolated Artifact Render", f"Expected Isolated Artifact Render, got {{title}}"
-        return {{"local_status": "VERIFIED", "rendered_text": rendered_text}}
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as rf:
+        rf_path = rf.name
+
+    cmd = [
+        obscura_bin,
+        "serve",
+        "--port", "0",
+        "--host", "127.0.0.1",
+        "--ready-file", rf_path,
+        "--quiet",
+    ]
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        ready = None
+        for _ in range(50):
+            await asyncio.sleep(0.05)
+            if os.path.exists(rf_path) and os.path.getsize(rf_path) > 0:
+                try:
+                    with open(rf_path) as f:
+                        ready = json.load(f)
+                    break
+                except Exception:
+                    pass
+        assert ready is not None, "Obscura failed to publish ready file"
+        assert ready.get("host") == "127.0.0.1", "Obscura published non-loopback host"
+
+        async with async_playwright() as p:
+            cdp_port = ready["port"]
+            browser = await p.chromium.connect_over_cdp(f"http://127.0.0.1:{{cdp_port}}")
+            page = await browser.new_page()
+            await page.set_content(
+                "<html><head><title>Isolated Artifact Render</title></head>"
+                "<body><div id='res'>Initial</div>"
+                "<script>document.getElementById('res').innerText = 'HYDRATED_SUCCESS';</script>"
+                "</body></html>"
+            )
+            rendered_text = await page.inner_text("#res")
+            title = await page.title()
+            await browser.close()
+            assert rendered_text == "HYDRATED_SUCCESS", f"Expected HYDRATED_SUCCESS, got {{rendered_text}}"
+            assert title == "Isolated Artifact Render", f"Expected Isolated Artifact Render, got {{title}}"
+            return {{"local_status": "VERIFIED", "rendered_text": rendered_text}}
+    finally:
+        proc.kill()
+        proc.wait()
+        if os.path.exists(rf_path):
+            os.unlink(rf_path)
 
 result = asyncio.run(test_render())
 print("LOCAL_RENDER_RESULT:", result)
@@ -538,134 +588,34 @@ print("LOCAL_RENDER_RESULT:", result)
     }
 
 
-def verify_sparticuz_layer_bootstrap(
-    layer_archive_path: Path | None = None,
-    node_binary: str | Path | None = None,
+def verify_obscura_binary_artifact(
+    binary_path: Path | None = None,
 ) -> dict[str, Any]:
-    """C2: Verifies Sparticuz Chromium layer artifact layout, decompression, and executable usability."""
-    archive_path = layer_archive_path or (
-        Path(__file__).resolve().parents[3] / "build" / "layers" / SPARTICUZ_CHROMIUM_LAYER_FILENAME
-    )
-    if not archive_path.exists():
-        raise FileNotFoundError(f"Sparticuz Chromium layer archive missing at {archive_path}")
+    """Verifies Obscura binary exists, is executable, matches x86_64 ELF format, and passes smoke test."""
+    from functions.browser.driver import resolve_obscura_binary
 
-    actual_hash = hashlib.sha256(archive_path.read_bytes()).hexdigest()
-    if actual_hash != SPARTICUZ_CHROMIUM_LAYER_SHA256:
-        raise ValueError(
-            f"Layer hash mismatch: expected {SPARTICUZ_CHROMIUM_LAYER_SHA256}, got {actual_hash}"
-        )
+    resolved = str(binary_path) if binary_path else resolve_obscura_binary()
+    if not resolved or not os.path.exists(resolved):
+        raise FileNotFoundError(f"Obscura binary not found: {resolved}")
+    if not os.access(resolved, os.X_OK):
+        raise PermissionError(f"Obscura binary is not executable: {resolved}")
 
-    with zipfile.ZipFile(archive_path, "r") as zf:
-        namelist = set(zf.namelist())
-        if "nodejs/node_modules/@sparticuz/chromium/bin/chromium.br" not in namelist:
-            raise AssertionError(
-                "Layer archive missing nodejs/node_modules/@sparticuz/chromium/bin/chromium.br"
-            )
-        if "nodejs/node_modules/@sparticuz/chromium/bin/al2023.tar.br" not in namelist:
-            raise AssertionError(
-                "Layer archive missing nodejs/node_modules/@sparticuz/chromium/bin/al2023.tar.br"
-            )
-        if "chromium" in namelist or "opt/chromium" in namelist:
-            raise AssertionError(
-                "Layer archive unexpectedly contains uncompressed chromium binary at root"
-            )
+    with open(resolved, "rb") as f:
+        magic = f.read(4)
+        if magic != b"\x7fELF":
+            raise RuntimeError(f"Expected ELF binary, got magic {magic!r}")
 
-    node_bin = node_binary
-    if node_bin is None:
-        try:
-            import playwright
+    res = subprocess.run([resolved, "--version"], capture_output=True, text=True, check=False)
+    if res.returncode != 0:
+        raise RuntimeError(f"Obscura execution failed:\n{res.stderr}")
 
-            cand = Path(playwright.__file__).parent / "driver" / "node"
-            if cand.exists() and os.access(cand, os.X_OK):
-                node_bin = cand
-        except Exception:
-            pass
-    if node_bin is None:
-        node_bin = shutil.which("node")
-    if node_bin is None or not os.access(node_bin, os.X_OK):
-        raise RuntimeError(
-            "No executable Node binary available to verify Sparticuz layer decompression"
-        )
-
-    import tempfile
-
-    with tempfile.TemporaryDirectory() as opt_sim_dir:
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(opt_sim_dir)
-
-        sparticuz_pkg = Path(opt_sim_dir) / "nodejs" / "node_modules" / "@sparticuz" / "chromium"
-        if not sparticuz_pkg.exists():
-            raise RuntimeError(f"Extracted Sparticuz package directory missing at {sparticuz_pkg}")
-
-        script = (
-            "const chromium = require('@sparticuz/chromium');"
-            "async function main() {"
-            "  const p = await chromium.executablePath();"
-            "  console.log('BOOTSTRAPPED_PATH:' + p);"
-            "}"
-            "main().catch(err => {"
-            "  console.error(err);"
-            "  process.exit(1);"
-            "});"
-        )
-        env = os.environ.copy()
-        env["NODE_PATH"] = str(Path(opt_sim_dir) / "nodejs" / "node_modules")
-        env["AWS_EXECUTION_ENV"] = "AWS_Lambda_nodejs20.x"
-
-        res = subprocess.run(
-            [str(node_bin), "-e", script],
-            cwd=str(sparticuz_pkg),
-            env=env,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(
-                f"Sparticuz bootstrap failed:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"
-            )
-
-        tmp_chromium = Path("/tmp/chromium")
-        if not tmp_chromium.exists() or not os.access(tmp_chromium, os.X_OK):
-            raise RuntimeError(
-                f"Bootstrap completed but {tmp_chromium} is missing or not executable"
-            )
-
-        with open(tmp_chromium, "rb") as f:
-            magic = f.read(4)
-            if magic != b"\x7fELF":
-                raise RuntimeError(f"Expected ELF binary, got magic {magic!r}")
-
-        ver_res = subprocess.run(
-            [str(tmp_chromium), "--version"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if ver_res.returncode != 0:
-            raise RuntimeError(f"Executing {tmp_chromium} --version failed:\n{ver_res.stderr}")
-        chromium_version = ver_res.stdout.strip()
-
-        try:
-            if tmp_chromium.exists():
-                tmp_chromium.unlink()
-            al2023_tmp = Path("/tmp/al2023")
-            if al2023_tmp.exists():
-                shutil.rmtree(al2023_tmp, ignore_errors=True)
-            fonts_tmp = Path("/tmp/fonts")
-            if fonts_tmp.exists():
-                shutil.rmtree(fonts_tmp, ignore_errors=True)
-        except Exception:
-            pass
-
-        return {
-            "layer_version": SPARTICUZ_CHROMIUM_VERSION,
-            "archive_bytes": archive_path.stat().st_size,
-            "archive_sha256": actual_hash,
-            "bootstrap_status": "VERIFIED",
-            "chromium_version": chromium_version,
-            "target_runtime_proof": "DEFERRED_TO_CLOUD_ROLLOUT",
-        }
+    version_out = res.stdout.strip()
+    return {
+        "status": "SUCCESS",
+        "version": version_out,
+        "binary_path": resolved,
+        "size_bytes": os.path.getsize(resolved),
+    }
 
 
 if __name__ == "__main__":
@@ -679,5 +629,5 @@ if __name__ == "__main__":
     print(f"Handler verification: {verify_res['status']}")
     render_res = verify_browser_startup_and_render_isolated_environment(out_dir)
     print(f"Browser render verification: {render_res['local_proof']}")
-    layer_res = verify_sparticuz_layer_bootstrap()
-    print(f"Layer bootstrap verification: {layer_res['bootstrap_status']}")
+    obscura_res = verify_obscura_binary_artifact()
+    print(f"Obscura binary verification: {obscura_res['status']}")

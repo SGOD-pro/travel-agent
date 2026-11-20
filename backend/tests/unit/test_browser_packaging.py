@@ -15,11 +15,7 @@ Validates:
 from __future__ import annotations
 
 import os
-import shutil
-import sys
-import tempfile
 import time
-import zipfile
 from pathlib import Path
 from typing import Any, cast
 
@@ -33,17 +29,15 @@ from functions.browser.packaging import (
     MAX_COMBINED_UNCOMPRESSED_BYTES,
     MAX_FUNCTION_COMPRESSED_BYTES,
     MAX_FUNCTION_UNCOMPRESSED_BYTES,
-    SPARTICUZ_CHROMIUM_LAYER_ARCHIVE_BYTES,
-    SPARTICUZ_CHROMIUM_LAYER_FILENAME,
-    SPARTICUZ_CHROMIUM_LAYER_SHA256,
-    SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES,
-    SPARTICUZ_CHROMIUM_VERSION,
+    OBSCURA_BINARY_UNPACKED_BYTES,
+    OBSCURA_COMMIT,
+    OBSCURA_VERSION,
     TARGET_COMBINED_UNCOMPRESSED_BYTES,
     build_isolated_browser_artifact,
     resolve_python_runtime_binary,
     verify_browser_startup_and_render_isolated_environment,
     verify_handler_in_clean_environment,
-    verify_sparticuz_layer_bootstrap,
+    verify_obscura_binary_artifact,
 )
 
 BROWSER_DIR = Path(__file__).resolve().parents[2] / "src" / "functions" / "browser"
@@ -96,7 +90,7 @@ def test_browser_template_existence_validity_and_settings_alignment() -> None:
     env_param = parameters.get("Environment", {})
     assert env_param.get("AllowedValues") == ["local", "staging", "production"]
     assert env_param.get("Default") in ["local", "staging", "production"]
-    assert "ChromiumLayerArn" in parameters
+    assert "ChromiumLayerArn" not in parameters
 
     # Verify Globals Function configuration
     globals_sec = template.get("Globals", {})
@@ -109,7 +103,7 @@ def test_browser_template_existence_validity_and_settings_alignment() -> None:
     assert "ENVIRONMENT" in env_vars
     assert "DATABASE_URL" in env_vars
     assert "BROWSER_WORKER_QUEUE_URL" in env_vars
-    assert env_vars.get("CHROMIUM_PATH") == "/tmp/chromium"
+    assert env_vars.get("OBSCURA_PATH") == "/var/task/bin/obscura"
     assert "BROWSER_NAVIGATION_TIMEOUT_SECONDS" in env_vars
     assert "BROWSER_MAX_ESCALATION_TASKS" in env_vars
 
@@ -126,7 +120,7 @@ def test_browser_template_existence_validity_and_settings_alignment() -> None:
     assert fn_props.get("Architectures") == ["x86_64"]
     assert fn_props.get("MemorySize") == 1536
     assert fn_props.get("CodeUri") == "../../../build/browser"
-    assert "Layers" in fn_props
+    assert "Layers" not in fn_props
 
     # SQS Event configuration with partial batch responses
     events = fn_props.get("Events", {})
@@ -216,84 +210,38 @@ def test_browser_dependency_inclusive_package_size_and_isolated_artifact() -> No
     assert node_bin.exists(), f"Playwright Node runtime binary missing from {output_dir}"
     assert os.access(node_bin, os.X_OK), f"Playwright Node binary {node_bin} is not executable"
 
-    # AC-8 size assertions with measured Sparticuz Chromium layer (C2)
-    assert CHROMIUM_LAYER_UNCOMPRESSED_BYTES == SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES
-    assert CHROMIUM_LAYER_UNCOMPRESSED_BYTES == 67_633_712
-    assert combined_unpacked_bytes == unpacked_func_bytes + CHROMIUM_LAYER_UNCOMPRESSED_BYTES
-    assert unpacked_func_bytes < MAX_FUNCTION_UNCOMPRESSED_BYTES, (
-        f"Function unpacked size {unpacked_func_bytes} bytes exceeds {MAX_FUNCTION_UNCOMPRESSED_BYTES} bytes (185 MB)"
+    # Obscura binary must be packaged and executable
+    obscura_bin = output_dir / "bin" / "obscura"
+    assert obscura_bin.exists(), f"Obscura binary missing from package: {obscura_bin}"
+    assert os.access(obscura_bin, os.X_OK), f"Obscura binary {obscura_bin} is not executable"
+
+    # Size assertions conforming to AWS Lambda 250 MB ceiling
+    assert CHROMIUM_LAYER_UNCOMPRESSED_BYTES == 0
+    assert combined_unpacked_bytes == unpacked_func_bytes
+    assert unpacked_func_bytes <= MAX_FUNCTION_UNCOMPRESSED_BYTES, (
+        f"Function unpacked size {unpacked_func_bytes} bytes exceeds {MAX_FUNCTION_UNCOMPRESSED_BYTES} bytes (250 MB)"
     )
     assert compressed_bytes < MAX_FUNCTION_COMPRESSED_BYTES, (
-        f"Function compressed ZIP size {compressed_bytes} bytes exceeds {MAX_FUNCTION_COMPRESSED_BYTES} bytes (70 MB)"
+        f"Function compressed ZIP size {compressed_bytes} bytes exceeds {MAX_FUNCTION_COMPRESSED_BYTES} bytes (100 MB)"
     )
-    assert combined_unpacked_bytes < MAX_COMBINED_UNCOMPRESSED_BYTES, (
+    assert combined_unpacked_bytes <= MAX_COMBINED_UNCOMPRESSED_BYTES, (
         f"Combined unpacked size {combined_unpacked_bytes} bytes exceeds {MAX_COMBINED_UNCOMPRESSED_BYTES} bytes (250 MB)"
     )
     assert combined_unpacked_bytes < TARGET_COMBINED_UNCOMPRESSED_BYTES, (
-        f"Combined unpacked size {combined_unpacked_bytes} bytes exceeds target {TARGET_COMBINED_UNCOMPRESSED_BYTES} bytes (225 MB)"
+        f"Combined unpacked size {combined_unpacked_bytes} bytes exceeds target {TARGET_COMBINED_UNCOMPRESSED_BYTES} bytes (240 MB)"
     )
 
 
-def test_sparticuz_chromium_layer_artifact_measurements_and_hash() -> None:
-    """C2: Verifies the official Sparticuz Chromium layer artifact SHA256 and extracted size."""
-    import hashlib
-
-    layer_archive = BACKEND_DIR / "build" / "layers" / SPARTICUZ_CHROMIUM_LAYER_FILENAME
-    assert layer_archive.exists(), f"Sparticuz Chromium layer missing at {layer_archive}"
-
-    # Verify version and SHA256 matches expected checksum
-    assert SPARTICUZ_CHROMIUM_VERSION == "v130.0.0"
-    actual_hash = hashlib.sha256(layer_archive.read_bytes()).hexdigest()
-    assert actual_hash == SPARTICUZ_CHROMIUM_LAYER_SHA256
-
-    # Verify compressed archive size
-    assert layer_archive.stat().st_size == SPARTICUZ_CHROMIUM_LAYER_ARCHIVE_BYTES
-
-    # Verify extracted layer contents in /opt
-    extracted_dir = BACKEND_DIR / "build" / "layers" / "extracted"
-    assert extracted_dir.exists(), f"Extracted layer directory missing at {extracted_dir}"
-
-    extracted_files = [f for f in extracted_dir.rglob("*") if f.is_file()]
-    extracted_bytes = sum(f.stat().st_size for f in extracted_files)
-    assert extracted_bytes == SPARTICUZ_CHROMIUM_LAYER_UNPACKED_BYTES
-    assert extracted_bytes == 67_633_712
-    assert len(extracted_files) == 54
-
-
-def test_sparticuz_layer_bootstrap_and_binary_usability() -> None:
-    """C2: Verifies Sparticuz Chromium layer decompressor produces usable binary and distinguishes deferrals."""
-    result = verify_sparticuz_layer_bootstrap()
-    assert result["bootstrap_status"] == "VERIFIED"
-    assert "Chromium 130." in result["chromium_version"]
-    assert result["target_runtime_proof"] == "DEFERRED_TO_CLOUD_ROLLOUT"
-
-
-def test_ensure_sparticuz_chromium_bootstrap() -> None:
-    """Verifies ensure_sparticuz_chromium returns existing binary or inflates layer artifact."""
-    from functions.browser.driver import ensure_sparticuz_chromium
-
-    # When target exists and is executable
-    assert ensure_sparticuz_chromium(target_path=sys.executable) == sys.executable
-
-    # When layer is not present, returns None safely without error
-    non_existent = Path("/nonexistent/directory")
-    assert (
-        ensure_sparticuz_chromium(layer_dir=non_existent, target_path="/tmp/nonexistent_chromium")
-        is None
-    )
-
-    # When layer archive exists, bootstraps successfully from extracted layer
-    layer_archive = BACKEND_DIR / "build" / "layers" / SPARTICUZ_CHROMIUM_LAYER_FILENAME
-    with tempfile.TemporaryDirectory() as td:
-        with zipfile.ZipFile(layer_archive, "r") as zf:
-            zf.extractall(td)
-        result = ensure_sparticuz_chromium(layer_dir=Path(td), target_path="/tmp/chromium")
-        assert result == "/tmp/chromium"
-        assert Path("/tmp/chromium").exists()
-        # Clean up
-        Path("/tmp/chromium").unlink(missing_ok=True)
-        shutil.rmtree("/tmp/al2023", ignore_errors=True)
-        shutil.rmtree("/tmp/fonts", ignore_errors=True)
+def test_obscura_binary_artifact_verification() -> None:
+    """Verifies that the standalone Obscura binary satisfies execution and architecture requirements."""
+    assert OBSCURA_VERSION == "v0.2.7"
+    assert OBSCURA_COMMIT == "0ecc41770da5c5300227dd83a15bfa1e5100d5d4"
+    assert OBSCURA_BINARY_UNPACKED_BYTES > 50_000_000
+    res = verify_obscura_binary_artifact()
+    assert res["status"] == "SUCCESS"
+    assert "obscura" in res["version"]
+    assert res["size_bytes"] > 50_000_000
+    assert Path(res["binary_path"]).exists()
 
 
 def test_verify_browser_startup_and_render_in_isolated_artifact_environment() -> None:
@@ -352,3 +300,27 @@ def test_resolve_python_runtime_binary_fails_when_unavailable(
 
     with pytest.raises(RuntimeError, match="Required Python 3.12 runtime is unavailable"):
         resolve_python_runtime_binary()
+
+
+def test_obscura_path_alias_backward_compatibility() -> None:
+    """Verifies OBSCURA_PATH accepts CHROMIUM_PATH environment alias for backwards compatibility."""
+    from config.config import Settings
+
+    s = Settings(CHROMIUM_PATH="/custom/legacy/path")
+    assert s.OBSCURA_PATH == "/custom/legacy/path"
+
+
+def test_resolve_obscura_binary_with_chromium_path_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verifies resolve_obscura_binary resolves CHROMIUM_PATH if OBSCURA_PATH is unset."""
+    from functions.browser.driver import resolve_obscura_binary
+
+    fake_bin = tmp_path / "legacy_browser"
+    fake_bin.write_bytes(b"\x7fELFfake")
+    os.chmod(fake_bin, 0o755)
+
+    monkeypatch.delenv("OBSCURA_PATH", raising=False)
+    monkeypatch.setenv("CHROMIUM_PATH", str(fake_bin))
+    assert resolve_obscura_binary() == str(fake_bin.resolve())

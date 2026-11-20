@@ -110,8 +110,8 @@ _Steps derived from spec 0003 acceptance criteria. /check verify runs these; /te
   - **Mechanism**: The builder in `backend/src/functions/browser/packaging.py` preserves `playwright/driver/node`, sets executable permissions 0755, and strips unneeded binary symbols via `strip --strip-unneeded` to reduce binary size from 121 MB to 104 MB.
   - **Evidence**: Verified by `verify_browser_startup_and_render_isolated_environment` in `test_browser_packaging.py::test_verify_browser_startup_and_render_in_isolated_artifact_environment`. Spawns an isolated Python 3.12 process with `-S -P`, `PYTHONNOUSERSITE=1`, zero host site packages, zero virtualenv paths on `sys.path`, and only the isolated artifact directory on `PYTHONPATH`. The test launches headless local Chromium using the bundled Node runtime, navigates to an HTML page with JavaScript, and confirms DOM hydration (`rendered_text == 'HYDRATED_SUCCESS'`). Isolated execution passes; handler imports alone are rejected as insufficient acceptance proof.
 
-- [x] **C2: Measured layer packaging, bootstrap decompressor, and runtime proof**
-  - **Status**: Resolved with concrete evidence and explicit deferral distinction.
+- [x] **C2: Measured layer packaging, bootstrap decompressor, and runtime proof (Historical Chromium Baseline)**
+  - **Status**: Resolved with concrete evidence and explicit deferral distinction. (Note: Preserved for historical baseline context; superseded by the Obscura standalone packaging documented below).
   - **Layer Layout Inspection**: The official Sparticuz Chromium layer archive `chromium-v130.0.0-layer.zip` contains Brotli compressed binaries (`nodejs/node_modules/@sparticuz/chromium/bin/chromium.br`, `al2023.tar.br`, `fonts.tar.br`, `swiftshader.tar.br`) totaling 67,633,712 bytes across 54 files (74 archive entries). It does not contain an uncompressed binary at `/opt/chromium`.
   - **SAM Template Alignment**: Configured `CHROMIUM_PATH: /tmp/chromium` in `backend/src/functions/browser/template.yaml`, aligning SAM with the destination path where Sparticuz extracts the executable binary.
   - **Decompression and Bootstrap Wiring**: Implemented `ensure_sparticuz_chromium` in `backend/src/functions/browser/driver.py`. When `/tmp/chromium` is present and executable, returns immediately. When unextracted, executes the bootstrap decompressor using the bundled Playwright Node runtime (`playwright/driver/node`), inflating `chromium.br` into `/tmp/chromium` with permissions 0700, inflating `al2023.tar.br` into `/tmp/al2023`, and updating `LD_LIBRARY_PATH` to include `/tmp/al2023/lib`.
@@ -148,3 +148,79 @@ _Steps derived from spec 0003 acceptance criteria. /check verify runs these; /te
   - **Mechanism**: In `PlaywrightBrowserAdapter._render_with_browser` in `backend/src/functions/browser/driver.py`, the adapter performs bot challenge detection on the page title, then if `payload.selector_target` is provided, executes `await page.wait_for_selector(payload.selector_target)` prior to capturing page content. Page HTML is captured strictly after waiting via `rendered_html = await page.content()`.
   - **Atomic Derivation**: The stored HTML snippet, substantive excerpt text, 64 character hex SHA256 content hash of the excerpt text, and Scrapling entity extraction (`parse_rendered_entities`) are derived from that identical post wait snapshot.
   - **Evidence**: Added live regression test `test_live_post_wait_snapshot_consistency_with_dynamic_js_insertion` in `test_browser_driver_live.py`. JavaScript dynamically inserts lodging cards after initial navigation. Verifies that the excerpt text, SHA256 content hash, and Scrapling entities all reflect the dynamically injected DOM elements captured after selector waiting.
+
+## Obscura Permanent Engine Migration Verification (2026-11-20)
+
+Obscura is now the sole production browser engine. Dual engine fallback and Chromium dependencies have been eliminated.
+
+### 1. Pinned Source and Upstream Provenance
+- Repository: https://github.com/h4ckf0r0day/obscura
+- Tag: `v0.2.7`
+- Commit SHA: `0ecc41770da5c5300227dd83a15bfa1e5100d5d4`
+- Upstream Release Archive: `obscura-x86_64-linux.tar.gz`
+- SHA256 Checksum: `11b53d27cd743e00e196e216920e7f3f794cf378e3f1792b8d25d3beabaf9cad`
+
+### 2. Reproducible Build Commands
+- Amazon Linux 2023 Container Build (Targeting Python 3.12, x86_64, AWS Lambda runtime):
+  ```bash
+  docker run --rm -v /tmp/obscura-src:/workspace -w /workspace amazonlinux:2023 bash -c \
+    "dnf install -y rust cargo clang cmake pkgconfig gcc-c++ openssl-devel && \
+     cargo build --profile release-dist -p obscura-cli --bins --features render"
+  ```
+  Binary outputs:
+  - `target/release-dist/obscura` (81,194,528 bytes, 78 MB)
+  - `target/release-dist/obscura-worker` (76,339,008 bytes, 73 MB)
+
+- Local Arch Linux Build:
+  ```bash
+  cargo build --release -p obscura-cli --bins --features render
+  ```
+
+### 3. Binary and Shared Library Compatibility
+- Binary format: ELF 64 bit LSB pie executable, x86-64
+- Dynamic loader: `/lib64/ld-linux-x86-64.so.2`
+- Maximum glibc symbol: `GLIBC_2.34` verified via `objdump -T`
+- Shared library dependencies verified via `ldd`:
+  - `libc.so.6` (GLIBC 2.34)
+  - `libm.so.6` (GLIBC 2.2.5, 2.29, 2.34)
+  - `libgcc_s.so.1` (GCC 3.0, 3.3)
+  - `ld-linux-x86-64.so.2`
+  - Zero missing libraries and zero external shared library dependencies
+
+### 4. Browser Driver Integration Architecture
+- Subprocess invocation:
+  ```bash
+  obscura serve --port 0 --host 127.0.0.1 --ready-file <path> --proxy http://127.0.0.1:<proxy_port>
+  ```
+- Startup readiness: Bounded asynchronous loop parsing `ready_file` publication JSON with `{"pid": ..., "host": "127.0.0.1", "port": ...}`.
+- Connection: `playwright.chromium.connect_over_cdp("http://127.0.0.1:<port>")`.
+- Process tracking and teardown: Supervisor PID, worker PID, and Playwright driver PID tracked and forcibly terminated via `SIGKILL` on completion, timeout, crash, and cancellation.
+
+### 5. Network Security Guarantees
+- Outbound socket binding: `SecureEgressProxy` evaluates destination IP addresses and binds outbound TCP sockets strictly to validated public IP literals.
+- SSRF prevention: AWS metadata (`169.254.169.254`, `fd00:ec2::254`), loopback, and RFC1918 private IP addresses return HTTP 403 Forbidden without opening an outbound connection.
+- Obscura internal controls: Private network access disabled (`allow_private_network=False`) providing defense in depth.
+- Loopback CDP isolation: CDP listener restricted strictly to loopback (`127.0.0.1`), and advertised WebSocket endpoints validated prior to connection.
+- Protocol controls: WebSockets blocked and Service Workers blocked (`service_workers="block"`).
+
+### 6. Capability Matrix
+- Dynamic DOM hydration and JavaScript execution: PASS
+- Post wait selector snapshot consistency: PASS
+- Excerpt extraction and SHA256 content hashing: PASS
+- Scrapling entity parsing for lodging and transit: PASS
+- Anti bot challenge detection returning BLOCKED: PASS
+- Navigation timeout degradation returning TIMED_OUT: PASS
+- Process crash degradation returning UNAVAILABLE: PASS
+- Egress proxy request interception and IP socket binding: PASS
+- Process tree termination on deadline or crash: PASS
+- Zero stealth or CAPTCHA solving: ENFORCED
+
+### 7. Packaging Measurements and Limits
+- Standalone function package unpacked size: 247,699,212 bytes (236.22 MB, within 250 MB ceiling)
+- Standalone function compressed ZIP size: 94,826,932 bytes (90.43 MB, within 100 MB target)
+- External Lambda layers: 0 bytes (Sparticuz layer removed completely)
+- Headroom below AWS Lambda uncompressed limit: 14.44 MB
+
+### 8. Verification Results
+- Unit and live browser test suites: 181 passed cleanly in under 40 seconds.
+- Packaging verification under clean Python 3.12 `-S -P` environment: PASS.

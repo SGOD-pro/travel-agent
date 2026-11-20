@@ -202,6 +202,7 @@ class TestLiveBrowserExecution:
         adapter = PlaywrightBrowserAdapter(
             ip_validator=local_test_ip_validator,
             headless=True,
+            allow_private_network=True,
         )
 
         payload = BrowserTaskPayload(
@@ -245,6 +246,7 @@ class TestLiveBrowserExecution:
         adapter = PlaywrightBrowserAdapter(
             ip_validator=local_test_ip_validator,
             headless=True,
+            allow_private_network=True,
         )
 
         payload = BrowserTaskPayload(
@@ -275,6 +277,7 @@ class TestLiveBrowserExecution:
         adapter = PlaywrightBrowserAdapter(
             ip_validator=test_validator,
             headless=True,
+            allow_private_network=True,
         )
 
         payload = BrowserTaskPayload(
@@ -335,6 +338,7 @@ class TestLiveBrowserExecution:
         adapter = PlaywrightBrowserAdapter(
             ip_validator=local_test_ip_validator,
             headless=True,
+            allow_private_network=True,
         )
 
         payload = BrowserTaskPayload(
@@ -365,6 +369,7 @@ class TestLiveBrowserExecution:
         adapter = PlaywrightBrowserAdapter(
             ip_validator=local_test_ip_validator,
             headless=True,
+            allow_private_network=True,
         )
 
         payload = BrowserTaskPayload(
@@ -397,6 +402,7 @@ class TestLiveBrowserExecution:
         adapter = PlaywrightBrowserAdapter(
             ip_validator=local_test_ip_validator,
             headless=True,
+            allow_private_network=True,
         )
 
         payload = BrowserTaskPayload(
@@ -444,6 +450,7 @@ class TestLiveBrowserExecution:
         adapter = PlaywrightBrowserAdapter(
             ip_validator=local_test_ip_validator,
             headless=True,
+            allow_private_network=True,
         )
 
         payload = BrowserTaskPayload(

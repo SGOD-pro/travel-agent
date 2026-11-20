@@ -113,9 +113,10 @@ class Settings(BaseSettings):
         default=None,
         description="Amazon SQS queue URL for browser worker task dispatch",
     )
-    CHROMIUM_PATH: str | None = Field(
+    OBSCURA_PATH: str | None = Field(
         default=None,
-        description="Path to Chromium executable for browser automation",
+        validation_alias=AliasChoices("OBSCURA_PATH", "CHROMIUM_PATH"),
+        description="Path to Obscura executable for browser automation",
     )
     BROWSER_NAVIGATION_TIMEOUT_SECONDS: int = Field(
         default=20,

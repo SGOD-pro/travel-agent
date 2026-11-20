@@ -571,7 +571,7 @@ class SecureEgressProxy:
     """In process asynchronous HTTP/HTTPS egress security proxy.
 
     Guarantees destination and connection safety:
-    1. Intercepts all Chromium outbound connections before any socket connects to destination hosts.
+    1. Intercepts all Obscura browser outbound connections before any socket connects to destination hosts.
     2. Resolves destination hostnames and validates that EVERY resolved IP is public and allowed.
     3. Explicitly binds outbound TCP sockets to the validated IP address literal, eliminating the
        validation to connection gap and defeating DNS rebinding.
@@ -629,7 +629,7 @@ class SecureEgressProxy:
         client_reader: asyncio.StreamReader,
         client_writer: asyncio.StreamWriter,
     ) -> None:
-        """Handles an incoming proxy connection from Chromium."""
+        """Handles an incoming proxy connection from the browser."""
         task = asyncio.current_task()
         if task:
             self._active_tasks.add(task)

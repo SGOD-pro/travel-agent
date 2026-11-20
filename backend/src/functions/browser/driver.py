@@ -1,6 +1,6 @@
 """Playwright driver adapter conforming to spec 0003 Slice 4.
 
-Provides live browser execution via Playwright Chromium with:
+Provides live browser execution via Playwright with standalone Obscura CDP server with:
 1. Strict pre navigation URL and DNS address validation.
 2. In flight route interception evaluating all requests, redirects, and subresources.
 3. Explicit mitigation against DNS rebinding, Service Workers (service_workers="block"),
@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
+import uuid
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
@@ -54,16 +57,6 @@ from functions.browser.parser import parse_rendered_entities
 
 logger = logging.getLogger(__name__)
 
-# Default headless Chromium flags for serverless and containerized environments
-DEFAULT_CHROMIUM_ARGS: list[str] = [
-    "--no-sandbox",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-gpu",
-    "--single-process",
-    "--no-zygote",
-]
-
 # Signatures for bot detection and anti scraping challenges
 _BOT_CHALLENGE_PATTERNS: tuple[str, ...] = (
     "cf-challenge",
@@ -78,119 +71,56 @@ _BOT_CHALLENGE_PATTERNS: tuple[str, ...] = (
 )
 
 
-def ensure_sparticuz_chromium(
+def resolve_obscura_binary(
     *,
-    layer_dir: str | Path | None = None,
-    target_path: str | Path = "/tmp/chromium",
+    target_path: str | Path | None = None,
 ) -> str | None:
-    """Ensures Sparticuz Chromium executable is decompressed and ready for execution."""
-    resolved_target = Path(target_path)
-    if resolved_target.exists() and os.access(resolved_target, os.X_OK):
+    """Resolves Obscura executable path across local, package, container, and temporary paths."""
+    resolved_target = Path(target_path) if target_path else None
+    if resolved_target and resolved_target.exists() and os.access(resolved_target, os.X_OK):
         return str(resolved_target)
 
-    candidate_layer_dirs: list[Path] = []
-    if layer_dir is not None:
-        candidate_layer_dirs.append(Path(layer_dir))
-    env_layer = os.environ.get("SPARTICUZ_LAYER_DIR")
-    if env_layer:
-        candidate_layer_dirs.append(Path(env_layer))
-    candidate_layer_dirs.extend(
-        [
-            Path("/opt/nodejs/node_modules/@sparticuz/chromium"),
-            Path("/opt"),
-        ]
-    )
+    candidates: list[Path] = []
+    if resolved_target is not None:
+        candidates.append(resolved_target)
 
-    resolved_sparticuz_dir: Path | None = None
-    for cand in candidate_layer_dirs:
-        if cand.name == "@sparticuz" and (cand / "chromium").is_dir():
-            resolved_sparticuz_dir = cand / "chromium"
-            break
-        if (cand / "nodejs" / "node_modules" / "@sparticuz" / "chromium").is_dir():
-            resolved_sparticuz_dir = cand / "nodejs" / "node_modules" / "@sparticuz" / "chromium"
-            break
-        if (cand / "bin" / "chromium.br").is_file():
-            resolved_sparticuz_dir = cand
-            break
+    env_path = os.environ.get("OBSCURA_PATH") or os.environ.get("CHROMIUM_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
 
-    if (
-        resolved_sparticuz_dir is None
-        or not (resolved_sparticuz_dir / "bin" / "chromium.br").is_file()
-    ):
-        return None
-
-    node_bin: str | Path | None = None
     try:
-        import playwright
-
-        driver_node = Path(playwright.__file__).parent / "driver" / "node"
-        if driver_node.exists() and os.access(driver_node, os.X_OK):
-            node_bin = driver_node
+        settings = Settings()
+        if settings.OBSCURA_PATH:
+            candidates.append(Path(settings.OBSCURA_PATH))
     except Exception:
         pass
 
-    if node_bin is None:
-        node_bin = shutil.which("node")
-
-    if node_bin is None or not os.access(node_bin, os.X_OK):
-        logger.warning(
-            "Sparticuz Chromium layer detected but no executable Node runtime found for bootstrap decompression"
-        )
-        return None
-
-    node_modules_dir = resolved_sparticuz_dir.parent.parent
-    bootstrap_script = (
-        "const chromium = require('@sparticuz/chromium');"
-        "async function main() {"
-        "  const p = await chromium.executablePath();"
-        "  console.log(p);"
-        "}"
-        "main().catch(err => {"
-        "  console.error(err);"
-        "  process.exit(1);"
-        "});"
+    curr_dir = Path(__file__).resolve().parent
+    candidates.extend(
+        [
+            curr_dir / "bin" / "obscura",
+            curr_dir.parents[2] / "build" / "browser" / "bin" / "obscura",
+            curr_dir.parents[2] / "build" / "bin" / "obscura",
+            curr_dir.parents[2] / "build" / "browser" / "obscura",
+            Path("/var/task/bin/obscura"),
+            Path("/var/task/obscura"),
+            Path("/opt/bin/obscura"),
+            Path("/opt/obscura/obscura"),
+            Path("/tmp/obscura-bin/obscura"),
+            Path("/tmp/al2023-target/release-dist/obscura"),
+            Path("/tmp/obscura"),
+        ]
     )
 
-    env = os.environ.copy()
-    existing_node_path = env.get("NODE_PATH", "")
-    env["NODE_PATH"] = (
-        f"{node_modules_dir}:{existing_node_path}" if existing_node_path else str(node_modules_dir)
-    )
-    if "AWS_EXECUTION_ENV" not in env:
-        env["AWS_EXECUTION_ENV"] = "AWS_Lambda_nodejs20.x"
+    for cand in candidates:
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand.resolve())
 
-    try:
-        res = subprocess.run(
-            [str(node_bin), "-e", bootstrap_script],
-            cwd=str(resolved_sparticuz_dir),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-        if res.returncode == 0 and resolved_target.exists() and os.access(resolved_target, os.X_OK):
-            al2023_lib = Path("/tmp/al2023/lib")
-            if al2023_lib.exists():
-                curr_ld = os.environ.get("LD_LIBRARY_PATH", "")
-                if "/tmp/al2023/lib" not in curr_ld:
-                    os.environ["LD_LIBRARY_PATH"] = (
-                        f"/tmp/al2023/lib:{curr_ld}" if curr_ld else "/tmp/al2023/lib"
-                    )
-            fonts_dir = Path("/tmp/fonts")
-            if fonts_dir.exists() and "FONTCONFIG_PATH" not in os.environ:
-                os.environ["FONTCONFIG_PATH"] = "/tmp/fonts"
-            return str(resolved_target)
-        logger.warning(
-            "Sparticuz Chromium bootstrap execution failed (code %s): STDOUT: %s, STDERR: %s",
-            res.returncode,
-            res.stdout.strip(),
-            res.stderr.strip(),
-        )
-        return None
-    except Exception as exc:
-        logger.warning("Sparticuz Chromium bootstrap decompression failed: %s", exc)
-        return None
+    which_obscura = shutil.which("obscura")
+    if which_obscura and os.access(which_obscura, os.X_OK):
+        return which_obscura
+
+    return None
 
 
 _ACTIVE_BROWSER_PIDS: set[int] = set()
@@ -285,7 +215,7 @@ def force_kill_process_tree(root_pid: int) -> None:
 
 
 def terminate_all_browser_processes() -> None:
-    """Forcibly terminates any tracked Playwright driver and Chromium processes."""
+    """Forcibly terminates any tracked Playwright driver and Obscura processes."""
     for pid in list(_ACTIVE_BROWSER_PIDS):
         force_kill_process_tree(pid)
     _ACTIVE_BROWSER_PIDS.clear()
@@ -300,11 +230,12 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         browser: Browser | None = None,
         dns_resolver: Callable[[str, int], Any] | None = None,
         ip_validator: Callable[[Any], bool] | None = None,
+        obscura_path: str | None = None,
         chromium_path: str | None = None,
-        launch_args: list[str] | None = None,
         headless: bool = True,
         egress_proxy: SecureEgressProxy | None = None,
         enable_egress_proxy: bool = True,
+        allow_private_network: bool = False,
         dns_timeout: float = 2.0,
         dns_nameservers: Sequence[str] | None = None,
         dns_port: int = 53,
@@ -312,18 +243,18 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         self._injected_browser = browser
         self._dns_resolver = dns_resolver
         self._ip_validator = ip_validator
-        self._chromium_path = chromium_path
-        self._launch_args = launch_args or DEFAULT_CHROMIUM_ARGS
+        self._obscura_path = obscura_path or chromium_path
         self._headless = headless
         self._egress_proxy = egress_proxy
         self._enable_egress_proxy = enable_egress_proxy
+        self._allow_private_network = allow_private_network
         self._dns_timeout = dns_timeout
         self._dns_nameservers = dns_nameservers
         self._dns_port = dns_port
         self._active_driver_pids: set[int] = set()
 
     def terminate_residual_processes(self) -> None:
-        """Terminates any tracked Playwright or Chromium processes remaining from abandoned operations."""
+        """Terminates any tracked Playwright or Obscura processes remaining from abandoned operations."""
         for pid in list(self._active_driver_pids):
             force_kill_process_tree(pid)
             _ACTIVE_BROWSER_PIDS.discard(pid)
@@ -382,82 +313,6 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         if self._injected_browser is not None:
             return await self._render_with_browser(self._injected_browser, payload, start_time)
 
-        # Launch dedicated browser instance
-        playwright_cm = async_playwright()
-        playwright = await playwright_cm.start()
-        browser: Browser | None = None
-        driver_pid: int | None = None
-        try:
-            impl_obj = getattr(playwright, "_impl_obj", None)
-            conn = getattr(impl_obj, "_connection", None)
-            transport = getattr(conn, "_transport", None)
-            proc = getattr(transport, "_proc", None)
-            if proc and hasattr(proc, "pid") and isinstance(proc.pid, int):
-                driver_pid = proc.pid
-                self._active_driver_pids.add(driver_pid)
-                _ACTIVE_BROWSER_PIDS.add(driver_pid)
-        except Exception as exc:
-            logger.debug("Could not determine driver PID: %s", exc)
-
-        try:
-            executable_path = self._chromium_path
-            if not executable_path:
-                try:
-                    settings = Settings()
-                    executable_path = settings.CHROMIUM_PATH
-                except Exception:
-                    executable_path = None
-
-            if executable_path == "/tmp/chromium" or (
-                executable_path and not os.path.exists(executable_path)
-            ):
-                bootstrapped = ensure_sparticuz_chromium(
-                    target_path=executable_path or "/tmp/chromium"
-                )
-                if bootstrapped:
-                    executable_path = bootstrapped
-
-            launch_kwargs: dict[str, Any] = {
-                "headless": self._headless,
-                "args": self._launch_args,
-            }
-            if executable_path:
-                launch_kwargs["executable_path"] = executable_path
-
-            browser = await playwright.chromium.launch(**launch_kwargs)
-            return await self._render_with_browser(browser, payload, start_time)
-        finally:
-            if browser is not None:
-                try:
-                    await asyncio.wait_for(browser.close(), timeout=1.0)
-                except Exception as exc:
-                    logger.debug("Error closing browser: %s", exc)
-            try:
-                await asyncio.wait_for(playwright.stop(), timeout=1.0)
-            except Exception as exc:
-                logger.debug("Error stopping playwright: %s", exc)
-            if driver_pid is not None:
-                force_kill_process_tree(driver_pid)
-                self._active_driver_pids.discard(driver_pid)
-                _ACTIVE_BROWSER_PIDS.discard(driver_pid)
-
-    async def _render_with_browser(
-        self,
-        browser: Browser,
-        payload: BrowserTaskPayload,
-        start_time: float,
-    ) -> BrowserRenderResult:
-        """Executes rendering inside an isolated, guarded browser context."""
-        context: BrowserContext | None = None
-        page: Page | None = None
-        background_tasks: set[asyncio.Task[Any]] = set()
-        interceptor = RouteSecurityInterceptor(
-            dns_resolver=self._dns_resolver,
-            ip_validator=self._ip_validator,
-            dns_timeout=self._dns_timeout,
-            dns_nameservers=self._dns_nameservers,
-            dns_port=self._dns_port,
-        )
         proxy: SecureEgressProxy | None = None
         proxy_started_here = False
         if self._enable_egress_proxy:
@@ -471,6 +326,205 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
             if proxy.server is None:
                 await proxy.start()
                 proxy_started_here = True
+
+        executable_path = resolve_obscura_binary(target_path=self._obscura_path)
+        if not executable_path:
+            if proxy_started_here and proxy is not None:
+                await proxy.stop()
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.UNAVAILABLE,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason="Obscura browser binary not found; checked OBSCURA_PATH and standard locations",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
+            )
+
+        ready_file = Path(f"/tmp/obscura_ready_{uuid.uuid4().hex}.json")
+        stderr_file = tempfile.NamedTemporaryFile(
+            prefix="obscura_stderr_",
+            suffix=".log",
+            delete=False,
+        )
+        stderr_file_path = Path(stderr_file.name)
+        obscura_proc: subprocess.Popen[bytes] | None = None
+        worker_pid: int | None = None
+        driver_pid: int | None = None
+        browser: Browser | None = None
+        playwright_cm = async_playwright()
+        playwright = None
+
+        try:
+            cmd = [
+                executable_path,
+                "serve",
+                "--port",
+                "0",
+                "--host",
+                "127.0.0.1",
+                "--ready-file",
+                str(ready_file),
+                "--quiet",
+            ]
+            if proxy is not None and proxy.port > 0:
+                cmd.extend(["--proxy", f"http://127.0.0.1:{proxy.port}"])
+            if self._allow_private_network:
+                cmd.append("--allow-private-network")
+
+            env = os.environ.copy()
+            obscura_dir = str(Path(executable_path).parent)
+            curr_path = env.get("PATH", "")
+            env["PATH"] = f"{obscura_dir}:{curr_path}" if curr_path else obscura_dir
+
+            obscura_proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=stderr_file,
+            )
+            self._active_driver_pids.add(obscura_proc.pid)
+            _ACTIVE_BROWSER_PIDS.add(obscura_proc.pid)
+
+            ready_data: dict[str, Any] | None = None
+            wait_deadline = time.monotonic() + 15.0
+            while time.monotonic() < wait_deadline:
+                if obscura_proc.poll() is not None:
+                    try:
+                        stderr_txt = stderr_file_path.read_text(
+                            encoding="utf-8",
+                            errors="replace",
+                        )[:1000]
+                    except Exception:
+                        stderr_txt = ""
+                    raise RuntimeError(
+                        f"Obscura process exited prematurely with code {obscura_proc.returncode}: {stderr_txt.strip()}"
+                    )
+                if ready_file.exists() and ready_file.stat().st_size > 0:
+                    try:
+                        content = ready_file.read_text(encoding="utf-8")
+                        parsed = json.loads(content)
+                        if isinstance(parsed, dict) and "port" in parsed:
+                            ready_data = parsed
+                            break
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.05)
+
+            if not ready_data:
+                raise TimeoutError("Obscura startup timed out waiting for ready file publication")
+
+            if ready_data.get("host") != "127.0.0.1":
+                raise BrowserSecurityError(
+                    f"Obscura published non-loopback host: {ready_data.get('host')}"
+                )
+
+            cdp_port = int(ready_data["port"])
+            worker_pid = ready_data.get("pid")
+            if worker_pid and isinstance(worker_pid, int):
+                self._active_driver_pids.add(worker_pid)
+                _ACTIVE_BROWSER_PIDS.add(worker_pid)
+
+            playwright = await playwright_cm.start()
+            try:
+                impl_obj = getattr(playwright, "_impl_obj", None)
+                conn = getattr(impl_obj, "_connection", None)
+                transport = getattr(conn, "_transport", None)
+                proc = getattr(transport, "_proc", None)
+                if proc and hasattr(proc, "pid") and isinstance(proc.pid, int):
+                    driver_pid = proc.pid
+                    self._active_driver_pids.add(driver_pid)
+                    _ACTIVE_BROWSER_PIDS.add(driver_pid)
+            except Exception as exc:
+                logger.debug("Could not determine driver PID: %s", exc)
+
+            browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{cdp_port}")
+            return await self._render_with_browser(
+                browser,
+                payload,
+                start_time,
+                proxy=proxy,
+            )
+        finally:
+            if browser is not None:
+                try:
+                    await asyncio.wait_for(browser.close(), timeout=1.0)
+                except Exception as exc:
+                    logger.debug("Error closing browser: %s", exc)
+            if playwright is not None:
+                try:
+                    await asyncio.wait_for(playwright.stop(), timeout=1.0)
+                except Exception as exc:
+                    logger.debug("Error stopping playwright: %s", exc)
+            if driver_pid is not None:
+                force_kill_process_tree(driver_pid)
+                self._active_driver_pids.discard(driver_pid)
+                _ACTIVE_BROWSER_PIDS.discard(driver_pid)
+            if worker_pid is not None:
+                force_kill_process_tree(worker_pid)
+                self._active_driver_pids.discard(worker_pid)
+                _ACTIVE_BROWSER_PIDS.discard(worker_pid)
+            if obscura_proc is not None:
+                force_kill_process_tree(obscura_proc.pid)
+                self._active_driver_pids.discard(obscura_proc.pid)
+                _ACTIVE_BROWSER_PIDS.discard(obscura_proc.pid)
+            if stderr_file is not None:
+                try:
+                    stderr_file.close()
+                except Exception:
+                    pass
+            if stderr_file_path is not None and stderr_file_path.exists():
+                try:
+                    stderr_file_path.unlink()
+                except OSError:
+                    pass
+            if ready_file.exists():
+                try:
+                    ready_file.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            if proxy_started_here and proxy is not None:
+                try:
+                    await asyncio.wait_for(proxy.stop(), timeout=1.0)
+                except Exception as exc:
+                    logger.debug("Error stopping egress proxy: %s", exc)
+
+    async def _render_with_browser(
+        self,
+        browser: Browser,
+        payload: BrowserTaskPayload,
+        start_time: float,
+        proxy: SecureEgressProxy | None = None,
+    ) -> BrowserRenderResult:
+        """Executes rendering inside an isolated, guarded browser context."""
+        context: BrowserContext | None = None
+        page: Page | None = None
+        background_tasks: set[asyncio.Task[Any]] = set()
+        interceptor = RouteSecurityInterceptor(
+            dns_resolver=self._dns_resolver,
+            ip_validator=self._ip_validator,
+            dns_timeout=self._dns_timeout,
+            dns_nameservers=self._dns_nameservers,
+            dns_port=self._dns_port,
+        )
+        local_proxy_started = False
+        if proxy is None and self._enable_egress_proxy:
+            proxy = self._egress_proxy or SecureEgressProxy(
+                dns_resolver=self._dns_resolver,
+                ip_validator=self._ip_validator,
+                dns_timeout=self._dns_timeout,
+                dns_nameservers=self._dns_nameservers,
+                dns_port=self._dns_port,
+            )
+            if proxy.server is None:
+                await proxy.start()
+                local_proxy_started = True
 
         try:
             # 1. Create context with Service Workers explicitly blocked and Egress Proxy configured
@@ -846,7 +900,7 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                     await asyncio.wait_for(context.close(), timeout=1.0)
                 except Exception as exc:
                     logger.debug("Error closing context: %s", exc)
-            if proxy_started_here and proxy is not None:
+            if local_proxy_started and proxy is not None:
                 try:
                     await asyncio.wait_for(proxy.stop(), timeout=1.0)
                 except Exception as exc:
