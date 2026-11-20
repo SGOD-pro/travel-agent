@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Browser Escalation Worker Function SAM Template with SQS Partial Batch Responses, DLQ Redrive Policies, and Chromium Layer Binding
+Description: Browser Escalation Worker Function SAM Template with SQS Partial Batch Responses, DLQ Redrive Policies, and Standalone Obscura Binary Packaging
 
 Parameters:
   Environment:
@@ -23,10 +23,6 @@ Parameters:
     Type: String
     Default: 'https://sqs.ap-south-1.amazonaws.com/123456789012/swena-browser-escalation'
     Description: Amazon SQS queue URL for browser worker task dispatches
-  ChromiumLayerArn:
-    Type: String
-    Default: 'arn:aws:lambda:ap-south-1:764866452832:layer:chromium:1'
-    Description: ARN for external precompiled Chromium Lambda Layer (e.g. Sparticuz Chromium)
 
 Globals:
   Function:
@@ -40,7 +36,7 @@ Globals:
         OUTBOX_QUEUE_URL: !Ref OutboxQueueUrl
         SQS_QUEUE_URL: !Ref OutboxQueueUrl
         BROWSER_WORKER_QUEUE_URL: !Ref BrowserWorkerQueueUrl
-        CHROMIUM_PATH: /tmp/chromium
+        OBSCURA_PATH: /var/task/bin/obscura
         BROWSER_NAVIGATION_TIMEOUT_SECONDS: '20'
         BROWSER_MAX_ESCALATION_TASKS: '3'
 
@@ -75,8 +71,6 @@ Resources:
       Timeout: 60
       MemorySize: 1536
       Description: SQS consumer for browser escalation TASK_DISPATCH messages
-      Layers:
-        - !Ref ChromiumLayerArn
       Events:
         TaskDispatchBatch:
           Type: SQS
