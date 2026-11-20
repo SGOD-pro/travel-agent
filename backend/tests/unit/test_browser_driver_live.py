@@ -11,12 +11,14 @@ Verifies actual headless Chromium browser execution:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import http.server
 import ipaddress
 import threading
 import time
 from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 
@@ -469,3 +471,183 @@ class TestLiveBrowserExecution:
         assert result.status == BrowserRenderStatus.SUCCESS
         assert result.excerpt_text is not None
         assert "Subresource Page Content" in result.excerpt_text
+
+    @pytest.mark.asyncio
+    async def test_obscura_early_process_exit_maps_to_unavailable(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Verifies early Obscura process exit (crash) maps to UNAVAILABLE with diagnostic reason."""
+        crash_script = tmp_path / "obscura_crash.sh"
+        crash_script.write_text(
+            "#!/bin/sh\n"
+            "echo 'FATAL: Illegal instruction (core dumped)' >&2\n"
+            "exit 132\n"
+        )
+        crash_script.chmod(0o755)
+
+        adapter = PlaywrightBrowserAdapter(
+            ip_validator=lambda ip: str(ip) != AWS_METADATA_IPV4,
+            obscura_path=str(crash_script),
+            allow_private_network=True,
+        )
+
+        payload = BrowserTaskPayload(
+            url="http://127.0.0.1:8080/test",
+            canonical_url="https://example.com/crash-test",
+            category="lodging",
+            reason="EARLY_EXIT_TEST",
+            wait_until=BrowserWaitUntil.LOAD,
+            timeout_seconds=5,
+        )
+
+        result = await adapter.render_page(payload)
+        assert result.status == BrowserRenderStatus.UNAVAILABLE
+        assert result.content_hash is None
+        assert result.unavailable_reason is not None
+        assert "Illegal instruction" in result.unavailable_reason or "132" in result.unavailable_reason
+
+    @pytest.mark.asyncio
+    async def test_obscura_missing_executable_dependencies_maps_to_unavailable(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Verifies dynamic linker or missing library errors map to UNAVAILABLE."""
+        missing_dep_script = tmp_path / "obscura_missing_dep.sh"
+        missing_dep_script.write_text(
+            "#!/bin/sh\n"
+            "echo 'obscura: error while loading shared libraries: libv8.so: cannot open shared object file' >&2\n"
+            "exit 127\n"
+        )
+        missing_dep_script.chmod(0o755)
+
+        adapter = PlaywrightBrowserAdapter(
+            ip_validator=lambda ip: str(ip) != AWS_METADATA_IPV4,
+            obscura_path=str(missing_dep_script),
+            allow_private_network=True,
+        )
+
+        payload = BrowserTaskPayload(
+            url="http://127.0.0.1:8080/test",
+            canonical_url="https://example.com/dep-test",
+            category="lodging",
+            reason="MISSING_DEP_TEST",
+            wait_until=BrowserWaitUntil.LOAD,
+            timeout_seconds=5,
+        )
+
+        result = await adapter.render_page(payload)
+        assert result.status == BrowserRenderStatus.UNAVAILABLE
+        assert result.unavailable_reason is not None
+        assert "libv8.so" in result.unavailable_reason or "127" in result.unavailable_reason
+
+    @pytest.mark.asyncio
+    async def test_obscura_readiness_timeout_maps_to_timed_out(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Verifies Obscura startup readiness deadline expiry maps to TIMED_OUT."""
+        hang_script = tmp_path / "obscura_hang.sh"
+        hang_script.write_text(
+            "#!/bin/sh\n"
+            "sleep 10\n"
+        )
+        hang_script.chmod(0o755)
+
+        adapter = PlaywrightBrowserAdapter(
+            ip_validator=lambda ip: str(ip) != AWS_METADATA_IPV4,
+            obscura_path=str(hang_script),
+            allow_private_network=True,
+            startup_timeout=0.15,
+        )
+
+        payload = BrowserTaskPayload(
+            url="http://127.0.0.1:8080/test",
+            canonical_url="https://example.com/timeout-test",
+            category="lodging",
+            reason="READINESS_TIMEOUT_TEST",
+            wait_until=BrowserWaitUntil.LOAD,
+            timeout_seconds=5,
+        )
+
+        result = await adapter.render_page(payload)
+        assert result.status == BrowserRenderStatus.TIMED_OUT
+        assert result.unavailable_reason is not None
+        assert "timed out waiting for ready file" in result.unavailable_reason
+
+    @pytest.mark.asyncio
+    async def test_obscura_failed_cdp_connection_maps_to_unavailable(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Verifies failed CDP connection (e.g. invalid port / refused) maps to UNAVAILABLE."""
+        bad_cdp_script = tmp_path / "obscura_bad_cdp.sh"
+        bad_cdp_script.write_text(
+            "#!/bin/sh\n"
+            "for arg in \"$@\"; do\n"
+            "  if [ \"$prev\" = \"--ready-file\" ]; then\n"
+            "    echo '{\"pid\": 999999, \"host\": \"127.0.0.1\", \"port\": 1}' > \"$arg\"\n"
+            "  fi\n"
+            "  prev=\"$arg\"\n"
+            "done\n"
+            "sleep 5\n"
+        )
+        bad_cdp_script.chmod(0o755)
+
+        adapter = PlaywrightBrowserAdapter(
+            ip_validator=lambda ip: str(ip) != AWS_METADATA_IPV4,
+            obscura_path=str(bad_cdp_script),
+            allow_private_network=True,
+        )
+
+        payload = BrowserTaskPayload(
+            url="http://127.0.0.1:8080/test",
+            canonical_url="https://example.com/bad-cdp-test",
+            category="lodging",
+            reason="FAILED_CDP_TEST",
+            wait_until=BrowserWaitUntil.LOAD,
+            timeout_seconds=5,
+        )
+
+        result = await adapter.render_page(payload)
+        assert result.status == BrowserRenderStatus.UNAVAILABLE
+        assert result.unavailable_reason is not None
+
+    @pytest.mark.asyncio
+    async def test_obscura_cancellation_propagates_and_cleans_up(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Verifies asyncio cancellation propagates cleanly and triggers process tree cleanup."""
+        sleep_script = tmp_path / "obscura_sleep.sh"
+        sleep_script.write_text(
+            "#!/bin/sh\n"
+            "sleep 30\n"
+        )
+        sleep_script.chmod(0o755)
+
+        adapter = PlaywrightBrowserAdapter(
+            ip_validator=lambda ip: str(ip) != AWS_METADATA_IPV4,
+            obscura_path=str(sleep_script),
+            allow_private_network=True,
+        )
+
+        payload = BrowserTaskPayload(
+            url="http://127.0.0.1:8080/test",
+            canonical_url="https://example.com/cancel-test",
+            category="lodging",
+            reason="CANCEL_PROPAGATION_TEST",
+            wait_until=BrowserWaitUntil.LOAD,
+            timeout_seconds=5,
+        )
+
+        task = asyncio.create_task(adapter.render_page(payload))
+        await asyncio.sleep(0.1)
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        # Confirm adapter tracked PIDs are cleared
+        assert len(adapter._active_driver_pids) == 0
+

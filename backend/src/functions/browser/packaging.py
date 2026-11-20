@@ -14,6 +14,7 @@ Packages standalone Obscura browser binary in bin/obscura with zero external Lam
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import shutil
@@ -319,6 +320,27 @@ def build_isolated_browser_artifact(
         if strip_bin:
             subprocess.run([strip_bin, str(dest_obscura)], check=False, capture_output=True)
 
+    if not dest_obscura.exists() or not os.access(dest_obscura, os.X_OK):
+        raise FileNotFoundError(
+            f"Required Obscura browser binary is missing or non executable at {dest_obscura}. "
+            "Artifact packaging strictly requires a verified Obscura binary in bin/obscura."
+        )
+
+    # 4c. Stage libatomic.so.1 into package lib/ directory to guarantee Node runtime compatibility on AL2023
+    dest_lib = output_dir / "lib"
+    dest_lib.mkdir(parents=True, exist_ok=True)
+    dest_atomic = dest_lib / "libatomic.so.1"
+    atomic_candidates = [
+        src_dir.parent / "build" / "bin" / "libatomic.so.1",
+        src_dir / "functions" / "browser" / "bin" / "libatomic.so.1",
+        Path("/usr/lib64/libatomic.so.1"),
+    ]
+    for cand in atomic_candidates:
+        if cand and cand.is_file():
+            shutil.copy2(cand, dest_atomic)
+            os.chmod(dest_atomic, 0o755)
+            break
+
     # 5. Strict isolation verification
     for forbidden in FORBIDDEN_HEAVY_PACKAGES:
         direct_pkg = output_dir / forbidden
@@ -473,10 +495,12 @@ def verify_browser_startup_and_render_isolated_environment(
     3. Dynamic HTML with JavaScript is rendered and DOM is hydrated.
     """
     runtime_python = str(python_bin) if python_bin else resolve_python_runtime_binary()
+    artifact_obscura = artifact_dir / "bin" / "obscura"
     resolved_obscura = (
         obscura_path
-        or str(artifact_dir / "bin" / "obscura")
+        or (str(artifact_obscura) if artifact_obscura.is_file() else None)
         or shutil.which("obscura")
+        or str(artifact_obscura)
     )
 
     verify_script = f"""
@@ -508,7 +532,7 @@ async def test_render():
         if cand.exists():
             obscura_bin = str(cand)
         else:
-            return {{"local_status": "SKIPPED_NO_BROWSER", "reason": "No Obscura binary found"}}
+            raise FileNotFoundError(f"Obscura browser binary not found in isolated artifact: {repr(resolved_obscura)}")
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as rf:
         rf_path = rf.name
@@ -551,7 +575,7 @@ async def test_render():
             await browser.close()
             assert rendered_text == "HYDRATED_SUCCESS", f"Expected HYDRATED_SUCCESS, got {{rendered_text}}"
             assert title == "Isolated Artifact Render", f"Expected Isolated Artifact Render, got {{title}}"
-            return {{"local_status": "VERIFIED", "rendered_text": rendered_text}}
+            return {{"status": "SUCCESS", "rendered_text": rendered_text, "title": title}}
     finally:
         proc.kill()
         proc.wait()
@@ -559,7 +583,7 @@ async def test_render():
             os.unlink(rf_path)
 
 result = asyncio.run(test_render())
-print("LOCAL_RENDER_RESULT:", result)
+print("STRUCTURED_RENDER_RESULT:" + json.dumps(result))
 """
 
     clean_env = {
@@ -581,9 +605,40 @@ print("LOCAL_RENDER_RESULT:", result)
             f"Isolated browser startup and rendering verification failed:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}"
         )
 
+    # Require explicit structured render result with status == SUCCESS
+    marker = "STRUCTURED_RENDER_RESULT:"
+    structured_data: dict[str, Any] | None = None
+    for line in res.stdout.splitlines():
+        if line.startswith(marker):
+            raw_json = line[len(marker) :].strip()
+            try:
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, dict):
+                    structured_data = parsed
+                    break
+            except Exception:
+                pass
+
+    if not structured_data:
+        raise RuntimeError(
+            f"Isolated browser rendering produced missing or unparseable structured output:\nSTDOUT: {res.stdout}"
+        )
+
+    if (
+        structured_data.get("status") != "SUCCESS"
+        or structured_data.get("rendered_text") != "HYDRATED_SUCCESS"
+        or structured_data.get("title") != "Isolated Artifact Render"
+    ):
+        raise RuntimeError(
+            f"Isolated browser rendering failed or was skipped:\n{structured_data}"
+        )
+
     return {
         "local_proof": "VERIFIED",
+        "status": "SUCCESS",
         "target_runtime_proof": "DEFERRED_TO_CLOUD_ROLLOUT",
+        "rendered_text": structured_data["rendered_text"],
+        "title": structured_data["title"],
         "stdout": res.stdout.strip(),
     }
 

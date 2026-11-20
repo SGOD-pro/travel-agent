@@ -239,6 +239,7 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         dns_timeout: float = 2.0,
         dns_nameservers: Sequence[str] | None = None,
         dns_port: int = 53,
+        startup_timeout: float = 15.0,
     ) -> None:
         self._injected_browser = browser
         self._dns_resolver = dns_resolver
@@ -251,6 +252,7 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
         self._dns_timeout = dns_timeout
         self._dns_nameservers = dns_nameservers
         self._dns_port = dns_port
+        self._startup_timeout = startup_timeout
         self._active_driver_pids: set[int] = set()
 
     def terminate_residual_processes(self) -> None:
@@ -393,7 +395,7 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
             _ACTIVE_BROWSER_PIDS.add(obscura_proc.pid)
 
             ready_data: dict[str, Any] | None = None
-            wait_deadline = time.monotonic() + 15.0
+            wait_deadline = time.monotonic() + self._startup_timeout
             while time.monotonic() < wait_deadline:
                 if obscura_proc.poll() is not None:
                     try:
@@ -450,6 +452,69 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
                 payload,
                 start_time,
                 proxy=proxy,
+            )
+        except asyncio.CancelledError:
+            raise
+        except TimeoutError as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.warning("Obscura startup or connection timed out for %s: %s", payload.url, exc)
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.TIMED_OUT,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason=f"Obscura startup or connection timed out: {exc}",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
+            )
+        except BrowserSecurityError as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.warning("Obscura security policy rejected %s: %s", payload.url, exc)
+            return BrowserRenderResult(
+                status=BrowserRenderStatus.BLOCKED,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason=f"Security policy blocked URL: {exc}",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
+            )
+        except Exception as exc:
+            duration_ms = int((time.monotonic() - start_time) * 1000)
+            logger.warning("Obscura process startup or connection error for %s: %s", payload.url, exc)
+            exc_str = str(exc)
+            is_timeout = "timeout" in exc_str.lower()
+            is_blocked = "blocked" in exc_str.lower() or "403" in exc_str
+            status = (
+                BrowserRenderStatus.TIMED_OUT
+                if is_timeout
+                else (
+                    BrowserRenderStatus.BLOCKED if is_blocked else BrowserRenderStatus.UNAVAILABLE
+                )
+            )
+            return BrowserRenderResult(
+                status=status,
+                canonical_url=payload.canonical_url,
+                effective_url=payload.url,
+                content_hash=None,
+                excerpt_text=None,
+                excerpt_locator=None,
+                rendered_html_snippet=None,
+                render_duration_ms=duration_ms,
+                unavailable_reason=f"Obscura process startup or connection error: {exc}",
+                usage=BrowserResourceUsage(duration_ms=duration_ms, memory_mb=None),
+                parsed_lodging_observations=[],
+                parsed_transit_observations=[],
             )
         finally:
             if browser is not None:

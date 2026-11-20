@@ -324,3 +324,87 @@ def test_resolve_obscura_binary_with_chromium_path_env(
     monkeypatch.delenv("OBSCURA_PATH", raising=False)
     monkeypatch.setenv("CHROMIUM_PATH", str(fake_bin))
     assert resolve_obscura_binary() == str(fake_bin.resolve())
+
+
+def test_verify_browser_startup_fails_when_obscura_missing(tmp_path: Path) -> None:
+    """Negative test: missing Obscura binary must fail packaging verification, never return VERIFIED."""
+    mock_artifact = tmp_path / "artifact"
+    mock_artifact.mkdir(parents=True, exist_ok=True)
+    # Even if playwright exists, missing Obscura in bin/ must raise RuntimeError / FileNotFoundError
+    (mock_artifact / "bin").mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(RuntimeError, match="Isolated browser startup and rendering verification failed"):
+        verify_browser_startup_and_render_isolated_environment(
+            mock_artifact,
+            obscura_path=str(tmp_path / "nonexistent_obscura"),
+        )
+
+
+def test_verify_browser_startup_rejects_malformed_or_skipped_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verifies that verification strictly rejects missing, malformed, or skipped render outputs."""
+    from unittest.mock import MagicMock
+
+    mock_artifact = tmp_path / "artifact"
+    mock_artifact.mkdir(parents=True, exist_ok=True)
+
+    # Case 1: returncode 0 but missing STRUCTURED_RENDER_RESULT
+    mock_run = MagicMock(
+        return_value=type(
+            "SubResult",
+            (),
+            {"returncode": 0, "stdout": "Some unexpected output\nwithout marker", "stderr": ""},
+        )()
+    )
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    with pytest.raises(RuntimeError, match="missing or unparseable structured output"):
+        verify_browser_startup_and_render_isolated_environment(mock_artifact)
+
+    # Case 2: returncode 0 but status != SUCCESS (e.g. SKIPPED_NO_BROWSER)
+    mock_run_skipped = MagicMock(
+        return_value=type(
+            "SubResult",
+            (),
+            {
+                "returncode": 0,
+                "stdout": 'STRUCTURED_RENDER_RESULT:{"status": "SKIPPED_NO_BROWSER", "reason": "No Obscura found"}',
+                "stderr": "",
+            },
+        )()
+    )
+    monkeypatch.setattr("subprocess.run", mock_run_skipped)
+
+    with pytest.raises(RuntimeError, match="Isolated browser rendering failed or was skipped"):
+        verify_browser_startup_and_render_isolated_environment(mock_artifact)
+
+
+def test_build_isolated_browser_artifact_fails_when_obscura_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Verifies artifact construction fails immediately when required Obscura binary is absent."""
+    out_dir = tmp_path / "browser_pkg"
+    zip_dest = tmp_path / "browser.zip"
+
+    # Block any external Obscura binary resolution
+    monkeypatch.delenv("OBSCURA_PATH", raising=False)
+    monkeypatch.delenv("CHROMIUM_PATH", raising=False)
+    monkeypatch.setattr("shutil.which", lambda cmd: None)
+
+    orig_is_file = Path.is_file
+    monkeypatch.setattr(
+        Path,
+        "is_file",
+        lambda self: False if "obscura" in str(self) else orig_is_file(self),
+    )
+
+    with pytest.raises(FileNotFoundError, match="Required Obscura browser binary is missing"):
+        build_isolated_browser_artifact(
+            output_dir=out_dir,
+            zip_path=zip_dest,
+            force_reinstall=False,
+        )
+

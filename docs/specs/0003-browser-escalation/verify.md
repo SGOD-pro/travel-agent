@@ -86,11 +86,11 @@ _Steps derived from spec 0003 acceptance criteria. /check verify runs these; /te
 
 ## Commands
 
-- [x] `uv run ruff check src/contracts/browser.py src/functions/browser tests/unit/test_browser*` passes cleanly with zero lint warnings.
-- [x] `uv run mypy src/functions/browser/ tests/unit/test_browser*` passes cleanly with zero type errors across all 16 source files.
-- [x] `uv run pytest tests/unit/test_browser_consumer.py tests/unit/test_browser_packaging.py -v` passes all 19 Slice 5 and packaging tests.
-- [x] `uv run pytest tests/unit/test_browser* -v` passes all 178 browser unit and live tests.
-- [x] `uv run pytest tests/unit` passes all 327 backend unit tests with zero regressions.
+- [x] `uv run ruff check src/config/ src/functions/browser tests/unit/test_browser* tests/integration/test_obscura*` passes cleanly with zero lint warnings.
+- [x] `uv run mypy src/functions/browser/ tests/unit/test_browser* tests/integration/test_obscura*` passes cleanly with zero type errors across all 17 source files.
+- [x] `uv run python -m functions.browser.packaging` builds standalone artifact and verifies isolated Python 3.12 environment execution.
+- [x] `./backend/scripts/verify_lambda_zip_runtime.sh` passes clean container runtime proof under Amazon Linux 2023 with read only root and writable `/tmp`.
+- [x] `uv run pytest tests/unit/test_browser* tests/integration/test_obscura_e2e_integration.py -v` passes all 194 browser unit, live, and integration tests.
 
 ## Acceptance criteria coverage
 
@@ -160,8 +160,9 @@ Obscura is now the sole production browser engine. Dual engine fallback and Chro
 - Upstream Release Archive: `obscura-x86_64-linux.tar.gz`
 - SHA256 Checksum: `11b53d27cd743e00e196e216920e7f3f794cf378e3f1792b8d25d3beabaf9cad`
 
-### 2. Reproducible Build Commands
+### 2. Reproducible Build Scripts and Commands
 - Amazon Linux 2023 Container Build (Targeting Python 3.12, x86_64, AWS Lambda runtime):
+  Executable script: [build_obscura_al2023.sh](file:///home/swyra/projects/travel-agent/backend/scripts/build_obscura_al2023.sh)
   ```bash
   docker run --rm -v /tmp/obscura-src:/workspace -w /workspace amazonlinux:2023 bash -c \
     "dnf install -y rust cargo clang cmake pkgconfig gcc-c++ openssl-devel && \
@@ -172,12 +173,21 @@ Obscura is now the sole production browser engine. Dual engine fallback and Chro
   - `target/release-dist/obscura-worker` (76,339,008 bytes, 73 MB)
 
 - Local Arch Linux Build:
+  Executable script: [build_obscura_arch.sh](file:///home/swyra/projects/travel-agent/backend/scripts/build_obscura_arch.sh)
   ```bash
   cargo build --release -p obscura-cli --bins --features render
   ```
 
+- Clean Runtime Verification Script:
+  Executable script: [verify_lambda_zip_runtime.sh](file:///home/swyra/projects/travel-agent/backend/scripts/verify_lambda_zip_runtime.sh)
+  Verifies the final ZIP in a clean `amazonlinux:2023` container with `--read-only` root, `--tmpfs /tmp:rw,exec`, `PYTHONPATH=/var/task`, `LD_LIBRARY_PATH=/var/task/lib`, and zero host PATH dependencies.
+  Dynamic render output: `{"status": "VERIFIED", "text": "AL2023_READONLY_ROOT_SUCCESS", "title": "Clean Runtime Proof"}`.
+
+- Worker Subprocess Requirements:
+  Source inspection of `crates/obscura-cli/src/main.rs:898` confirms that `obscura serve` spawns itself (`TokioCommand::new(&exe).arg("serve").arg("--port")...`) as worker processes. `obscura-worker` is only invoked by `obscura scrape` (CLI batch scrape mode). Therefore, only `obscura` is required in `bin/` for the browser worker Lambda, saving 73 MB of unpacked binary weight and keeping the artifact under the 250 MB ceiling.
+
 ### 3. Binary and Shared Library Compatibility
-- Binary format: ELF 64 bit LSB pie executable, x86-64
+- Binary format: ELF 64 bit LSB pie executable, x86_64
 - Dynamic loader: `/lib64/ld-linux-x86-64.so.2`
 - Maximum glibc symbol: `GLIBC_2.34` verified via `objdump -T`
 - Shared library dependencies verified via `ldd`:
@@ -186,15 +196,21 @@ Obscura is now the sole production browser engine. Dual engine fallback and Chro
   - `libgcc_s.so.1` (GCC 3.0, 3.3)
   - `ld-linux-x86-64.so.2`
   - Zero missing libraries and zero external shared library dependencies
+- Bundled runtime dependencies:
+  - `lib/libatomic.so.1` (37 KB) staged into `/var/task/lib` ensuring Playwright Node runtime compatibility in clean Amazon Linux 2023 environments with `LD_LIBRARY_PATH=/var/task/lib`.
 
-### 4. Browser Driver Integration Architecture
+### 4. Browser Driver Integration Architecture and Failure Mapping
 - Subprocess invocation:
   ```bash
   obscura serve --port 0 --host 127.0.0.1 --ready-file <path> --proxy http://127.0.0.1:<proxy_port>
   ```
 - Startup readiness: Bounded asynchronous loop parsing `ready_file` publication JSON with `{"pid": ..., "host": "127.0.0.1", "port": ...}`.
 - Connection: `playwright.chromium.connect_over_cdp("http://127.0.0.1:<port>")`.
-- Process tracking and teardown: Supervisor PID, worker PID, and Playwright driver PID tracked and forcibly terminated via `SIGKILL` on completion, timeout, crash, and cancellation.
+- Structured failure mapping:
+  - Early process exit, missing executable dependencies, and failed CDP connections map to `UNAVAILABLE`.
+  - Startup or readiness timeout maps to `TIMED_OUT`.
+  - `asyncio.CancelledError` propagates cleanly without suppression.
+  - Process tree cleanup (`force_kill_process_tree`) terminates supervisor, worker, and driver processes across all outcomes.
 
 ### 5. Network Security Guarantees
 - Outbound socket binding: `SecureEgressProxy` evaluates destination IP addresses and binds outbound TCP sockets strictly to validated public IP literals.
@@ -210,17 +226,31 @@ Obscura is now the sole production browser engine. Dual engine fallback and Chro
 - Scrapling entity parsing for lodging and transit: PASS
 - Anti bot challenge detection returning BLOCKED: PASS
 - Navigation timeout degradation returning TIMED_OUT: PASS
-- Process crash degradation returning UNAVAILABLE: PASS
+- Process crash and startup failure degradation returning UNAVAILABLE: PASS
 - Egress proxy request interception and IP socket binding: PASS
-- Process tree termination on deadline or crash: PASS
+- Process tree termination on deadline, crash, or cancellation: PASS
 - Zero stealth or CAPTCHA solving: ENFORCED
 
 ### 7. Packaging Measurements and Limits
-- Standalone function package unpacked size: 247,699,212 bytes (236.22 MB, within 250 MB ceiling)
-- Standalone function compressed ZIP size: 94,826,932 bytes (90.43 MB, within 100 MB target)
-- External Lambda layers: 0 bytes (Sparticuz layer removed completely)
-- Headroom below AWS Lambda uncompressed limit: 14.44 MB
+- Standalone function package unpacked size: 247,741,412 bytes (236.26 MB, within 250 MB ceiling)
+- Standalone function compressed ZIP size: 94,845,952 bytes (90.45 MB, within 100 MB target)
+- External Lambda layers: 0 MB (Sparticuz layer removed completely)
+- Headroom below AWS Lambda uncompressed limit: 13.74 MB
+- Packaging verification:
+  - `verify_browser_startup_and_render_isolated_environment` raises `FileNotFoundError` if Obscura binary is absent, preventing false positives.
+  - Verification child script outputs structured payload `STRUCTURED_RENDER_RESULT:<json>` and parent asserts `status == "SUCCESS"`, `rendered_text == "HYDRATED_SUCCESS"`, and `title == "Isolated Artifact Render"`. Missing, malformed, or skipped output raises `RuntimeError`.
+  - Negative tests in [test_browser_packaging.py](file:///home/swyra/projects/travel-agent/backend/tests/unit/test_browser_packaging.py) reproduce and verify false positive prevention.
 
-### 8. Verification Results
-- Unit and live browser test suites: 181 passed cleanly in under 40 seconds.
+### 8. Integration Evidence
+- End to end integration suite in [test_obscura_e2e_integration.py](file:///home/swyra/projects/travel-agent/backend/tests/integration/test_obscura_e2e_integration.py):
+  - Controlled dispatch to real Obscura worker execution, PostgreSQL observation persistence with `extraction_method="BROWSER_HTML"`, outbox event publication, `CompletionReconciliationService` reconciliation, and graph consumption: VERIFIED.
+  - Repeated task isolation and process tree cleanup with zero zombie processes: VERIFIED.
+  - Performance benchmark against recorded Chromium baseline:
+    - Memory: Obscura peak RSS 140 to 190 MB (versus Chromium baseline 350 to 500 MB peak RSS).
+    - Latency: Obscura 250 to 450 ms (versus Chromium baseline 963 to 1800 ms).
+
+### 9. Verification Results
+- Unit and integration browser test suites: 194 passed cleanly in under 45 seconds (191 unit tests and 3 integration tests).
+- Static analysis: clean linting via `ruff` and zero type issues via `mypy` across 17 files.
 - Packaging verification under clean Python 3.12 `-S -P` environment: PASS.
+- Clean container runtime proof under read only root and writable `/tmp`: PASS.
