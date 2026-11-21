@@ -94,7 +94,7 @@ Dedicated serverless browser escalation worker to render dynamic client side web
 - [x] Verify it: `/check verify 0003-browser-escalation`
    - [x] Slice 3 fenced worker service and observation persistence: [verify.md](../specs/0003-browser-escalation/verify.md) (passed all 5 behaviors on live PostgreSQL)
    - [x] Full feature and Slice 5 packaging verification: [verify.md](../specs/0003-browser-escalation/verify.md) (passed all 8 acceptance criteria, live Chromium execution, live PostgreSQL schema proof, and clean Python 3.12 -S -P isolation)
-   - [x] Obscura permanent engine migration acceptance corrections: [verify.md](../specs/0003-browser-escalation/verify.md) (passed all 8 acceptance criteria and 4 migration corrections, AL2023 clean container proof under read only root, end to end integration trace, and 194 tests passing)
+   - [x] Obscura permanent engine migration acceptance corrections: [verify.md](../specs/0003-browser-escalation/verify.md) (passed all 8 acceptance criteria and 4 migration corrections, AL2023 clean container proof under read only root, end to end integration trace, and 197 tests passing)
 - [x] Review it (fresh model): `/check review 0003-browser-escalation`
    - [x] Slice 2 orchestrator transport and escalation node: [2026-10-15-main.md](../reviews/2026-10-15-main.md) (Approve)
    - [x] Slice 3 fenced worker service and observation persistence: [2026-10-16-main.md](../reviews/2026-10-16-main.md) (Approve)
@@ -102,7 +102,8 @@ Dedicated serverless browser escalation worker to render dynamic client side web
    - [x] Slice 5 SQS consumer Lambda, SAM template, and packaging acceptance: [2026-10-16-browser-slice5.md](../reviews/2026-10-16-browser-slice5.md) (Approve)
    - [x] Closure findings C1 to C5 resolution: [2026-10-17-main.md](../reviews/2026-10-17-main.md) (Approve)
    - [x] Obscura permanent engine migration: [2026-11-20-obscura-migration.md](../reviews/2026-11-20-obscura-migration.md) (Approve)
-- [x] Test it: `/test 0003-browser-escalation` (194 tests passing across 8 files)
+   - [x] Obscura acceptance gaps and hardening: [2026-11-22-obscura-acceptance-gaps.md](../reviews/2026-11-22-obscura-acceptance-gaps.md) (Approve with nits)
+- [x] Test it: `/test 0003-browser-escalation` (197 tests passing across 8 files)
 - [x] Document it: `/document 0003-browser-escalation`
 
 Spec 0003 (`docs/specs/0003-browser-escalation.md`, Status: Accepted) · code in `backend/src/functions/browser/` and `backend/src/functions/orchestrator/`

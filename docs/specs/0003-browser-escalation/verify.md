@@ -87,10 +87,10 @@ _Steps derived from spec 0003 acceptance criteria. /check verify runs these; /te
 ## Commands
 
 - [x] `uv run ruff check src/config/ src/functions/browser tests/unit/test_browser* tests/integration/test_obscura*` passes cleanly with zero lint warnings.
-- [x] `uv run mypy src/functions/browser/ tests/unit/test_browser* tests/integration/test_obscura*` passes cleanly with zero type errors across all 17 source files.
+- [x] `uv run mypy src/functions/browser/ tests/unit/test_browser* tests/integration/test_obscura*` passes cleanly with zero type errors across all source files.
 - [x] `uv run python -m functions.browser.packaging` builds standalone artifact and verifies isolated Python 3.12 environment execution.
 - [x] `./backend/scripts/verify_lambda_zip_runtime.sh` passes clean container runtime proof under Amazon Linux 2023 with read only root and writable `/tmp`.
-- [x] `uv run pytest tests/unit/test_browser* tests/integration/test_obscura_e2e_integration.py -v` passes all 194 browser unit, live, and integration tests.
+- [x] `uv run pytest tests/unit/test_browser* tests/integration/test_obscura_e2e_integration.py -v` passes all 197 browser unit, live, and integration tests.
 
 ## Acceptance criteria coverage
 
@@ -163,19 +163,26 @@ Obscura is now the sole production browser engine. Dual engine fallback and Chro
 ### 2. Reproducible Build Scripts and Commands
 - Amazon Linux 2023 Container Build (Targeting Python 3.12, x86_64, AWS Lambda runtime):
   Executable script: [build_obscura_al2023.sh](file:///home/swyra/projects/travel-agent/backend/scripts/build_obscura_al2023.sh)
+  - Validates pinned source commit `0ecc41770da5c5300227dd83a15bfa1e5100d5d4` on every build.
+  - Rejects dirty git working trees or unexpected checkouts.
+  - Isolates build cache to `/tmp/obscura-target-al2023` and source to `/tmp/obscura-src-al2023`.
+  - Stages output binary to `backend/build/bin/al2023/obscura`.
+  - Generates `backend/build/bin/al2023/provenance.json` with SHA256 binary hash, target architecture, git commit, and timestamp.
   ```bash
-  docker run --rm -v /tmp/obscura-src:/workspace -w /workspace amazonlinux:2023 bash -c \
+  docker run --rm -v /tmp/obscura-src-al2023:/workspace -v /tmp/obscura-target-al2023:/target -w /workspace amazonlinux:2023 bash -c \
     "dnf install -y rust cargo clang cmake pkgconfig gcc-c++ openssl-devel && \
-     cargo build --profile release-dist -p obscura-cli --bins --features render"
+     cargo build --profile release-dist -p obscura-cli --bins --features render --target-dir /target"
   ```
-  Binary outputs:
-  - `target/release-dist/obscura` (81,194,528 bytes, 78 MB)
-  - `target/release-dist/obscura-worker` (76,339,008 bytes, 73 MB)
 
 - Local Arch Linux Build:
   Executable script: [build_obscura_arch.sh](file:///home/swyra/projects/travel-agent/backend/scripts/build_obscura_arch.sh)
+  - Validates pinned source commit `0ecc41770da5c5300227dd83a15bfa1e5100d5d4` on every build.
+  - Rejects dirty git working trees or unexpected checkouts.
+  - Isolates build cache to `/tmp/obscura-target-arch` and source to `/tmp/obscura-src-arch`.
+  - Stages output binary to `backend/build/bin/arch/obscura`.
+  - Generates `backend/build/bin/arch/provenance.json` with SHA256 binary hash, target architecture, git commit, and timestamp.
   ```bash
-  cargo build --release -p obscura-cli --bins --features render
+  cargo build --profile release-dist -p obscura-cli --bins --features render --target-dir /tmp/obscura-target-arch
   ```
 
 - Clean Runtime Verification Script:
@@ -237,20 +244,27 @@ Obscura is now the sole production browser engine. Dual engine fallback and Chro
 - External Lambda layers: 0 MB (Sparticuz layer removed completely)
 - Headroom below AWS Lambda uncompressed limit: 13.74 MB
 - Packaging verification:
-  - `verify_browser_startup_and_render_isolated_environment` raises `FileNotFoundError` if Obscura binary is absent, preventing false positives.
+  - `verify_browser_startup_and_render_isolated_environment` strictly requires `bin/obscura` inside the artifact directory.
+  - Host PATH fallback is completely removed from packaged runtime acceptance.
+  - Executable overrides outside the artifact directory are rejected with `ValueError`.
   - Verification child script outputs structured payload `STRUCTURED_RENDER_RESULT:<json>` and parent asserts `status == "SUCCESS"`, `rendered_text == "HYDRATED_SUCCESS"`, and `title == "Isolated Artifact Render"`. Missing, malformed, or skipped output raises `RuntimeError`.
-  - Negative tests in [test_browser_packaging.py](file:///home/swyra/projects/travel-agent/backend/tests/unit/test_browser_packaging.py) reproduce and verify false positive prevention.
+  - Negative tests in [test_browser_packaging.py](file:///home/swyra/projects/travel-agent/backend/tests/unit/test_browser_packaging.py) verify that missing artifact binaries fail even with a valid Obscura on host PATH, and external binary overrides are rejected.
 
 ### 8. Integration Evidence
 - End to end integration suite in [test_obscura_e2e_integration.py](file:///home/swyra/projects/travel-agent/backend/tests/integration/test_obscura_e2e_integration.py):
-  - Controlled dispatch to real Obscura worker execution, PostgreSQL observation persistence with `extraction_method="BROWSER_HTML"`, outbox event publication, `CompletionReconciliationService` reconciliation, and graph consumption: VERIFIED.
+  - Production orchestration acceptance: `GraphRunnerService` execution dispatch, outbox serialized delivery envelope parsing, real Obscura worker rendering under lease fencing, PostgreSQL observation persistence with `extraction_method="BROWSER_HTML"`, `CompletionReconciliationService` task reconciliation, checkpoint resume, and production graph consumption: VERIFIED.
+  - Production graph assertions: verifies step progression beyond evidence waiting, browser task output in `task_outputs`, dispatched URL tracking in `dispatched_browser_urls`, and evidence routing action `PROCEED_DETERMINISTIC_EVALUATION` directly from graph state without direct DB SELECT in the test.
+  - Controlled endpoints: uses explicit `controlled_http_server` fixtures for test predictability and zero external network dependencies.
+  - Preserved lower-level integration tests: direct `BrowserWorkerService` lease fencing and test graph reconciliation preserved with clear label `test_obscura_fenced_worker_direct_execution_lower_level`.
   - Repeated task isolation and process tree cleanup with zero zombie processes: VERIFIED.
-  - Performance benchmark against recorded Chromium baseline:
-    - Memory: Obscura peak RSS 140 to 190 MB (versus Chromium baseline 350 to 500 MB peak RSS).
-    - Latency: Obscura 250 to 450 ms (versus Chromium baseline 963 to 1800 ms).
+  - Process tree resource measurements and phase timings:
+    - Measurement method: continuous background sampling of `/proc/<pid>/status` `VmRSS` every 20ms across Python host, Playwright Node driver, Obscura supervisor, and Obscura worker processes (`ProcessTreeMemorySampler`).
+    - Sampling limits: discrete 20ms polling interval captures active execution intervals; brief transient kernel allocations between polling ticks may remain unsampled.
+    - Separated phase timings: startup readiness duration, navigation and DOM hydration duration, and total task execution duration measured independently.
+    - Comparative improvement status: marked UNVERIFIED because identical side-by-side repetitions against Chromium under matching system conditions were not performed on this test runner. Prior comparative claims without side-by-side run records have been retracted.
 
 ### 9. Verification Results
-- Unit and integration browser test suites: 194 passed cleanly in under 45 seconds (191 unit tests and 3 integration tests).
-- Static analysis: clean linting via `ruff` and zero type issues via `mypy` across 17 files.
+- Unit and integration browser test suites: 197 passed cleanly (193 unit and live tests, and 4 integration tests).
+- Static analysis: clean linting via `ruff` and zero type issues via `mypy` across all source files.
 - Packaging verification under clean Python 3.12 `-S -P` environment: PASS.
 - Clean container runtime proof under read only root and writable `/tmp`: PASS.

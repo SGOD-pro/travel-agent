@@ -327,16 +327,55 @@ def test_resolve_obscura_binary_with_chromium_path_env(
 
 
 def test_verify_browser_startup_fails_when_obscura_missing(tmp_path: Path) -> None:
-    """Negative test: missing Obscura binary must fail packaging verification, never return VERIFIED."""
+    """Negative test: missing Obscura binary inside artifact must raise FileNotFoundError."""
     mock_artifact = tmp_path / "artifact"
     mock_artifact.mkdir(parents=True, exist_ok=True)
-    # Even if playwright exists, missing Obscura in bin/ must raise RuntimeError / FileNotFoundError
     (mock_artifact / "bin").mkdir(parents=True, exist_ok=True)
 
-    with pytest.raises(RuntimeError, match="Isolated browser startup and rendering verification failed"):
+    with pytest.raises(FileNotFoundError, match="Required Obscura browser executable missing inside artifact"):
+        verify_browser_startup_and_render_isolated_environment(mock_artifact)
+
+
+def test_verify_browser_startup_fails_with_host_obscura_on_path_when_artifact_binary_missing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Regression test: valid host Obscura on PATH must NOT satisfy artifact-only verification if artifact binary is missing."""
+    mock_artifact = tmp_path / "artifact"
+    mock_artifact.mkdir(parents=True, exist_ok=True)
+    (mock_artifact / "bin").mkdir(parents=True, exist_ok=True)
+
+    # Place a fake executable on host PATH
+    fake_host_bin_dir = tmp_path / "host_bin"
+    fake_host_bin_dir.mkdir(parents=True, exist_ok=True)
+    fake_host_obscura = fake_host_bin_dir / "obscura"
+    fake_host_obscura.write_bytes(b"\x7fELFfake")
+    fake_host_obscura.chmod(0o755)
+
+    monkeypatch.setenv("PATH", f"{fake_host_bin_dir}:{os.environ.get('PATH', '')}")
+    monkeypatch.setattr("shutil.which", lambda cmd: str(fake_host_obscura) if cmd == "obscura" else None)
+
+    with pytest.raises(FileNotFoundError, match="Required Obscura browser executable missing inside artifact"):
+        verify_browser_startup_and_render_isolated_environment(mock_artifact)
+
+
+def test_verify_browser_startup_rejects_override_outside_artifact(
+    tmp_path: Path,
+) -> None:
+    """Rejects executable overrides pointing outside the artifact directory."""
+    mock_artifact = tmp_path / "artifact"
+    mock_artifact.mkdir(parents=True, exist_ok=True)
+    (mock_artifact / "bin").mkdir(parents=True, exist_ok=True)
+
+    outside_bin = tmp_path / "outside_bin" / "obscura"
+    outside_bin.parent.mkdir(parents=True, exist_ok=True)
+    outside_bin.write_bytes(b"\x7fELFoutside")
+    outside_bin.chmod(0o755)
+
+    with pytest.raises(ValueError, match="Executable override outside the artifact is rejected"):
         verify_browser_startup_and_render_isolated_environment(
             mock_artifact,
-            obscura_path=str(tmp_path / "nonexistent_obscura"),
+            obscura_path=str(outside_bin),
         )
 
 
@@ -349,6 +388,10 @@ def test_verify_browser_startup_rejects_malformed_or_skipped_output(
 
     mock_artifact = tmp_path / "artifact"
     mock_artifact.mkdir(parents=True, exist_ok=True)
+    fake_bin = mock_artifact / "bin" / "obscura"
+    fake_bin.parent.mkdir(parents=True, exist_ok=True)
+    fake_bin.write_bytes(b"\x7fELF")
+    fake_bin.chmod(0o755)
 
     # Case 1: returncode 0 but missing STRUCTURED_RENDER_RESULT
     mock_run = MagicMock(

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "61c98831-b127-4e93-8923-95bb0873848d",
+  "status": "current",
+  "command": "deliver",
+  "type": "sequence",
+  "input": "/home/swyra/projects/travel-agent/.archify/sequence-browser-escalation-20261121-203525/candidate.json",
+  "output": "/home/swyra/projects/travel-agent/.archify/sequence-browser-escalation-20261121-203525/browser-escalation-pipeline.html",
+  "specification": {
+    "sha256": "a2bfb7f10d34f5cff26b19d86ce0a35749ee1ae16193441aba1a63fafe3222e5",
+    "bytes": 4748
+  },
+  "artifact": {
+    "sha256": "2e727f1bd65e0b5ece399ce7392d3a348b6a9ec164aa2e2ba0be291ff12172f8",
+    "bytes": 763523
+  }
+}

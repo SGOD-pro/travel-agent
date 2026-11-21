@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Browser Escalation End-to-End Pipeline",
+    "output": ".archify/sequence-browser-escalation-20261121-203525/browser-escalation-pipeline.html",
+    "viewBox": [1060, 680],
+    "column_fit": "spread",
+    "animation": "trace",
+    "quality_profile": "showcase"
+  },
+  "participants": [
+    { "id": "orchestrator", "type": "backend", "label": "Orchestrator", "sublabel": "LangGraph" },
+    { "id": "collector", "type": "backend", "label": "Collector", "sublabel": "Static" },
+    { "id": "db", "type": "database", "label": "Postgres", "sublabel": "Store" },
+    { "id": "sqs", "type": "messagebus", "label": "SQS", "sublabel": "Queue" },
+    { "id": "browser", "type": "backend", "label": "Browser", "sublabel": "Worker" },
+    { "id": "driver", "type": "cloud", "label": "Playwright", "sublabel": "Engine" },
+    { "id": "parser", "type": "backend", "label": "Scrapling", "sublabel": "Parser" }
+  ],
+  "segments": [
+    { "from": 150, "to": 255, "label": "1. Static Scrape & Escalation" },
+    { "from": 265, "to": 360, "label": "2. Queue & Fenced Claim" },
+    { "from": 370, "to": 500, "label": "3. Render & Dynamic Extract" },
+    { "from": 510, "to": 575, "label": "4. Store & SQS Ack" }
+  ],
+  "messages": [
+    { "id": "m1", "from": "orchestrator", "to": "collector", "y": 170, "label": "dispatch collection task", "variant": "emphasis" },
+    { "id": "m2", "from": "collector", "to": "db", "y": 205, "label": "persist NEEDS_BROWSER placeholder", "variant": "emphasis" },
+    { "id": "m3", "from": "orchestrator", "to": "db", "y": 240, "label": "enqueue TASK_DISPATCH in outbox", "variant": "emphasis" },
+    { "id": "m4", "from": "db", "to": "sqs", "y": 275, "label": "outbox relay forwards to SQS", "variant": "dashed" },
+    { "id": "m5", "from": "sqs", "to": "browser", "y": 310, "label": "deliver SQS batch (TASK_DISPATCH)", "variant": "emphasis" },
+    { "id": "m6", "from": "browser", "to": "db", "y": 345, "label": "claim_task() lease fencing", "variant": "security" },
+    { "id": "m7", "from": "browser", "to": "driver", "y": 380, "label": "render_page(BrowserTaskPayload)", "variant": "emphasis" },
+    { "id": "m8", "from": "driver", "to": "browser", "y": 415, "label": "return HTML DOM snapshot", "variant": "return" },
+    { "id": "m9", "from": "browser", "to": "parser", "y": 450, "label": "parse_rendered_entities(html)", "variant": "emphasis" },
+    { "id": "m10", "from": "parser", "to": "browser", "y": 485, "label": "extracted travel entities (INR)", "variant": "return" },
+    { "id": "m11", "from": "browser", "to": "db", "y": 520, "label": "save SourceObservationModel", "variant": "emphasis" },
+    { "id": "m12", "from": "browser", "to": "sqs", "y": 555, "label": "return batchItemFailures []", "variant": "return" }
+  ],
+  "activations": [
+    { "participant": "orchestrator", "from": 165, "to": 245, "type": "backend" },
+    { "participant": "collector", "from": 170, "to": 210, "type": "backend" },
+    { "participant": "db", "from": 200, "to": 280, "type": "database" },
+    { "participant": "sqs", "from": 270, "to": 315, "type": "messagebus" },
+    { "participant": "browser", "from": 305, "to": 560, "type": "backend" },
+    { "participant": "db", "from": 340, "to": 355, "type": "database" },
+    { "participant": "driver", "from": 375, "to": 420, "type": "cloud" },
+    { "participant": "parser", "from": 445, "to": 490, "type": "backend" },
+    { "participant": "db", "from": 515, "to": 530, "type": "database" },
+    { "participant": "sqs", "from": 550, "to": 560, "type": "messagebus" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "Static First Architecture",
+      "items": [
+        "Lightweight Evidence Collector attempts HTTP + Scrapling static scrape first",
+        "Pages with SPA, noscript, or bot barriers emit NEEDS_BROWSER placeholder",
+        "Orchestrator enforces a strict budget limit of 3 browser escalations per trip"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Lease Fencing & SSRF Security",
+      "items": [
+        "WorkerFencingService claims task with 120s DB lock, rejecting stale attempts",
+        "RouteSecurityInterceptor blocks private IPs, metadata endpoints (169.254.169.254)",
+        "Service Workers and WebSockets are disabled in Playwright to prevent leaks"
+      ]
+    },
+    {
+      "dot": "cyan",
+      "title": "Graceful Degradation & Teardown",
+      "items": [
+        "Timeouts or bot blocks gracefully record unavailable observations without failing the workflow",
+        "Lambda deadline guard aborts hanging tasks before execution window closes",
+        "Process cleanup forcefully terminates orphaned Chromium instances"
+      ]
+    }
+  ]
+}

@@ -299,6 +299,8 @@ def build_isolated_browser_artifact(
     candidates = [
         dest_obscura,
         Path(os.environ.get("OBSCURA_PATH", "")) if os.environ.get("OBSCURA_PATH") else None,
+        src_dir.parent / "build" / "bin" / "al2023" / "obscura",
+        src_dir.parent / "build" / "bin" / "arch" / "obscura",
         src_dir.parent / "build" / "bin" / "obscura",
         src_dir / "functions" / "browser" / "bin" / "obscura",
         Path("/tmp/obscura-bin/obscura"),
@@ -491,17 +493,37 @@ def verify_browser_startup_and_render_isolated_environment(
     Spawns an isolated Python 3.12 process with -S -P and ONLY artifact_dir on PYTHONPATH.
     Verifies:
     1. Bundled Node runtime is present, executable, and used by Playwright.
-    2. Obscura browser binary starts up and connects via Playwright connect_over_cdp.
-    3. Dynamic HTML with JavaScript is rendered and DOM is hydrated.
+    2. Obscura browser binary is strictly located inside the artifact and connects via Playwright.
+    3. Host PATH fallback is rejected.
+    4. Overrides outside the artifact are rejected.
+    5. Dynamic HTML with JavaScript is rendered and DOM is hydrated.
     """
     runtime_python = str(python_bin) if python_bin else resolve_python_runtime_binary()
-    artifact_obscura = artifact_dir / "bin" / "obscura"
-    resolved_obscura = (
-        obscura_path
-        or (str(artifact_obscura) if artifact_obscura.is_file() else None)
-        or shutil.which("obscura")
-        or str(artifact_obscura)
-    )
+    artifact_dir_resolved = artifact_dir.resolve()
+    artifact_obscura = artifact_dir_resolved / "bin" / "obscura"
+
+    if obscura_path is not None:
+        override_resolved = Path(obscura_path).resolve()
+        try:
+            is_relative = override_resolved.is_relative_to(artifact_dir_resolved)
+        except AttributeError:
+            is_relative = (
+                override_resolved == artifact_dir_resolved
+                or artifact_dir_resolved in override_resolved.parents
+            )
+        if not is_relative:
+            raise ValueError(
+                f"Executable override outside the artifact is rejected: {obscura_path} (must reside within {artifact_dir_resolved})"
+            )
+        target_obscura = override_resolved
+    else:
+        target_obscura = artifact_obscura
+
+    if not target_obscura.is_file() or not os.access(target_obscura, os.X_OK):
+        raise FileNotFoundError(
+            f"Required Obscura browser executable missing inside artifact: {target_obscura}"
+        )
+    resolved_obscura = str(target_obscura)
 
     verify_script = f"""
 import os, sys, asyncio, platform, subprocess, tempfile, json
@@ -524,15 +546,11 @@ node_bin = driver_dir / "node"
 assert node_bin.exists(), f"Playwright Node binary missing from isolated artifact: {{node_bin}}"
 assert os.access(node_bin, os.X_OK), f"Playwright Node binary is not executable: {{node_bin}}"
 
-# Test Obscura CDP launch and live dynamic rendering
+# Test Obscura CDP launch and live dynamic rendering strictly from artifact
 async def test_render():
-    obscura_bin = {repr(resolved_obscura)}
-    if not obscura_bin or not os.path.exists(obscura_bin):
-        cand = Path({repr(str(artifact_dir.resolve()))}) / "bin" / "obscura"
-        if cand.exists():
-            obscura_bin = str(cand)
-        else:
-            raise FileNotFoundError(f"Obscura browser binary not found in isolated artifact: {repr(resolved_obscura)}")
+    obscura_bin = Path({repr(resolved_obscura)})
+    if not obscura_bin.is_file() or not os.access(obscura_bin, os.X_OK):
+        raise FileNotFoundError(f"Obscura browser binary missing inside artifact: {{obscura_bin}}")
 
     with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as rf:
         rf_path = rf.name

@@ -8,26 +8,88 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TARGET_NAME="arch"
 DEST_BIN_DIR="${BACKEND_DIR}/build/bin"
-mkdir -p "${DEST_BIN_DIR}"
+TARGET_BIN_DIR="${DEST_BIN_DIR}/${TARGET_NAME}"
+mkdir -p "${TARGET_BIN_DIR}" "${DEST_BIN_DIR}"
 
 OBSCURA_COMMIT="0ecc41770da5c5300227dd83a15bfa1e5100d5d4"
 OBSCURA_TAG="v0.2.7"
 
-echo "Building Obscura ${OBSCURA_TAG} (${OBSCURA_COMMIT}) for Arch Linux..."
+echo "Building Obscura ${OBSCURA_TAG} (${OBSCURA_COMMIT}) for Arch Linux host..."
 
-SRC_DIR="/tmp/obscura-src"
+# Dedicated isolated source and cargo cache directories for Arch Linux
+SRC_DIR="/tmp/obscura-src-arch"
+CARGO_TARGET_CACHE="/tmp/obscura-target-arch"
+mkdir -p "${CARGO_TARGET_CACHE}"
+
 if [ ! -d "${SRC_DIR}" ]; then
   git clone https://github.com/h4ckf0r0day/obscura.git "${SRC_DIR}"
   cd "${SRC_DIR}"
   git checkout "${OBSCURA_COMMIT}"
 fi
 
+# 1. Validate pinned source SHA on every build and reject dirty or unexpected checkouts
 cd "${SRC_DIR}"
-cargo build --profile release-dist -p obscura-cli --bins --features render
-cp target/release-dist/obscura "${DEST_BIN_DIR}/obscura"
-cp target/release-dist/obscura-worker "${DEST_BIN_DIR}/obscura-worker"
+if [ -n "$(git status --porcelain)" ]; then
+  echo "Error: Source checkout at ${SRC_DIR} is dirty! Rejecting build." >&2
+  echo "Hint: Stash or discard uncommitted changes in ${SRC_DIR} (e.g. 'git -C ${SRC_DIR} stash')." >&2
+  exit 1
+fi
+
+CURRENT_SHA="$(git rev-parse HEAD)"
+if [ "${CURRENT_SHA}" != "${OBSCURA_COMMIT}" ]; then
+  echo "Error: Source checkout at ${SRC_DIR} is at ${CURRENT_SHA}, expected pinned SHA ${OBSCURA_COMMIT}! Rejecting build." >&2
+  echo "Hint: Checkout the pinned commit via 'git -C ${SRC_DIR} checkout ${OBSCURA_COMMIT}'." >&2
+  exit 1
+fi
+
+# 2. Build natively using isolated target cache
+CARGO_TARGET_DIR="${CARGO_TARGET_CACHE}" cargo build --profile release-dist -p obscura-cli --bins --features render
+cp "${CARGO_TARGET_CACHE}/release-dist/obscura" "${TARGET_BIN_DIR}/obscura"
+cp "${CARGO_TARGET_CACHE}/release-dist/obscura-worker" "${TARGET_BIN_DIR}/obscura-worker"
+strip --strip-unneeded "${TARGET_BIN_DIR}/obscura" || true
+strip --strip-unneeded "${TARGET_BIN_DIR}/obscura-worker" || true
+chmod 0755 "${TARGET_BIN_DIR}/obscura" "${TARGET_BIN_DIR}/obscura-worker"
+
+# Copy to canonical build/bin destination as active host binary
+cp "${TARGET_BIN_DIR}/obscura" "${DEST_BIN_DIR}/obscura"
+cp "${TARGET_BIN_DIR}/obscura-worker" "${DEST_BIN_DIR}/obscura-worker"
 chmod 0755 "${DEST_BIN_DIR}/obscura" "${DEST_BIN_DIR}/obscura-worker"
 
-echo "Build complete. Binaries written to ${DEST_BIN_DIR}:"
-ls -la "${DEST_BIN_DIR}"
+# 3. Record resulting binary hashes and target provenance
+OBSCURA_HASH="$(sha256sum "${TARGET_BIN_DIR}/obscura" | awk '{print $1}')"
+OBSCURA_SIZE="$(stat -c %s "${TARGET_BIN_DIR}/obscura")"
+WORKER_HASH="$(sha256sum "${TARGET_BIN_DIR}/obscura-worker" | awk '{print $1}')"
+WORKER_SIZE="$(stat -c %s "${TARGET_BIN_DIR}/obscura-worker")"
+BUILD_TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+PROVENANCE_JSON=$(cat <<EOF
+{
+  "target": "arch",
+  "target_platform": "x86_64-linux",
+  "obscura_version": "${OBSCURA_TAG}",
+  "obscura_commit": "${OBSCURA_COMMIT}",
+  "upstream_repo": "https://github.com/h4ckf0r0day/obscura.git",
+  "built_at": "${BUILD_TIMESTAMP}",
+  "binaries": {
+    "obscura": {
+      "path": "obscura",
+      "sha256": "${OBSCURA_HASH}",
+      "size_bytes": ${OBSCURA_SIZE}
+    },
+    "obscura-worker": {
+      "path": "obscura-worker",
+      "sha256": "${WORKER_HASH}",
+      "size_bytes": ${WORKER_SIZE}
+    }
+  }
+}
+EOF
+)
+
+echo "${PROVENANCE_JSON}" > "${TARGET_BIN_DIR}/provenance.json"
+echo "${PROVENANCE_JSON}" > "${DEST_BIN_DIR}/provenance.json"
+
+echo "Build complete for Arch Linux. Binaries and provenance written to ${TARGET_BIN_DIR} and ${DEST_BIN_DIR}:"
+ls -la "${TARGET_BIN_DIR}"

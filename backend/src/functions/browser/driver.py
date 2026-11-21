@@ -101,6 +101,8 @@ def resolve_obscura_binary(
             curr_dir / "bin" / "obscura",
             curr_dir.parents[2] / "build" / "browser" / "bin" / "obscura",
             curr_dir.parents[2] / "build" / "bin" / "obscura",
+            curr_dir.parents[2] / "build" / "bin" / "al2023" / "obscura",
+            curr_dir.parents[2] / "build" / "bin" / "arch" / "obscura",
             curr_dir.parents[2] / "build" / "browser" / "obscura",
             Path("/var/task/bin/obscura"),
             Path("/var/task/obscura"),
