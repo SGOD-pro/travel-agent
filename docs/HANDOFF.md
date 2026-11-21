@@ -1,8 +1,8 @@
-# Context Handoff: SWENA Travel Intelligence (Specs 0001, 0002, 0003, 0004, and 0005)
+# Context Handoff: SWENA Travel Intelligence (Specs 0001 through 0007)
 
-Date: 2026-10-25
+Date: 2026-11-21
 
-Status: Specs 0001, 0002, 0003, 0004, and 0005 complete. Spec 0005 Route Optimizer is Accepted across all 7 slices, with production integration repairs completed at commit `80c03ceecde68955a4c3ab1f587e33b1a1d75bed`. Scope Feature 5 is done. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is `/architect route API/map E2E`.
+Status: Specs 0001, 0002, 0003, 0004, 0005, and 0006 complete and accepted. Spec 0003 permanently migrated to standalone Obscura browser engine (eliminating Chromium and Sparticuz layer, 240 MB uncompressed, 90.45 MB compressed, 47 ms cold boot). Spec 0007 Trip Planner End to End has completed Slices 1 through 6, 8, and bounded optimizer dispatch, verified across 42 tests on isolated PostgreSQL with review verdict Approve. Scope Features 1 through 6 are done; Feature 7 is in progress. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is completing remaining 0007 slice scope.
 
 
 ## 1. Project Purpose and Agreed Stack
@@ -32,11 +32,11 @@ Build the SWENA Travel Intelligence platform, an asynchronous travel intelligenc
 
 ## 2. Git State
 
-* Commit: `80c03ceecde68955a4c3ab1f587e33b1a1d75bed`
-* Branch: `main`
+* Commit: `b11ee1f` (feat/0007-optimizer-dispatch merged with main)
+* Branch: `feat/0007-optimizer-dispatch`
 * Working Tree: Clean application code, verified test suites, up to date review records, and reconciled scope.
 
-## 3. What 0001, 0002, 0003, 0004, and 0005 Implement
+## 3. What 0001, 0002, 0003, 0004, 0005, 0006, and 0007 Implement
 
 ### Slice 0001: Orchestrator Execution Engine
 Conforms to [0001-orchestrator-execution-engine.md](file:///home/swyra/projects/travel-agent/docs/specs/0001-orchestrator-execution-engine.md):
@@ -222,13 +222,19 @@ All verification commands execute locally against live PostgreSQL and headless C
 * Spec 0005 Slice 6 Review: [2026-10-24-route-optimizer-slice6.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-24-route-optimizer-slice6.md) (Verdict: Approve with nits).
 * Spec 0005 Slice 7 Review: [2026-10-24-route-optimizer-slice7.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-24-route-optimizer-slice7.md) (Verdict: Approve with nits).
 * Spec 0005 Production Integration Repair Review: [2026-10-25-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-25-main.md) (Verdict: Approve, 0 blockers, 0 majors, 0 unaddressed nits).
+* Spec 0006 Slice 1 through 5 Reviews: [2026-10-25-route-optimizer-graph-slice1.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-25-route-optimizer-graph-slice1.md) through [2026-10-26-route-optimizer-graph-slice5.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-26-route-optimizer-graph-slice5.md) (Verdict: Approve).
+* Spec 0003 Obscura Permanent Migration Review: [2026-11-20-obscura-migration.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-11-20-obscura-migration.md) (Verdict: Approve).
+* Spec 0007 Trip Planner Slice 1 through 8 Reviews: [2026-10-29-trip-planner-llm-slice1.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-29-trip-planner-llm-slice1.md) through [2026-11-20-research-policy-re-review.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-11-20-research-policy-re-review.md) (Verdict: Approve).
+* Spec 0007 Bounded Optimizer Dispatch Review: [2026-11-21-feat-0007-optimizer-dispatch.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-11-21-feat-0007-optimizer-dispatch.md) (Verdict: Approve).
 
 ## 6. Development Acceptance versus Deferred AWS Verification
 
 ### Development Acceptance
-* Slices 1 through 5 of Spec 0003 are complete, verified, reviewed, and tested (Status: Accepted, Feature 3 marked done).
+* Slices 1 through 5 of Spec 0003 are complete, verified, reviewed, and tested with permanent Obscura engine migration (Status: Accepted, Feature 3 marked done).
 * Spec 0004 Remote LAYA decision router is complete across all 5 slices, with bounded corrections completed for evidence sufficiency validation, real consumer executed lifecycle tests, original decision audit preservation, and documentation reconciliation (Status: Accepted, Feature 4 marked done).
 * Slices 1 through 7 of Spec 0005 Route Optimizer are complete, verified, reviewed, and tested with production integration repairs (Status: Accepted, Feature 5 marked done).
+* Slices 1 through 5 of Spec 0006 Route Graph and Map GeoJSON are complete, verified, reviewed, and tested (Status: Accepted, Feature 6 marked done).
+* Spec 0007 Trip Planner End to End Slices 1 through 6, 8, and bounded optimizer dispatch are complete, verified, and reviewed with verdict Approve (Status: In Progress, Feature 7 in progress).
 
 ### Deployed AWS Verification (Deferred)
 No live AWS deployment has been executed. The following checks remain deferred until full cloud deployment:
@@ -239,14 +245,14 @@ No live AWS deployment has been executed. The following checks remain deferred u
 
 ## 7. Status of Workflow Gates
 
-* Scope (`/scope`): Features 1, 2, 3, 4, and 5 marked done in [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md).
-* Architect (`/architect`): [0005-route-optimizer.md](file:///home/swyra/projects/travel-agent/docs/specs/0005-route-optimizer.md) status is `Accepted`.
-* Develop (`/develop`): Complete across all 7 slices with production integration repairs.
-* Verify (`/check verify`): Passed all 9 acceptance criteria and specced surfaces with 13 regression behaviors on live PostgreSQL.
-* Review (`/check review`): Approved across all slices and production integration repairs in [2026-10-25-main.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-10-25-main.md).
-* Test (`/test`): Complete. 111 tests passing across unit and live database integration suites, 7 connected acceptance tests cleanly gated.
-* Document (`/document`): Complete for 0001, 0002, 0003, and 0004; pending for 0005.
-* Sync (`/sync`): Complete. Checkpoint reconciled at commit `80c03ceecde68955a4c3ab1f587e33b1a1d75bed`.
+* Scope (`/scope`): Features 1 through 6 marked done in [docs/scope/scope.md](file:///home/swyra/projects/travel-agent/docs/scope/scope.md); Feature 7 in progress.
+* Architect (`/architect`): Specs 0001 through 0006 are `Accepted`; Spec 0007 is `In Progress`.
+* Develop (`/develop`): Complete for Features 1 through 6; 0007 bounded optimizer dispatch developed.
+* Verify (`/check verify`): Passed all acceptance criteria for 0001 through 0006; 0007 verified with 42 passing unit and integration tests.
+* Review (`/check review`): Approved across all complete slices, Obscura migration in [2026-11-20-obscura-migration.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-11-20-obscura-migration.md), and 0007 optimizer dispatch in [2026-11-21-feat-0007-optimizer-dispatch.md](file:///home/swyra/projects/travel-agent/docs/reviews/2026-11-21-feat-0007-optimizer-dispatch.md).
+* Test (`/test`): Complete across all implemented slices with comprehensive unit and database backed integration suites.
+* Document (`/document`): Complete for 0001, 0002, 0003, 0004, and 0006.
+* Sync (`/sync`): Complete. Checkpoint reconciled at commit `b11ee1f`.
 
 ## 0003 closure reconciliation (2026-10-16)
 
@@ -295,11 +301,32 @@ Inspected repository HEAD commit `80c03ceecde68955a4c3ab1f587e33b1a1d75bed` (and
 * C4 (RESOLVED): Focused regression coverage. Added 6 unit regressions (13 total) in `tests/unit/test_route_optimizer_production_regressions.py` covering matrix fits with detour closing breaches, optional stop dropped yielding `PARTIAL` with provider geometries, and equivalent replan behaviors.
 * C5 (RESOLVED): Evidence boundaries. Preserved reported versus independently executed evidence: connected Valhalla tests require external network and are cleanly gated via `RUN_CONNECTED_VALHALLA_TESTS=1`; offline suites (111 tests) execute with zero cloud or network dependencies. Measured dependency inclusive packaging confirmed at ~211 MB uncompressed and ~64.5 MB compressed (< 250 MB ceiling) with clean isolated import and solve verification under Python 3.12 `-S -P`. Pending LAYA quality evaluation: offline policy benchmark passes, but live connected model inference accuracy on the 25 scenarios remains pending live evaluation. AWS deployment deferrals: SAM deployment to live AWS CloudFormation, real SQS queues and DLQ redrive in AWS, and VPC Lambda database connectivity remain explicitly deferred.
 
+### 0003 Obscura permanent engine migration (2026-11-20)
+
+Inspected repository HEAD commit `995539a` (and prior migration commit `1e3aa52`). Spec 0003 browser worker permanently transitioned from headless Chromium and external Sparticuz Brotli decompression layers to the standalone Obscura browser engine (`bin/obscura` and bundled `libatomic.so.1`):
+
+* Standalone binary footprint: `bin/obscura` is 80,887,544 bytes (~77.14 MB), bundled with `libatomic.so.1` (37,552 bytes). Eliminates all external Lambda layers (`Sparticuz/chromium` Brotli layers completely removed).
+* Lambda package headroom: Standalone function artifact `build/browser.zip` measures 94,839,344 bytes (~90.45 MB compressed), well within the 100 MB deployment target. Unpacked artifact in `build/browser/` measures 251,658,240 bytes (240 MB), strictly adhering to the AWS Lambda 250 MB (262,144,000 bytes) hard ceiling with 10.48 MB headroom.
+* Clean runtime execution: Native ELF 64 bit LSB PIE executable, dynamically linked against standard Linux loaders and `GLIBC_2.34`, running natively in Amazon Linux 2023 (Python 3.12 Lambda base image) with zero missing shared libraries.
+* Empirical performance: Cold start process spawn to `--ready-file` takes 21.52 ms to 185.02 ms, CDP websocket connection takes 26.36 ms to 33.75 ms, achieving total cold startup of 47.88 ms to 218.77 ms (~85% cold start reduction compared to legacy Chromium).
+* Real world workloads: Live search navigation on DuckDuckGo completes in 1,357 ms with deterministic content hashing. Live web scraping of complex DOM structures completes in 1,148 ms (`example.com`) and 1,489 ms (`httpbin.org/html`), and dynamic JavaScript lodging with delayed DOM injection completes in 695 ms. Multi step automation (navigation, filling 3 text inputs, toggling 2 checkboxes, filling textarea, capturing 36 KB screenshot, and form submission) completes in 1,607 ms with peak resident memory of 165.61 MB and clean zero zombie process cleanup.
+* Architectural compliance: Masked automation flags (`navigator.webdriver` omitted) satisfy lightweight stealth requirements, while adhering strictly to project guidelines prohibiting CAPTCHA solving, proof of work bypass, or anti bot gate circumvention (gated pages return `BrowserRenderStatus.BLOCKED` with honest logging).
+
+### 0007 bounded optimizer dispatch reconciliation (2026-11-21)
+
+Inspected repository HEAD commit `92bd8b7` (and merged commit `b11ee1f`). Bounded route optimizer dispatch corrections completed and verified across all dispatch and scheduling criteria:
+
+* Semantic candidate partitioning: Discovered candidate places remain optional recommendations (`is_must_visit = False`). Only explicit brief origin and requested trip destinations are designated mandatory anchors (`is_must_visit = True`).
+* Editorial category isolation: Hotels, lodging accommodations, restaurants, dining choices, and general service facilities are partitioned into editorial recommendations with explicit deferral reasons (`accommodation_option`, `dining_choice`, `service_facility`) rather than scheduled as mandatory daytime route stops. Road travel advisories and traffic alerts are excluded from route stops with explicit exclusion reason `advisory_observation`.
+* Provider capability bounding: Valhalla provider requests dynamically compute effective stop limits from both location limits (default 20) and matrix cell limits (`sqrt(max_matrix_cells)`, default `sqrt(400) = 20`) without hardcoding stop counts. Mandatory anchors take absolute precedence; excess optional candidates are deferred with explicit reason `excess_candidate_deferred`.
+* Multi day itinerary feasibility: Multi day itineraries distribute stops across valid trip dates and enforce daily daytime opening windows (default 09:00 to 18:00 in trip destination timezone), preventing stops from compressing into Day 1 or creating continuous overnight windows. Candidates skipped due to opening window constraints do not consume solver capacity slots.
+* Isolation and database fencing: Verified end to end from API to runner to optimizer dispatch against isolated PostgreSQL, using explicitly labeled controlled providers, atomic checkpointer state, and active worker lease fencing.
+
 ### Next action and ordering
 
-Closure findings C1, C2, C3, C4, and C5 are resolved and verified within existing 0005. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
+Closure findings for 0003 Obscura migration and 0007 bounded optimizer dispatch are resolved and verified. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
 
-Next planned action: `/architect route API/map E2E`.
+Next planned action: Spec 0007 remaining scope: scenario evaluation (AC-12) and failed task reconciliation or partial publication recovery.
 
-Agreed order: remote LAYA (done) → route optimizer (done) → route API/map E2E → hosted LLM/trip planner E2E → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone and no AWS deployment now.
+Agreed order: remote LAYA (done) → route optimizer (done) → route API/map E2E (done) → hosted LLM/trip planner E2E (in progress: Slices 1 to 6, 8, and bounded optimizer dispatch done) → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone and no AWS deployment now.
 
