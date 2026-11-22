@@ -42,6 +42,40 @@ class ValhallaTimeoutError(ValhallaError):
 class ValhallaRoutingError(ValhallaError):
     """Raised when Valhalla returns a client error or fails to calculate a route."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_code: int | None = None,
+        endpoint: str | None = None,
+        response_body: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.error_code = error_code
+        self.endpoint = endpoint
+        self.response_body = response_body
+
+    @property
+    def is_matrix_distance_limit_exceeded(self) -> bool:
+        """Determines if error is provider matrix distance limit rejection (HTTP 400 / 154 on /sources_to_targets)."""
+        return (
+            self.status_code == 400
+            and self.error_code == 154
+            and (
+                self.endpoint == "/sources_to_targets"
+                or (self.endpoint is not None and self.endpoint.endswith("/sources_to_targets"))
+            )
+        )
+
+
+def is_valhalla_matrix_distance_limit_error(exc: BaseException) -> bool:
+    """Classifies if an exception is specifically Valhalla HTTP 400 with error_code 154 on /sources_to_targets."""
+    if isinstance(exc, ValhallaRoutingError):
+        return exc.is_matrix_distance_limit_exceeded
+    return False
+
 
 class ValhallaSSRFError(ValhallaError):
     """Raised when coordinate parameters violate geographic safety bounds or blocked host rules.
@@ -251,7 +285,24 @@ class ValhallaClient:
                         f"Valhalla client error {resp.status_code} for {endpoint_path}: {resp.text}"
                     )
                     logger.error(error_msg)
-                    raise ValhallaRoutingError(error_msg)
+                    error_code: int | None = None
+                    parsed_body: dict[str, Any] | None = None
+                    try:
+                        parsed_body = resp.json()
+                        if isinstance(parsed_body, dict):
+                            val = parsed_body.get("error_code")
+                            if val is not None:
+                                error_code = int(val)
+                    except Exception:
+                        parsed_body = None
+
+                    raise ValhallaRoutingError(
+                        error_msg,
+                        status_code=resp.status_code,
+                        error_code=error_code,
+                        endpoint=endpoint_path,
+                        response_body=parsed_body,
+                    )
 
                 # 5xx Server Error: retry if budget remains
                 if resp.status_code >= 500:

@@ -55,6 +55,8 @@ from functions.route_optimizer.solver import OrToolsRoutingSolver
 from functions.route_optimizer.valhalla import (
     ValhallaClient,
     ValhallaConnectionError,
+    ValhallaRoutingError,
+    is_valhalla_matrix_distance_limit_error,
 )
 
 
@@ -170,7 +172,7 @@ class RouteOptimizerWorkerService:
     async def execute_task(
         self,
         message: dict[str, Any] | RouteOptimizerDispatchEnvelope,
-    ) -> tuple[uuid.UUID, RouteOptimizerWorkerOutput]:
+    ) -> tuple[uuid.UUID | None, RouteOptimizerWorkerOutput | dict[str, Any]]:
         """Claims and executes a route optimization task under lease fencing (AC-9)."""
         # 1. Normalize message and claim task under parent-first lease fencing
         if isinstance(message, RouteOptimizerDispatchEnvelope):
@@ -279,14 +281,71 @@ class RouteOptimizerWorkerService:
                 s.is_pedestrian_only or s.vehicle_restricted for s in route_req.stops
             )
 
-            if is_driving and has_pedestrian_stops:
-                solved_route = await self._multimodal_service.plan_multimodal_route(
-                    route_req, restrictions=restrictions
-                )
-            else:
-                solved_route = await self._solve_route_with_provider(
-                    route_req, restrictions=restrictions
-                )
+            is_travel_workflow = (
+                (exec_model is not None and exec_model.workflow == "TRAVEL")
+                or effective_trip_id is not None
+            )
+
+            try:
+                if is_driving and has_pedestrian_stops:
+                    solved_route = await self._multimodal_service.plan_multimodal_route(
+                        route_req, restrictions=restrictions
+                    )
+                else:
+                    solved_route = await self._solve_route_with_provider(
+                        route_req, restrictions=restrictions
+                    )
+            except ValhallaRoutingError as exc:
+                if is_travel_workflow and is_valhalla_matrix_distance_limit_error(exc):
+                    logger.warning(
+                        "Valhalla matrix distance limit exceeded for execution %s (HTTP 400 / error_code 154): "
+                        "completing task under lease with degraded ROUTING_UNAVAILABLE output",
+                        claim_result.execution_id,
+                    )
+                    safe_reason = (
+                        "Valhalla matrix distance limit exceeded (HTTP 400, error_code 154 on /sources_to_targets): "
+                        "inter-city stop distance exceeds provider matrix threshold"
+                    )
+                    degraded_output: dict[str, Any] = {
+                        "worker": envelope.worker,
+                        "action": envelope.action,
+                        "status": "FAILED",
+                        "routing_status": "ROUTING_UNAVAILABLE",
+                        "error": {
+                            "reason": safe_reason,
+                            "error_code": 154,
+                            "status_code": 400,
+                            "endpoint": "/sources_to_targets",
+                        },
+                        "diagnostics": [
+                            "Road routing engine unavailable; stops preserved without driving schedule or route polyline",
+                            safe_reason,
+                        ],
+                    }
+
+                    # Complete task under lease fencing atomically with degraded outcome
+                    await self._fencing_service.complete_task(
+                        execution_id=claim_result.execution_id,
+                        task_id=claim_result.task_id,
+                        lease_token=claim_result.lease_token,
+                        output=degraded_output,
+                        expected_context_version=claim_result.context_version,
+                    )
+
+                    # Record job timeline event
+                    await record_job_event(
+                        self._session,
+                        execution_id=claim_result.execution_id,
+                        event_type="ROUTE_OPTIMIZED",
+                        safe_payload={
+                            "status": "ROUTING_UNAVAILABLE",
+                            "routing_status": "ROUTING_UNAVAILABLE",
+                            "reason": safe_reason,
+                        },
+                    )
+
+                    return None, degraded_output
+                raise
 
             # Apply closure avoidance and spatial revalidation
             if restrictions:

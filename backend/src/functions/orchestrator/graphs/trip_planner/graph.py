@@ -1715,7 +1715,7 @@ async def consume_route_result_node(
         or worker_output_dict.get("routing_status") == "ROUTING_UNAVAILABLE"
         or "error" in worker_output_dict
     )
-    if is_failed_worker and "route_id" not in worker_output_dict:
+    if is_failed_worker and ("route_id" not in worker_output_dict or worker_output_dict.get("route_id") is None):
         logger.warning(
             "Optimizer worker reported failure or outage: %s",
             worker_output_dict.get("error") or worker_output_dict.get("status"),
@@ -1726,14 +1726,20 @@ async def consume_route_result_node(
             total_travel_minutes=0,
             is_optimal=False,
         )
+        diags = [
+            "Road routing engine unavailable; stops preserved without driving schedule or route polyline"
+        ]
+        worker_diags = worker_output_dict.get("diagnostics")
+        if isinstance(worker_diags, list):
+            for d in worker_diags:
+                if d and d not in diags:
+                    diags.append(str(d))
         return {
             "current_step": "route_result_consumed",
             "route_id": None,
             "route_status": "ROUTING_UNAVAILABLE",
             "routing_status": "ROUTING_UNAVAILABLE",
-            "route_diagnostics": [
-                "Road routing engine unavailable; stops preserved without driving schedule or route polyline"
-            ],
+            "route_diagnostics": diags,
             "optimized_schedule": empty_schedule.model_dump(mode="json"),
         }
 

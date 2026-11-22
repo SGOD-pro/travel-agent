@@ -230,6 +230,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Bounded destination research coverage and search routing: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL dispatch integration suite, clean ruff linting, and strict mypy verification)
    - [x] Research policy enforcement and credential safe logging: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL dispatch and contract integration suite, clean ruff linting, and strict mypy verification)
    - [x] Bounded and semantically correct route optimizer dispatch: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL dispatch integration suite, clean ruff linting, and strict mypy verification)
+   - [x] Valhalla matrix distance rejection recovery: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, isolated PostgreSQL lifecycle integration suite, live backend journey evaluation on Bengaluru to Mysuru to Madikeri corridor, clean ruff linting, and strict mypy verification)
 - [x] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
@@ -247,6 +248,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Bounded destination research coverage and search routing: [2026-11-19-destination-research-coverage.md](../reviews/2026-11-19-destination-research-coverage.md) · [2026-11-20-destination-research-coverage.md](../reviews/2026-11-20-destination-research-coverage.md) (Approve with nits)
    - [x] Research policy enforcement and credential safe logging: [2026-11-20-research-policy-and-credential-safety.md](../reviews/2026-11-20-research-policy-and-credential-safety.md) · [2026-11-20-research-policy-re-review.md](../reviews/2026-11-20-research-policy-re-review.md) (Approve)
    - [x] Bounded and semantically correct route optimizer dispatch: [2026-11-21-feat-0007-optimizer-dispatch.md](../reviews/2026-11-21-feat-0007-optimizer-dispatch.md) (Approve)
+   - [x] Valhalla matrix distance rejection recovery: [2026-11-22-0007-valhalla-distance-rejection-recovery.md](../reviews/2026-11-22-0007-valhalla-distance-rejection-recovery.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

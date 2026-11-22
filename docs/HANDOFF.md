@@ -1,8 +1,8 @@
 # Context Handoff: SWENA Travel Intelligence (Specs 0001 through 0007)
 
-Date: 2026-11-21
+Date: 2026-11-22
 
-Status: Specs 0001, 0002, 0003, 0004, 0005, and 0006 complete and accepted. Spec 0003 permanently migrated to standalone Obscura browser engine (eliminating Chromium and Sparticuz layer, 240 MB uncompressed, 90.45 MB compressed, 47 ms cold boot). Spec 0007 Trip Planner End to End has completed Slices 1 through 6, 8, and bounded optimizer dispatch, verified across 42 tests on isolated PostgreSQL with review verdict Approve. Scope Features 1 through 6 are done; Feature 7 is in progress. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is completing remaining 0007 slice scope.
+Status: Specs 0001, 0002, 0003, 0004, 0005, and 0006 complete and accepted. Spec 0003 permanently migrated to standalone Obscura browser engine (eliminating Chromium and Sparticuz layer, 240 MB uncompressed, 90.45 MB compressed, 47 ms cold boot). Spec 0007 Trip Planner End to End has completed Slices 1 through 6, 8, bounded optimizer dispatch, and Valhalla matrix distance rejection recovery, verified across 63 tests on isolated PostgreSQL with review verdict Approve. Scope Features 1 through 6 are done; Feature 7 is in progress. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is short multi stop brief headless live run for live road geometry verification.
 
 
 ## 1. Project Purpose and Agreed Stack
@@ -322,11 +322,25 @@ Inspected repository HEAD commit `92bd8b7` (and merged commit `b11ee1f`). Bounde
 * Multi day itinerary feasibility: Multi day itineraries distribute stops across valid trip dates and enforce daily daytime opening windows (default 09:00 to 18:00 in trip destination timezone), preventing stops from compressing into Day 1 or creating continuous overnight windows. Candidates skipped due to opening window constraints do not consume solver capacity slots.
 * Isolation and database fencing: Verified end to end from API to runner to optimizer dispatch against isolated PostgreSQL, using explicitly labeled controlled providers, atomic checkpointer state, and active worker lease fencing.
 
+### 0007 Valhalla matrix distance rejection recovery reconciliation (2026-11-22)
+
+Inspected repository HEAD commit `b161654`. Bounded error recovery for provider matrix distance rejections completed and verified across unit, integration, and live backend execution:
+
+* Classification precision: `ValhallaRoutingError.is_matrix_distance_limit_exceeded` and `is_valhalla_matrix_distance_limit_error` classify HTTP 400 specifically when `error_code == 154` on `/sources_to_targets`. Other 400 rejections (such as error 171), `/route` endpoint calls, and server errors return False without classification.
+* Fast fail nonretryable client error: In `ValhallaClient._send_request`, 4xx status codes fast fail immediately with zero retries.
+* Lease fencing and durable completion: In `RouteOptimizerWorkerService.execute_task`, the rejection is caught for travel workflows, completed atomically under `WorkerFencingService.complete_task` with degraded `ROUTING_UNAVAILABLE` output, and releases its claim. Non travel workflows and unrelated provider errors reraise untouched.
+* Timeline event: Immediately after task completion under lease, the worker records a `ROUTE_OPTIMIZED` event with routing status `ROUTING_UNAVAILABLE` and safe diagnostic description.
+* Trip graph consumption: In `consume_route_result_node`, worker output with `route_id = None` or status `FAILED` sets `route_id = None`, `routing_status = "ROUTING_UNAVAILABLE"`, and constructs an empty schedule. Discovered places, validated candidates, eligible stops, editorial recommendations, weather advisories, and non road budget lines are fully preserved. Downstream publication succeeds with `trips.current_route_id = None` and `trips.state = "proposed"`.
+* Database invariants: Zero phantom rows exist in `routes` table, lease tokens are released on completion (no stranded claims), and duplicate delivery is discarded safely without duplicate delta creation.
+* Controlled PostgreSQL regression: Verified end to end on isolated PostgreSQL (`acceptance_db`) by injecting exact HTTP 400/154 response at the Valhalla HTTP transport boundary, confirming consumer execution, lease clearing, zero routes, outbox reconciliation, LangGraph resumption, and HTTP 200 on `GET /api/v1/trips/{trip_id}/itinerary`.
+* Live backend evaluation (Bengaluru to Mysuru to Madikeri): Executed real application via `backend/scripts/run_live_backend_journey.py` against live external providers (Bedrock, SerpAPI, Scrapling, public Valhalla, Open Meteo, Obscura, and PostgreSQL). Public Valhalla rejected matrix calculation for the 250 km intercity distance with HTTP 400 / 154. The application recovered cleanly, completed the job in 8.1s with status `SUCCEEDED`, and served `GET /api/v1/trips/{trip_id}/itinerary` with status 200, `routing_status: "ROUTING_UNAVAILABLE"`, `route_id: null`, zero persisted routes, and preserved candidate evidence.
+* Separate gates maintained: Live partial publication with honest diagnostics is verified. Successful live road routing on intercity corridors (requiring self hosted Valhalla with relaxed matrix limits or sequential point to point route fallback), live remote LAYA, browser dispatch, authoritative advisory, and durable HITL remain separate future gates.
+
 ### Next action and ordering
 
-Closure findings for 0003 Obscura migration and 0007 bounded optimizer dispatch are resolved and verified. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
+Closure findings for 0003 Obscura migration, 0007 bounded optimizer dispatch, and 0007 Valhalla distance rejection recovery are resolved and verified. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
 
-Next planned action: Spec 0007 remaining scope: scenario evaluation (AC-12) and failed task reconciliation or partial publication recovery.
+Next planned action: Spec 0007 short multi stop brief headless live run on a compact corridor (< 150 km between stops) to verify real road geometry, feasible driving schedule, budget and provenance, and end to end latency.
 
-Agreed order: remote LAYA (done) → route optimizer (done) → route API/map E2E (done) → hosted LLM/trip planner E2E (in progress: Slices 1 to 6, 8, and bounded optimizer dispatch done) → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone and no AWS deployment now.
+Agreed order: remote LAYA (done) → route optimizer (done) → route API/map E2E (done) → hosted LLM/trip planner E2E (in progress: Slices 1 to 6, 8, bounded optimizer dispatch, and matrix rejection recovery done) → short multi stop live road routing verification → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone and no AWS deployment now.
 
