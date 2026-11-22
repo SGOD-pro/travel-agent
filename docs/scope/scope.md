@@ -232,6 +232,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Bounded and semantically correct route optimizer dispatch: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, live PostgreSQL dispatch integration suite, clean ruff linting, and strict mypy verification)
    - [x] Valhalla matrix distance rejection recovery: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, isolated PostgreSQL lifecycle integration suite, live backend journey evaluation on Bengaluru to Mysuru to Madikeri corridor, clean ruff linting, and strict mypy verification)
    - [x] Restrict Valhalla matrix distance rejection recovery to TRAVEL: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, isolated PostgreSQL lifecycle integration suite, clean ruff linting, and strict mypy verification)
+   - [x] Correct lodging night budget accounting: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
 - [x] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
@@ -251,6 +252,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Bounded and semantically correct route optimizer dispatch: [2026-11-21-feat-0007-optimizer-dispatch.md](../reviews/2026-11-21-feat-0007-optimizer-dispatch.md) (Approve)
    - [x] Valhalla matrix distance rejection recovery: [2026-11-22-0007-valhalla-distance-rejection-recovery.md](../reviews/2026-11-22-0007-valhalla-distance-rejection-recovery.md) (Approve)
    - [x] Restrict Valhalla matrix distance rejection recovery to TRAVEL: [2026-11-22-0007-restrict-distance-recovery-to-travel.md](../reviews/2026-11-22-0007-restrict-distance-recovery-to-travel.md) (Approve)
+   - [x] Correct lodging night budget accounting: [2026-11-22-0007-correct-lodging-night-budget-accounting.md](../reviews/2026-11-22-0007-correct-lodging-night-budget-accounting.md) (Approve)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

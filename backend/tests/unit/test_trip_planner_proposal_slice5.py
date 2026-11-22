@@ -1190,3 +1190,138 @@ async def test_publish_proposal_missing_runner_lease_fails_closed() -> None:
     assert res["status"] == "FAILED"
     assert res["proposal_status"] == "FAILED"
     assert "runner lease" in res["errors"][0]
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_lodging_accounting_mysuru_regression() -> None:
+    """Verifies that 25-26 November trip with two destinations and one room yields exactly one estimated night at 3,500 INR.
+
+    Destination stay_days must not multiply hotel nights.
+    Unknown overnight location is preserved as 'hotel_stay_unknown'.
+    """
+    state = _make_sample_state()
+    state["brief"]["start_date"] = "2026-11-25"
+    state["brief"]["end_date"] = "2026-11-26"
+    state["brief"]["rooms"] = 1
+    state["brief"]["destinations"] = [
+        {
+            "name": "Srirangapatna",
+            "latitude": 12.4218,
+            "longitude": 76.6932,
+            "stay_days": 1,
+            "confidence": 1.0,
+        },
+        {
+            "name": "Mandya",
+            "latitude": 12.5230,
+            "longitude": 76.8970,
+            "stay_days": 1,
+            "confidence": 1.0,
+        },
+    ]
+
+    res = await compute_budget_node(state)
+    assert res["current_step"] == "budget_computed"
+    lines = res["budget_lines"]
+    summary = res["budget_summary"]
+
+    hotel_lines = [
+        line for line in lines if line["category"] == BudgetCategory.ACCOMMODATION.value
+    ]
+    # Destination stay_days must not multiply hotel nights: exactly 1 accommodation line
+    assert len(hotel_lines) == 1
+    hotel_line = hotel_lines[0]
+    assert hotel_line["amount"] == "3500.00"
+    assert hotel_line["quantity"] == "1"
+    assert hotel_line["estimated"] is True
+    assert hotel_line["source_ref"] == "benchmark_hotel_estimate"
+    assert hotel_line["basis"] == "hotel_stay_unknown (1 rooms, 1 nights)"
+    assert hotel_line["unknown_reason"] is None
+
+    # Unverified tolls remain explicit unknown lines without zero coercion
+    toll_lines = [
+        line for line in lines if line["category"] == BudgetCategory.TOLLS_AND_FEES.value
+    ]
+    for tl in toll_lines:
+        assert tl["amount"] is None
+        assert tl["unknown_reason"] is not None
+
+    # Known total includes accommodation benchmark amount exactly once
+    assert Decimal(str(summary["known_total"]["amount"])) >= Decimal("3500.00")
+    assert summary["is_complete"] is False
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_lodging_accounting_same_day_trip() -> None:
+    """Verifies that same-day trips (calendar_nights == 0) yield zero lodging nights and zero accommodation lines."""
+    state = _make_sample_state()
+    state["brief"]["start_date"] = "2026-11-25"
+    state["brief"]["end_date"] = "2026-11-25"
+    state["brief"]["rooms"] = 1
+    state["brief"]["destinations"] = [
+        {
+            "name": "Srirangapatna",
+            "latitude": 12.4218,
+            "longitude": 76.6932,
+            "stay_days": 1,
+        }
+    ]
+
+    res = await compute_budget_node(state)
+    assert res["current_step"] == "budget_computed"
+    lines = res["budget_lines"]
+
+    hotel_lines = [
+        line for line in lines if line["category"] == BudgetCategory.ACCOMMODATION.value
+    ]
+    # Same-day trip requires zero overnight accommodation
+    assert len(hotel_lines) == 0
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_lodging_accounting_multiple_rooms() -> None:
+    """Verifies that multiple rooms correctly scale the room-night quantity across calendar nights."""
+    state = _make_sample_state()
+    state["brief"]["start_date"] = "2026-11-25"
+    state["brief"]["end_date"] = "2026-11-27"  # 2 calendar nights
+    state["brief"]["rooms"] = 3  # 3 rooms -> 6 room-nights
+    state["brief"]["destinations"] = [
+        {"name": "Srirangapatna", "latitude": 12.4218, "longitude": 76.6932, "stay_days": 1},
+        {"name": "Mandya", "latitude": 12.5230, "longitude": 76.8970, "stay_days": 1},
+    ]
+
+    res = await compute_budget_node(state)
+    assert res["current_step"] == "budget_computed"
+    lines = res["budget_lines"]
+
+    hotel_lines = [
+        line for line in lines if line["category"] == BudgetCategory.ACCOMMODATION.value
+    ]
+    assert len(hotel_lines) == 1
+    assert hotel_lines[0]["amount"] == "3500.00"
+    assert hotel_lines[0]["quantity"] == "6"  # 3 rooms * 2 nights
+    assert hotel_lines[0]["basis"] == "hotel_stay_unknown (3 rooms, 2 nights)"
+    assert hotel_lines[0]["estimated"] is True
+
+
+@pytest.mark.asyncio
+async def test_compute_budget_lodging_accounting_single_destination_known_location() -> None:
+    """Verifies that single-destination trips preserve the destination name as the lodging location."""
+    state = _make_sample_state()
+    state["brief"]["start_date"] = "2026-11-25"
+    state["brief"]["end_date"] = "2026-11-26"  # 1 night
+    state["brief"]["rooms"] = 1
+    state["brief"]["destinations"] = [
+        {"name": "Mysore", "latitude": 12.2958, "longitude": 76.6394, "stay_days": 1}
+    ]
+
+    res = await compute_budget_node(state)
+    lines = res["budget_lines"]
+
+    hotel_lines = [
+        line for line in lines if line["category"] == BudgetCategory.ACCOMMODATION.value
+    ]
+    assert len(hotel_lines) == 1
+    assert hotel_lines[0]["basis"] == "hotel_stay_Mysore (1 rooms, 1 nights)"
+    assert hotel_lines[0]["quantity"] == "1"
+    assert hotel_lines[0]["amount"] == "3500.00"

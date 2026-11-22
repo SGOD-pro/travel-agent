@@ -1,0 +1,2578 @@
+{
+  "execution_date": "2026-11-22",
+  "provider_readiness": {
+    "postgresql": {
+      "readiness": "PASS",
+      "details": "Connected to acceptance_db (28 tables, alembic 0015_trip_route_itinerary)"
+    },
+    "bedrock": {
+      "readiness": "PASS",
+      "model_id": "apac.amazon.nova-lite-v1:0",
+      "region": "ap-south-1",
+      "account_ending": "6027",
+      "latency_ms": 555.2,
+      "reply": "READY"
+    },
+    "serpapi": {
+      "readiness": "PASS",
+      "status_code": 200,
+      "latency_ms": 492.7
+    },
+    "scrapling_http": {
+      "readiness": "PASS",
+      "status_code": 200,
+      "latency_ms": 728.2
+    },
+    "valhalla": {
+      "readiness": "PASS",
+      "status_code": 200,
+      "latency_ms": 599.0
+    },
+    "open_meteo": {
+      "readiness": "PASS",
+      "status_code": 200,
+      "latency_ms": 744.1
+    },
+    "obscura": {
+      "readiness": "PASS",
+      "path": "/home/swyra/projects/travel-agent/backend/build/bin/obscura",
+      "size_bytes": 80887544
+    },
+    "remote_laya": {
+      "readiness": "OFFLINE",
+      "url": "https://missed-catalog-tub-renewal.trycloudflare.com/v1/systemone",
+      "prerequisite": "Cloudflare tunnel on Kaggle (missed-catalog-tub-renewal.trycloudflare.com) is down or not resolving DNS",
+      "details": "[Errno -2] Name or service not known"
+    }
+  },
+  "outbox_events_processed": [
+    {
+      "event_id": "e42bfe64-aa41-4b86-953d-2680ce7d4b72",
+      "kind": "EXECUTION_START",
+      "duration_ms": 91.71,
+      "outcome": "WAITING_TASKS",
+      "tasks_dispatched": 1
+    },
+    {
+      "event_id": "42c526fb-ef08-4c3e-9dfc-14bda97c7c28",
+      "kind": "TASK_DISPATCH",
+      "worker": "EVIDENCE",
+      "action": "collect",
+      "duration_ms": 2810.0
+    },
+    {
+      "event_id": "f6fd588d-3b64-4f89-8133-a7609e749fd9",
+      "kind": "TASK_COMPLETED",
+      "status": "APPLIED",
+      "graph_resumed": true,
+      "duration_ms": 47.15
+    },
+    {
+      "event_id": "d7a7b71c-3349-4008-9dca-6b59c87e1cb0",
+      "kind": "EXECUTION_RESUME",
+      "outcome": "WAITING_TASKS",
+      "tasks_dispatched": 1,
+      "duration_ms": 858.17
+    },
+    {
+      "event_id": "606d81d1-eb5c-4827-b302-685be8be785b",
+      "kind": "TASK_DISPATCH",
+      "worker": "OPTIMIZER",
+      "action": "solve",
+      "duration_ms": 655.54
+    },
+    {
+      "event_id": "c64c5349-90c6-43b4-9a33-1e4ea96b7fb6",
+      "kind": "TASK_COMPLETED",
+      "status": "APPLIED",
+      "graph_resumed": true,
+      "duration_ms": 41.54
+    },
+    {
+      "event_id": "956186c7-cd64-4674-82c1-4277e0c361ae",
+      "kind": "EXECUTION_RESUME",
+      "outcome": "SUCCEEDED",
+      "tasks_dispatched": 0,
+      "duration_ms": 132.55
+    }
+  ],
+  "api_journey": {
+    "create_trip_request": {
+      "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+      "brief": {
+        "origin_name": "Bengaluru",
+        "origin_lat": 12.9716,
+        "origin_lng": 77.5946,
+        "destinations": [
+          {
+            "name": "Mysuru",
+            "latitude": 12.2958,
+            "longitude": 76.6394,
+            "stay_days": 1,
+            "confidence": 1.0
+          },
+          {
+            "name": "Madikeri",
+            "latitude": 12.4244,
+            "longitude": 75.7382,
+            "stay_days": 1,
+            "confidence": 1.0
+          }
+        ],
+        "start_date": "2026-11-24",
+        "end_date": "2026-11-26",
+        "timezone": "Asia/Kolkata",
+        "adults": 2,
+        "child_ages": [],
+        "rooms": 1,
+        "target_budget": {
+          "amount": "25000.000000",
+          "currency": "INR"
+        },
+        "preferred_modes": [
+          "car_petrol"
+        ],
+        "dietary_preferences": [
+          "local food"
+        ],
+        "accessibility_requirements": [],
+        "hard_constraints": [
+          "heritage",
+          "coffee estates",
+          "scenic viewpoints",
+          "relaxed"
+        ]
+      }
+    },
+    "create_trip_response": {
+      "status_code": 201,
+      "body": {
+        "id": "f1b4e2d1-5146-4312-b9df-9f2eb4a32452",
+        "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+        "current_version": 1,
+        "state": "draft",
+        "status": null,
+        "brief": {
+          "origin_name": "Bengaluru",
+          "origin_lat": 12.9716,
+          "origin_lng": 77.5946,
+          "destinations": [
+            {
+              "name": "Mysuru",
+              "latitude": 12.2958,
+              "longitude": 76.6394,
+              "confidence": 1.0,
+              "provider_place_id": null,
+              "stay_days": 1,
+              "visit_date": null,
+              "day_offset": null
+            },
+            {
+              "name": "Madikeri",
+              "latitude": 12.4244,
+              "longitude": 75.7382,
+              "confidence": 1.0,
+              "provider_place_id": null,
+              "stay_days": 1,
+              "visit_date": null,
+              "day_offset": null
+            }
+          ],
+          "start_date": "2026-11-24",
+          "end_date": "2026-11-26",
+          "timezone": "Asia/Kolkata",
+          "adults": 2,
+          "child_ages": [],
+          "rooms": 1,
+          "target_budget": {
+            "amount": "25000.000000",
+            "currency": "INR"
+          },
+          "preferred_modes": [
+            "car_petrol"
+          ],
+          "dietary_preferences": [
+            "local food"
+          ],
+          "accessibility_requirements": [],
+          "hard_constraints": [
+            "heritage",
+            "coffee estates",
+            "scenic viewpoints",
+            "relaxed"
+          ]
+        },
+        "current_route_id": null
+      }
+    },
+    "start_plan_request": {
+      "url": "/api/v1/trips/f1b4e2d1-5146-4312-b9df-9f2eb4a32452/plans",
+      "headers": {
+        "Idempotency-Key": "[REDACTED]"
+      },
+      "body": {
+        "workflow": "TRAVEL",
+        "planning_options": {}
+      }
+    },
+    "start_plan_response": {
+      "status_code": 202,
+      "body": {
+        "job_id": "3231e609-bca1-4747-afea-844400ff5aab",
+        "status": "QUEUED",
+        "status_url": "/api/v1/jobs/3231e609-bca1-4747-afea-844400ff5aab"
+      }
+    },
+    "job_polls": [
+      {
+        "poll": 1,
+        "elapsed_seconds": 2.0,
+        "status": "WAITING_TASKS",
+        "progress": {
+          "tasks_total": 1,
+          "tasks_completed": 0,
+          "tasks_failed": 0,
+          "workflow": "TRAVEL"
+        },
+        "timeline_count": 3,
+        "error": null
+      },
+      {
+        "poll": 2,
+        "elapsed_seconds": 4.1,
+        "status": "RUNNING",
+        "progress": {
+          "tasks_total": 1,
+          "tasks_completed": 1,
+          "tasks_failed": 0,
+          "workflow": "TRAVEL"
+        },
+        "timeline_count": 5,
+        "error": null
+      },
+      {
+        "poll": 3,
+        "elapsed_seconds": 6.1,
+        "status": "WAITING_TASKS",
+        "progress": {
+          "tasks_total": 2,
+          "tasks_completed": 2,
+          "tasks_failed": 0,
+          "workflow": "TRAVEL"
+        },
+        "timeline_count": 8,
+        "error": null
+      },
+      {
+        "poll": 4,
+        "elapsed_seconds": 8.1,
+        "status": "SUCCEEDED",
+        "progress": {
+          "tasks_total": 2,
+          "tasks_completed": 2,
+          "tasks_failed": 0,
+          "workflow": "TRAVEL"
+        },
+        "timeline_count": 12,
+        "error": null
+      }
+    ],
+    "itinerary_endpoint": {
+      "status_code": 200,
+      "body": {
+        "trip_id": "f1b4e2d1-5146-4312-b9df-9f2eb4a32452",
+        "version": 1,
+        "state": "proposed",
+        "status": "ready_for_approval",
+        "schedule": {
+          "legs": [],
+          "stops": [],
+          "is_optimal": false,
+          "total_travel_minutes": 0
+        },
+        "budget_summary": {
+          "is_complete": true,
+          "known_total": {
+            "amount": "7000.000000",
+            "currency": "INR"
+          },
+          "unknown_count": 0,
+          "estimated_count": 2,
+          "unknown_reasons": []
+        },
+        "budget_lines": [
+          {
+            "basis": "hotel_stay_Mysuru (1 rooms, 1 nights)",
+            "amount": "3500.00",
+            "category": "accommodation",
+            "currency": "INR",
+            "quantity": "1",
+            "estimated": true,
+            "source_ref": "benchmark_hotel_estimate",
+            "unknown_reason": null
+          },
+          {
+            "basis": "hotel_stay_Madikeri (1 rooms, 1 nights)",
+            "amount": "3500.00",
+            "category": "accommodation",
+            "currency": "INR",
+            "quantity": "1",
+            "estimated": true,
+            "source_ref": "benchmark_hotel_estimate",
+            "unknown_reason": null
+          }
+        ],
+        "editorial_recommendations": [
+          {
+            "point": {
+              "lat": 12.2958,
+              "lng": 76.6394
+            },
+            "category": "destination",
+            "place_id": "0a417800-6688-4b54-b05f-375f124c0d94",
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Mysuru",
+                "point": {
+                  "lat": 12.2958,
+                  "lng": 76.6394
+                },
+                "category": "destination"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+              "evidence_note": "No supporting source observations or verified claims exist. Candidate place preserved only as editorial recommendation.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 0.0,
+              "existence_verification": "UNVERIFIED"
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Mysuru",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 0.0,
+            "suggested_stay_minutes": 180
+          },
+          {
+            "point": {
+              "lat": 12.4244,
+              "lng": 75.7382
+            },
+            "category": "destination",
+            "place_id": "3dedb070-8105-4be8-befb-007c31440001",
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Madikeri",
+                "point": {
+                  "lat": 12.4244,
+                  "lng": 75.7382
+                },
+                "category": "destination"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+              "evidence_note": "No supporting source observations or verified claims exist. Candidate place preserved only as editorial recommendation.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 0.0,
+              "existence_verification": "UNVERIFIED"
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Madikeri",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 0.0,
+            "suggested_stay_minutes": 180
+          },
+          {
+            "point": {
+              "lat": 12.326606499999999,
+              "lng": 76.6291529
+            },
+            "category": "restaurant",
+            "place_id": "d97bc810-ac6b-4fc0-b701-280ab28a5fda",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Cloverdale Cuisine",
+                "point": {
+                  "lat": 12.326606499999999,
+                  "lng": 76.6291529
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Cloverdale+Cuisine",
+                "https://www.google.com/maps/search?api=1&query=Cloverdale+Cuisine"
+              ],
+              "uncertainty": "VERIFIED",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": "18:00:00",
+            "diagnostics": {
+              "hours_status": "HOURS_ASSUMED",
+              "corridor_note": "Candidate within corridor bounds (3.6km <= 100.0km). Coordinate match alone does not prove existence.",
+              "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+              "corridor_distance_km": 3.6,
+              "existence_verification": "VERIFIED"
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "HOURS_ASSUMED",
+            "is_candidate": true,
+            "primary_name": "Cloverdale Cuisine",
+            "window_start": "09:00:00",
+            "existence_status": "VERIFIED",
+            "is_hours_assumed": true,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.6,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3110994,
+              "lng": 76.6593602
+            },
+            "category": "restaurant",
+            "place_id": "97b30595-387e-4e28-9dee-a6e881f836bb",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Gufha Restaurant, Mysuru",
+                "point": {
+                  "lat": 12.3110994,
+                  "lng": 76.6593602
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.paihotels.com/vista-mysore/restaurants/restaurants.html"
+              ],
+              "uncertainty": "VERIFIED",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": "18:00:00",
+            "diagnostics": {
+              "hours_status": "HOURS_ASSUMED",
+              "corridor_note": "Candidate within corridor bounds (2.8km <= 100.0km). Coordinate match alone does not prove existence.",
+              "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+              "corridor_distance_km": 2.76,
+              "existence_verification": "VERIFIED"
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "HOURS_ASSUMED",
+            "is_candidate": true,
+            "primary_name": "Gufha Restaurant, Mysuru",
+            "window_start": "09:00:00",
+            "existence_status": "VERIFIED",
+            "is_hours_assumed": true,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 2.76,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.306799999999999,
+              "lng": 76.65121839999999
+            },
+            "category": "restaurant",
+            "place_id": "4e949734-f757-4708-947a-2f9708f9e642",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Aatithya Grand Pure Veg Restaurant",
+                "point": {
+                  "lat": 12.306799999999999,
+                  "lng": 76.65121839999999
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Aatithya+Grand+Pure+Veg+Restaurant",
+                "https://www.google.com/maps/search?api=1&query=Aatithya+Grand+Pure+Veg+Restaurant"
+              ],
+              "uncertainty": "VERIFIED",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": "18:00:00",
+            "diagnostics": {
+              "hours_status": "HOURS_ASSUMED",
+              "corridor_note": "Candidate within corridor bounds (1.8km <= 100.0km). Coordinate match alone does not prove existence.",
+              "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+              "corridor_distance_km": 1.77,
+              "existence_verification": "VERIFIED"
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "HOURS_ASSUMED",
+            "is_candidate": true,
+            "primary_name": "Aatithya Grand Pure Veg Restaurant",
+            "window_start": "09:00:00",
+            "existence_status": "VERIFIED",
+            "is_hours_assumed": true,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1.77,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.318572099999999,
+              "lng": 76.6594811
+            },
+            "category": "restaurant",
+            "place_id": "5a1fd29e-fd7b-42eb-a1a7-2394af228b91",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Mahaveer veg restaurant",
+                "point": {
+                  "lat": 12.318572099999999,
+                  "lng": 76.6594811
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Mahaveer+veg+restaurant",
+                "https://www.google.com/maps/search?api=1&query=Mahaveer+veg+restaurant"
+              ],
+              "uncertainty": "VERIFIED",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": "18:00:00",
+            "diagnostics": {
+              "hours_status": "HOURS_ASSUMED",
+              "corridor_note": "Candidate within corridor bounds (3.2km <= 100.0km). Coordinate match alone does not prove existence.",
+              "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+              "corridor_distance_km": 3.25,
+              "existence_verification": "VERIFIED"
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "HOURS_ASSUMED",
+            "is_candidate": true,
+            "primary_name": "Mahaveer veg restaurant",
+            "window_start": "09:00:00",
+            "existence_status": "VERIFIED",
+            "is_hours_assumed": true,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.25,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3921466,
+              "lng": 75.7222038
+            },
+            "category": "attraction",
+            "place_id": "ee8083a1-d0af-4e4e-9886-3b16a45e2fe6",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Glass Bridge Madikeri",
+                "point": {
+                  "lat": 12.3921466,
+                  "lng": 75.7222038
+                },
+                "category": "attraction"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Glass+Bridge+Madikeri",
+                "https://www.google.com/maps/search?api=1&query=Glass+Bridge+Madikeri"
+              ],
+              "uncertainty": "VERIFIED",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.215223+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": "18:00:00",
+            "diagnostics": {
+              "hours_status": "HOURS_ASSUMED",
+              "corridor_note": "Candidate within corridor bounds (4.0km <= 100.0km). Coordinate match alone does not prove existence.",
+              "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "deferral_reason": "Deferred: candidate exceeds provider matrix cell capacity for route optimization (capacity=10 stops, max cells=100)",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+              "corridor_distance_km": 3.98,
+              "existence_verification": "VERIFIED"
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "HOURS_ASSUMED",
+            "is_candidate": true,
+            "primary_name": "Glass Bridge Madikeri",
+            "window_start": "09:00:00",
+            "existence_status": "VERIFIED",
+            "is_hours_assumed": true,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.98,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3225163,
+              "lng": 76.62272399999999
+            },
+            "category": "attraction",
+            "place_id": "7877ce5b-e4ef-45cf-920c-af74ea336715",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "MYSURU KITCHEN",
+                "point": {
+                  "lat": 12.3225163,
+                  "lng": 76.62272399999999
+                },
+                "category": "attraction"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=MYSURU+KITCHEN",
+                "https://www.google.com/maps/search?api=1&query=MYSURU+KITCHEN"
+              ],
+              "uncertainty": "VERIFIED",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": "18:00:00",
+            "diagnostics": {
+              "hours_status": "HOURS_ASSUMED",
+              "corridor_note": "Candidate within corridor bounds (3.5km <= 100.0km). Coordinate match alone does not prove existence.",
+              "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "deferral_reason": "Deferred: candidate exceeds provider matrix cell capacity for route optimization (capacity=10 stops, max cells=100)",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+              "corridor_distance_km": 3.48,
+              "existence_verification": "VERIFIED"
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "HOURS_ASSUMED",
+            "is_candidate": true,
+            "primary_name": "MYSURU KITCHEN",
+            "window_start": "09:00:00",
+            "existence_status": "VERIFIED",
+            "is_hours_assumed": true,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.48,
+            "suggested_stay_minutes": 60
+          }
+        ],
+        "excluded_candidates": [
+          {
+            "point": {
+              "lat": 22.4285,
+              "lng": 87.8712
+            },
+            "category": "restaurant",
+            "place_id": null,
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Kolaghat Express Highway Dhaba",
+                "point": {
+                  "lat": 22.4285,
+                  "lng": 87.8712
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "corridor_validation_failed"
+              ],
+              "brief_corridor_validated": false
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_status": "OUTSIDE_CORRIDOR",
+              "rejection_reason": "Candidate distance (1512.3km) exceeds maximum corridor boundary (100.0km). Discarded."
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Kolaghat Express Highway Dhaba",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1512.3,
+            "suggested_stay_minutes": 45
+          },
+          {
+            "point": {
+              "lat": 22.4691,
+              "lng": 87.9154
+            },
+            "category": "heritage",
+            "place_id": null,
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Deulti Rural Heritage Center",
+                "point": {
+                  "lat": 22.4691,
+                  "lng": 87.9154
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "corridor_validation_failed"
+              ],
+              "brief_corridor_validated": false
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_status": "OUTSIDE_CORRIDOR",
+              "rejection_reason": "Candidate distance (1518.7km) exceeds maximum corridor boundary (100.0km). Discarded."
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Deulti Rural Heritage Center",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1518.69,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 22.2982,
+              "lng": 87.9251
+            },
+            "category": "heritage",
+            "place_id": null,
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Tamluk Bargabhima Temple",
+                "point": {
+                  "lat": 22.2982,
+                  "lng": 87.9251
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "corridor_validation_failed"
+              ],
+              "brief_corridor_validated": false
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_status": "OUTSIDE_CORRIDOR",
+              "rejection_reason": "Candidate distance (1506.7km) exceeds maximum corridor boundary (100.0km). Discarded."
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Tamluk Bargabhima Temple",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1506.71,
+            "suggested_stay_minutes": 45
+          },
+          {
+            "point": {
+              "lat": 22.1865,
+              "lng": 87.9892
+            },
+            "category": "heritage",
+            "place_id": null,
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Mahishadal Rajbari Palace",
+                "point": {
+                  "lat": 22.1865,
+                  "lng": 87.9892
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "corridor_validation_failed"
+              ],
+              "brief_corridor_validated": false
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_status": "OUTSIDE_CORRIDOR",
+              "rejection_reason": "Candidate distance (1503.4km) exceeds maximum corridor boundary (100.0km). Discarded."
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Mahishadal Rajbari Palace",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1503.42,
+            "suggested_stay_minutes": 90
+          },
+          {
+            "point": {
+              "lat": 21.6264,
+              "lng": 87.5093
+            },
+            "category": "nature",
+            "place_id": null,
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Digha Sea Beach Promenade",
+                "point": {
+                  "lat": 21.6264,
+                  "lng": 87.5093
+                },
+                "category": "nature"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "corridor_validation_failed"
+              ],
+              "brief_corridor_validated": false
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_status": "OUTSIDE_CORRIDOR",
+              "rejection_reason": "Candidate distance (1425.2km) exceeds maximum corridor boundary (100.0km). Discarded."
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Digha Sea Beach Promenade",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1425.18,
+            "suggested_stay_minutes": 120
+          }
+        ],
+        "weather_advisories": [
+          {
+            "is_day": true,
+            "latitude": 22.5726,
+            "condition": "sunny",
+            "longitude": 88.3639,
+            "stop_name": "Kolkata (Howrah Hub)",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 0,
+            "forecast_time": "2026-11-01T12:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 65,
+            "precipitation_mm": 0.0,
+            "temperature_celsius": 31.0,
+            "precipitation_probability": 10,
+            "apparent_temperature_celsius": 35.0
+          },
+          {
+            "is_day": true,
+            "latitude": 22.4285,
+            "condition": "sunny",
+            "longitude": 87.8712,
+            "stop_name": "Kolaghat Express Highway Plaza",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 1,
+            "forecast_time": "2026-11-01T13:30:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 70,
+            "precipitation_mm": 0.0,
+            "temperature_celsius": 30.5,
+            "precipitation_probability": 15,
+            "apparent_temperature_celsius": 34.0
+          },
+          {
+            "is_day": true,
+            "latitude": 22.2341,
+            "condition": "cloudy",
+            "longitude": 87.9025,
+            "stop_name": "Nandakumar Junction",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 2,
+            "forecast_time": "2026-11-01T15:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 75,
+            "precipitation_mm": 0.5,
+            "temperature_celsius": 29.8,
+            "precipitation_probability": 30,
+            "apparent_temperature_celsius": 33.5
+          },
+          {
+            "is_day": true,
+            "latitude": 21.6266,
+            "condition": "rainy",
+            "longitude": 87.5074,
+            "stop_name": "New Digha Sea Beach",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "moderate",
+            "weather_code": 61,
+            "forecast_time": "2026-11-01T17:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 85,
+            "precipitation_mm": 12.0,
+            "temperature_celsius": 28.5,
+            "precipitation_probability": 65,
+            "apparent_temperature_celsius": 32.0
+          }
+        ],
+        "weather_status": "AVAILABLE",
+        "validated_candidates": [
+          {
+            "point": {
+              "lat": 12.2958,
+              "lng": 76.6394
+            },
+            "category": "destination",
+            "place_id": "0a417800-6688-4b54-b05f-375f124c0d94",
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Mysuru",
+                "point": {
+                  "lat": 12.2958,
+                  "lng": 76.6394
+                },
+                "category": "destination"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 0.0
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Mysuru",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 0.0,
+            "suggested_stay_minutes": 180
+          },
+          {
+            "point": {
+              "lat": 12.4244,
+              "lng": 75.7382
+            },
+            "category": "destination",
+            "place_id": "3dedb070-8105-4be8-befb-007c31440001",
+            "provenance": {
+              "source": "llm_proposal",
+              "identity": {
+                "name": "Madikeri",
+                "point": {
+                  "lat": 12.4244,
+                  "lng": 75.7382
+                },
+                "category": "destination"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": null,
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 0.0
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Madikeri",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 0.0,
+            "suggested_stay_minutes": 180
+          },
+          {
+            "point": {
+              "lat": 12.2949849,
+              "lng": 76.68198629999999
+            },
+            "category": "heritage",
+            "place_id": "83aba672-a5df-4119-b20b-d22395945c6e",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Gowri\u2019s Sand Museum Mysore",
+                "point": {
+                  "lat": 12.2949849,
+                  "lng": 76.68198629999999
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.facebook.com/share/1DXKT9qCzB/?mibextid=wwXIfr"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.059946+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (3.9km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 3.89
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Gowri\u2019s Sand Museum Mysore",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.89,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.305163,
+              "lng": 76.65517489999999
+            },
+            "category": "heritage",
+            "place_id": "c60513a3-9b88-4222-9881-c24eb996b61c",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Mysuru Palace",
+                "point": {
+                  "lat": 12.305163,
+                  "lng": 76.65517489999999
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://mysorepalace.karnataka.gov.in/"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.059946+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (2.0km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 2.01
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Mysuru Palace",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 2.01,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3068216,
+              "lng": 76.6497928
+            },
+            "category": "heritage",
+            "place_id": "e22f5492-75a4-48c9-a6a3-b387a014974b",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Jaganmohana Palace Art Gallery & Auditorium",
+                "point": {
+                  "lat": 12.3068216,
+                  "lng": 76.6497928
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Jaganmohana+Palace+Art+Gallery+&+Auditorium"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.059946+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (1.7km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 1.67
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Jaganmohana Palace Art Gallery & Auditorium",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1.67,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3163393,
+              "lng": 76.643323
+            },
+            "category": "heritage",
+            "place_id": "e215516a-1865-4ac0-a035-0d4eecd8cb32",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "MYSURU RAILWAY MUSEUM",
+                "point": {
+                  "lat": 12.3163393,
+                  "lng": 76.643323
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "http://mysururailmuseum.com/"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.059946+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (2.3km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 2.32
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "MYSURU RAILWAY MUSEUM",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 2.32,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3024092,
+              "lng": 76.6638194
+            },
+            "category": "nature",
+            "place_id": "86764d90-c913-4aab-a760-90ddba7bd065",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Sri Chamarajendra Zoological Gardens",
+                "point": {
+                  "lat": 12.3024092,
+                  "lng": 76.6638194
+                },
+                "category": "nature"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.mysuruzoo.info/"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.059946+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (2.8km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 2.75
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Sri Chamarajendra Zoological Gardens",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 2.75,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.4144899,
+              "lng": 75.7368986
+            },
+            "category": "nature",
+            "place_id": "be56c97a-089d-4b36-9aa2-826291cdd1b3",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Raja Seat Garden",
+                "point": {
+                  "lat": 12.4144899,
+                  "lng": 75.7368986
+                },
+                "category": "nature"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://coorgtourism.co.in/raja-s-seat-coorg"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.215223+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (1.1km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 1.11
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Raja Seat Garden",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1.11,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.4211545,
+              "lng": 75.73871609999999
+            },
+            "category": "heritage",
+            "place_id": "a150e4c8-0363-4415-81af-0e7cda2fd5f3",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Madikeri Fort",
+                "point": {
+                  "lat": 12.4211545,
+                  "lng": 75.73871609999999
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "http://www.karnatakatourism.org/"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.215223+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (0.4km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 0.37
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Madikeri Fort",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 0.37,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.420355899999999,
+              "lng": 75.7392301
+            },
+            "category": "heritage",
+            "place_id": "5aeb5f8b-fec4-4617-9575-6b8743ba8ea1",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Government Museum -Madikeri",
+                "point": {
+                  "lat": 12.420355899999999,
+                  "lng": 75.7392301
+                },
+                "category": "heritage"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Government+Museum+-Madikeri"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.215223+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 0.46
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Government Museum -Madikeri",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 0.46,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.4578946,
+              "lng": 75.7164803
+            },
+            "category": "nature",
+            "place_id": "e92fa39e-b6d3-45e0-813f-bcf4e98eb66f",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Abbi Waterfall",
+                "point": {
+                  "lat": 12.4578946,
+                  "lng": 75.7164803
+                },
+                "category": "nature"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Abbi+Waterfall"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.215223+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (4.4km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 4.41
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Abbi Waterfall",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 4.41,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3921466,
+              "lng": 75.7222038
+            },
+            "category": "attraction",
+            "place_id": "ee8083a1-d0af-4e4e-9886-3b16a45e2fe6",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Glass Bridge Madikeri",
+                "point": {
+                  "lat": 12.3921466,
+                  "lng": 75.7222038
+                },
+                "category": "attraction"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Glass+Bridge+Madikeri"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.215223+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (4.0km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 3.98
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Glass Bridge Madikeri",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.98,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3225163,
+              "lng": 76.62272399999999
+            },
+            "category": "attraction",
+            "place_id": "7877ce5b-e4ef-45cf-920c-af74ea336715",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "MYSURU KITCHEN",
+                "point": {
+                  "lat": 12.3225163,
+                  "lng": 76.62272399999999
+                },
+                "category": "attraction"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=MYSURU+KITCHEN"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (3.5km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 3.48
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "MYSURU KITCHEN",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.48,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.326606499999999,
+              "lng": 76.6291529
+            },
+            "category": "restaurant",
+            "place_id": "d97bc810-ac6b-4fc0-b701-280ab28a5fda",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Cloverdale Cuisine",
+                "point": {
+                  "lat": 12.326606499999999,
+                  "lng": 76.6291529
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Cloverdale+Cuisine"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (3.6km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 3.6
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Cloverdale Cuisine",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.6,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.3110994,
+              "lng": 76.6593602
+            },
+            "category": "restaurant",
+            "place_id": "97b30595-387e-4e28-9dee-a6e881f836bb",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Gufha Restaurant, Mysuru",
+                "point": {
+                  "lat": 12.3110994,
+                  "lng": 76.6593602
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.paihotels.com/vista-mysore/restaurants/restaurants.html"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (2.8km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 2.76
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Gufha Restaurant, Mysuru",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 2.76,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.306799999999999,
+              "lng": 76.65121839999999
+            },
+            "category": "restaurant",
+            "place_id": "4e949734-f757-4708-947a-2f9708f9e642",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Aatithya Grand Pure Veg Restaurant",
+                "point": {
+                  "lat": 12.306799999999999,
+                  "lng": 76.65121839999999
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Aatithya+Grand+Pure+Veg+Restaurant"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (1.8km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 1.77
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Aatithya Grand Pure Veg Restaurant",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 1.77,
+            "suggested_stay_minutes": 60
+          },
+          {
+            "point": {
+              "lat": 12.318572099999999,
+              "lng": 76.6594811
+            },
+            "category": "restaurant",
+            "place_id": "5a1fd29e-fd7b-42eb-a1a7-2394af228b91",
+            "provenance": {
+              "source": "evidence_observation",
+              "identity": {
+                "name": "Mahaveer veg restaurant",
+                "point": {
+                  "lat": 12.318572099999999,
+                  "lng": 76.6594811
+                },
+                "category": "restaurant"
+              },
+              "owner_id": "f33066c2-422a-481b-8454-195e5d9d0ca0",
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Mahaveer+veg+restaurant"
+              ],
+              "uncertainty": "EDITORIAL_DISCOVERY",
+              "execution_id": "3231e609-bca1-4747-afea-844400ff5aab",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "existence_unverified"
+              ],
+              "brief_corridor_validated": true
+            },
+            "window_end": null,
+            "diagnostics": {
+              "corridor_note": "Candidate within corridor bounds (3.2km <= 100.0km). Coordinate match alone does not prove existence.",
+              "corridor_status": "WITHIN_CORRIDOR",
+              "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+              "corridor_distance_km": 3.25
+            },
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "hours_status": "UNKNOWN",
+            "is_candidate": true,
+            "primary_name": "Mahaveer veg restaurant",
+            "window_start": null,
+            "existence_status": "UNVERIFIED",
+            "is_hours_assumed": false,
+            "price_estimate_inr": null,
+            "corridor_distance_km": 3.25,
+            "suggested_stay_minutes": 60
+          }
+        ],
+        "discovered_places": [
+          {
+            "lat": 12.2958,
+            "lng": 76.6394,
+            "name": "Mysuru",
+            "category": "destination",
+            "latitude": 12.2958,
+            "longitude": 76.6394,
+            "confidence": 1.0,
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "is_candidate": true,
+            "stay_minutes": 180
+          },
+          {
+            "lat": 12.4244,
+            "lng": 75.7382,
+            "name": "Madikeri",
+            "category": "destination",
+            "latitude": 12.4244,
+            "longitude": 75.7382,
+            "confidence": 1.0,
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "is_candidate": true,
+            "stay_minutes": 180
+          },
+          {
+            "lat": 22.4285,
+            "lng": 87.8712,
+            "name": "Kolaghat Express Highway Dhaba",
+            "address": "NH16, Kolaghat, West Bengal 721134",
+            "category": "restaurant",
+            "latitude": 22.4285,
+            "longitude": 87.8712,
+            "confidence": 0.95,
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "is_candidate": true,
+            "stay_minutes": 45,
+            "opening_hours": "06:00 - 23:00",
+            "price_estimate_inr": 350.0
+          },
+          {
+            "lat": 22.4691,
+            "lng": 87.9154,
+            "name": "Deulti Rural Heritage Center",
+            "address": "Samtaber, Deulti, Howrah, West Bengal 711303",
+            "category": "heritage",
+            "latitude": 22.4691,
+            "longitude": 87.9154,
+            "confidence": 0.88,
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "is_candidate": true,
+            "stay_minutes": 60,
+            "opening_hours": "09:00 - 17:30",
+            "price_estimate_inr": 50.0
+          },
+          {
+            "lat": 22.2982,
+            "lng": 87.9251,
+            "name": "Tamluk Bargabhima Temple",
+            "address": "Tamluk, Purba Medinipur, West Bengal 721636",
+            "category": "heritage",
+            "latitude": 22.2982,
+            "longitude": 87.9251,
+            "confidence": 0.92,
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "is_candidate": true,
+            "stay_minutes": 45,
+            "opening_hours": "06:00 - 12:30, 15:30 - 20:30",
+            "price_estimate_inr": 0.0
+          },
+          {
+            "lat": 22.1865,
+            "lng": 87.9892,
+            "name": "Mahishadal Rajbari Palace",
+            "address": "Mahishadal, Purba Medinipur, West Bengal 721628",
+            "category": "heritage",
+            "latitude": 22.1865,
+            "longitude": 87.9892,
+            "confidence": 0.85,
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "is_candidate": true,
+            "stay_minutes": 90,
+            "opening_hours": "10:00 - 17:00",
+            "price_estimate_inr": 100.0
+          },
+          {
+            "lat": 21.6264,
+            "lng": 87.5093,
+            "name": "Digha Sea Beach Promenade",
+            "address": "Old Digha, Purba Medinipur, West Bengal 721428",
+            "category": "nature",
+            "latitude": 21.6264,
+            "longitude": 87.5093,
+            "confidence": 0.98,
+            "uncertainty": "EDITORIAL_DISCOVERY",
+            "is_candidate": true,
+            "stay_minutes": 120,
+            "opening_hours": "Open 24 hours",
+            "price_estimate_inr": 0.0
+          }
+        ],
+        "food_research": {
+          "reason": "Dining recommendations retrieved without source-backed regional culinary dishes",
+          "status": "PARTIAL",
+          "local_dishes": [],
+          "verified_dining_count": 4,
+          "dining_recommendations": [
+            {
+              "name": "Cloverdale Cuisine",
+              "address": null,
+              "category": "restaurant",
+              "identity": {
+                "name": "Cloverdale Cuisine",
+                "point": {
+                  "lat": 12.326606499999999,
+                  "lng": 76.6291529
+                },
+                "category": "restaurant"
+              },
+              "source_url": "https://www.google.com/maps/search/?api=1&query=Cloverdale+Cuisine",
+              "coordinates": {
+                "lat": 12.326606499999999,
+                "lng": 76.6291529
+              },
+              "is_verified": true,
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Cloverdale+Cuisine",
+                "https://www.google.com/maps/search?api=1&query=Cloverdale+Cuisine"
+              ],
+              "uncertainty": "VERIFIED",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ]
+            },
+            {
+              "name": "Gufha Restaurant, Mysuru",
+              "address": null,
+              "category": "restaurant",
+              "identity": {
+                "name": "Gufha Restaurant, Mysuru",
+                "point": {
+                  "lat": 12.3110994,
+                  "lng": 76.6593602
+                },
+                "category": "restaurant"
+              },
+              "source_url": "https://www.paihotels.com/vista-mysore/restaurants/restaurants.html",
+              "coordinates": {
+                "lat": 12.3110994,
+                "lng": 76.6593602
+              },
+              "is_verified": true,
+              "source_urls": [
+                "https://www.paihotels.com/vista-mysore/restaurants/restaurants.html"
+              ],
+              "uncertainty": "VERIFIED",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ]
+            },
+            {
+              "name": "Aatithya Grand Pure Veg Restaurant",
+              "address": null,
+              "category": "restaurant",
+              "identity": {
+                "name": "Aatithya Grand Pure Veg Restaurant",
+                "point": {
+                  "lat": 12.306799999999999,
+                  "lng": 76.65121839999999
+                },
+                "category": "restaurant"
+              },
+              "source_url": "https://www.google.com/maps/search/?api=1&query=Aatithya+Grand+Pure+Veg+Restaurant",
+              "coordinates": {
+                "lat": 12.306799999999999,
+                "lng": 76.65121839999999
+              },
+              "is_verified": true,
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Aatithya+Grand+Pure+Veg+Restaurant",
+                "https://www.google.com/maps/search?api=1&query=Aatithya+Grand+Pure+Veg+Restaurant"
+              ],
+              "uncertainty": "VERIFIED",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ]
+            },
+            {
+              "name": "Mahaveer veg restaurant",
+              "address": null,
+              "category": "restaurant",
+              "identity": {
+                "name": "Mahaveer veg restaurant",
+                "point": {
+                  "lat": 12.318572099999999,
+                  "lng": 76.6594811
+                },
+                "category": "restaurant"
+              },
+              "source_url": "https://www.google.com/maps/search/?api=1&query=Mahaveer+veg+restaurant",
+              "coordinates": {
+                "lat": 12.318572099999999,
+                "lng": 76.6594811
+              },
+              "is_verified": true,
+              "source_urls": [
+                "https://www.google.com/maps/search/?api=1&query=Mahaveer+veg+restaurant",
+                "https://www.google.com/maps/search?api=1&query=Mahaveer+veg+restaurant"
+              ],
+              "uncertainty": "VERIFIED",
+              "retrieval_time": "2026-11-22T06:19:52.374837+00:00",
+              "conflicting_details": [],
+              "unavailable_details": [
+                "opening_hours_assumed"
+              ]
+            }
+          ],
+          "unverified_dining_count": 0
+        },
+        "accommodation_research": {
+          "reason": "No usable source-backed accommodation evidence retrieved",
+          "status": "UNAVAILABLE",
+          "pricing_notice": "All rates are indicative search estimates from web aggregators. Verified date specific offers, live room availability, and booking confirmations are not included.",
+          "verified_offers": [],
+          "indicative_options": [],
+          "availability_status": "PRICE_UNAVAILABLE",
+          "cheapest_claim_guarantee": "No cheapest hotel claims are asserted; search rates represent indicative pricing without live supplier confirmation."
+        },
+        "route_id": null,
+        "route_status": "ROUTING_UNAVAILABLE",
+        "routing_status": "ROUTING_UNAVAILABLE",
+        "route_diagnostics": [
+          "Road routing engine unavailable; stops preserved without driving schedule or route polyline",
+          "Valhalla matrix distance limit exceeded (HTTP 400, error_code 154 on /sources_to_targets): inter-city stop distance exceeds provider matrix threshold"
+        ],
+        "provider_diagnostics": {
+          "weather": {
+            "provider": "fixture",
+            "attribution": "Weather data by Open Meteo.com",
+            "ghat_caution": null,
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "fixture_scenario": "kolkata_digha_standard",
+            "licensing_status": "non_commercial",
+            "forecast_horizon_days": 16,
+            "is_commercial_licensed": false
+          }
+        },
+        "map_geojson": null,
+        "timezone": "Asia/Kolkata",
+        "generated_at": "2026-11-22T06:19:58.120045+00:00"
+      }
+    },
+    "weather_endpoint": {
+      "status_code": 200,
+      "body": {
+        "trip_id": "f1b4e2d1-5146-4312-b9df-9f2eb4a32452",
+        "weather_status": "AVAILABLE",
+        "weather_advisories": [
+          {
+            "is_day": true,
+            "latitude": 22.5726,
+            "condition": "sunny",
+            "longitude": 88.3639,
+            "stop_name": "Kolkata (Howrah Hub)",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 0,
+            "forecast_time": "2026-11-01T12:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 65,
+            "precipitation_mm": 0.0,
+            "temperature_celsius": 31.0,
+            "precipitation_probability": 10,
+            "apparent_temperature_celsius": 35.0
+          },
+          {
+            "is_day": true,
+            "latitude": 22.4285,
+            "condition": "sunny",
+            "longitude": 87.8712,
+            "stop_name": "Kolaghat Express Highway Plaza",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 1,
+            "forecast_time": "2026-11-01T13:30:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 70,
+            "precipitation_mm": 0.0,
+            "temperature_celsius": 30.5,
+            "precipitation_probability": 15,
+            "apparent_temperature_celsius": 34.0
+          },
+          {
+            "is_day": true,
+            "latitude": 22.2341,
+            "condition": "cloudy",
+            "longitude": 87.9025,
+            "stop_name": "Nandakumar Junction",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 2,
+            "forecast_time": "2026-11-01T15:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 75,
+            "precipitation_mm": 0.5,
+            "temperature_celsius": 29.8,
+            "precipitation_probability": 30,
+            "apparent_temperature_celsius": 33.5
+          },
+          {
+            "is_day": true,
+            "latitude": 21.6266,
+            "condition": "rainy",
+            "longitude": 87.5074,
+            "stop_name": "New Digha Sea Beach",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "moderate",
+            "weather_code": 61,
+            "forecast_time": "2026-11-01T17:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 85,
+            "precipitation_mm": 12.0,
+            "temperature_celsius": 28.5,
+            "precipitation_probability": 65,
+            "apparent_temperature_celsius": 32.0
+          }
+        ],
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+        "ghat_caution": null,
+        "attribution": "Weather data by Open Meteo.com",
+        "stops": [
+          {
+            "is_day": true,
+            "latitude": 22.5726,
+            "condition": "sunny",
+            "longitude": 88.3639,
+            "stop_name": "Kolkata (Howrah Hub)",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 0,
+            "forecast_time": "2026-11-01T12:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 65,
+            "precipitation_mm": 0.0,
+            "temperature_celsius": 31.0,
+            "precipitation_probability": 10,
+            "apparent_temperature_celsius": 35.0
+          },
+          {
+            "is_day": true,
+            "latitude": 22.4285,
+            "condition": "sunny",
+            "longitude": 87.8712,
+            "stop_name": "Kolaghat Express Highway Plaza",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 1,
+            "forecast_time": "2026-11-01T13:30:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 70,
+            "precipitation_mm": 0.0,
+            "temperature_celsius": 30.5,
+            "precipitation_probability": 15,
+            "apparent_temperature_celsius": 34.0
+          },
+          {
+            "is_day": true,
+            "latitude": 22.2341,
+            "condition": "cloudy",
+            "longitude": 87.9025,
+            "stop_name": "Nandakumar Junction",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "low",
+            "weather_code": 2,
+            "forecast_time": "2026-11-01T15:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 75,
+            "precipitation_mm": 0.5,
+            "temperature_celsius": 29.8,
+            "precipitation_probability": 30,
+            "apparent_temperature_celsius": 33.5
+          },
+          {
+            "is_day": true,
+            "latitude": 21.6266,
+            "condition": "rainy",
+            "longitude": 87.5074,
+            "stop_name": "New Digha Sea Beach",
+            "attribution": "Weather data by Open Meteo.com",
+            "diagnostics": {},
+            "ghat_caution": null,
+            "monsoon_risk": "moderate",
+            "weather_code": 61,
+            "forecast_time": "2026-11-01T17:00:00+05:30",
+            "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+            "humidity_percent": 85,
+            "precipitation_mm": 12.0,
+            "temperature_celsius": 28.5,
+            "precipitation_probability": 65,
+            "apparent_temperature_celsius": 32.0
+          }
+        ],
+        "diagnostics": {
+          "provider": "fixture",
+          "attribution": "Weather data by Open Meteo.com",
+          "ghat_caution": null,
+          "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+          "fixture_scenario": "kolkata_digha_standard",
+          "licensing_status": "non_commercial",
+          "forecast_horizon_days": 16,
+          "is_commercial_licensed": false
+        }
+      }
+    },
+    "map_endpoint": {}
+  },
+  "database_audit": {
+    "execution": {
+      "id": "3231e609-bca1-4747-afea-844400ff5aab",
+      "status": "SUCCEEDED",
+      "workflow": "TRAVEL",
+      "context_version": 1,
+      "budget": {
+        "currency": "INR",
+        "reservations": {
+          "45da2115-450d-4047-b6f0-a8bc3c171983": {
+            "status": "RECONCILED",
+            "attempt": 1,
+            "task_id": "fa3c74f4-ce54-4ee0-8bd1-fbc97b95103d",
+            "cost_minor": 50,
+            "created_at": "2026-11-22T06:19:52.371701+00:00",
+            "settled_as": "SUCCESS",
+            "lease_token": "[REDACTED]",
+            "recovered_at": null,
+            "reconciled_at": "2026-11-22T06:19:52.535604+00:00",
+            "reservation_id": "45da2115-450d-4047-b6f0-a8bc3c171983"
+          },
+          "5da37116-4601-444e-8e13-ddb45e7fec71": {
+            "status": "RECONCILED",
+            "attempt": 1,
+            "task_id": "fa3c74f4-ce54-4ee0-8bd1-fbc97b95103d",
+            "cost_minor": 50,
+            "created_at": "2026-11-22T06:19:52.212494+00:00",
+            "settled_as": "SUCCESS",
+            "lease_token": "[REDACTED]",
+            "recovered_at": null,
+            "reconciled_at": "2026-11-22T06:19:52.362785+00:00",
+            "reservation_id": "5da37116-4601-444e-8e13-ddb45e7fec71"
+          },
+          "d8bdf488-c3d6-4a33-b9e5-e0c2bfa36990": {
+            "status": "RECONCILED",
+            "attempt": 1,
+            "task_id": "fa3c74f4-ce54-4ee0-8bd1-fbc97b95103d",
+            "cost_minor": 50,
+            "created_at": "2026-11-22T06:19:52.545470+00:00",
+            "settled_as": "SUCCESS",
+            "lease_token": "[REDACTED]",
+            "recovered_at": null,
+            "reconciled_at": "2026-11-22T06:19:52.957934+00:00",
+            "reservation_id": "d8bdf488-c3d6-4a33-b9e5-e0c2bfa36990"
+          },
+          "fca26ea3-2fa6-4cb4-8c95-0378fe6509d2": {
+            "status": "RECONCILED",
+            "attempt": 1,
+            "task_id": "fa3c74f4-ce54-4ee0-8bd1-fbc97b95103d",
+            "cost_minor": 50,
+            "created_at": "2026-11-22T06:19:52.056017+00:00",
+            "settled_as": "SUCCESS",
+            "lease_token": "[REDACTED]",
+            "recovered_at": null,
+            "reconciled_at": "2026-11-22T06:19:52.204947+00:00",
+            "reservation_id": "fca26ea3-2fa6-4cb4-8c95-0378fe6509d2"
+          }
+        },
+        "spent_cost_minor": 200,
+        "spent_tool_calls": 4,
+        "cost_per_call_minor": 50,
+        "reserved_cost_minor": 0,
+        "reserved_tool_calls": 0,
+        "remaining_cost_minor": 0,
+        "remaining_tool_calls": 0,
+        "uncertain_cost_minor": 0,
+        "uncertain_tool_calls": 0
+      },
+      "error": null,
+      "created_at": "2026-11-22T06:19:51.358921+00:00",
+      "updated_at": "2026-11-22T06:19:58.180173+00:00"
+    },
+    "tasks": [
+      {
+        "id": "fa3c74f4-ce54-4ee0-8bd1-fbc97b95103d",
+        "worker": "EVIDENCE",
+        "action": "collect",
+        "status": "COMPLETED",
+        "attempt": 1,
+        "created_at": "2026-11-22T06:19:51.673898+00:00",
+        "updated_at": "2026-11-22T06:19:54.814606+00:00"
+      },
+      {
+        "id": "d2b5956a-3414-4c92-9131-31b68d04eb2f",
+        "worker": "OPTIMIZER",
+        "action": "solve",
+        "status": "COMPLETED",
+        "attempt": 1,
+        "created_at": "2026-11-22T06:19:56.206990+00:00",
+        "updated_at": "2026-11-22T06:19:57.399796+00:00"
+      }
+    ],
+    "worker_results": [
+      {
+        "id": "b5a42ae6-4307-42a0-aa4e-cf9177b73774",
+        "task_id": "fa3c74f4-ce54-4ee0-8bd1-fbc97b95103d",
+        "status": "SUCCESS",
+        "output_summary": {
+          "usage": 3,
+          "observations": 22,
+          "browser_requests": 0,
+          "budget_exhausted": false,
+          "unavailable_sources": 0
+        },
+        "created_at": "2026-11-22T06:19:54.814606+00:00"
+      },
+      {
+        "id": "dbed34c2-6b97-4346-abfc-1696ffb8b67d",
+        "task_id": "d2b5956a-3414-4c92-9131-31b68d04eb2f",
+        "status": "SUCCESS",
+        "output_summary": {
+          "error": 4,
+          "action": "solve",
+          "status": "FAILED",
+          "worker": "OPTIMIZER",
+          "diagnostics": 2,
+          "routing_status": "ROUTING_UNAVAILABLE"
+        },
+        "created_at": "2026-11-22T06:19:57.399796+00:00"
+      }
+    ],
+    "source_observations_by_extraction_method": {
+      "SCRAPLING_HTTP": 2,
+      "SERPAPI_SEARCH": 20
+    },
+    "claims_by_category_verification": [
+      {
+        "category": "ATTRACTION",
+        "verification": "VERIFIED",
+        "count": 11
+      },
+      {
+        "category": "CUISINE",
+        "verification": "VERIFIED",
+        "count": 4
+      },
+      {
+        "category": "RESTRICTION",
+        "verification": "CONFLICTED",
+        "count": 2
+      },
+      {
+        "category": "WEATHER",
+        "verification": "CONFLICTED",
+        "count": 3
+      }
+    ],
+    "laya_decisions": [
+      {
+        "decision_type": "EVIDENCE_ROUTING",
+        "chosen_action": "DISPATCH_EVIDENCE_SEARCH",
+        "status": "DETERMINISTIC_SINGLETON",
+        "model_version": "deterministic_singleton",
+        "count": 1
+      },
+      {
+        "decision_type": "EVIDENCE_ROUTING",
+        "chosen_action": "PROCEED_DETERMINISTIC_EVALUATION",
+        "status": "DETERMINISTIC_SINGLETON",
+        "model_version": "deterministic_singleton",
+        "count": 1
+      }
+    ],
+    "routes": [],
+    "job_events_timeline": [
+      {
+        "sequence": 1,
+        "event_type": "JOB_ACCEPTED",
+        "timestamp": "2026-11-22T06:19:51.370142+00:00",
+        "payload": {
+          "status": "CREATED",
+          "trip_id": "f1b4e2d1-5146-4312-b9df-9f2eb4a32452",
+          "workflow": "TRAVEL",
+          "trip_version": 1
+        }
+      },
+      {
+        "sequence": 2,
+        "event_type": "EXECUTION_STARTED",
+        "timestamp": "2026-11-22T06:19:51.650907+00:00",
+        "payload": {
+          "status": "RUNNING"
+        }
+      },
+      {
+        "sequence": 3,
+        "event_type": "TASKS_DISPATCHED",
+        "timestamp": "2026-11-22T06:19:51.691769+00:00",
+        "payload": {
+          "count": 1,
+          "status": "WAITING_TASKS"
+        }
+      },
+      {
+        "sequence": 4,
+        "event_type": "TASK_COMPLETED",
+        "timestamp": "2026-11-22T06:19:54.832699+00:00",
+        "payload": {
+          "action": "collect",
+          "worker": "EVIDENCE",
+          "attempt": 1,
+          "task_id": "fa3c74f4-ce54-4ee0-8bd1-fbc97b95103d"
+        }
+      },
+      {
+        "sequence": 5,
+        "event_type": "GRAPH_RESUMED",
+        "timestamp": "2026-11-22T06:19:55.188326+00:00",
+        "payload": {
+          "action": "resume_graph",
+          "status": "RUNNING"
+        }
+      },
+      {
+        "sequence": 6,
+        "event_type": "EXECUTION_RESUMING",
+        "timestamp": "2026-11-22T06:19:55.510374+00:00",
+        "payload": {
+          "action": "resume_graph",
+          "status": "RUNNING"
+        }
+      },
+      {
+        "sequence": 7,
+        "event_type": "TASKS_DISPATCHED",
+        "timestamp": "2026-11-22T06:19:56.249304+00:00",
+        "payload": {
+          "count": 1,
+          "status": "WAITING_TASKS"
+        }
+      },
+      {
+        "sequence": 8,
+        "event_type": "TASK_COMPLETED",
+        "timestamp": "2026-11-22T06:19:57.407965+00:00",
+        "payload": {
+          "action": "solve",
+          "worker": "OPTIMIZER",
+          "attempt": 1,
+          "task_id": "d2b5956a-3414-4c92-9131-31b68d04eb2f"
+        }
+      },
+      {
+        "sequence": 9,
+        "event_type": "GRAPH_RESUMED",
+        "timestamp": "2026-11-22T06:19:57.760344+00:00",
+        "payload": {
+          "action": "resume_graph",
+          "status": "RUNNING"
+        }
+      },
+      {
+        "sequence": 10,
+        "event_type": "EXECUTION_RESUMING",
+        "timestamp": "2026-11-22T06:19:58.085488+00:00",
+        "payload": {
+          "action": "resume_graph",
+          "status": "RUNNING"
+        }
+      },
+      {
+        "sequence": 11,
+        "event_type": "PROPOSAL_PUBLISHED",
+        "timestamp": "2026-11-22T06:19:58.140269+00:00",
+        "payload": {
+          "trip_id": "f1b4e2d1-5146-4312-b9df-9f2eb4a32452",
+          "route_id": null,
+          "base_version": 1,
+          "routing_status": "ROUTING_UNAVAILABLE"
+        }
+      },
+      {
+        "sequence": 12,
+        "event_type": "EXECUTION_SUCCEEDED",
+        "timestamp": "2026-11-22T06:19:58.192933+00:00",
+        "payload": {
+          "status": "SUCCEEDED"
+        }
+      }
+    ]
+  }
+}

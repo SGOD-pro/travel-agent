@@ -48,6 +48,8 @@ settings.AUTH_PUBLIC_KEY = TEST_PUBLIC_KEY_PEM
 settings.VALHALLA_ENDPOINT_URL = "https://valhalla1.openstreetmap.de"
 settings.BEDROCK_MODEL_ID = "apac.amazon.nova-lite-v1:0"
 settings.AWS_REGION = "ap-south-1"
+settings.LAYA_ENDPOINT_URL = ""
+os.environ["LAYA_ENDPOINT_URL"] = ""
 
 # Reset database engine singletons
 db_module._engine = None
@@ -251,21 +253,28 @@ async def probe_providers() -> dict[str, Any]:
 
     # 8. Remote LAYA
     laya_url = getattr(settings, "LAYA_ENDPOINT_URL", "")
-    try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            res = await client.post(laya_url, json={"prompt": "ping"})
-            report["remote_laya"] = {
-                "readiness": "PASS",
-                "url": laya_url,
-                "status_code": res.status_code,
-            }
-    except Exception as exc:
+    if not laya_url:
         report["remote_laya"] = {
-            "readiness": "OFFLINE",
-            "url": laya_url,
-            "prerequisite": "Cloudflare tunnel on Kaggle (missed-catalog-tub-renewal.trycloudflare.com) is down or not resolving DNS",
-            "details": str(exc),
+            "readiness": "DISABLED",
+            "url": None,
+            "details": "Remote LAYA explicitly kept off for this live verification run",
         }
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=3.0) as client:
+                res = await client.post(laya_url, json={"prompt": "ping"})
+                report["remote_laya"] = {
+                    "readiness": "PASS",
+                    "url": laya_url,
+                    "status_code": res.status_code,
+                }
+        except Exception as exc:
+            report["remote_laya"] = {
+                "readiness": "OFFLINE",
+                "url": laya_url,
+                "prerequisite": "Cloudflare tunnel on Kaggle (missed-catalog-tub-renewal.trycloudflare.com) is down or not resolving DNS",
+                "details": str(exc),
+            }
 
     return report
 
@@ -578,48 +587,48 @@ async def main() -> None:
 
     # 4. Submit Brief through authenticated API
     # Natural language brief requested:
-    # "Plan a relaxed three-day petrol-car trip for two adults from Bengaluru through Mysuru and Madikeri,
-    #  departing two days from the execution date. Budget ₹25,000 including accommodation.
-    #  We prefer heritage, local food, coffee estates and scenic viewpoints."
-    # Dates in Asia/Kolkata: 2026-11-24 to 2026-11-26 (3 days)
-    # Origin: Bengaluru (12.9716, 77.5946)
-    # Destinations: Mysuru (12.2958, 76.6394), Madikeri (12.4244, 75.7382)
+    # "Plan a fresh two-day petrol-car trip for two adults from Mysuru through Srirangapatna to Mandya
+    #  on 25–26 November 2026. Budget ₹12,000 total for one night of lodging, meals, fuel, and tolls.
+    #  Prefer heritage, local Karnataka food, and daylight driving."
+    # Dates in Asia/Kolkata: 2026-11-25 to 2026-11-26 (2 days)
+    # Origin: Mysuru (12.2958, 76.6394)
+    # Destinations: Srirangapatna (12.4218, 76.6932), Mandya (12.5230, 76.8970)
     create_trip_payload = {
         "owner_id": str(owner_id),
         "brief": {
-            "origin_name": "Bengaluru",
-            "origin_lat": 12.9716,
-            "origin_lng": 77.5946,
+            "origin_name": "Mysuru",
+            "origin_lat": 12.2958,
+            "origin_lng": 76.6394,
             "destinations": [
                 {
-                    "name": "Mysuru",
-                    "latitude": 12.2958,
-                    "longitude": 76.6394,
+                    "name": "Srirangapatna",
+                    "latitude": 12.4218,
+                    "longitude": 76.6932,
                     "stay_days": 1,
                     "confidence": 1.0,
                 },
                 {
-                    "name": "Madikeri",
-                    "latitude": 12.4244,
-                    "longitude": 75.7382,
+                    "name": "Mandya",
+                    "latitude": 12.5230,
+                    "longitude": 76.8970,
                     "stay_days": 1,
                     "confidence": 1.0,
                 },
             ],
-            "start_date": "2026-11-24",
+            "start_date": "2026-11-25",
             "end_date": "2026-11-26",
             "timezone": "Asia/Kolkata",
             "adults": 2,
             "child_ages": [],
             "rooms": 1,
             "target_budget": {
-                "amount": "25000.000000",
+                "amount": "12000.000000",
                 "currency": "INR",
             },
             "preferred_modes": ["car_petrol"],
-            "dietary_preferences": ["local food"],
+            "dietary_preferences": ["local Karnataka food"],
             "accessibility_requirements": [],
-            "hard_constraints": ["heritage", "coffee estates", "scenic viewpoints", "relaxed"],
+            "hard_constraints": ["heritage", "local Karnataka food", "daylight driving"],
         },
     }
 
@@ -806,6 +815,20 @@ async def main() -> None:
                 "action": t.action,
                 "status": t.status,
                 "attempt": t.attempt,
+                "payload_summary": {
+                    "stops_count": len((t.payload_ref or {}).get("stops", []))
+                    if isinstance(t.payload_ref, dict) and "stops" in t.payload_ref
+                    else None,
+                    "stops": [
+                        s.get("name")
+                        for s in (t.payload_ref or {}).get("stops", [])
+                        if isinstance(s, dict)
+                    ]
+                    if isinstance(t.payload_ref, dict) and "stops" in t.payload_ref
+                    else None,
+                }
+                if t.payload_ref
+                else None,
                 "created_at": t.created_at.isoformat() if t.created_at else None,
                 "updated_at": t.updated_at.isoformat() if t.updated_at else None,
             }
@@ -881,19 +904,60 @@ async def main() -> None:
         # Routes
         route_res = await session.execute(
             text(
-                "SELECT id, total_distance_m, total_travel_seconds, status FROM routes WHERE execution_id = :eid"
+                "SELECT id, total_distance_m, total_travel_seconds, fuel_amount, status, solver_status FROM routes WHERE execution_id = :eid"
             ),
             {"eid": uuid.UUID(job_id)},
         )
-        db_audit["routes"] = [
-            {
-                "id": str(row[0]),
-                "total_distance_m": row[1],
-                "total_travel_seconds": row[2],
-                "status": row[3],
-            }
-            for row in route_res.all()
-        ]
+        routes_list = []
+        for r_row in route_res.all():
+            r_id = r_row[0]
+            stops_res = await session.execute(
+                text(
+                    "SELECT stop_order, name, stop_type, planned_arrival_at, planned_departure_at, dwell_seconds, wait_seconds FROM route_stops WHERE route_id = :rid ORDER BY stop_order"
+                ),
+                {"rid": r_id},
+            )
+            route_stops = [
+                {
+                    "stop_order": stop_row[0],
+                    "name": stop_row[1],
+                    "stop_type": stop_row[2],
+                    "planned_arrival_at": stop_row[3].isoformat() if stop_row[3] else None,
+                    "planned_departure_at": stop_row[4].isoformat() if stop_row[4] else None,
+                    "dwell_seconds": stop_row[5],
+                    "wait_seconds": stop_row[6],
+                }
+                for stop_row in stops_res.all()
+            ]
+            legs_res = await session.execute(
+                text(
+                    "SELECT leg_order, transport_mode, distance_m, travel_seconds, provider FROM route_legs WHERE route_id = :rid ORDER BY leg_order"
+                ),
+                {"rid": r_id},
+            )
+            route_legs = [
+                {
+                    "leg_order": leg_row[0],
+                    "transport_mode": leg_row[1],
+                    "distance_m": leg_row[2],
+                    "travel_seconds": leg_row[3],
+                    "provider": leg_row[4],
+                }
+                for leg_row in legs_res.all()
+            ]
+            routes_list.append(
+                {
+                    "id": str(r_id),
+                    "total_distance_m": r_row[1],
+                    "total_travel_seconds": r_row[2],
+                    "fuel_amount": str(r_row[3]) if r_row[3] is not None else None,
+                    "status": r_row[4],
+                    "solver_status": r_row[5],
+                    "stops": route_stops,
+                    "legs": route_legs,
+                }
+            )
+        db_audit["routes"] = routes_list
 
         # Job Events timeline
         events_rows = (

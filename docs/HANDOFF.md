@@ -345,11 +345,23 @@ Inspected repository HEAD commit `0ae2479`. Bounded recovery for Valhalla matrix
 * Preservation of TRAVEL recovery: TRAVEL workflows encountering intercity matrix distance limits continue to catch the error, complete durably under lease fencing with degraded `ROUTING_UNAVAILABLE` output, advance LangGraph via checkpoint resume, and publish a partial itinerary with preserved evidence, zero phantom routes, and honest diagnostics.
 * Regression coverage: Verified via unit suite (`test_valhalla_distance_rejection.py`, 7 tests passing) and database integration lifecycle on isolated PostgreSQL (`test_valhalla_matrix_rejection_recovery_lifecycle.py`, 2 tests passing). Code review approved by Senior Staff Reviewer in `docs/reviews/2026-11-22-0007-restrict-distance-recovery-to-travel.md`.
 
+### 0007 correct lodging night budget accounting (2026-11-22)
+
+Inspected repository HEAD commit `bb058bd`. Resolved lodging night budget calculation defect where destination `stay_days` previously multiplied hotel nights:
+
+* Calendar date truth: In `compute_budget_node`, total lodging nights are derived strictly from local calendar dates `calendar_nights = max(0, (brief.end_date - brief.start_date).days)`. The destination loop was replaced with a single calculation, ensuring destination `stay_days` never multiplies hotel nights.
+* Two destination regression: On the Mysuru run brief (25 to 26 November 2026, Srirangapatna and Mandya, 1 room), `calendar_nights` resolves to 1 night. Because the overnight location is not an explicit scheduled accommodation stop, the basis preserves `hotel_stay_unknown (1 rooms, 1 nights)`, yielding exactly one estimated night at 3,500 INR.
+* Same day trip handling: When `calendar_nights == 0`, zero accommodation budget lines are emitted, ensuring zero artificial hotel expense for same day trips.
+* Multi room scaling: Line item quantity scales as `brief.rooms * calendar_nights` (for example, 3 rooms across 2 nights yields quantity 6 at 3,500 INR = 21,000 INR).
+* Single destination location retention: For single destination trips, the destination name is preserved in the basis string (for example, `hotel_stay_Mysore (1 rooms, 1 nights)`).
+* Preservation of estimate labels and unknown costs: Benchmark accommodation retains `estimated=True` and `source_ref="benchmark_hotel_estimate"`. Unquoted highway tolls and unverified activity fees remain explicit unknown lines with documented reasons without zero coercion.
+* Regression coverage: Verified via 4 new unit tests in `test_trip_planner_proposal_slice5.py` (32 tests passing), PostgreSQL itinerary API integration test (2 tests passing), clean ruff linting, and strict mypy verification. Code review approved in `docs/reviews/2026-11-22-0007-correct-lodging-night-budget-accounting.md`.
+
 ### Next action and ordering
 
-Closure findings for 0003 Obscura migration, 0007 bounded optimizer dispatch, and 0007 Valhalla distance rejection recovery are resolved and verified. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
+Closure findings for 0003 Obscura migration, 0007 bounded optimizer dispatch, 0007 Valhalla distance rejection recovery, and 0007 lodging night budget accounting are resolved and verified. Exact revisions, commands, test evidence, package budgets, and cloud deferrals are recorded in verify.md and review records.
 
-Next planned action: Spec 0007 short multi stop brief headless live run on a compact corridor (< 150 km between stops) to verify real road geometry, feasible driving schedule, budget and provenance, and end to end latency.
+Next planned action: Address remaining itinerary correctness findings from the Mysuru live run (meal budget lines representation, avoiding public parks as overnight accommodation stops, and refining hours fallback for nocturnal attractions).
 
-Agreed order: remote LAYA (done) → route optimizer (done) → route API/map E2E (done) → hosted LLM/trip planner E2E (in progress: Slices 1 to 6, 8, bounded optimizer dispatch, and matrix rejection recovery done) → short multi stop live road routing verification → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone and no AWS deployment now.
+Agreed order: remote LAYA (done) → route optimizer (done) → route API/map E2E (done) → hosted LLM/trip planner E2E (in progress: Slices 1 to 6, 8, bounded optimizer dispatch, matrix rejection recovery, and lodging accounting done) → short multi stop live road routing verification (done, verified live Valhalla PASS) → itinerary correctness refinement → connected live scenario evaluation → media extractor/analyzer/location → composition/hardening. Browser remains evidence rendering fallback; booking/payments remain future scope. No new milestone and no AWS deployment now.
 

@@ -2659,22 +2659,34 @@ async def compute_budget_node(
         lines = RoadBudgetCalculator.calculate_segment_budget(segment, profile)
         all_budget_lines.extend(lines)
 
-    # 2. Daily Estimated Accommodation
-    for d in brief.destinations:
+    # 2. Daily Estimated Accommodation (AC-7)
+    # Lodging nights derived from local calendar dates; destination stay_days must not multiply hotel nights
+    stops_data = schedule_data.get("stops", [])
+    calendar_nights = max(0, (brief.end_date - brief.start_date).days)
+    if calendar_nights > 0:
+        overnight_location: str | None = None
+        if len(brief.destinations) == 1:
+            overnight_location = brief.destinations[0].name
+        else:
+            for stop in stops_data:
+                if str(stop.get("stop_type", "")).upper() in ("ACCOMMODATION", "HOTEL", "LODGING"):
+                    overnight_location = stop.get("name")
+                    break
+
+        loc_str = overnight_location if overnight_location else "unknown"
         all_budget_lines.append(
             BudgetLine(
                 category=BudgetCategory.ACCOMMODATION,
                 amount=Decimal("3500.00"),
                 currency=Currency.INR,
-                basis=f"hotel_stay_{d.name} ({brief.rooms} rooms, {d.stay_days} nights)",
-                quantity=Decimal(str(brief.rooms * d.stay_days)),
+                basis=f"hotel_stay_{loc_str} ({brief.rooms} rooms, {calendar_nights} nights)",
+                quantity=Decimal(str(brief.rooms * calendar_nights)),
                 source_ref="benchmark_hotel_estimate",
                 estimated=True,
             )
         )
 
     # 3. Activities and entrance fees for stops (AC-7, AC-12)
-    stops_data = schedule_data.get("stops", [])
     seen_entry_stops: set[str] = set()
 
     # Track candidate metadata, provenance, and categories

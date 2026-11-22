@@ -215,7 +215,7 @@ class PdfExportService:
                     [
                         "Accommodation",
                         f"{brief.rooms} room(s) across destinations",
-                        str(brief.rooms * sum(d.stay_days for d in brief.destinations)),
+                        str(brief.rooms * max(0, (brief.end_date - brief.start_date).days)),
                         "Benchmark est.",
                         "Indicative Search",
                     ],
