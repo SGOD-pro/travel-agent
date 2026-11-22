@@ -329,6 +329,92 @@ async def test_optimizer_worker_reraises_for_non_travel_workflow() -> None:
 
 
 @pytest.mark.asyncio
+async def test_optimizer_worker_reraises_for_route_optimizer_graph_with_populated_trip_id() -> None:
+    """Verifies that HTTP 400/154 is re-raised for ROUTE_OPTIMIZER_GRAPH even with populated trip_id."""
+    execution_id = uuid.uuid4()
+    task_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    lease_token = uuid.uuid4()
+
+    now = datetime.now(UTC)
+    mock_session = AsyncMock()
+    mock_session.add = MagicMock()
+
+    # Workflow is explicitly ROUTE_OPTIMIZER_GRAPH, but trip_id is populated
+    exec_row = ExecutionModel(
+        id=execution_id,
+        owner_id=owner_id,
+        trip_id=trip_id,
+        workflow="ROUTE_OPTIMIZER_GRAPH",
+        status="RUNNING",
+        deadline_at=datetime.now(UTC).replace(year=2099),
+    )
+    mock_exec_res = MagicMock()
+    mock_exec_res.scalar_one_or_none.return_value = exec_row
+    mock_exec_res.mappings.return_value.all.return_value = []
+    mock_session.execute.return_value = mock_exec_res
+
+    req = RouteRequest(
+        owner_id=owner_id,
+        trip_id=trip_id,
+        execution_id=execution_id,
+        departure_at=datetime.now(UTC),
+        stops=[
+            RouteStopInput(name="A", location=Point(latitude=12.9716, longitude=77.5946), stop_type=StopType.ORIGIN),
+            RouteStopInput(name="B", location=Point(latitude=12.4244, longitude=75.7382), stop_type=StopType.DESTINATION),
+        ],
+    )
+
+    mock_fencing = AsyncMock(spec=WorkerFencingService)
+    mock_fencing.claim_task.return_value = TaskClaimResult(
+        task_id=task_id,
+        execution_id=execution_id,
+        lease_token=lease_token,
+        attempt=1,
+        context_version=1,
+        payload_ref=req.model_dump(mode="json"),
+        worker="OPTIMIZER",
+        action="solve",
+        lease_expiry=now.replace(year=2099),
+    )
+
+    mock_valhalla = AsyncMock()
+    mock_valhalla.base_url = "http://valhalla.test"
+    mock_valhalla.sources_to_targets.side_effect = ValhallaRoutingError(
+        "Valhalla client error 400 for /sources_to_targets: Path distance exceeds the max distance limit",
+        status_code=400,
+        error_code=154,
+        endpoint="/sources_to_targets",
+    )
+
+    worker_service = RouteOptimizerWorkerService(
+        mock_session,
+        valhalla_client=mock_valhalla,
+        fencing_service=mock_fencing,
+    )
+
+    envelope = RouteOptimizerDispatchEnvelope(
+        task_id=task_id,
+        execution_id=execution_id,
+        worker="OPTIMIZER",
+        action="solve",
+        payload=req.model_dump(mode="json"),
+        attempt=1,
+        context_version=1,
+    )
+
+    with pytest.raises(ValhallaRoutingError) as exc_info:
+        await worker_service.execute_task(envelope)
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.error_code == 154
+
+    # Must NOT have completed task under degraded recovery
+    mock_fencing.complete_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_optimizer_worker_reraises_unrelated_valhalla_error() -> None:
     """Verifies that unrelated Valhalla errors (e.g. 500 server error) are re-raised even for TRAVEL workflow."""
     execution_id = uuid.uuid4()

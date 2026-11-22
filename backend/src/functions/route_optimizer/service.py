@@ -282,8 +282,7 @@ class RouteOptimizerWorkerService:
             )
 
             is_travel_workflow = (
-                (exec_model is not None and exec_model.workflow == "TRAVEL")
-                or effective_trip_id is not None
+                exec_model is not None and exec_model.workflow == "TRAVEL"
             )
 
             try:

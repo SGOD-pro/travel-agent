@@ -15,6 +15,7 @@ Verifies:
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
@@ -27,6 +28,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config.db import get_session
+from contracts.routing import Point, RouteRequest, RouteStopInput, StopType
+from contracts.trips import TransportMode
 from functions.api.app import app
 from functions.api.models import TripDeltaModel, TripModel
 from functions.api.repository import SqlAlchemyUnitOfWork
@@ -59,7 +62,7 @@ from functions.orchestrator.graphs.trip_planner.graph import (
 )
 from functions.orchestrator.routing.models import RouteModel
 from functions.route_optimizer.consumer import process_record
-from functions.route_optimizer.valhalla import ValhallaClient
+from functions.route_optimizer.valhalla import ValhallaClient, ValhallaRoutingError
 from middleware.auth import AuthenticatedUser, get_current_user
 
 
@@ -575,3 +578,162 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
         assert trip_final.current_version == 1
         assert trip_final.current_route_id is None
         assert trip_final.state == "proposed"
+
+
+@pytest.mark.asyncio
+async def test_valhalla_matrix_rejection_propagates_for_route_optimizer_graph_with_trip_id(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Verifies that ROUTE_OPTIMIZER_GRAPH with a populated trip_id propagates HTTP 400/154.
+
+    Asserts:
+    1. Execution has workflow="ROUTE_OPTIMIZER_GRAPH" and a non-None trip_id.
+    2. Route optimizer consumer encounters HTTP 400/154 and raises ValhallaRoutingError.
+    3. Task is NOT completed under lease (no degraded ROUTING_UNAVAILABLE output).
+    4. Routes table has zero records.
+    5. No TASK_COMPLETED outbox event or proposal publication occurs.
+    """
+    owner_id = uuid.uuid4()
+    trip_id = uuid.uuid4()
+    execution_id = uuid.uuid4()
+    task_id = uuid.uuid4()
+    now = datetime.now(UTC)
+
+    async with session_factory() as session:
+        trip = TripModel(
+            id=trip_id,
+            owner_id=owner_id,
+            current_version=1,
+            state="planning",
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(trip)
+        await session.flush()
+
+        # Standalone route execution associated with a trip_id
+        execution = ExecutionModel(
+            id=execution_id,
+            owner_id=owner_id,
+            trip_id=trip_id,
+            workflow="ROUTE_OPTIMIZER_GRAPH",
+            status="RUNNING",
+            context_version=1,
+            deadline_at=now + timedelta(hours=2),
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(execution)
+        await session.flush()
+
+        # RouteRequest stops: inter-city distances > 150 km
+        req = RouteRequest(
+            owner_id=owner_id,
+            trip_id=trip_id,
+            execution_id=execution_id,
+            departure_at=now + timedelta(days=2),
+            stops=[
+                RouteStopInput(
+                    id=uuid.uuid4(),
+                    name="Bengaluru",
+                    location=Point(latitude=12.9716, longitude=77.5946),
+                    stop_type=StopType.ORIGIN,
+                ),
+                RouteStopInput(
+                    id=uuid.uuid4(),
+                    name="Madikeri",
+                    location=Point(latitude=12.4244, longitude=75.7382),
+                    stop_type=StopType.DESTINATION,
+                ),
+            ],
+            transport_mode=TransportMode.CAR_PETROL,
+        )
+        req_dict = req.model_dump(mode="json")
+
+        task = TaskModel(
+            id=task_id,
+            execution_id=execution_id,
+            worker="OPTIMIZER",
+            action="solve",
+            status="PENDING",
+            payload_ref=req_dict,
+            input_hash=hashlib.sha256(b"route_req").hexdigest(),
+            idempotency_key=f"idemp_{task_id}",
+            deadline_at=now + timedelta(minutes=5),
+            context_version=1,
+            attempt=0,
+            max_attempts=3,
+            created_at=now,
+        )
+        session.add(task)
+        await session.commit()
+
+    dispatch_payload = {
+        "execution_id": str(execution_id),
+        "task_id": str(task_id),
+        "worker": "OPTIMIZER",
+        "action": "solve",
+        "attempt": 0,
+        "context_version": 1,
+        "payload": req_dict,
+    }
+
+    # Inject HTTP 400 / 154 at Valhalla HTTP boundary
+    def mock_valhalla_handler(request: httpx.Request) -> httpx.Response:
+        if "/sources_to_targets" in str(request.url):
+            return httpx.Response(
+                status_code=400,
+                headers={"Content-Type": "application/json"},
+                json={
+                    "error_code": 154,
+                    "error": "Path distance exceeds the max distance limit: 150000 meters",
+                    "status_code": 400,
+                    "status": "Bad Request",
+                },
+            )
+        return httpx.Response(status_code=200, json={})
+
+    transport = httpx.MockTransport(mock_valhalla_handler)
+    async with httpx.AsyncClient(transport=transport) as http_client:
+        injected_valhalla_client = ValhallaClient(
+            "http://valhalla.provider.local",
+            http_client=http_client,
+        )
+
+        with pytest.raises(ValhallaRoutingError) as exc_info:
+            await process_record(
+                dispatch_payload,
+                session_factory=session_factory,
+                valhalla_client=injected_valhalla_client,
+            )
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == 154
+
+    # Verify task was NOT completed with degraded ROUTING_UNAVAILABLE output
+    async with session_factory() as session:
+        task_after = (
+            await session.execute(select(TaskModel).where(TaskModel.id == task_id))
+        ).scalar_one()
+
+        assert task_after.status != "COMPLETED"
+        assert task_after.result_id is None
+
+        # Verify zero routes persisted
+        route_check = (
+            await session.execute(
+                select(RouteModel).where(RouteModel.execution_id == execution_id)
+            )
+        ).scalars().all()
+        assert len(route_check) == 0
+
+        # Verify no TASK_COMPLETED outbox event exists
+        outbox_check = (
+            await session.execute(
+                select(OutboxEventModel).where(
+                    OutboxEventModel.execution_id == execution_id,
+                    OutboxEventModel.kind == "TASK_COMPLETED",
+                )
+            )
+        ).scalars().all()
+        assert len(outbox_check) == 0

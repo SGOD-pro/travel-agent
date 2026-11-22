@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Specs 0001, 0002, 0003, 0004, 0005, and 0006 complete and accepted. Spec 0003 permanently migrated to standalone Obscura browser engine (eliminating Chromium and Sparticuz layer, 240 MB uncompressed, 90.45 MB compressed, 47 ms cold boot). Spec 0007 Trip Planner End to End has completed Slices 1 through 6, 8, bounded optimizer dispatch, and Valhalla matrix distance rejection recovery, verified across 63 tests on isolated PostgreSQL with review verdict Approve. Scope Features 1 through 6 are done; Feature 7 is in progress. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is short multi stop brief headless live run for live road geometry verification.
+Status: Specs 0001, 0002, 0003, 0004, 0005, and 0006 complete and accepted. Spec 0003 permanently migrated to standalone Obscura browser engine (eliminating Chromium and Sparticuz layer, 240 MB uncompressed, 90.45 MB compressed, 47 ms cold boot). Spec 0007 Trip Planner End to End has completed Slices 1 through 6, 8, bounded optimizer dispatch, Valhalla matrix distance rejection recovery, and restriction of distance recovery to TRAVEL workflows, verified across 70 tests on isolated PostgreSQL with review verdict Approve. Scope Features 1 through 6 are done; Feature 7 is in progress. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is short multi stop brief headless live run for live road geometry verification.
 
 
 ## 1. Project Purpose and Agreed Stack
@@ -335,6 +335,15 @@ Inspected repository HEAD commit `b161654`. Bounded error recovery for provider 
 * Controlled PostgreSQL regression: Verified end to end on isolated PostgreSQL (`acceptance_db`) by injecting exact HTTP 400/154 response at the Valhalla HTTP transport boundary, confirming consumer execution, lease clearing, zero routes, outbox reconciliation, LangGraph resumption, and HTTP 200 on `GET /api/v1/trips/{trip_id}/itinerary`.
 * Live backend evaluation (Bengaluru to Mysuru to Madikeri): Executed real application via `backend/scripts/run_live_backend_journey.py` against live external providers (Bedrock, SerpAPI, Scrapling, public Valhalla, Open Meteo, Obscura, and PostgreSQL). Public Valhalla rejected matrix calculation for the 250 km intercity distance with HTTP 400 / 154. The application recovered cleanly, completed the job in 8.1s with status `SUCCEEDED`, and served `GET /api/v1/trips/{trip_id}/itinerary` with status 200, `routing_status: "ROUTING_UNAVAILABLE"`, `route_id: null`, zero persisted routes, and preserved candidate evidence.
 * Separate gates maintained: Live partial publication with honest diagnostics is verified. Successful live road routing on intercity corridors (requiring self hosted Valhalla with relaxed matrix limits or sequential point to point route fallback), live remote LAYA, browser dispatch, authoritative advisory, and durable HITL remain separate future gates.
+
+### 0007 restrict Valhalla matrix distance rejection recovery to TRAVEL (2026-11-22)
+
+Inspected repository HEAD commit `0ae2479`. Bounded recovery for Valhalla matrix distance limit rejections (HTTP 400 with error code 154 on `/sources_to_targets`) is restricted strictly to executions whose workflow is TRAVEL:
+
+* Strict workflow boundary: In `RouteOptimizerWorkerService.execute_task`, `is_travel_workflow` requires `exec_model is not None and exec_model.workflow == "TRAVEL"`. A populated trip identifier alone does not activate degraded recovery.
+* Fail closed for standalone route optimization: Standalone route calculations running under `ROUTE_OPTIMIZER_GRAPH` re-raise `ValhallaRoutingError` immediately when encountering HTTP 400 / 154, leaving the task uncompleted under lease, persisting zero routes, and emitting zero completion events to the outbox.
+* Preservation of TRAVEL recovery: TRAVEL workflows encountering intercity matrix distance limits continue to catch the error, complete durably under lease fencing with degraded `ROUTING_UNAVAILABLE` output, advance LangGraph via checkpoint resume, and publish a partial itinerary with preserved evidence, zero phantom routes, and honest diagnostics.
+* Regression coverage: Verified via unit suite (`test_valhalla_distance_rejection.py`, 7 tests passing) and database integration lifecycle on isolated PostgreSQL (`test_valhalla_matrix_rejection_recovery_lifecycle.py`, 2 tests passing). Code review approved by Senior Staff Reviewer in `docs/reviews/2026-11-22-0007-restrict-distance-recovery-to-travel.md`.
 
 ### Next action and ordering
 
