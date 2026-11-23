@@ -8,7 +8,7 @@ Optimizes multi-stop travel sequences and daily time schedules:
 
 from __future__ import annotations
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Any, TypedDict
 
 from pydantic import BaseModel, ConfigDict
@@ -234,14 +234,26 @@ class ItineraryScheduler:
         for stop_out in optimized.stops:
             info = stop_input_map.get(stop_out.name, {})
             is_origin = stop_out.name == origin_name and stop_out.stop_order == 0
+            stop_arr = stop_out.planned_arrival_at or start_datetime
+            stop_dep = stop_out.planned_departure_at or start_datetime
+            wait_s = getattr(stop_out, "wait_seconds", 0)
+            dwell_s = getattr(stop_out, "dwell_seconds", 0)
+            if (
+                isinstance(wait_s, (int, float))
+                and wait_s >= 4 * 3600
+                and stop_arr.date() < stop_dep.date()
+            ):
+                dwell_seconds_int = int(dwell_s) if isinstance(dwell_s, (int, float)) else 0
+                stop_arr = stop_dep - timedelta(seconds=dwell_seconds_int)
+
             sched_stops.append(
                 ScheduledStop(
                     position=stop_out.stop_order,
                     name=stop_out.name,
                     latitude=stop_out.location.latitude,
                     longitude=stop_out.location.longitude,
-                    arrival_time=stop_out.planned_arrival_at or start_datetime,
-                    departure_time=stop_out.planned_departure_at or start_datetime,
+                    arrival_time=stop_arr,
+                    departure_time=stop_dep,
                     stay_duration_minutes=stop_out.dwell_seconds // 60,
                     window_start=stop_out.window_start,
                     window_end=stop_out.window_end,

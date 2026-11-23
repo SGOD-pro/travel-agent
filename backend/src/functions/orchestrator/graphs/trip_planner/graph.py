@@ -2090,13 +2090,24 @@ async def consume_route_result_node(
 
         assert s.planned_arrival_at is not None
         assert s.planned_departure_at is not None
+        stop_arrival = s.planned_arrival_at
+        wait_s = getattr(s, "wait_seconds", 0)
+        dwell_s = getattr(s, "dwell_seconds", 0)
+        if (
+            isinstance(wait_s, (int, float))
+            and wait_s >= 4 * 3600
+            and stop_arrival.date() < s.planned_departure_at.date()
+        ):
+            dwell_seconds_int = int(dwell_s) if isinstance(dwell_s, (int, float)) else 0
+            stop_arrival = s.planned_departure_at - timedelta(seconds=dwell_seconds_int)
+
         sched_stops.append(
             ScheduledStop(
                 position=s.stop_order,
                 name=s.name,
                 latitude=lat_val,
                 longitude=lng_val,
-                arrival_time=s.planned_arrival_at,
+                arrival_time=stop_arrival,
                 departure_time=s.planned_departure_at,
                 stay_duration_minutes=s.dwell_seconds // 60,
                 window_start=s.window_start,

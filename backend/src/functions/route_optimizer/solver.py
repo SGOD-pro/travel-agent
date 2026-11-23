@@ -495,6 +495,11 @@ class OrToolsRoutingSolver:
             dep_time = service_start + timedelta(seconds=dwell)
             current_time = dep_time
 
+            is_overnight_wait = wait > 0 and (
+                arr_time.date() < service_start.date() or wait >= 4 * 3600
+            )
+            stop_arrival = service_start if is_overnight_wait else arr_time
+
             scheduled_stops.append(
                 ScheduledStopOutput(
                     id=s.id,
@@ -508,7 +513,7 @@ class OrToolsRoutingSolver:
                     window_start=s.window_start,
                     window_end=s.window_end,
                     dwell_seconds=dwell,
-                    planned_arrival_at=arr_time,
+                    planned_arrival_at=stop_arrival,
                     planned_departure_at=dep_time,
                     wait_seconds=wait,
                 )
@@ -600,6 +605,13 @@ class OrToolsRoutingSolver:
             assumptions=[
                 "Calculated on road transit network",
                 "Fuel calculation assumes constant consumption rate",
-            ],
+            ]
+            + (
+                [
+                    "Overnight waiting interval with unassigned accommodation: lodging coordinates, verified hours, and connecting road geometry are unassigned"
+                ]
+                if any(getattr(s, "wait_seconds", 0) >= 4 * 3600 for s in scheduled_stops)
+                else []
+            ),
             diagnostics=[],
         )

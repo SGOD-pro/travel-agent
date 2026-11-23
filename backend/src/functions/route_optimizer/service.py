@@ -655,10 +655,15 @@ class RouteOptimizerWorkerService:
                                 }
                             )
 
+                is_overnight_wait = wait_s > 0 and (
+                    arr_time.date() < service_start.date() or wait_s >= 4 * 3600
+                )
+                stop_arrival = service_start if is_overnight_wait else arr_time
+
                 updated_stops.append(
                     to_stop.model_copy(
                         update={
-                            "planned_arrival_at": arr_time,
+                            "planned_arrival_at": stop_arrival,
                             "planned_departure_at": target_dep,
                             "wait_seconds": wait_s,
                             "dwell_seconds": dwell,
@@ -732,6 +737,12 @@ class RouteOptimizerWorkerService:
         )
         total_elapsed_s = total_travel_s + total_dwell_s + total_wait_s
 
+        assumptions = list(initial_route.assumptions)
+        if total_wait_s >= 4 * 3600 and not any("Overnight waiting" in a for a in assumptions):
+            assumptions.append(
+                "Overnight waiting interval with unassigned accommodation: lodging coordinates, verified hours, and connecting road geometry are unassigned"
+            )
+
         return initial_route.model_copy(
             update={
                 "stops": updated_stops,
@@ -746,6 +757,7 @@ class RouteOptimizerWorkerService:
                 "fuel_amount": fuel_cost,
                 "fuel_currency": fuel_profile.currency,
                 "fuel_basis": fuel_basis,
+                "assumptions": assumptions,
                 "actual_return_at": actual_return_at,
             }
         )

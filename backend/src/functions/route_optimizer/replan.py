@@ -677,10 +677,15 @@ class RouteReplanService:
                             }
                         )
 
+            is_overnight_wait = wait_s > 0 and (
+                arr_time.date() < service_start.date() or wait_s >= 4 * 3600
+            )
+            stop_arrival = service_start if is_overnight_wait else arr_time
+
             updated_stops.append(
                 to_stop.model_copy(
                     update={
-                        "planned_arrival_at": arr_time,
+                        "planned_arrival_at": stop_arrival,
                         "planned_departure_at": target_dep,
                         "wait_seconds": wait_s,
                         "dwell_seconds": dwell,

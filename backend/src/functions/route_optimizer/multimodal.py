@@ -341,6 +341,11 @@ class MultimodalTransitionService:
                             scheduled_stops.append(skipped_stop)
                             continue
 
+                is_overnight_wait = wait_s > 0 and (
+                    arr_time.date() < service_start.date() or wait_s >= 4 * 3600
+                )
+                stop_arrival = service_start if is_overnight_wait else arr_time
+
                 target_scheduled = ScheduledStopOutput(
                     id=target.id,
                     stop_id=target.id,
@@ -352,7 +357,7 @@ class MultimodalTransitionService:
                     is_must_visit=target.is_must_visit,
                     window_start=target.window_start,
                     window_end=target.window_end,
-                    planned_arrival_at=arr_time,
+                    planned_arrival_at=stop_arrival,
                     planned_departure_at=dep_time,
                     dwell_seconds=target.dwell_seconds,
                     wait_seconds=wait_s,
@@ -549,6 +554,11 @@ class MultimodalTransitionService:
                             scheduled_stops.append(skipped_stop)
                             continue
 
+                is_overnight_wait = wait_s > 0 and (
+                    arr_time.date() < service_start.date() or wait_s >= 4 * 3600
+                )
+                stop_arrival = service_start if is_overnight_wait else arr_time
+
                 target_scheduled = ScheduledStopOutput(
                     id=target.id,
                     stop_id=target.id,
@@ -560,7 +570,7 @@ class MultimodalTransitionService:
                     is_must_visit=target.is_must_visit,
                     window_start=target.window_start,
                     window_end=target.window_end,
-                    planned_arrival_at=arr_time,
+                    planned_arrival_at=stop_arrival,
                     planned_departure_at=dep_time,
                     dwell_seconds=target.dwell_seconds,
                     wait_seconds=wait_s,
