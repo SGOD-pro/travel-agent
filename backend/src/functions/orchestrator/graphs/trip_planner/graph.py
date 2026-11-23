@@ -2674,12 +2674,14 @@ async def compute_budget_node(
                     break
 
         loc_str = overnight_location if overnight_location else "unknown"
+        rooms_label = "1 room" if brief.rooms == 1 else f"{brief.rooms} rooms"
+        nights_label = "1 night" if calendar_nights == 1 else f"{calendar_nights} nights"
         all_budget_lines.append(
             BudgetLine(
                 category=BudgetCategory.ACCOMMODATION,
                 amount=Decimal("3500.00"),
                 currency=Currency.INR,
-                basis=f"hotel_stay_{loc_str} ({brief.rooms} rooms, {calendar_nights} nights)",
+                basis=f"hotel_stay_{loc_str} ({rooms_label}, {nights_label})",
                 quantity=Decimal(str(brief.rooms * calendar_nights)),
                 source_ref="benchmark_hotel_estimate",
                 estimated=True,

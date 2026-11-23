@@ -54,7 +54,7 @@ The live routing subsystem operated flawlessly without degraded fallbacks:
 * **GeoJSON Map Delivery**:
   * Authenticated Endpoint: `GET /api/v1/trips/{trip_id}/map`
   * Status: HTTP 200 OK
-  * Payload: FeatureCollection containing 20 features (10 Point features with stop sequences and names, 9 LineString features with decoded polyline6 road coordinates, and 1 bounding box).
+  * Payload: FeatureCollection containing 20 features (10 Point features with stop sequences and names, 9 LineString features with decoded polyline6 road coordinates, and 1 Polygon road closure restriction feature), with top-level bounding box.
 * **Durable Checkpoint Resumption**:
   * Checkpoint 1: Captured upon completion of evidence gathering (Task `93cc9cd6-5426-4a6e-bb7c-8bb94062ff9c`, action `collect`). Resumed cleanly by `GraphRunnerService`.
   * Checkpoint 2: Captured upon completion of route optimization (Task `8b67111e-dbcc-45a4-9740-df9736894afa`, action `solve`). Resumed cleanly by `GraphRunnerService`.
@@ -140,7 +140,7 @@ Detailed inspection of the published itinerary and database records revealed fou
 | :--- | :--- | :--- | :--- | :--- |
 | Routing Engine | Valhalla Matrix | HTTP 200 (< 150 km) | HTTP 200 (all distances <= 46 km) | PASS |
 | Road Geometry | Valhalla Route | 9 legs with polylines | 9 legs persisted, 64.88 km total | PASS |
-| Map Visualization | API Map Endpoint | 20 GeoJSON features | 20 features (10 stops, 9 legs, 1 bbox) | PASS |
+| Map Visualization | API Map Endpoint | 20 GeoJSON features | 20 features (10 Point stops, 9 LineString legs, 1 Polygon restriction) with top-level bbox | PASS |
 | Checkpoint Recovery| GraphRunnerService | Clean resume on interrupts | Resumed twice, 34.3s total time | PASS |
 | Remote LAYA | Endpoint Isolation | Disabled, 0 remote calls | 0 calls, 2 singleton bypasses | PASS |
 | Lodging Budget | compute_budget_node | 1 night (3,500 INR) | 2 nights (7,000 INR) | DEFECT |

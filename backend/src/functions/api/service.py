@@ -203,29 +203,34 @@ class PdfExportService:
                     ]
                 )
         else:
-            budget_table_data.extend(
+            budget_table_data.append(
                 [
-                    [
-                        "Transport (Fuel)",
-                        f"Road Transit ({brief.preferred_modes[0].value if brief.preferred_modes else 'car'})",
-                        "1",
-                        "Calculated",
-                        "Math Model",
-                    ],
+                    "Transport (Fuel)",
+                    f"Road Transit ({brief.preferred_modes[0].value if brief.preferred_modes else 'car'})",
+                    "1",
+                    "Calculated",
+                    "Math Model",
+                ]
+            )
+            calendar_nights = max(0, (brief.end_date - brief.start_date).days)
+            if calendar_nights > 0:
+                rooms_str = "1 room" if brief.rooms == 1 else f"{brief.rooms} rooms"
+                budget_table_data.append(
                     [
                         "Accommodation",
-                        f"{brief.rooms} room(s) across destinations",
-                        str(brief.rooms * max(0, (brief.end_date - brief.start_date).days)),
+                        f"{rooms_str} across destinations",
+                        str(brief.rooms * calendar_nights),
                         "Benchmark est.",
                         "Indicative Search",
-                    ],
-                    [
-                        "Highway Tolls",
-                        "NH-275 corridor plaza tariffs",
-                        "Corridor",
-                        "UNKNOWN",
-                        "Explicit Unknown (Uncoerced)",
-                    ],
+                    ]
+                )
+            budget_table_data.append(
+                [
+                    "Highway Tolls",
+                    "NH-275 corridor plaza tariffs",
+                    "Corridor",
+                    "UNKNOWN",
+                    "Explicit Unknown (Uncoerced)",
                 ]
             )
 

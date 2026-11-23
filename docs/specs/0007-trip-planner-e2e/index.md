@@ -169,7 +169,7 @@ Workflow graph execution moves sequentially through twelve stages:
 | Corridor weather advisory | Temperature, precipitation, monsoon risk | Open Meteo forecast API or `FixtureWeatherAdapter` |
 | Fuel budget line | Fuel liters, estimated fuel expense | `RoadBudgetCalculator` math using vehicle profile and route distance (labeled `ESTIMATED`) |
 | Toll budget line | Toll amount or explicit unknown reason | Highway toll tables or explicit unknown entry with reason (labeled `UNKNOWN`) |
-| Lodging budget line | Hotel stay amount, nights, rooms | Destination stay days multiplied by room count benchmark (labeled `ESTIMATED`) |
+| Lodging budget line | Hotel stay amount, nights, rooms | Trip calendar nights (end date minus start date) multiplied by room count benchmark (labeled `ESTIMATED`); destination stay days do not multiply hotel nights; per-hotel itemization deferred until hotels are assigned to specific nights |
 | Weather attribution | Provider attribution text | Required static text: "Weather data by Open Meteo.com" |
 | Travel advisories and alerts | Advisory text, severity, source timestamp | IMD bulletins, NDMA warnings, police alerts via `source_observations` (or labeled `ADVISORY_UNKNOWN`) |
 | Road closures and exclusions | Polygon boundaries, restriction intervals | Authoritative police or transport department claims mapped to Valhalla `exclude_polygons` |

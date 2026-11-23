@@ -1,8 +1,8 @@
 # Context Handoff: SWENA Travel Intelligence (Specs 0001 through 0007)
 
-Date: 2026-11-22
+Date: 2026-11-23
 
-Status: Specs 0001, 0002, 0003, 0004, 0005, and 0006 complete and accepted. Spec 0003 permanently migrated to standalone Obscura browser engine (eliminating Chromium and Sparticuz layer, 240 MB uncompressed, 90.45 MB compressed, 47 ms cold boot). Spec 0007 Trip Planner End to End has completed Slices 1 through 6, 8, bounded optimizer dispatch, Valhalla matrix distance rejection recovery, and restriction of distance recovery to TRAVEL workflows, verified across 70 tests on isolated PostgreSQL with review verdict Approve. Scope Features 1 through 6 are done; Feature 7 is in progress. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is short multi stop brief headless live run for live road geometry verification.
+Status: Specs 0001, 0002, 0003, 0004, 0005, and 0006 complete and accepted. Spec 0003 permanently migrated to standalone Obscura browser engine (eliminating Chromium and Sparticuz layer, 240 MB uncompressed, 90.45 MB compressed, 47 ms cold boot). Spec 0007 Trip Planner End to End has completed Slices 1 through 6, 8, bounded optimizer dispatch, Valhalla matrix distance rejection recovery, restriction of distance recovery to TRAVEL workflows, lodging night budget accounting, and lodging budget review follow ups, verified across 73 tests on isolated PostgreSQL and unit suites with review verdict Approve. Scope Features 1 through 6 are done; Feature 7 is in progress. AWS deployment verification remains deferred across all features until cloud deployment. Next planned action is itinerary correctness refinement (meals representation, overnight accommodation stop assignment, and nocturnal opening windows).
 
 
 ## 1. Project Purpose and Agreed Stack
@@ -356,6 +356,17 @@ Inspected repository HEAD commit `bb058bd`. Resolved lodging night budget calcul
 * Single destination location retention: For single destination trips, the destination name is preserved in the basis string (for example, `hotel_stay_Mysore (1 rooms, 1 nights)`).
 * Preservation of estimate labels and unknown costs: Benchmark accommodation retains `estimated=True` and `source_ref="benchmark_hotel_estimate"`. Unquoted highway tolls and unverified activity fees remain explicit unknown lines with documented reasons without zero coercion.
 * Regression coverage: Verified via 4 new unit tests in `test_trip_planner_proposal_slice5.py` (32 tests passing), PostgreSQL itinerary API integration test (2 tests passing), clean ruff linting, and strict mypy verification. Code review approved in `docs/reviews/2026-11-22-0007-correct-lodging-night-budget-accounting.md`.
+
+### 0007 finish lodging budget review follow ups (2026-11-23)
+
+Resolved remaining minor follow up items from code reviews and live run artifact evaluations:
+
+* PDF export fallback alignment: In `PdfExportService.generate_pdf`, when fallback branch is active, accommodation row is completely omitted when `calendar_nights == 0`. When positive, quantity equals `rooms * calendar_nights`.
+* Singular and plural formatting: Updated basis label formatting in both `graph.py` and `service.py` to distinguish singular and plural counts for rooms and nights (`1 room` vs `N rooms`, `1 night` vs `N nights`).
+* Specification and design table reconciliation: Reconciled `docs/specs/0007-trip-planner-e2e/index.md` to reflect calendar night accounting, and explicitly documented that per hotel itemization is deferred until hotels are assigned to specific nights.
+* Review GeoJSON breakdown correction: Reconciled `docs/reviews/2026-11-22-0007-live-routed-itinerary-review.md` to match raw artifact evidence: 20 features consisting of 10 Point stops, 9 LineString legs, 1 Polygon road closure restriction feature, with a top level bounding box property.
+* Historical artifacts preserved: Both `live_journey_result_bengaluru_mysuru_madikeri.json` and `live_journey_result_mysuru_srirangapatna_mandya.json` remain preserved in `backend/scripts/`.
+* Test coverage: 3 new unit tests added in `test_trip_planner_proposal_slice5.py` validating PDF export fallback generation. All 35 tests pass cleanly. Independent senior review approved in `docs/reviews/2026-11-23-0007-lodging-budget-review-followups.md`.
 
 ### Next action and ordering
 

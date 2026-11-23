@@ -15,8 +15,10 @@ Conforms to specification 0007 Slice 5, AC-1, AC-7, AC-8, AC-9:
 
 from __future__ import annotations
 
+import base64
 import uuid
-from datetime import UTC, datetime, timedelta
+import zlib
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
@@ -24,6 +26,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from contracts.money import BudgetCategory
+from contracts.trips import DestinationPoint, TransportMode, TripBrief
+from functions.api.service import PdfExportService
 from functions.orchestrator.graphs.trip_planner.graph import (
     TripPlanningNode,
     TripPlanningState,
@@ -1235,7 +1239,7 @@ async def test_compute_budget_lodging_accounting_mysuru_regression() -> None:
     assert hotel_line["quantity"] == "1"
     assert hotel_line["estimated"] is True
     assert hotel_line["source_ref"] == "benchmark_hotel_estimate"
-    assert hotel_line["basis"] == "hotel_stay_unknown (1 rooms, 1 nights)"
+    assert hotel_line["basis"] == "hotel_stay_unknown (1 room, 1 night)"
     assert hotel_line["unknown_reason"] is None
 
     # Unverified tolls remain explicit unknown lines without zero coercion
@@ -1322,6 +1326,104 @@ async def test_compute_budget_lodging_accounting_single_destination_known_locati
         line for line in lines if line["category"] == BudgetCategory.ACCOMMODATION.value
     ]
     assert len(hotel_lines) == 1
-    assert hotel_lines[0]["basis"] == "hotel_stay_Mysore (1 rooms, 1 nights)"
+    assert hotel_lines[0]["basis"] == "hotel_stay_Mysore (1 room, 1 night)"
     assert hotel_lines[0]["quantity"] == "1"
     assert hotel_lines[0]["amount"] == "3500.00"
+
+
+def _extract_pdf_decompressed_stream(pdf_bytes: bytes) -> bytes:
+    """Helper to decompress ReportLab ASCII85+Flate stream for test assertions."""
+    idx1 = pdf_bytes.find(b"stream\n") + len(b"stream\n")
+    idx2 = pdf_bytes.find(b"endstream", idx1)
+    data = pdf_bytes[idx1:idx2].strip()
+    raw = base64.a85decode(data, adobe=True)
+    return zlib.decompress(raw)
+
+
+def test_pdf_export_fallback_same_day_trip_omits_accommodation() -> None:
+    """Verifies that PDF fallback omits the accommodation row entirely for same-day trips."""
+    brief = TripBrief(
+        origin_name="Bengaluru",
+        origin_lat=12.9716,
+        origin_lng=77.5946,
+        start_date=date(2026, 11, 25),
+        end_date=date(2026, 11, 25),
+        adults=2,
+        rooms=1,
+        preferred_modes=[TransportMode.CAR_PETROL],
+        destinations=[
+            DestinationPoint(name="Mysuru", latitude=12.2958, longitude=76.6394, stay_days=1)
+        ],
+    )
+    pdf_bytes = PdfExportService.generate_pdf(
+        trip_id=uuid.uuid4(),
+        version=1,
+        brief=brief,
+        schedule=None,
+        budget_summary=None,
+    )
+    assert len(pdf_bytes) > 0
+    stream_text = _extract_pdf_decompressed_stream(pdf_bytes)
+    assert b"Transport" in stream_text
+    assert b"Highway Tolls" in stream_text
+    assert b"Accommodation" not in stream_text
+
+
+def test_pdf_export_fallback_one_room_one_night() -> None:
+    """Verifies that PDF fallback formats singular room and night labels for 1 room, 1 night."""
+    brief = TripBrief(
+        origin_name="Bengaluru",
+        origin_lat=12.9716,
+        origin_lng=77.5946,
+        start_date=date(2026, 11, 25),
+        end_date=date(2026, 11, 26),
+        adults=2,
+        rooms=1,
+        preferred_modes=[TransportMode.CAR_PETROL],
+        destinations=[
+            DestinationPoint(name="Mysuru", latitude=12.2958, longitude=76.6394, stay_days=1)
+        ],
+    )
+    pdf_bytes = PdfExportService.generate_pdf(
+        trip_id=uuid.uuid4(),
+        version=1,
+        brief=brief,
+        schedule=None,
+        budget_summary=None,
+    )
+    assert len(pdf_bytes) > 0
+    stream_text = _extract_pdf_decompressed_stream(pdf_bytes)
+    assert b"Accommodation" in stream_text
+    assert b"1 room across destinations" in stream_text
+    assert b"room(s)" not in stream_text
+    assert b"(1)" in stream_text
+
+
+def test_pdf_export_fallback_multiple_rooms() -> None:
+    """Verifies that PDF fallback formats plural room label and scales quantity for multiple rooms."""
+    brief = TripBrief(
+        origin_name="Bengaluru",
+        origin_lat=12.9716,
+        origin_lng=77.5946,
+        start_date=date(2026, 11, 25),
+        end_date=date(2026, 11, 27),
+        adults=4,
+        rooms=3,
+        preferred_modes=[TransportMode.CAR_PETROL],
+        destinations=[
+            DestinationPoint(name="Mysuru", latitude=12.2958, longitude=76.6394, stay_days=1)
+        ],
+    )
+    pdf_bytes = PdfExportService.generate_pdf(
+        trip_id=uuid.uuid4(),
+        version=1,
+        brief=brief,
+        schedule=None,
+        budget_summary=None,
+    )
+    assert len(pdf_bytes) > 0
+    stream_text = _extract_pdf_decompressed_stream(pdf_bytes)
+    assert b"Accommodation" in stream_text
+    assert b"3 rooms across destinations" in stream_text
+    assert b"(6)" in stream_text
+
