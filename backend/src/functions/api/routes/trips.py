@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.db import get_session, get_session_factory
 from contracts.jobs import Job, JobStatus
 from contracts.routing import RouteMapGeoJsonResponse
-from contracts.trips import Trip, TripBrief, TripState
+from contracts.trips import Trip, TripBrief, TripBriefDraft, TripState
 from functions.api.idempotency import IdempotencyConflictError, IdempotencyRepository
 from functions.api.models import TripModel, TripVersionModel
 from functions.api.repository import SqlAlchemyUnitOfWork, TripVersionConflictError
@@ -40,12 +40,12 @@ UowDep = Annotated[SqlAlchemyUnitOfWork, Depends(get_uow)]
 
 class CreateTripRequest(BaseModel):
     owner_id: uuid.UUID
-    brief: TripBrief
+    brief: TripBrief | TripBriefDraft
 
 
 class UpdateBriefRequest(BaseModel):
     expected_base_version: int
-    brief: TripBrief
+    brief: TripBrief | TripBriefDraft
     command_id: uuid.UUID = Field(default_factory=uuid.uuid4)
 
 
@@ -55,7 +55,7 @@ class TripResponse(BaseModel):
     current_version: int
     state: TripState
     status: str | None = None
-    brief: TripBrief | None = None
+    brief: TripBrief | TripBriefDraft | None = None
     current_route_id: uuid.UUID | None = None
 
 
@@ -324,16 +324,20 @@ async def start_trip_plan(
 
     try:
         validated_brief = TripBrief.model_validate(trip_version.brief_json)
+        brief_snapshot = validated_brief.model_dump(mode="json")
+        planned_queries = QueryPlanningService.plan_destination_queries(validated_brief)
+        collector_budget = QueryPlanningService.calculate_collector_budget(planned_queries)
+        execution_budget = ensure_execution_budget_structure(collector_budget)
     except (ValidationError, ValueError, TypeError) as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Trip {trip_id} version {trip_version.version} has an invalid brief snapshot: {e}",
-        ) from e
-
-    brief_snapshot = validated_brief.model_dump(mode="json")
-    planned_queries = QueryPlanningService.plan_destination_queries(validated_brief)
-    collector_budget = QueryPlanningService.calculate_collector_budget(planned_queries)
-    execution_budget = ensure_execution_budget_structure(collector_budget)
+        try:
+            draft_brief = TripBriefDraft.model_validate(trip_version.brief_json)
+            brief_snapshot = draft_brief.model_dump(mode="json")
+            execution_budget = ensure_execution_budget_structure({})
+        except Exception:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Trip {trip_id} version {trip_version.version} has an invalid brief snapshot: {e}",
+            ) from e
 
     start_payload: dict[str, Any] = {
         "trip_id": str(trip.id),

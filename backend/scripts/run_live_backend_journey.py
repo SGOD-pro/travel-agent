@@ -85,6 +85,8 @@ from functions.orchestrator.graphs.trip_planner import (
 from functions.route_optimizer import consumer as route_optimizer_consumer
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("live_backend_journey")
 
 
@@ -995,7 +997,10 @@ async def main() -> None:
         "database_audit": db_audit,
     }
 
-    out_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "live_journey_result.json"))
+    out_path = os.environ.get(
+        "LIVE_JOURNEY_OUTPUT_FILE",
+        os.path.abspath(os.path.join(os.path.dirname(__file__), "live_journey_result.json")),
+    )
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(redact_secrets(final_output), f, indent=2)
 

@@ -13,9 +13,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.db import get_session
+from contracts.question import AnswerSubmissionResult, QuestionAnswerRequest
 from functions.orchestrator.execution.cancellation import cancel_execution
 from functions.orchestrator.execution.job_events import get_job_events
-from functions.orchestrator.execution.models import ExecutionModel, TaskModel
+from functions.orchestrator.execution.models import (
+    ExecutionModel,
+    TaskModel,
+    TravelerQuestionModel,
+)
+from functions.orchestrator.hitl import (
+    AnswerValidationError,
+    ConflictingAnswerError,
+    ExecutionCancelledError,
+    ExecutionDeadlineExceededError,
+    QuestionNotFoundError,
+    QuestionNotPendingError,
+    QuestionOwnerMismatchError,
+    StaleContextError,
+    TravelerAnswerService,
+)
 from middleware.auth import AuthenticatedUser, get_current_user
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
@@ -39,6 +55,7 @@ class JobStatusResponse(BaseModel):
     context_version: int
     progress: dict[str, Any] = Field(default_factory=dict)
     missing_inputs: list[str] = Field(default_factory=list)
+    pending_questions: list[dict[str, Any]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     error: dict[str, Any] | None = None
     result_available: bool = False
@@ -152,12 +169,38 @@ async def get_job_status(
                 "map_url": f"/api/v1/optimization/routes/{route_id}/map",
             }
 
+    # Fetch pending questions for this execution
+    q_stmt = (
+        select(TravelerQuestionModel)
+        .where(
+            TravelerQuestionModel.execution_id == job_id,
+            TravelerQuestionModel.status == "PENDING",
+        )
+        .order_by(TravelerQuestionModel.created_at.asc())
+    )
+    pending_q_rows = (await session.execute(q_stmt)).scalars().all()
+    missing_inputs = [q.question_key for q in pending_q_rows]
+    pending_questions = [
+        {
+            "id": str(q.id),
+            "question_id": str(q.id),
+            "question_key": q.question_key,
+            "question_type": q.question_type,
+            "prompt": q.prompt,
+            "validation_rules": q.validation_rules,
+            "context_version": q.context_version,
+            "created_at": q.created_at.isoformat(),
+        }
+        for q in pending_q_rows
+    ]
+
     return JobStatusResponse(
         job_id=execution.id,
         status=execution.status,
         context_version=execution.context_version,
         progress=progress,
-        missing_inputs=[],
+        missing_inputs=missing_inputs,
+        pending_questions=pending_questions,
         warnings=[],
         error=error_info,
         result_available=result_available,
@@ -238,3 +281,55 @@ async def cancel_job(
         status=execution.status,
         cancelled=was_cancelled,
     )
+
+
+JobResponseSubmissionRequest = QuestionAnswerRequest
+
+
+@router.post("/{job_id}/responses", response_model=AnswerSubmissionResult)
+async def submit_job_response(
+    job_id: uuid.UUID,
+    request: JobResponseSubmissionRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> AnswerSubmissionResult:
+    """Submits answer to a pending question, advancing context and scheduling resume."""
+    exec_stmt = select(ExecutionModel).where(ExecutionModel.id == job_id)
+    execution = (await session.execute(exec_stmt)).scalar_one_or_none()
+    if execution is None or execution.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found",
+        )
+
+    service = TravelerAnswerService()
+    try:
+        result = await service.submit_answer(
+            session,
+            question_id=request.question_id,
+            caller_id=current_user.id,
+            answer=request.answer,
+            expected_context_version=request.expected_context_version,
+            execution_id=job_id,
+        )
+        await session.commit()
+        return result
+    except QuestionNotFoundError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+    except QuestionOwnerMismatchError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
+    except (
+        ExecutionCancelledError,
+        ExecutionDeadlineExceededError,
+        QuestionNotPendingError,
+        StaleContextError,
+        ConflictingAnswerError,
+    ) as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+    except AnswerValidationError as e:
+        await session.rollback()
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
+

@@ -266,6 +266,7 @@ class GraphRunnerService:
                 # Duplicate / Replay check
                 if execution.status in (
                     "WAITING_TASKS",
+                    "WAITING_USER",
                     "SUCCEEDED",
                     "PARTIAL",
                     "FAILED",
@@ -469,6 +470,26 @@ class GraphRunnerService:
                         return GraphRunnerResult(
                             execution_id=execution_id,
                             status="WAITING_TASKS",
+                            tasks_dispatched=0,
+                            graph_advanced=False,
+                        )
+
+                # Check if still waiting for user input
+                if execution.status == "WAITING_USER":
+                    from functions.orchestrator.execution.models import TravelerQuestionModel
+
+                    pending_q_res = await session.execute(
+                        select(sa.func.count(TravelerQuestionModel.id)).where(
+                            TravelerQuestionModel.execution_id == execution_id,
+                            TravelerQuestionModel.status == "PENDING",
+                        )
+                    )
+                    pending_count = pending_q_res.scalar() or 0
+                    if pending_count > 0:
+                        # Cannot resume yet, question still pending answer
+                        return GraphRunnerResult(
+                            execution_id=execution_id,
+                            status="WAITING_USER",
                             tasks_dispatched=0,
                             graph_advanced=False,
                         )
@@ -826,17 +847,61 @@ class GraphRunnerService:
                     )
 
                 # Case C: Graph paused without pending tasks
-                execution.status = "WAITING_TASKS"
+                paused_status = (
+                    "WAITING_USER"
+                    if state_values.get("status") == "WAITING_USER"
+                    else "WAITING_TASKS"
+                )
+                execution.status = paused_status
                 execution.lease_token = None
                 execution.lease_expiry = None
                 execution.updated_at = now
+
+                if paused_status == "WAITING_USER":
+                    pending_q = state_values.get("pending_question")
+                    if pending_q and isinstance(pending_q, dict):
+                        from functions.orchestrator.execution.models import TravelerQuestionModel
+
+                        q_id = (
+                            uuid.UUID(str(pending_q["id"]))
+                            if pending_q.get("id")
+                            else uuid.uuid4()
+                        )
+                        q_stmt = select(TravelerQuestionModel).where(TravelerQuestionModel.id == q_id)
+                        existing_q = (await session.execute(q_stmt)).scalar_one_or_none()
+                        if existing_q is None:
+                            q_row = TravelerQuestionModel(
+                                id=q_id,
+                                execution_id=execution_id,
+                                trip_id=execution.trip_id,
+                                owner_id=execution.owner_id,
+                                context_version=execution.context_version,
+                                question_key=str(pending_q.get("question_key", "missing_constraint")),
+                                question_type=str(pending_q.get("question_type", "TEXT")),
+                                prompt=str(pending_q.get("prompt", "")),
+                                validation_rules=dict(pending_q.get("validation_rules", {})),
+                                status="PENDING",
+                                created_at=now,
+                            )
+                            session.add(q_row)
+
+                            await record_job_event(
+                                session,
+                                execution_id=execution_id,
+                                event_type="QUESTION_ASKED",
+                                safe_payload={
+                                    "question_id": str(q_id),
+                                    "question_key": pending_q.get("question_key", "missing_constraint"),
+                                    "status": "WAITING_USER",
+                                },
+                            )
 
                 if checkpointer and hasattr(checkpointer, "flush"):
                     await checkpointer.flush(session, str(execution_id))
 
                 return GraphRunnerResult(
                     execution_id=execution_id,
-                    status="WAITING_TASKS",
+                    status=paused_status,
                     tasks_dispatched=0,
                     graph_advanced=True,
                     checkpoint_id=checkpoint_id,

@@ -81,3 +81,27 @@ Steps derived from spec 0007 acceptance criteria. `/check verify` runs these; `/
 
 ## Test reconciliation and live collection boundaries
 Previous verification reports for Slices 1 through 6 proved contract compliance, schema definitions, and PostgreSQL state persistence under mocked or seeded fixtures. Those suites declared zero SerpAPI requests and seeded destination evidence directly into database tables or fixture state. Live Bedrock and remote LAYA probes were evaluated as standalone smoke tests, not as participants in a search to publication loop. Seeded evidence must never be counted as live collection. Slice 8 introduces genuine query planning, real task dispatch through GraphRunnerService, evidence worker execution under lease fencing, browser fallback, and outbox reconciliation.
+
+## Human in the Loop (HITL) Backend Flow and Direct Python Runner Verification
+
+### Integration Test Suite Summary
+- **Test File**: `backend/tests/integration/test_hitl_pipeline.py`
+- **Database**: PostgreSQL PostGIS isolated acceptance database (`127.0.0.1:5432/acceptance_db`)
+- **Outcome**: 10 passed out of 10 in 6.56 seconds.
+- **Coverage**:
+  1. `test_incomplete_brief_creates_question_and_enters_waiting_user`: Incomplete brief persists `TravelerQuestionModel`, sets execution status to `WAITING_USER`, releases lease, records `QUESTION_ASKED` timeline event.
+  2. `test_valid_answer_advances_version_and_resumes_planning`: Valid answer advances `context_version` to 2, marks question `ANSWERED`, stages `EXECUTION_RESUME`, and resumes execution graph.
+  3. `test_invalid_answer_rejected_and_leaves_question_pending`: Inverted dates fail validation with `AnswerValidationError`, leaving question `PENDING` and graph uncorrupted.
+  4. `test_idempotent_duplicate_answer_replay_safe`: Duplicate identical submissions return `is_duplicate=True` without duplicate resume events.
+  5. `test_concurrent_conflicting_answer_rejected`: Conflicting answers for answered questions raise `ConflictingAnswerError`.
+  6. `test_owner_mismatch_and_stale_context_rejected`: Cross tenant submission raises `QuestionOwnerMismatchError`; stale versions raise `StaleContextError`; mismatched execution IDs raise `QuestionNotFoundError`.
+  7. `test_cancellation_and_deadline_expiry_prevent_resume`: Cancelled or expired executions reject answers and block resumption.
+  8. `test_process_restart_preserves_question_and_resumes`: Fresh runner instance reads persisted question and resumes cleanly upon answer.
+  9. `test_resumed_planning_preserves_completed_work`: Checkpoint state preserves earlier candidate evidence through pause and resume.
+  10. `test_complete_brief_bypasses_await_user_input`: Complete brief skips question generation and routes directly to candidate discovery.
+
+### Direct Runner Verification
+- **Script**: `backend/scripts/run_hitl_pipeline.py`
+- **Phase 1 (Pause Demonstration)**: Executed with `--stop-at-question --output scripts/hitl_pipeline_pause_demo.json`. Job `1b528ede-bf71-474d-bfc2-ab3cd7337e84` created via draft brief, paused in `WAITING_USER`, and displayed `travel_dates` question prompt.
+- **Phase 2 (Resume Demonstration)**: Executed in fresh process with `--resume 1b528ede-bf71-474d-bfc2-ab3cd7337e84 --non-interactive --start-date 2026-11-25 --end-date 2026-11-26`. Submitted answer via `POST /api/v1/jobs/{job_id}/responses`, advanced version to 2, resumed LangGraph execution through evidence collection, route optimization, weather, budget, and published finalized 10 stop itinerary to `trips.itinerary_json` with status `SUCCEEDED`.
+- **Artifact**: `backend/scripts/hitl_pipeline_result_mysuru_hitl_20261123.json`.

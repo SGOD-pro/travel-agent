@@ -104,6 +104,90 @@ class TripBrief(BaseModel):
         return (self.end_date - self.start_date).days + 1
 
 
+class TripBriefDraft(BaseModel):
+    """Compatible draft travel brief contract for incomplete initial input."""
+
+    model_config = ConfigDict(frozen=True)
+
+    origin_name: str
+    origin_lat: float = Field(..., ge=-90.0, le=90.0)
+    origin_lng: float = Field(..., ge=-180.0, le=180.0)
+    destinations: list[DestinationPoint] = Field(..., min_length=1)
+    start_date: date | None = None
+    end_date: date | None = None
+    timezone: str = Field(
+        default="Asia/Kolkata", description="Target IANA timezone string for trip scheduling"
+    )
+    adults: int = Field(default=1, ge=1)
+    child_ages: list[int] = Field(default_factory=list)
+    rooms: int = Field(default=1, ge=1)
+    target_budget: Money | None = None
+    preferred_modes: list[TransportMode] = Field(default_factory=lambda: [TransportMode.CAR_PETROL])
+    dietary_preferences: list[str] = Field(default_factory=list)
+    accessibility_requirements: list[str] = Field(default_factory=list)
+    hard_constraints: list[str] = Field(default_factory=list)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, v: str) -> str:
+        if not v or not v.strip():
+            return "Asia/Kolkata"
+        import zoneinfo
+
+        try:
+            zoneinfo.ZoneInfo(v.strip())
+        except Exception as exc:
+            raise ValueError(f"Invalid IANA timezone string: '{v}'") from exc
+        return v.strip()
+
+    @field_validator("end_date")
+    @classmethod
+    def validate_date_range(cls, v: date | None, info: object) -> date | None:
+        if v is None:
+            return None
+        data = getattr(info, "data", {})
+        start = data.get("start_date")
+        if start and v < start:
+            raise ValueError(f"end_date ({v}) cannot precede start_date ({start})")
+        return v
+
+    def is_complete(self) -> bool:
+        """Returns True if all required planning constraints are populated."""
+        return self.start_date is not None and self.end_date is not None
+
+    def get_missing_fields(self) -> list[str]:
+        """Returns list of missing required planning constraints."""
+        missing: list[str] = []
+        if self.start_date is None or self.end_date is None:
+            missing.append("travel_dates")
+        return missing
+
+    def to_trip_brief(self) -> TripBrief:
+        """Transforms into canonical validated TripBrief, raising ValueError if incomplete."""
+        if not self.is_complete():
+            missing = ", ".join(self.get_missing_fields())
+            raise ValueError(f"Cannot convert incomplete draft to TripBrief; missing: {missing}")
+        assert self.start_date is not None
+        assert self.end_date is not None
+        return TripBrief(
+            origin_name=self.origin_name,
+            origin_lat=self.origin_lat,
+            origin_lng=self.origin_lng,
+            destinations=self.destinations,
+            start_date=self.start_date,
+            end_date=self.end_date,
+            timezone=self.timezone,
+            adults=self.adults,
+            child_ages=self.child_ages,
+            rooms=self.rooms,
+            target_budget=self.target_budget,
+            preferred_modes=self.preferred_modes,
+            dietary_preferences=self.dietary_preferences,
+            accessibility_requirements=self.accessibility_requirements,
+            hard_constraints=self.hard_constraints,
+        )
+
+
 class TripVersion(BaseModel):
     """Immutable snapshot of a Trip at a specific version."""
 
@@ -111,7 +195,7 @@ class TripVersion(BaseModel):
 
     trip_id: uuid.UUID
     version: int = Field(..., ge=1)
-    brief: TripBrief
+    brief: TripBrief | TripBriefDraft
     command_id: uuid.UUID
     schema_version: int = 1
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

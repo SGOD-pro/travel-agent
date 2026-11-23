@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from contracts.trips import Trip, TripBrief, TripState, TripVersion
+from contracts.trips import Trip, TripBrief, TripBriefDraft, TripState, TripVersion
 from functions.api.models import TripModel, TripVersionModel
 from functions.api.repository import TripRepositoryPort, TripVersionConflictError
 
@@ -62,7 +62,7 @@ class SqlAlchemyTripRepository(TripRepositoryPort):
         self,
         trip_id: uuid.UUID,
         expected_base_version: int,
-        brief: TripBrief,
+        brief: TripBrief | TripBriefDraft,
         command_id: uuid.UUID,
     ) -> TripVersion:
         # 1. Idempotency check: Has this command_id already produced a version for this trip?
@@ -72,10 +72,14 @@ class SqlAlchemyTripRepository(TripRepositoryPort):
         )
         existing = (await self._session.execute(idempotency_stmt)).scalar_one_or_none()
         if existing:
+            try:
+                b_val = TripBrief.model_validate(existing.brief_json)
+            except Exception:
+                b_val = TripBriefDraft.model_validate(existing.brief_json)
             return TripVersion(
                 trip_id=existing.trip_id,
                 version=existing.version,
-                brief=TripBrief.model_validate(existing.brief_json),
+                brief=b_val,
                 command_id=existing.command_id,
                 schema_version=existing.schema_version,
                 created_at=existing.created_at,
@@ -130,10 +134,14 @@ class SqlAlchemyTripRepository(TripRepositoryPort):
         model = (await self._session.execute(stmt)).scalar_one_or_none()
         if not model:
             return None
+        try:
+            b_val = TripBrief.model_validate(model.brief_json)
+        except Exception:
+            b_val = TripBriefDraft.model_validate(model.brief_json)
         return TripVersion(
             trip_id=model.trip_id,
             version=model.version,
-            brief=TripBrief.model_validate(model.brief_json),
+            brief=b_val,
             command_id=model.command_id,
             schema_version=model.schema_version,
             created_at=model.created_at,

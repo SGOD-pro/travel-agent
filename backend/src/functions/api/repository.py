@@ -8,7 +8,7 @@ from typing import Any
 
 from contracts.artifacts import Artifact, ArtifactStatus
 from contracts.jobs import Job
-from contracts.trips import Trip, TripBrief, TripVersion
+from contracts.trips import Trip, TripBrief, TripBriefDraft, TripVersion
 
 
 class TripVersionConflictError(Exception):
@@ -39,7 +39,7 @@ class TripRepositoryPort(ABC):
         self,
         trip_id: uuid.UUID,
         expected_base_version: int,
-        brief: TripBrief,
+        brief: TripBrief | TripBriefDraft,
         command_id: uuid.UUID,
     ) -> TripVersion:
         pass

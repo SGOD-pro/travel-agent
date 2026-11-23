@@ -1,0 +1,7465 @@
+{
+  "runner": "run_hitl_pipeline.py",
+  "started_at": "2026-11-23T15:59:02.394919+00:00",
+  "database_url": "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/acceptance_db",
+  "resume_mode": true,
+  "job_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+  "question_presented": {
+    "id": "de51a486-0238-481b-84fa-6a8e540e9d1d",
+    "key": "travel_dates",
+    "type": "DATE_RANGE",
+    "prompt": "Please specify your travel dates (start_date and end_date in YYYY-MM-DD format) to continue planning your trip.",
+    "rules": {
+      "type": "date_range",
+      "fields": [
+        "start_date",
+        "end_date"
+      ]
+    }
+  },
+  "submitted_answer": {
+    "start_date": "2026-11-25",
+    "end_date": "2026-11-26"
+  },
+  "answer_result": {
+    "question_id": "de51a486-0238-481b-84fa-6a8e540e9d1d",
+    "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+    "status": "ANSWERED",
+    "new_context_version": 2,
+    "context_version": 2,
+    "is_duplicate": false,
+    "message": "Answer recorded and execution resume scheduled"
+  },
+  "final_status": "SUCCEEDED",
+  "timeline": [
+    {
+      "id": "57e4b174-0927-484c-97d1-9fe30b95a661",
+      "sequence": 1,
+      "event_type": "JOB_ACCEPTED",
+      "safe_payload": {
+        "status": "CREATED",
+        "trip_id": "b4f6df3b-c112-436b-9401-1522f0cf01ce",
+        "workflow": "TRAVEL",
+        "trip_version": 1
+      },
+      "timestamp": "2026-11-23T15:58:51.448793Z"
+    },
+    {
+      "id": "2e0395db-0c12-40de-922c-923ed01c2dda",
+      "sequence": 2,
+      "event_type": "EXECUTION_STARTED",
+      "safe_payload": {
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-23T15:58:51.723713Z"
+    },
+    {
+      "id": "72691e6c-1d51-4c5d-9f38-4cb3061e7dd8",
+      "sequence": 3,
+      "event_type": "QUESTION_ASKED",
+      "safe_payload": {
+        "status": "WAITING_USER",
+        "question_id": "de51a486-0238-481b-84fa-6a8e540e9d1d",
+        "question_key": "travel_dates"
+      },
+      "timestamp": "2026-11-23T15:58:51.761408Z"
+    },
+    {
+      "id": "45269fd0-396d-46d5-bb01-e30799094a8c",
+      "sequence": 4,
+      "event_type": "QUESTION_ANSWERED",
+      "safe_payload": {
+        "question_id": "de51a486-0238-481b-84fa-6a8e540e9d1d",
+        "question_key": "travel_dates",
+        "context_version": 2
+      },
+      "timestamp": "2026-11-23T15:59:02.760862Z"
+    },
+    {
+      "id": "8953771f-06a8-4b6e-afc7-761999c7d02d",
+      "sequence": 5,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-23T15:59:02.849239Z"
+    },
+    {
+      "id": "9d97e2d3-01d1-432d-a04d-470b3534fe92",
+      "sequence": 6,
+      "event_type": "TASKS_DISPATCHED",
+      "safe_payload": {
+        "count": 1,
+        "status": "WAITING_TASKS"
+      },
+      "timestamp": "2026-11-23T15:59:02.902852Z"
+    },
+    {
+      "id": "9baaca42-cdb6-40dd-8619-919eb7721910",
+      "sequence": 7,
+      "event_type": "TASK_COMPLETED",
+      "safe_payload": {
+        "action": "collect",
+        "worker": "EVIDENCE",
+        "attempt": 1,
+        "task_id": "a1292df0-4f4b-4640-a835-bb3da7295809"
+      },
+      "timestamp": "2026-11-23T15:59:06.278002Z"
+    },
+    {
+      "id": "3abf5fc7-32b7-44db-9ca4-58abd22ae954",
+      "sequence": 8,
+      "event_type": "GRAPH_RESUMED",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-23T15:59:06.636341Z"
+    },
+    {
+      "id": "cd51db11-e75e-4d49-a25c-15409b3bd555",
+      "sequence": 9,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-23T15:59:06.959022Z"
+    },
+    {
+      "id": "27b1f9b0-f784-4f06-a4e1-89cc43a62b0b",
+      "sequence": 10,
+      "event_type": "TASKS_DISPATCHED",
+      "safe_payload": {
+        "count": 1,
+        "status": "WAITING_TASKS"
+      },
+      "timestamp": "2026-11-23T15:59:07.598008Z"
+    },
+    {
+      "id": "621e2f0a-e780-4f55-8ce5-852d9b4ce926",
+      "sequence": 11,
+      "event_type": "TASK_COMPLETED",
+      "safe_payload": {
+        "action": "solve",
+        "worker": "OPTIMIZER",
+        "attempt": 1,
+        "task_id": "0f39bfd9-bfac-4451-ad9a-9e234e2ecdaa"
+      },
+      "timestamp": "2026-11-23T15:59:22.626592Z"
+    },
+    {
+      "id": "40c0198c-6915-4013-9624-6cc410b2978f",
+      "sequence": 12,
+      "event_type": "GRAPH_RESUMED",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-23T15:59:23.009056Z"
+    },
+    {
+      "id": "40c5b8c8-c6cd-4f84-af37-6e74e0b92b3c",
+      "sequence": 13,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-23T15:59:23.337319Z"
+    },
+    {
+      "id": "466ff5f3-a32b-49ac-9cb5-961e1e4e4a11",
+      "sequence": 14,
+      "event_type": "PROPOSAL_PUBLISHED",
+      "safe_payload": {
+        "trip_id": "b4f6df3b-c112-436b-9401-1522f0cf01ce",
+        "route_id": "2d996a30-fa9e-4da3-aba1-be99ead2cd31",
+        "base_version": 2,
+        "routing_status": "FEASIBLE"
+      },
+      "timestamp": "2026-11-23T15:59:23.439634Z"
+    },
+    {
+      "id": "56901ee2-5695-4cd5-867a-4686710c49a6",
+      "sequence": 15,
+      "event_type": "EXECUTION_SUCCEEDED",
+      "safe_payload": {
+        "status": "SUCCEEDED"
+      },
+      "timestamp": "2026-11-23T15:59:23.559610Z"
+    }
+  ],
+  "itinerary": {
+    "status": "ready_for_approval",
+    "trip_id": "b4f6df3b-c112-436b-9401-1522f0cf01ce",
+    "version": 2,
+    "route_id": "2d996a30-fa9e-4da3-aba1-be99ead2cd31",
+    "schedule": {
+      "legs": [
+        {
+          "to_stop": "Srirangapatna River Front",
+          "from_stop": "Mysuru, Karnataka",
+          "distance_km": 18.244,
+          "duration_minutes": 65
+        },
+        {
+          "to_stop": "Srirangapatna Light and Sound Show",
+          "from_stop": "Srirangapatna River Front",
+          "distance_km": 12.611,
+          "duration_minutes": 40
+        },
+        {
+          "to_stop": "Sri Ranganathaswamy Temple",
+          "from_stop": "Srirangapatna Light and Sound Show",
+          "distance_km": 0.929,
+          "duration_minutes": 6
+        },
+        {
+          "to_stop": "Srirangapattana Ghat",
+          "from_stop": "Sri Ranganathaswamy Temple",
+          "distance_km": 0.645,
+          "duration_minutes": 5
+        },
+        {
+          "to_stop": "TIPU SULTAN SUMMER PALACE",
+          "from_stop": "Srirangapattana Ghat",
+          "distance_km": 2.457,
+          "duration_minutes": 9
+        },
+        {
+          "to_stop": "Shivananjappa Park",
+          "from_stop": "TIPU SULTAN SUMMER PALACE",
+          "distance_km": 27.09,
+          "duration_minutes": 52
+        },
+        {
+          "to_stop": "Shree Veeranjaneya Swamy Temple",
+          "from_stop": "Shivananjappa Park",
+          "distance_km": 1.824,
+          "duration_minutes": 10
+        },
+        {
+          "to_stop": "Silver Jubliee Park",
+          "from_stop": "Shree Veeranjaneya Swamy Temple",
+          "distance_km": 0.458,
+          "duration_minutes": 3
+        },
+        {
+          "to_stop": "Aane Park",
+          "from_stop": "Silver Jubliee Park",
+          "distance_km": 0.623,
+          "duration_minutes": 3
+        }
+      ],
+      "stops": [
+        {
+          "name": "Mysuru, Karnataka",
+          "latitude": 12.2958,
+          "position": 0,
+          "longitude": 76.6394,
+          "window_end": null,
+          "arrival_time": "2026-11-25T03:30:00Z",
+          "hours_status": "ORIGIN",
+          "window_start": null,
+          "departure_time": "2026-11-25T03:30:00Z",
+          "is_hours_assumed": false,
+          "stay_duration_minutes": 0
+        },
+        {
+          "name": "Srirangapatna River Front",
+          "latitude": 12.4032324,
+          "position": 1,
+          "longitude": 76.72752919999999,
+          "window_end": "2026-11-25T12:30:00Z",
+          "arrival_time": "2026-11-25T04:35:49Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-25T03:30:00Z",
+          "departure_time": "2026-11-25T05:35:49Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        },
+        {
+          "name": "Srirangapatna Light and Sound Show",
+          "latitude": 12.418926299999999,
+          "position": 2,
+          "longitude": 76.6832051,
+          "window_end": "2026-11-25T12:30:00Z",
+          "arrival_time": "2026-11-25T06:15:59Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-25T03:30:00Z",
+          "departure_time": "2026-11-25T07:15:59Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        },
+        {
+          "name": "Sri Ranganathaswamy Temple",
+          "latitude": 12.424898899999999,
+          "position": 3,
+          "longitude": 76.67906839999999,
+          "window_end": "2026-11-25T12:30:00Z",
+          "arrival_time": "2026-11-25T07:22:30Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-25T03:30:00Z",
+          "departure_time": "2026-11-25T08:22:30Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        },
+        {
+          "name": "Srirangapattana Ghat",
+          "latitude": 12.427311399999999,
+          "position": 4,
+          "longitude": 76.6833759,
+          "window_end": "2026-11-25T12:30:00Z",
+          "arrival_time": "2026-11-25T08:28:26Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-25T03:30:00Z",
+          "departure_time": "2026-11-25T09:28:26Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        },
+        {
+          "name": "TIPU SULTAN SUMMER PALACE",
+          "latitude": 12.418370699999999,
+          "position": 5,
+          "longitude": 76.69671,
+          "window_end": "2026-11-25T12:30:00Z",
+          "arrival_time": "2026-11-25T09:37:45Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-25T03:30:00Z",
+          "departure_time": "2026-11-25T10:37:45Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        },
+        {
+          "name": "Shivananjappa Park",
+          "latitude": 12.523596,
+          "position": 6,
+          "longitude": 76.88902,
+          "window_end": "2026-11-26T12:30:00Z",
+          "arrival_time": "2026-11-26T03:30:00Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-26T03:30:00Z",
+          "departure_time": "2026-11-26T04:30:00Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        },
+        {
+          "name": "Shree Veeranjaneya Swamy Temple",
+          "latitude": 12.5287334,
+          "position": 7,
+          "longitude": 76.897882,
+          "window_end": "2026-11-26T12:30:00Z",
+          "arrival_time": "2026-11-26T04:40:30Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-26T03:30:00Z",
+          "departure_time": "2026-11-26T05:40:30Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        },
+        {
+          "name": "Silver Jubliee Park",
+          "latitude": 12.5281313,
+          "position": 8,
+          "longitude": 76.89749669999999,
+          "window_end": "2026-11-26T12:30:00Z",
+          "arrival_time": "2026-11-26T05:44:21Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-26T03:30:00Z",
+          "departure_time": "2026-11-26T06:44:21Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        },
+        {
+          "name": "Aane Park",
+          "latitude": 12.5247817,
+          "position": 9,
+          "longitude": 76.8976591,
+          "window_end": "2026-11-26T12:30:00Z",
+          "arrival_time": "2026-11-26T06:48:19Z",
+          "hours_status": "HOURS_ASSUMED",
+          "window_start": "2026-11-26T03:30:00Z",
+          "departure_time": "2026-11-26T07:48:19Z",
+          "is_hours_assumed": true,
+          "stay_duration_minutes": 60
+        }
+      ],
+      "is_optimal": true,
+      "total_travel_minutes": 198
+    },
+    "advisories": [],
+    "budget_lines": [
+      {
+        "basis": "fuel_car_petrol (18.244km @ 15.0km/l)",
+        "amount": "124.667368",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_Mysuru, Karnataka_to_Srirangapatna River Front",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between Mysuru, Karnataka and Srirangapatna River Front"
+      },
+      {
+        "basis": "fuel_car_petrol (12.611km @ 15.0km/l)",
+        "amount": "86.175133",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_Srirangapatna River Front_to_Srirangapatna Light and Sound Show",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between Srirangapatna River Front and Srirangapatna Light and Sound Show"
+      },
+      {
+        "basis": "fuel_car_petrol (0.929km @ 15.0km/l)",
+        "amount": "6.348133",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_Srirangapatna Light and Sound Show_to_Sri Ranganathaswamy Temple",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between Srirangapatna Light and Sound Show and Sri Ranganathaswamy Temple"
+      },
+      {
+        "basis": "fuel_car_petrol (0.645km @ 15.0km/l)",
+        "amount": "4.407500",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_Sri Ranganathaswamy Temple_to_Srirangapattana Ghat",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between Sri Ranganathaswamy Temple and Srirangapattana Ghat"
+      },
+      {
+        "basis": "fuel_car_petrol (2.457km @ 15.0km/l)",
+        "amount": "16.789500",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_Srirangapattana Ghat_to_TIPU SULTAN SUMMER PALACE",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between Srirangapattana Ghat and TIPU SULTAN SUMMER PALACE"
+      },
+      {
+        "basis": "fuel_car_petrol (27.09km @ 15.0km/l)",
+        "amount": "185.115000",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_TIPU SULTAN SUMMER PALACE_to_Shivananjappa Park",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between TIPU SULTAN SUMMER PALACE and Shivananjappa Park"
+      },
+      {
+        "basis": "fuel_car_petrol (1.824km @ 15.0km/l)",
+        "amount": "12.464000",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_Shivananjappa Park_to_Shree Veeranjaneya Swamy Temple",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between Shivananjappa Park and Shree Veeranjaneya Swamy Temple"
+      },
+      {
+        "basis": "fuel_car_petrol (0.458km @ 15.0km/l)",
+        "amount": "3.129633",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_Shree Veeranjaneya Swamy Temple_to_Silver Jubliee Park",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between Shree Veeranjaneya Swamy Temple and Silver Jubliee Park"
+      },
+      {
+        "basis": "fuel_car_petrol (0.623km @ 15.0km/l)",
+        "amount": "4.257133",
+        "category": "transport",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "default_petrol_car_benchmark",
+        "unknown_reason": null
+      },
+      {
+        "basis": "toll_Silver Jubliee Park_to_Aane Park",
+        "amount": null,
+        "category": "tolls_and_fees",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "unverified_corridor",
+        "unknown_reason": "Toll rates unverified between Silver Jubliee Park and Aane Park"
+      },
+      {
+        "basis": "hotel_stay_unknown (1 room, 1 night)",
+        "amount": "3500.00",
+        "category": "accommodation",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "benchmark_hotel_estimate",
+        "unknown_reason": null
+      },
+      {
+        "basis": "entry_fee_Mysuru, Karnataka",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "stop:Mysuru, Karnataka",
+        "unknown_reason": "Entrance fee unverified for Mysuru, Karnataka"
+      },
+      {
+        "basis": "entry_fee_Srirangapatna River Front",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for Srirangapatna River Front"
+      },
+      {
+        "basis": "entry_fee_Srirangapatna Light and Sound Show",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for Srirangapatna Light and Sound Show"
+      },
+      {
+        "basis": "entry_fee_Sri Ranganathaswamy Temple",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for Sri Ranganathaswamy Temple"
+      },
+      {
+        "basis": "entry_fee_Srirangapattana Ghat",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for Srirangapattana Ghat"
+      },
+      {
+        "basis": "entry_fee_TIPU SULTAN SUMMER PALACE",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for TIPU SULTAN SUMMER PALACE"
+      },
+      {
+        "basis": "entry_fee_Shivananjappa Park",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for Shivananjappa Park"
+      },
+      {
+        "basis": "entry_fee_Shree Veeranjaneya Swamy Temple",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for Shree Veeranjaneya Swamy Temple"
+      },
+      {
+        "basis": "entry_fee_Silver Jubliee Park",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for Silver Jubliee Park"
+      },
+      {
+        "basis": "entry_fee_Aane Park",
+        "amount": null,
+        "category": "activities",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "evidence_observation",
+        "unknown_reason": "Entrance fee unverified for Aane Park"
+      }
+    ],
+    "generated_at": "2026-11-23T15:59:23.403394+00:00",
+    "route_status": "FEASIBLE",
+    "food_research": {
+      "reason": "Dining recommendations retrieved without source-backed regional culinary dishes",
+      "status": "PARTIAL",
+      "local_dishes": [],
+      "verified_dining_count": 2,
+      "dining_recommendations": [
+        {
+          "name": "Hallimane Veg Restaurant",
+          "address": null,
+          "category": "restaurant",
+          "identity": {
+            "name": "Hallimane Veg Restaurant",
+            "point": {
+              "lat": 12.388458199999999,
+              "lng": 76.6664893
+            },
+            "category": "restaurant"
+          },
+          "source_url": "https://www.google.com/maps/search/?api=1&query=Hallimane+Veg+Restaurant",
+          "coordinates": {
+            "lat": 12.388458199999999,
+            "lng": 76.6664893
+          },
+          "is_verified": true,
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Hallimane+Veg+Restaurant",
+            "https://www.google.com/maps/search?api=1&query=Hallimane+Veg+Restaurant"
+          ],
+          "uncertainty": "VERIFIED",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ]
+        },
+        {
+          "name": "Dakshina paaka veg restaurant@blr- mys expressway",
+          "address": null,
+          "category": "restaurant",
+          "identity": {
+            "name": "Dakshina paaka veg restaurant@blr- mys expressway",
+            "point": {
+              "lat": 12.387736799999999,
+              "lng": 76.6665203
+            },
+            "category": "restaurant"
+          },
+          "source_url": "https://dakshinapaakamysuru.in/",
+          "coordinates": {
+            "lat": 12.387736799999999,
+            "lng": 76.6665203
+          },
+          "is_verified": true,
+          "source_urls": [
+            "https://dakshinapaakamysuru.in/"
+          ],
+          "uncertainty": "VERIFIED",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ]
+        }
+      ],
+      "unverified_dining_count": 0
+    },
+    "budget_summary": {
+      "is_complete": false,
+      "known_total": {
+        "amount": "3943.353400",
+        "currency": "INR"
+      },
+      "unknown_count": 19,
+      "estimated_count": 10,
+      "unknown_reasons": [
+        "Toll rates unverified between Mysuru, Karnataka and Srirangapatna River Front",
+        "Toll rates unverified between Srirangapatna River Front and Srirangapatna Light and Sound Show",
+        "Toll rates unverified between Srirangapatna Light and Sound Show and Sri Ranganathaswamy Temple",
+        "Toll rates unverified between Sri Ranganathaswamy Temple and Srirangapattana Ghat",
+        "Toll rates unverified between Srirangapattana Ghat and TIPU SULTAN SUMMER PALACE",
+        "Toll rates unverified between TIPU SULTAN SUMMER PALACE and Shivananjappa Park",
+        "Toll rates unverified between Shivananjappa Park and Shree Veeranjaneya Swamy Temple",
+        "Toll rates unverified between Shree Veeranjaneya Swamy Temple and Silver Jubliee Park",
+        "Toll rates unverified between Silver Jubliee Park and Aane Park",
+        "Entrance fee unverified for Mysuru, Karnataka",
+        "Entrance fee unverified for Srirangapatna River Front",
+        "Entrance fee unverified for Srirangapatna Light and Sound Show",
+        "Entrance fee unverified for Sri Ranganathaswamy Temple",
+        "Entrance fee unverified for Srirangapattana Ghat",
+        "Entrance fee unverified for TIPU SULTAN SUMMER PALACE",
+        "Entrance fee unverified for Shivananjappa Park",
+        "Entrance fee unverified for Shree Veeranjaneya Swamy Temple",
+        "Entrance fee unverified for Silver Jubliee Park",
+        "Entrance fee unverified for Aane Park"
+      ]
+    },
+    "route_geometry": {
+      "type": "LineString",
+      "coordinates": [
+        [
+          76.639391,
+          12.295732
+        ],
+        [
+          76.639548,
+          12.295713
+        ],
+        [
+          76.639537,
+          12.295598
+        ],
+        [
+          76.640365,
+          12.295512
+        ],
+        [
+          76.640915,
+          12.295429
+        ],
+        [
+          76.641121,
+          12.295408
+        ],
+        [
+          76.641769,
+          12.295324
+        ],
+        [
+          76.641841,
+          12.29534
+        ],
+        [
+          76.642003,
+          12.295329
+        ],
+        [
+          76.642019,
+          12.295352
+        ],
+        [
+          76.642042,
+          12.29537
+        ],
+        [
+          76.642069,
+          12.295381
+        ],
+        [
+          76.642083,
+          12.295441
+        ],
+        [
+          76.642103,
+          12.295528
+        ],
+        [
+          76.642159,
+          12.295583
+        ],
+        [
+          76.642167,
+          12.295692
+        ],
+        [
+          76.642188,
+          12.295787
+        ],
+        [
+          76.64225,
+          12.296039
+        ],
+        [
+          76.642487,
+          12.297352
+        ],
+        [
+          76.642501,
+          12.297466
+        ],
+        [
+          76.642529,
+          12.297697
+        ],
+        [
+          76.642555,
+          12.2979
+        ],
+        [
+          76.642583,
+          12.298122
+        ],
+        [
+          76.642607,
+          12.298317
+        ],
+        [
+          76.642612,
+          12.298357
+        ],
+        [
+          76.642679,
+          12.298897
+        ],
+        [
+          76.64265,
+          12.298921
+        ],
+        [
+          76.64263,
+          12.298953
+        ],
+        [
+          76.642621,
+          12.29899
+        ],
+        [
+          76.642625,
+          12.299027
+        ],
+        [
+          76.642641,
+          12.299061
+        ],
+        [
+          76.642667,
+          12.299088
+        ],
+        [
+          76.6427,
+          12.299106
+        ],
+        [
+          76.642707,
+          12.299344
+        ],
+        [
+          76.64276,
+          12.299419
+        ],
+        [
+          76.642891,
+          12.300203
+        ],
+        [
+          76.643041,
+          12.301256
+        ],
+        [
+          76.643245,
+          12.302482
+        ],
+        [
+          76.64321,
+          12.302487
+        ],
+        [
+          76.643177,
+          12.302501
+        ],
+        [
+          76.643148,
+          12.302522
+        ],
+        [
+          76.643123,
+          12.302553
+        ],
+        [
+          76.643107,
+          12.302589
+        ],
+        [
+          76.643103,
+          12.302638
+        ],
+        [
+          76.643115,
+          12.302685
+        ],
+        [
+          76.643143,
+          12.302726
+        ],
+        [
+          76.643183,
+          12.302756
+        ],
+        [
+          76.643231,
+          12.30277
+        ],
+        [
+          76.643274,
+          12.30277
+        ],
+        [
+          76.643314,
+          12.302757
+        ],
+        [
+          76.64335,
+          12.302734
+        ],
+        [
+          76.643377,
+          12.302701
+        ],
+        [
+          76.643394,
+          12.302662
+        ],
+        [
+          76.643398,
+          12.302621
+        ],
+        [
+          76.643774,
+          12.302573
+        ],
+        [
+          76.644233,
+          12.302515
+        ],
+        [
+          76.644483,
+          12.302482
+        ],
+        [
+          76.644731,
+          12.302453
+        ],
+        [
+          76.644947,
+          12.302425
+        ],
+        [
+          76.645179,
+          12.302395
+        ],
+        [
+          76.645741,
+          12.302323
+        ],
+        [
+          76.646827,
+          12.302179
+        ],
+        [
+          76.647451,
+          12.302101
+        ],
+        [
+          76.647946,
+          12.30204
+        ],
+        [
+          76.649056,
+          12.301898
+        ],
+        [
+          76.649095,
+          12.301893
+        ],
+        [
+          76.650542,
+          12.301702
+        ],
+        [
+          76.650965,
+          12.301647
+        ],
+        [
+          76.651468,
+          12.301601
+        ],
+        [
+          76.652022,
+          12.301563
+        ],
+        [
+          76.652625,
+          12.301599
+        ],
+        [
+          76.652988,
+          12.301621
+        ],
+        [
+          76.653341,
+          12.301663
+        ],
+        [
+          76.653454,
+          12.301676
+        ],
+        [
+          76.654858,
+          12.301815
+        ],
+        [
+          76.655081,
+          12.30186
+        ],
+        [
+          76.655112,
+          12.301881
+        ],
+        [
+          76.655134,
+          12.301887
+        ],
+        [
+          76.655155,
+          12.301889
+        ],
+        [
+          76.655192,
+          12.301883
+        ],
+        [
+          76.655223,
+          12.301865
+        ],
+        [
+          76.655247,
+          12.301838
+        ],
+        [
+          76.655484,
+          12.301863
+        ],
+        [
+          76.655886,
+          12.301909
+        ],
+        [
+          76.656199,
+          12.301962
+        ],
+        [
+          76.656388,
+          12.301999
+        ],
+        [
+          76.656553,
+          12.302071
+        ],
+        [
+          76.656772,
+          12.302169
+        ],
+        [
+          76.657271,
+          12.302438
+        ],
+        [
+          76.657546,
+          12.3026
+        ],
+        [
+          76.657807,
+          12.302808
+        ],
+        [
+          76.658049,
+          12.303111
+        ],
+        [
+          76.658436,
+          12.303798
+        ],
+        [
+          76.65863,
+          12.304125
+        ],
+        [
+          76.659006,
+          12.304803
+        ],
+        [
+          76.660049,
+          12.306948
+        ],
+        [
+          76.659975,
+          12.306993
+        ],
+        [
+          76.659924,
+          12.307062
+        ],
+        [
+          76.659902,
+          12.307144
+        ],
+        [
+          76.659914,
+          12.307229
+        ],
+        [
+          76.659948,
+          12.307292
+        ],
+        [
+          76.659957,
+          12.307301
+        ],
+        [
+          76.66,
+          12.307342
+        ],
+        [
+          76.660066,
+          12.307373
+        ],
+        [
+          76.659949,
+          12.307543
+        ],
+        [
+          76.659398,
+          12.308546
+        ],
+        [
+          76.659393,
+          12.308581
+        ],
+        [
+          76.659314,
+          12.308772
+        ],
+        [
+          76.659113,
+          12.309256
+        ],
+        [
+          76.65907,
+          12.309359
+        ],
+        [
+          76.65891,
+          12.309692
+        ],
+        [
+          76.658902,
+          12.309711
+        ],
+        [
+          76.658785,
+          12.309955
+        ],
+        [
+          76.658752,
+          12.310019
+        ],
+        [
+          76.658649,
+          12.310225
+        ],
+        [
+          76.658629,
+          12.31051
+        ],
+        [
+          76.658642,
+          12.310809
+        ],
+        [
+          76.658664,
+          12.310984
+        ],
+        [
+          76.658719,
+          12.311227
+        ],
+        [
+          76.658739,
+          12.311375
+        ],
+        [
+          76.658756,
+          12.311677
+        ],
+        [
+          76.658771,
+          12.311768
+        ],
+        [
+          76.658812,
+          12.312093
+        ],
+        [
+          76.658992,
+          12.313512
+        ],
+        [
+          76.659039,
+          12.313692
+        ],
+        [
+          76.659017,
+          12.313714
+        ],
+        [
+          76.659001,
+          12.31374
+        ],
+        [
+          76.658991,
+          12.313778
+        ],
+        [
+          76.658992,
+          12.313816
+        ],
+        [
+          76.65902,
+          12.313877
+        ],
+        [
+          76.659075,
+          12.313915
+        ],
+        [
+          76.65913,
+          12.314459
+        ],
+        [
+          76.659235,
+          12.315545
+        ],
+        [
+          76.659264,
+          12.316176
+        ],
+        [
+          76.659281,
+          12.316388
+        ],
+        [
+          76.659298,
+          12.316599
+        ],
+        [
+          76.659368,
+          12.316815
+        ],
+        [
+          76.659377,
+          12.317055
+        ],
+        [
+          76.659414,
+          12.317537
+        ],
+        [
+          76.659424,
+          12.317619
+        ],
+        [
+          76.659458,
+          12.317924
+        ],
+        [
+          76.659427,
+          12.317942
+        ],
+        [
+          76.659405,
+          12.31797
+        ],
+        [
+          76.659395,
+          12.318004
+        ],
+        [
+          76.659396,
+          12.318029
+        ],
+        [
+          76.659405,
+          12.318054
+        ],
+        [
+          76.659419,
+          12.318075
+        ],
+        [
+          76.659439,
+          12.318092
+        ],
+        [
+          76.659456,
+          12.3181
+        ],
+        [
+          76.659474,
+          12.318106
+        ],
+        [
+          76.659492,
+          12.318107
+        ],
+        [
+          76.65952,
+          12.318103
+        ],
+        [
+          76.659546,
+          12.318091
+        ],
+        [
+          76.659567,
+          12.318072
+        ],
+        [
+          76.659836,
+          12.318102
+        ],
+        [
+          76.659883,
+          12.318111
+        ],
+        [
+          76.659925,
+          12.318121
+        ],
+        [
+          76.660165,
+          12.31819
+        ],
+        [
+          76.660581,
+          12.318312
+        ],
+        [
+          76.660635,
+          12.318328
+        ],
+        [
+          76.660987,
+          12.318428
+        ],
+        [
+          76.661294,
+          12.318515
+        ],
+        [
+          76.661501,
+          12.318574
+        ],
+        [
+          76.66169,
+          12.318628
+        ],
+        [
+          76.661763,
+          12.318639
+        ],
+        [
+          76.661851,
+          12.318641
+        ],
+        [
+          76.66199,
+          12.318584
+        ],
+        [
+          76.662257,
+          12.318443
+        ],
+        [
+          76.662555,
+          12.318243
+        ],
+        [
+          76.663978,
+          12.317747
+        ],
+        [
+          76.664336,
+          12.317601
+        ],
+        [
+          76.664685,
+          12.31748
+        ],
+        [
+          76.665237,
+          12.317252
+        ],
+        [
+          76.665525,
+          12.317074
+        ],
+        [
+          76.665382,
+          12.317355
+        ],
+        [
+          76.665328,
+          12.317504
+        ],
+        [
+          76.665258,
+          12.317732
+        ],
+        [
+          76.665183,
+          12.317971
+        ],
+        [
+          76.665123,
+          12.318099
+        ],
+        [
+          76.664806,
+          12.318628
+        ],
+        [
+          76.664749,
+          12.318713
+        ],
+        [
+          76.664635,
+          12.318883
+        ],
+        [
+          76.664576,
+          12.318972
+        ],
+        [
+          76.664691,
+          12.31901
+        ],
+        [
+          76.665089,
+          12.319108
+        ],
+        [
+          76.665484,
+          12.319212
+        ],
+        [
+          76.665899,
+          12.319319
+        ],
+        [
+          76.666288,
+          12.319415
+        ],
+        [
+          76.666616,
+          12.319495
+        ],
+        [
+          76.666984,
+          12.319596
+        ],
+        [
+          76.667307,
+          12.319685
+        ],
+        [
+          76.667413,
+          12.31972
+        ],
+        [
+          76.667589,
+          12.319789
+        ],
+        [
+          76.66784,
+          12.319867
+        ],
+        [
+          76.668335,
+          12.320068
+        ],
+        [
+          76.668511,
+          12.320137
+        ],
+        [
+          76.668638,
+          12.320201
+        ],
+        [
+          76.668853,
+          12.320283
+        ],
+        [
+          76.668929,
+          12.320304
+        ],
+        [
+          76.669197,
+          12.3204
+        ],
+        [
+          76.66955,
+          12.32053
+        ],
+        [
+          76.6699,
+          12.320661
+        ],
+        [
+          76.670911,
+          12.321057
+        ],
+        [
+          76.671326,
+          12.321249
+        ],
+        [
+          76.671453,
+          12.321308
+        ],
+        [
+          76.671668,
+          12.321416
+        ],
+        [
+          76.671892,
+          12.321558
+        ],
+        [
+          76.672039,
+          12.321661
+        ],
+        [
+          76.672462,
+          12.321991
+        ],
+        [
+          76.67252,
+          12.322036
+        ],
+        [
+          76.672702,
+          12.322152
+        ],
+        [
+          76.673229,
+          12.322484
+        ],
+        [
+          76.673529,
+          12.322682
+        ],
+        [
+          76.673818,
+          12.322892
+        ],
+        [
+          76.674079,
+          12.323078
+        ],
+        [
+          76.674279,
+          12.323211
+        ],
+        [
+          76.674585,
+          12.323436
+        ],
+        [
+          76.674697,
+          12.323516
+        ],
+        [
+          76.675148,
+          12.323849
+        ],
+        [
+          76.675418,
+          12.324013
+        ],
+        [
+          76.675621,
+          12.324117
+        ],
+        [
+          76.675934,
+          12.324298
+        ],
+        [
+          76.676069,
+          12.324376
+        ],
+        [
+          76.676553,
+          12.32463
+        ],
+        [
+          76.676686,
+          12.324709
+        ],
+        [
+          76.676843,
+          12.324796
+        ],
+        [
+          76.676997,
+          12.324873
+        ],
+        [
+          76.677431,
+          12.325075
+        ],
+        [
+          76.677749,
+          12.325245
+        ],
+        [
+          76.678645,
+          12.325718
+        ],
+        [
+          76.678839,
+          12.325845
+        ],
+        [
+          76.67919,
+          12.326054
+        ],
+        [
+          76.679417,
+          12.326186
+        ],
+        [
+          76.67949,
+          12.326229
+        ],
+        [
+          76.679572,
+          12.326277
+        ],
+        [
+          76.679682,
+          12.326341
+        ],
+        [
+          76.6798,
+          12.326405
+        ],
+        [
+          76.680067,
+          12.326547
+        ],
+        [
+          76.68035,
+          12.326699
+        ],
+        [
+          76.680606,
+          12.326804
+        ],
+        [
+          76.680662,
+          12.326828
+        ],
+        [
+          76.680858,
+          12.326905
+        ],
+        [
+          76.681032,
+          12.32697
+        ],
+        [
+          76.681259,
+          12.327051
+        ],
+        [
+          76.681427,
+          12.327116
+        ],
+        [
+          76.681454,
+          12.327127
+        ],
+        [
+          76.681635,
+          12.327192
+        ],
+        [
+          76.681659,
+          12.3272
+        ],
+        [
+          76.681793,
+          12.327253
+        ],
+        [
+          76.681823,
+          12.327264
+        ],
+        [
+          76.681901,
+          12.327295
+        ],
+        [
+          76.682091,
+          12.327367
+        ],
+        [
+          76.682152,
+          12.32739
+        ],
+        [
+          76.682278,
+          12.327434
+        ],
+        [
+          76.682332,
+          12.327452
+        ],
+        [
+          76.682436,
+          12.327484
+        ],
+        [
+          76.682546,
+          12.327516
+        ],
+        [
+          76.682759,
+          12.327582
+        ],
+        [
+          76.682905,
+          12.327631
+        ],
+        [
+          76.683082,
+          12.327688
+        ],
+        [
+          76.683181,
+          12.327736
+        ],
+        [
+          76.683284,
+          12.327784
+        ],
+        [
+          76.683465,
+          12.327877
+        ],
+        [
+          76.683544,
+          12.32792
+        ],
+        [
+          76.683739,
+          12.328023
+        ],
+        [
+          76.683923,
+          12.32813
+        ],
+        [
+          76.684027,
+          12.328182
+        ],
+        [
+          76.684128,
+          12.328225
+        ],
+        [
+          76.684293,
+          12.328305
+        ],
+        [
+          76.684432,
+          12.328368
+        ],
+        [
+          76.684557,
+          12.328418
+        ],
+        [
+          76.684904,
+          12.328558
+        ],
+        [
+          76.685227,
+          12.328688
+        ],
+        [
+          76.685335,
+          12.32872
+        ],
+        [
+          76.685476,
+          12.328774
+        ],
+        [
+          76.685662,
+          12.328825
+        ],
+        [
+          76.685993,
+          12.328888
+        ],
+        [
+          76.686574,
+          12.329009
+        ],
+        [
+          76.687152,
+          12.329129
+        ],
+        [
+          76.687281,
+          12.329161
+        ],
+        [
+          76.68758,
+          12.329228
+        ],
+        [
+          76.687889,
+          12.32931
+        ],
+        [
+          76.687992,
+          12.329337
+        ],
+        [
+          76.688067,
+          12.329357
+        ],
+        [
+          76.688144,
+          12.329387
+        ],
+        [
+          76.688232,
+          12.329421
+        ],
+        [
+          76.688321,
+          12.329471
+        ],
+        [
+          76.688445,
+          12.329556
+        ],
+        [
+          76.68851,
+          12.329609
+        ],
+        [
+          76.688623,
+          12.329717
+        ],
+        [
+          76.688706,
+          12.329784
+        ],
+        [
+          76.688802,
+          12.329831
+        ],
+        [
+          76.688999,
+          12.329932
+        ],
+        [
+          76.689165,
+          12.330009
+        ],
+        [
+          76.689248,
+          12.330049
+        ],
+        [
+          76.68934,
+          12.330098
+        ],
+        [
+          76.68981,
+          12.330322
+        ],
+        [
+          76.689957,
+          12.330396
+        ],
+        [
+          76.690159,
+          12.330488
+        ],
+        [
+          76.690231,
+          12.330524
+        ],
+        [
+          76.690317,
+          12.330574
+        ],
+        [
+          76.691567,
+          12.331323
+        ],
+        [
+          76.691657,
+          12.331382
+        ],
+        [
+          76.691882,
+          12.331522
+        ],
+        [
+          76.692426,
+          12.331866
+        ],
+        [
+          76.69266,
+          12.332015
+        ],
+        [
+          76.693347,
+          12.332455
+        ],
+        [
+          76.694106,
+          12.332909
+        ],
+        [
+          76.694193,
+          12.332968
+        ],
+        [
+          76.694476,
+          12.333123
+        ],
+        [
+          76.694615,
+          12.333179
+        ],
+        [
+          76.694684,
+          12.333213
+        ],
+        [
+          76.694796,
+          12.33328
+        ],
+        [
+          76.69483,
+          12.333301
+        ],
+        [
+          76.694853,
+          12.333315
+        ],
+        [
+          76.694895,
+          12.333339
+        ],
+        [
+          76.695131,
+          12.333481
+        ],
+        [
+          76.695537,
+          12.333744
+        ],
+        [
+          76.696164,
+          12.334137
+        ],
+        [
+          76.696303,
+          12.334211
+        ],
+        [
+          76.69637,
+          12.334252
+        ],
+        [
+          76.696739,
+          12.334479
+        ],
+        [
+          76.696796,
+          12.334514
+        ],
+        [
+          76.698156,
+          12.335294
+        ],
+        [
+          76.699305,
+          12.336024
+        ],
+        [
+          76.699802,
+          12.336375
+        ],
+        [
+          76.700271,
+          12.336705
+        ],
+        [
+          76.700487,
+          12.336899
+        ],
+        [
+          76.700726,
+          12.337097
+        ],
+        [
+          76.701335,
+          12.337568
+        ],
+        [
+          76.702037,
+          12.338202
+        ],
+        [
+          76.70236,
+          12.338494
+        ],
+        [
+          76.702708,
+          12.338809
+        ],
+        [
+          76.703361,
+          12.339406
+        ],
+        [
+          76.70362,
+          12.339643
+        ],
+        [
+          76.704056,
+          12.340042
+        ],
+        [
+          76.705488,
+          12.341415
+        ],
+        [
+          76.70591,
+          12.34182
+        ],
+        [
+          76.706336,
+          12.342248
+        ],
+        [
+          76.707016,
+          12.34294
+        ],
+        [
+          76.707088,
+          12.343017
+        ],
+        [
+          76.707176,
+          12.343098
+        ],
+        [
+          76.707352,
+          12.343261
+        ],
+        [
+          76.707402,
+          12.343315
+        ],
+        [
+          76.708325,
+          12.344236
+        ],
+        [
+          76.708554,
+          12.344436
+        ],
+        [
+          76.708841,
+          12.344756
+        ],
+        [
+          76.709029,
+          12.344964
+        ],
+        [
+          76.709165,
+          12.345152
+        ],
+        [
+          76.709719,
+          12.345878
+        ],
+        [
+          76.709856,
+          12.346106
+        ],
+        [
+          76.709948,
+          12.346274
+        ],
+        [
+          76.710194,
+          12.346728
+        ],
+        [
+          76.710266,
+          12.346832
+        ],
+        [
+          76.710345,
+          12.346971
+        ],
+        [
+          76.710468,
+          12.347188
+        ],
+        [
+          76.710686,
+          12.347529
+        ],
+        [
+          76.710642,
+          12.347727
+        ],
+        [
+          76.710583,
+          12.347974
+        ],
+        [
+          76.710534,
+          12.348254
+        ],
+        [
+          76.710531,
+          12.348296
+        ],
+        [
+          76.710511,
+          12.348559
+        ],
+        [
+          76.710508,
+          12.348593
+        ],
+        [
+          76.710492,
+          12.348827
+        ],
+        [
+          76.710479,
+          12.349168
+        ],
+        [
+          76.710476,
+          12.349622
+        ],
+        [
+          76.710458,
+          12.3499
+        ],
+        [
+          76.710338,
+          12.350278
+        ],
+        [
+          76.710313,
+          12.350342
+        ],
+        [
+          76.709764,
+          12.351779
+        ],
+        [
+          76.710709,
+          12.353478
+        ],
+        [
+          76.710916,
+          12.35384
+        ],
+        [
+          76.711536,
+          12.355001
+        ],
+        [
+          76.711559,
+          12.355059
+        ],
+        [
+          76.713179,
+          12.357983
+        ],
+        [
+          76.714768,
+          12.360679
+        ],
+        [
+          76.715393,
+          12.361705
+        ],
+        [
+          76.716114,
+          12.363022
+        ],
+        [
+          76.716064,
+          12.363272
+        ],
+        [
+          76.71626,
+          12.363282
+        ],
+        [
+          76.716698,
+          12.363977
+        ],
+        [
+          76.717814,
+          12.366157
+        ],
+        [
+          76.719144,
+          12.368522
+        ],
+        [
+          76.720097,
+          12.370274
+        ],
+        [
+          76.720543,
+          12.372093
+        ],
+        [
+          76.721084,
+          12.374524
+        ],
+        [
+          76.722277,
+          12.378272
+        ],
+        [
+          76.722356,
+          12.378477
+        ],
+        [
+          76.723152,
+          12.381156
+        ],
+        [
+          76.723564,
+          12.382866
+        ],
+        [
+          76.723763,
+          12.383835
+        ],
+        [
+          76.723671,
+          12.384232
+        ],
+        [
+          76.72358,
+          12.384468
+        ],
+        [
+          76.723541,
+          12.384608
+        ],
+        [
+          76.723452,
+          12.384809
+        ],
+        [
+          76.723889,
+          12.384932
+        ],
+        [
+          76.724112,
+          12.385032
+        ],
+        [
+          76.724139,
+          12.385323
+        ],
+        [
+          76.724179,
+          12.385967
+        ],
+        [
+          76.72426,
+          12.387083
+        ],
+        [
+          76.724517,
+          12.388751
+        ],
+        [
+          76.724895,
+          12.390578
+        ],
+        [
+          76.725135,
+          12.391358
+        ],
+        [
+          76.725152,
+          12.392068
+        ],
+        [
+          76.725179,
+          12.393237
+        ],
+        [
+          76.725221,
+          12.39503
+        ],
+        [
+          76.725444,
+          12.395793
+        ],
+        [
+          76.725632,
+          12.397489
+        ],
+        [
+          76.725779,
+          12.398811
+        ],
+        [
+          76.726001,
+          12.398862
+        ],
+        [
+          76.725944,
+          12.399338
+        ],
+        [
+          76.725927,
+          12.400399
+        ],
+        [
+          76.7259,
+          12.401471
+        ],
+        [
+          76.725905,
+          12.401815
+        ],
+        [
+          76.725871,
+          12.402781
+        ],
+        [
+          76.725905,
+          12.401815
+        ],
+        [
+          76.7259,
+          12.401471
+        ],
+        [
+          76.725927,
+          12.400399
+        ],
+        [
+          76.725944,
+          12.399338
+        ],
+        [
+          76.726001,
+          12.398862
+        ],
+        [
+          76.725779,
+          12.398811
+        ],
+        [
+          76.724997,
+          12.398815
+        ],
+        [
+          76.724493,
+          12.398825
+        ],
+        [
+          76.724321,
+          12.398825
+        ],
+        [
+          76.724278,
+          12.398773
+        ],
+        [
+          76.724298,
+          12.398487
+        ],
+        [
+          76.72431,
+          12.39836
+        ],
+        [
+          76.72433,
+          12.398147
+        ],
+        [
+          76.724337,
+          12.398073
+        ],
+        [
+          76.724358,
+          12.397848
+        ],
+        [
+          76.72436,
+          12.397824
+        ],
+        [
+          76.724385,
+          12.397557
+        ],
+        [
+          76.724503,
+          12.396279
+        ],
+        [
+          76.724493,
+          12.395556
+        ],
+        [
+          76.724428,
+          12.395357
+        ],
+        [
+          76.724321,
+          12.395283
+        ],
+        [
+          76.724085,
+          12.395336
+        ],
+        [
+          76.723731,
+          12.395315
+        ],
+        [
+          76.723474,
+          12.395241
+        ],
+        [
+          76.723313,
+          12.395042
+        ],
+        [
+          76.723291,
+          12.394791
+        ],
+        [
+          76.723334,
+          12.394466
+        ],
+        [
+          76.723259,
+          12.39389
+        ],
+        [
+          76.723029,
+          12.393579
+        ],
+        [
+          76.722744,
+          12.393418
+        ],
+        [
+          76.722401,
+          12.393324
+        ],
+        [
+          76.721961,
+          12.393146
+        ],
+        [
+          76.721499,
+          12.392831
+        ],
+        [
+          76.721006,
+          12.392643
+        ],
+        [
+          76.720405,
+          12.392517
+        ],
+        [
+          76.72003,
+          12.392475
+        ],
+        [
+          76.71977,
+          12.392351
+        ],
+        [
+          76.719397,
+          12.392171
+        ],
+        [
+          76.718646,
+          12.391762
+        ],
+        [
+          76.718103,
+          12.391349
+        ],
+        [
+          76.718013,
+          12.39128
+        ],
+        [
+          76.717873,
+          12.391158
+        ],
+        [
+          76.717691,
+          12.390998
+        ],
+        [
+          76.717356,
+          12.390764
+        ],
+        [
+          76.71709,
+          12.390578
+        ],
+        [
+          76.716879,
+          12.390418
+        ],
+        [
+          76.716468,
+          12.390107
+        ],
+        [
+          76.716146,
+          12.389792
+        ],
+        [
+          76.715877,
+          12.389562
+        ],
+        [
+          76.715749,
+          12.389363
+        ],
+        [
+          76.715684,
+          12.38909
+        ],
+        [
+          76.715545,
+          12.388682
+        ],
+        [
+          76.715448,
+          12.388577
+        ],
+        [
+          76.715234,
+          12.388504
+        ],
+        [
+          76.715009,
+          12.388462
+        ],
+        [
+          76.714815,
+          12.388399
+        ],
+        [
+          76.71474,
+          12.388252
+        ],
+        [
+          76.714601,
+          12.388042
+        ],
+        [
+          76.714386,
+          12.387927
+        ],
+        [
+          76.714236,
+          12.387917
+        ],
+        [
+          76.713991,
+          12.387938
+        ],
+        [
+          76.713928,
+          12.387944
+        ],
+        [
+          76.71326,
+          12.387938
+        ],
+        [
+          76.712637,
+          12.387959
+        ],
+        [
+          76.712294,
+          12.387885
+        ],
+        [
+          76.711994,
+          12.38778
+        ],
+        [
+          76.711704,
+          12.387739
+        ],
+        [
+          76.711264,
+          12.387739
+        ],
+        [
+          76.711028,
+          12.387718
+        ],
+        [
+          76.710942,
+          12.387676
+        ],
+        [
+          76.710803,
+          12.38756
+        ],
+        [
+          76.710525,
+          12.387622
+        ],
+        [
+          76.710427,
+          12.387634
+        ],
+        [
+          76.708904,
+          12.387948
+        ],
+        [
+          76.707305,
+          12.388221
+        ],
+        [
+          76.707026,
+          12.388346
+        ],
+        [
+          76.706822,
+          12.388504
+        ],
+        [
+          76.706586,
+          12.388504
+        ],
+        [
+          76.706189,
+          12.38842
+        ],
+        [
+          76.705331,
+          12.388252
+        ],
+        [
+          76.704752,
+          12.388252
+        ],
+        [
+          76.704044,
+          12.388315
+        ],
+        [
+          76.702939,
+          12.388514
+        ],
+        [
+          76.701286,
+          12.388849
+        ],
+        [
+          76.700696,
+          12.388965
+        ],
+        [
+          76.700353,
+          12.3893
+        ],
+        [
+          76.700106,
+          12.389803
+        ],
+        [
+          76.70001,
+          12.390306
+        ],
+        [
+          76.699817,
+          12.391228
+        ],
+        [
+          76.69972,
+          12.391689
+        ],
+        [
+          76.699495,
+          12.39215
+        ],
+        [
+          76.699396,
+          12.392242
+        ],
+        [
+          76.699199,
+          12.392434
+        ],
+        [
+          76.699033,
+          12.392564
+        ],
+        [
+          76.698776,
+          12.392737
+        ],
+        [
+          76.698261,
+          12.392947
+        ],
+        [
+          76.69802,
+          12.393012
+        ],
+        [
+          76.697765,
+          12.393062
+        ],
+        [
+          76.697274,
+          12.393106
+        ],
+        [
+          76.696256,
+          12.393303
+        ],
+        [
+          76.695857,
+          12.393452
+        ],
+        [
+          76.695458,
+          12.393601
+        ],
+        [
+          76.694838,
+          12.393785
+        ],
+        [
+          76.694484,
+          12.393774
+        ],
+        [
+          76.693937,
+          12.393848
+        ],
+        [
+          76.693572,
+          12.393953
+        ],
+        [
+          76.692961,
+          12.394026
+        ],
+        [
+          76.692532,
+          12.394026
+        ],
+        [
+          76.692274,
+          12.394047
+        ],
+        [
+          76.692049,
+          12.394047
+        ],
+        [
+          76.691856,
+          12.393963
+        ],
+        [
+          76.691695,
+          12.393733
+        ],
+        [
+          76.691287,
+          12.393429
+        ],
+        [
+          76.690911,
+          12.393188
+        ],
+        [
+          76.690407,
+          12.392884
+        ],
+        [
+          76.690053,
+          12.392737
+        ],
+        [
+          76.689983,
+          12.392737
+        ],
+        [
+          76.68986,
+          12.392737
+        ],
+        [
+          76.689624,
+          12.392737
+        ],
+        [
+          76.689023,
+          12.392821
+        ],
+        [
+          76.688809,
+          12.392758
+        ],
+        [
+          76.688658,
+          12.392601
+        ],
+        [
+          76.688583,
+          12.392412
+        ],
+        [
+          76.688508,
+          12.392014
+        ],
+        [
+          76.688365,
+          12.3915
+        ],
+        [
+          76.688337,
+          12.391396
+        ],
+        [
+          76.688192,
+          12.390959
+        ],
+        [
+          76.687897,
+          12.390044
+        ],
+        [
+          76.68779,
+          12.38964
+        ],
+        [
+          76.687714,
+          12.389352
+        ],
+        [
+          76.687645,
+          12.38903
+        ],
+        [
+          76.687629,
+          12.388954
+        ],
+        [
+          76.687528,
+          12.388757
+        ],
+        [
+          76.687468,
+          12.38864
+        ],
+        [
+          76.687384,
+          12.388467
+        ],
+        [
+          76.687334,
+          12.388364
+        ],
+        [
+          76.687285,
+          12.388263
+        ],
+        [
+          76.685944,
+          12.388357
+        ],
+        [
+          76.685719,
+          12.388483
+        ],
+        [
+          76.685536,
+          12.388615
+        ],
+        [
+          76.684464,
+          12.389394
+        ],
+        [
+          76.684335,
+          12.389481
+        ],
+        [
+          76.682736,
+          12.390558
+        ],
+        [
+          76.68265,
+          12.390725
+        ],
+        [
+          76.68265,
+          12.390945
+        ],
+        [
+          76.682672,
+          12.391113
+        ],
+        [
+          76.682715,
+          12.391689
+        ],
+        [
+          76.68264,
+          12.392045
+        ],
+        [
+          76.6825,
+          12.392224
+        ],
+        [
+          76.681899,
+          12.392873
+        ],
+        [
+          76.681728,
+          12.392989
+        ],
+        [
+          76.681567,
+          12.393072
+        ],
+        [
+          76.679754,
+          12.393701
+        ],
+        [
+          76.67897,
+          12.393837
+        ],
+        [
+          76.677586,
+          12.394162
+        ],
+        [
+          76.676706,
+          12.394323
+        ],
+        [
+          76.67661,
+          12.39434
+        ],
+        [
+          76.675848,
+          12.39455
+        ],
+        [
+          76.675198,
+          12.394771
+        ],
+        [
+          76.675108,
+          12.394801
+        ],
+        [
+          76.674694,
+          12.39506
+        ],
+        [
+          76.674442,
+          12.395217
+        ],
+        [
+          76.674335,
+          12.395283
+        ],
+        [
+          76.674179,
+          12.395432
+        ],
+        [
+          76.673917,
+          12.395682
+        ],
+        [
+          76.673091,
+          12.396551
+        ],
+        [
+          76.672904,
+          12.396843
+        ],
+        [
+          76.672881,
+          12.396878
+        ],
+        [
+          76.672696,
+          12.39708
+        ],
+        [
+          76.6722,
+          12.397453
+        ],
+        [
+          76.671642,
+          12.397683
+        ],
+        [
+          76.670693,
+          12.398223
+        ],
+        [
+          76.670409,
+          12.398385
+        ],
+        [
+          76.669855,
+          12.398559
+        ],
+        [
+          76.66958,
+          12.398223
+        ],
+        [
+          76.669307,
+          12.397772
+        ],
+        [
+          76.669149,
+          12.39744
+        ],
+        [
+          76.669095,
+          12.397326
+        ],
+        [
+          76.669021,
+          12.397363
+        ],
+        [
+          76.668714,
+          12.397521
+        ],
+        [
+          76.668658,
+          12.397568
+        ],
+        [
+          76.668624,
+          12.397657
+        ],
+        [
+          76.668585,
+          12.397966
+        ],
+        [
+          76.668547,
+          12.398376
+        ],
+        [
+          76.668446,
+          12.399367
+        ],
+        [
+          76.668439,
+          12.399435
+        ],
+        [
+          76.66841,
+          12.399661
+        ],
+        [
+          76.668391,
+          12.399862
+        ],
+        [
+          76.668386,
+          12.400004
+        ],
+        [
+          76.668386,
+          12.400119
+        ],
+        [
+          76.668397,
+          12.400253
+        ],
+        [
+          76.66842,
+          12.400407
+        ],
+        [
+          76.668458,
+          12.400554
+        ],
+        [
+          76.668509,
+          12.400729
+        ],
+        [
+          76.668558,
+          12.400871
+        ],
+        [
+          76.668619,
+          12.400999
+        ],
+        [
+          76.668716,
+          12.401164
+        ],
+        [
+          76.668831,
+          12.401374
+        ],
+        [
+          76.668952,
+          12.401607
+        ],
+        [
+          76.669019,
+          12.401772
+        ],
+        [
+          76.66908,
+          12.401961
+        ],
+        [
+          76.669124,
+          12.402139
+        ],
+        [
+          76.66914,
+          12.402505
+        ],
+        [
+          76.669138,
+          12.402556
+        ],
+        [
+          76.669134,
+          12.402655
+        ],
+        [
+          76.669131,
+          12.402725
+        ],
+        [
+          76.669099,
+          12.402925
+        ],
+        [
+          76.669062,
+          12.40309
+        ],
+        [
+          76.668764,
+          12.404167
+        ],
+        [
+          76.668673,
+          12.404496
+        ],
+        [
+          76.668617,
+          12.404732
+        ],
+        [
+          76.668587,
+          12.404897
+        ],
+        [
+          76.668574,
+          12.405065
+        ],
+        [
+          76.668574,
+          12.405322
+        ],
+        [
+          76.668598,
+          12.405738
+        ],
+        [
+          76.668603,
+          12.406147
+        ],
+        [
+          76.668609,
+          12.406372
+        ],
+        [
+          76.668614,
+          12.406519
+        ],
+        [
+          76.66863,
+          12.406678
+        ],
+        [
+          76.668649,
+          12.406867
+        ],
+        [
+          76.668678,
+          12.407032
+        ],
+        [
+          76.66871,
+          12.407174
+        ],
+        [
+          76.668753,
+          12.407354
+        ],
+        [
+          76.669097,
+          12.408557
+        ],
+        [
+          76.669163,
+          12.408884
+        ],
+        [
+          76.669188,
+          12.409033
+        ],
+        [
+          76.669199,
+          12.409261
+        ],
+        [
+          76.669207,
+          12.409529
+        ],
+        [
+          76.669207,
+          12.409643
+        ],
+        [
+          76.669207,
+          12.409717
+        ],
+        [
+          76.669231,
+          12.409979
+        ],
+        [
+          76.669266,
+          12.410241
+        ],
+        [
+          76.6693,
+          12.410443
+        ],
+        [
+          76.669338,
+          12.410631
+        ],
+        [
+          76.669513,
+          12.411328
+        ],
+        [
+          76.669708,
+          12.412101
+        ],
+        [
+          76.669716,
+          12.412132
+        ],
+        [
+          76.669791,
+          12.412413
+        ],
+        [
+          76.669864,
+          12.412722
+        ],
+        [
+          76.669925,
+          12.412965
+        ],
+        [
+          76.669985,
+          12.413146
+        ],
+        [
+          76.670052,
+          12.413343
+        ],
+        [
+          76.670172,
+          12.413618
+        ],
+        [
+          76.670252,
+          12.413798
+        ],
+        [
+          76.670336,
+          12.414076
+        ],
+        [
+          76.670773,
+          12.415839
+        ],
+        [
+          76.670982,
+          12.416617
+        ],
+        [
+          76.671042,
+          12.416868
+        ],
+        [
+          76.671103,
+          12.417124
+        ],
+        [
+          76.671111,
+          12.417148
+        ],
+        [
+          76.671147,
+          12.417229
+        ],
+        [
+          76.671149,
+          12.417298
+        ],
+        [
+          76.671168,
+          12.417362
+        ],
+        [
+          76.671181,
+          12.4174
+        ],
+        [
+          76.671217,
+          12.417461
+        ],
+        [
+          76.671252,
+          12.417496
+        ],
+        [
+          76.671303,
+          12.41758
+        ],
+        [
+          76.671442,
+          12.417804
+        ],
+        [
+          76.67151,
+          12.417866
+        ],
+        [
+          76.671584,
+          12.417913
+        ],
+        [
+          76.671673,
+          12.417956
+        ],
+        [
+          76.67183,
+          12.418013
+        ],
+        [
+          76.6726,
+          12.418283
+        ],
+        [
+          76.673284,
+          12.418504
+        ],
+        [
+          76.673514,
+          12.418574
+        ],
+        [
+          76.673807,
+          12.41866
+        ],
+        [
+          76.674048,
+          12.418715
+        ],
+        [
+          76.674257,
+          12.418752
+        ],
+        [
+          76.674491,
+          12.418783
+        ],
+        [
+          76.674665,
+          12.418802
+        ],
+        [
+          76.674853,
+          12.418812
+        ],
+        [
+          76.675011,
+          12.418812
+        ],
+        [
+          76.675185,
+          12.418809
+        ],
+        [
+          76.67541,
+          12.418797
+        ],
+        [
+          76.675574,
+          12.418775
+        ],
+        [
+          76.675722,
+          12.418755
+        ],
+        [
+          76.675883,
+          12.418726
+        ],
+        [
+          76.676067,
+          12.418689
+        ],
+        [
+          76.677701,
+          12.41832
+        ],
+        [
+          76.67801,
+          12.418247
+        ],
+        [
+          76.678398,
+          12.418157
+        ],
+        [
+          76.678886,
+          12.418043
+        ],
+        [
+          76.680239,
+          12.417741
+        ],
+        [
+          76.681899,
+          12.417358
+        ],
+        [
+          76.682613,
+          12.417203
+        ],
+        [
+          76.682926,
+          12.417151
+        ],
+        [
+          76.683224,
+          12.417102
+        ],
+        [
+          76.683219,
+          12.417896
+        ],
+        [
+          76.683224,
+          12.418282
+        ],
+        [
+          76.683154,
+          12.418838
+        ],
+        [
+          76.683134,
+          12.418907
+        ],
+        [
+          76.682972,
+          12.419469
+        ],
+        [
+          76.682817,
+          12.419769
+        ],
+        [
+          76.682662,
+          12.420015
+        ],
+        [
+          76.682117,
+          12.420019
+        ],
+        [
+          76.681806,
+          12.420021
+        ],
+        [
+          76.681588,
+          12.420023
+        ],
+        [
+          76.681476,
+          12.420086
+        ],
+        [
+          76.681365,
+          12.420164
+        ],
+        [
+          76.681156,
+          12.420397
+        ],
+        [
+          76.680613,
+          12.421004
+        ],
+        [
+          76.68051,
+          12.421139
+        ],
+        [
+          76.6804,
+          12.421284
+        ],
+        [
+          76.680325,
+          12.421391
+        ],
+        [
+          76.680228,
+          12.421528
+        ],
+        [
+          76.68016,
+          12.421624
+        ],
+        [
+          76.679952,
+          12.421797
+        ],
+        [
+          76.679667,
+          12.421977
+        ],
+        [
+          76.679692,
+          12.422174
+        ],
+        [
+          76.679753,
+          12.422651
+        ],
+        [
+          76.679789,
+          12.42293
+        ],
+        [
+          76.67983,
+          12.423209
+        ],
+        [
+          76.679901,
+          12.423938
+        ],
+        [
+          76.679926,
+          12.424498
+        ],
+        [
+          76.679065,
+          12.424506
+        ],
+        [
+          76.679926,
+          12.424498
+        ],
+        [
+          76.67997,
+          12.424911
+        ],
+        [
+          76.680432,
+          12.424893
+        ],
+        [
+          76.68098,
+          12.424871
+        ],
+        [
+          76.682055,
+          12.424828
+        ],
+        [
+          76.682834,
+          12.42479
+        ],
+        [
+          76.682984,
+          12.424783
+        ],
+        [
+          76.682989,
+          12.424802
+        ],
+        [
+          76.682999,
+          12.424819
+        ],
+        [
+          76.683012,
+          12.424833
+        ],
+        [
+          76.683029,
+          12.424843
+        ],
+        [
+          76.683048,
+          12.424848
+        ],
+        [
+          76.683068,
+          12.424848
+        ],
+        [
+          76.68318,
+          12.425535
+        ],
+        [
+          76.683296,
+          12.426253
+        ],
+        [
+          76.683365,
+          12.426252
+        ],
+        [
+          76.685634,
+          12.426229
+        ],
+        [
+          76.685791,
+          12.426185
+        ],
+        [
+          76.68619,
+          12.425819
+        ],
+        [
+          76.686335,
+          12.425721
+        ],
+        [
+          76.68642,
+          12.425663
+        ],
+        [
+          76.686812,
+          12.425426
+        ],
+        [
+          76.687167,
+          12.425218
+        ],
+        [
+          76.68755,
+          12.425045
+        ],
+        [
+          76.687876,
+          12.424963
+        ],
+        [
+          76.689235,
+          12.424662
+        ],
+        [
+          76.689379,
+          12.424562
+        ],
+        [
+          76.689472,
+          12.424399
+        ],
+        [
+          76.689514,
+          12.424245
+        ],
+        [
+          76.689518,
+          12.424047
+        ],
+        [
+          76.689499,
+          12.423825
+        ],
+        [
+          76.689444,
+          12.423419
+        ],
+        [
+          76.689394,
+          12.423053
+        ],
+        [
+          76.689359,
+          12.42271
+        ],
+        [
+          76.68931,
+          12.422339
+        ],
+        [
+          76.689294,
+          12.422077
+        ],
+        [
+          76.689336,
+          12.421841
+        ],
+        [
+          76.689463,
+          12.421812
+        ],
+        [
+          76.689848,
+          12.421722
+        ],
+        [
+          76.689994,
+          12.421688
+        ],
+        [
+          76.690458,
+          12.421599
+        ],
+        [
+          76.690764,
+          12.421522
+        ],
+        [
+          76.691061,
+          12.421451
+        ],
+        [
+          76.691393,
+          12.421357
+        ],
+        [
+          76.691481,
+          12.421316
+        ],
+        [
+          76.691775,
+          12.421232
+        ],
+        [
+          76.691864,
+          12.421238
+        ],
+        [
+          76.691903,
+          12.421225
+        ],
+        [
+          76.691985,
+          12.421198
+        ],
+        [
+          76.69209,
+          12.421164
+        ],
+        [
+          76.692212,
+          12.421128
+        ],
+        [
+          76.692189,
+          12.421057
+        ],
+        [
+          76.692152,
+          12.420941
+        ],
+        [
+          76.691951,
+          12.420294
+        ],
+        [
+          76.691828,
+          12.41986
+        ],
+        [
+          76.691909,
+          12.419731
+        ],
+        [
+          76.692305,
+          12.419025
+        ],
+        [
+          76.693217,
+          12.417662
+        ],
+        [
+          76.693324,
+          12.417545
+        ],
+        [
+          76.693697,
+          12.417137
+        ],
+        [
+          76.693857,
+          12.417019
+        ],
+        [
+          76.694333,
+          12.416756
+        ],
+        [
+          76.694427,
+          12.416705
+        ],
+        [
+          76.695173,
+          12.41616
+        ],
+        [
+          76.695875,
+          12.415606
+        ],
+        [
+          76.696146,
+          12.415415
+        ],
+        [
+          76.696396,
+          12.416926
+        ],
+        [
+          76.696561,
+          12.417908
+        ],
+        [
+          76.696396,
+          12.416926
+        ],
+        [
+          76.696146,
+          12.415415
+        ],
+        [
+          76.695875,
+          12.415606
+        ],
+        [
+          76.695173,
+          12.41616
+        ],
+        [
+          76.694427,
+          12.416705
+        ],
+        [
+          76.694333,
+          12.416756
+        ],
+        [
+          76.693857,
+          12.417019
+        ],
+        [
+          76.693697,
+          12.417137
+        ],
+        [
+          76.693324,
+          12.417545
+        ],
+        [
+          76.693217,
+          12.417662
+        ],
+        [
+          76.692305,
+          12.419025
+        ],
+        [
+          76.691909,
+          12.419731
+        ],
+        [
+          76.691828,
+          12.41986
+        ],
+        [
+          76.691715,
+          12.419904
+        ],
+        [
+          76.69178,
+          12.420122
+        ],
+        [
+          76.691819,
+          12.420255
+        ],
+        [
+          76.692002,
+          12.420867
+        ],
+        [
+          76.69207,
+          12.421096
+        ],
+        [
+          76.69209,
+          12.421164
+        ],
+        [
+          76.692145,
+          12.421321
+        ],
+        [
+          76.692152,
+          12.421342
+        ],
+        [
+          76.692238,
+          12.421599
+        ],
+        [
+          76.692381,
+          12.421919
+        ],
+        [
+          76.69255,
+          12.422278
+        ],
+        [
+          76.69314,
+          12.423357
+        ],
+        [
+          76.693494,
+          12.423894
+        ],
+        [
+          76.693802,
+          12.424457
+        ],
+        [
+          76.694217,
+          12.425316
+        ],
+        [
+          76.69447,
+          12.425748
+        ],
+        [
+          76.694637,
+          12.426058
+        ],
+        [
+          76.694763,
+          12.426293
+        ],
+        [
+          76.694883,
+          12.4265
+        ],
+        [
+          76.695028,
+          12.426733
+        ],
+        [
+          76.695152,
+          12.426924
+        ],
+        [
+          76.695264,
+          12.427084
+        ],
+        [
+          76.695404,
+          12.427273
+        ],
+        [
+          76.695535,
+          12.427443
+        ],
+        [
+          76.695656,
+          12.427592
+        ],
+        [
+          76.696294,
+          12.428279
+        ],
+        [
+          76.696487,
+          12.428472
+        ],
+        [
+          76.696879,
+          12.428902
+        ],
+        [
+          76.697134,
+          12.429172
+        ],
+        [
+          76.69738,
+          12.429412
+        ],
+        [
+          76.697498,
+          12.429507
+        ],
+        [
+          76.697674,
+          12.429656
+        ],
+        [
+          76.697802,
+          12.42973
+        ],
+        [
+          76.697927,
+          12.429806
+        ],
+        [
+          76.698161,
+          12.429936
+        ],
+        [
+          76.698209,
+          12.429963
+        ],
+        [
+          76.69864,
+          12.430172
+        ],
+        [
+          76.69892,
+          12.430309
+        ],
+        [
+          76.699524,
+          12.430603
+        ],
+        [
+          76.700325,
+          12.430992
+        ],
+        [
+          76.700513,
+          12.431079
+        ],
+        [
+          76.700682,
+          12.431128
+        ],
+        [
+          76.700881,
+          12.431167
+        ],
+        [
+          76.701053,
+          12.431191
+        ],
+        [
+          76.701243,
+          12.431196
+        ],
+        [
+          76.701482,
+          12.431191
+        ],
+        [
+          76.702995,
+          12.43108
+        ],
+        [
+          76.703219,
+          12.431063
+        ],
+        [
+          76.703563,
+          12.431054
+        ],
+        [
+          76.703614,
+          12.431055
+        ],
+        [
+          76.703801,
+          12.431056
+        ],
+        [
+          76.704026,
+          12.431073
+        ],
+        [
+          76.704206,
+          12.431095
+        ],
+        [
+          76.704373,
+          12.431125
+        ],
+        [
+          76.704633,
+          12.431181
+        ],
+        [
+          76.704826,
+          12.431244
+        ],
+        [
+          76.705049,
+          12.431335
+        ],
+        [
+          76.705288,
+          12.431456
+        ],
+        [
+          76.705481,
+          12.431568
+        ],
+        [
+          76.705698,
+          12.431739
+        ],
+        [
+          76.705996,
+          12.431988
+        ],
+        [
+          76.706742,
+          12.432681
+        ],
+        [
+          76.706972,
+          12.432894
+        ],
+        [
+          76.707105,
+          12.433023
+        ],
+        [
+          76.707246,
+          12.433161
+        ],
+        [
+          76.707503,
+          12.433428
+        ],
+        [
+          76.708372,
+          12.434402
+        ],
+        [
+          76.708699,
+          12.434769
+        ],
+        [
+          76.708818,
+          12.434906
+        ],
+        [
+          76.708938,
+          12.435034
+        ],
+        [
+          76.709053,
+          12.435154
+        ],
+        [
+          76.709236,
+          12.43533
+        ],
+        [
+          76.709614,
+          12.435663
+        ],
+        [
+          76.711218,
+          12.436996
+        ],
+        [
+          76.711719,
+          12.437399
+        ],
+        [
+          76.712092,
+          12.437669
+        ],
+        [
+          76.71312,
+          12.438365
+        ],
+        [
+          76.713203,
+          12.438421
+        ],
+        [
+          76.71382,
+          12.438837
+        ],
+        [
+          76.713957,
+          12.438931
+        ],
+        [
+          76.714069,
+          12.439023
+        ],
+        [
+          76.714203,
+          12.439138
+        ],
+        [
+          76.714436,
+          12.439337
+        ],
+        [
+          76.714576,
+          12.439479
+        ],
+        [
+          76.715206,
+          12.440115
+        ],
+        [
+          76.715325,
+          12.440225
+        ],
+        [
+          76.715364,
+          12.440258
+        ],
+        [
+          76.715472,
+          12.440346
+        ],
+        [
+          76.715536,
+          12.440392
+        ],
+        [
+          76.715614,
+          12.440448
+        ],
+        [
+          76.715754,
+          12.440524
+        ],
+        [
+          76.715931,
+          12.440597
+        ],
+        [
+          76.716124,
+          12.440642
+        ],
+        [
+          76.716333,
+          12.440673
+        ],
+        [
+          76.71658,
+          12.440668
+        ],
+        [
+          76.717677,
+          12.440574
+        ],
+        [
+          76.71854,
+          12.440503
+        ],
+        [
+          76.720769,
+          12.440262
+        ],
+        [
+          76.721102,
+          12.440238
+        ],
+        [
+          76.722084,
+          12.440272
+        ],
+        [
+          76.722752,
+          12.440309
+        ],
+        [
+          76.7231,
+          12.440338
+        ],
+        [
+          76.723414,
+          12.440385
+        ],
+        [
+          76.723599,
+          12.440414
+        ],
+        [
+          76.724118,
+          12.440513
+        ],
+        [
+          76.724283,
+          12.440561
+        ],
+        [
+          76.724488,
+          12.440648
+        ],
+        [
+          76.724995,
+          12.440992
+        ],
+        [
+          76.725528,
+          12.441207
+        ],
+        [
+          76.726121,
+          12.441397
+        ],
+        [
+          76.727491,
+          12.44176
+        ],
+        [
+          76.728036,
+          12.441943
+        ],
+        [
+          76.728453,
+          12.442126
+        ],
+        [
+          76.72882,
+          12.442334
+        ],
+        [
+          76.72924,
+          12.442643
+        ],
+        [
+          76.729486,
+          12.44282
+        ],
+        [
+          76.730039,
+          12.443217
+        ],
+        [
+          76.73062,
+          12.443446
+        ],
+        [
+          76.732724,
+          12.444937
+        ],
+        [
+          76.733296,
+          12.445371
+        ],
+        [
+          76.733751,
+          12.44571
+        ],
+        [
+          76.734087,
+          12.446054
+        ],
+        [
+          76.734206,
+          12.446187
+        ],
+        [
+          76.7358,
+          12.447998
+        ],
+        [
+          76.736897,
+          12.449241
+        ],
+        [
+          76.737327,
+          12.449751
+        ],
+        [
+          76.73775,
+          12.450372
+        ],
+        [
+          76.739048,
+          12.452516
+        ],
+        [
+          76.739302,
+          12.452903
+        ],
+        [
+          76.739591,
+          12.453247
+        ],
+        [
+          76.739928,
+          12.453576
+        ],
+        [
+          76.740406,
+          12.453976
+        ],
+        [
+          76.741585,
+          12.454828
+        ],
+        [
+          76.741954,
+          12.455164
+        ],
+        [
+          76.742282,
+          12.455467
+        ],
+        [
+          76.742565,
+          12.455816
+        ],
+        [
+          76.742925,
+          12.456372
+        ],
+        [
+          76.743296,
+          12.457056
+        ],
+        [
+          76.743885,
+          12.458159
+        ],
+        [
+          76.744712,
+          12.459899
+        ],
+        [
+          76.745548,
+          12.461711
+        ],
+        [
+          76.745845,
+          12.462294
+        ],
+        [
+          76.746117,
+          12.462723
+        ],
+        [
+          76.746398,
+          12.463124
+        ],
+        [
+          76.746841,
+          12.463664
+        ],
+        [
+          76.747203,
+          12.464028
+        ],
+        [
+          76.747688,
+          12.464436
+        ],
+        [
+          76.748275,
+          12.464861
+        ],
+        [
+          76.74855,
+          12.465036
+        ],
+        [
+          76.750857,
+          12.466479
+        ],
+        [
+          76.751941,
+          12.467093
+        ],
+        [
+          76.753247,
+          12.46771
+        ],
+        [
+          76.754135,
+          12.468091
+        ],
+        [
+          76.754787,
+          12.4684
+        ],
+        [
+          76.755248,
+          12.46865
+        ],
+        [
+          76.755704,
+          12.468956
+        ],
+        [
+          76.755865,
+          12.469058
+        ],
+        [
+          76.756194,
+          12.4693
+        ],
+        [
+          76.756514,
+          12.469551
+        ],
+        [
+          76.756708,
+          12.469703
+        ],
+        [
+          76.757047,
+          12.469991
+        ],
+        [
+          76.757374,
+          12.470269
+        ],
+        [
+          76.760169,
+          12.472977
+        ],
+        [
+          76.762711,
+          12.474927
+        ],
+        [
+          76.763583,
+          12.47555
+        ],
+        [
+          76.767335,
+          12.47821
+        ],
+        [
+          76.768766,
+          12.479214
+        ],
+        [
+          76.770215,
+          12.480214
+        ],
+        [
+          76.771263,
+          12.480889
+        ],
+        [
+          76.773309,
+          12.482167
+        ],
+        [
+          76.774052,
+          12.482641
+        ],
+        [
+          76.774402,
+          12.482862
+        ],
+        [
+          76.774852,
+          12.483117
+        ],
+        [
+          76.775152,
+          12.483289
+        ],
+        [
+          76.775664,
+          12.483555
+        ],
+        [
+          76.775828,
+          12.483644
+        ],
+        [
+          76.777831,
+          12.484696
+        ],
+        [
+          76.778209,
+          12.484899
+        ],
+        [
+          76.778477,
+          12.485053
+        ],
+        [
+          76.778741,
+          12.48522
+        ],
+        [
+          76.77901,
+          12.485422
+        ],
+        [
+          76.77927,
+          12.485617
+        ],
+        [
+          76.779514,
+          12.485839
+        ],
+        [
+          76.779733,
+          12.486089
+        ],
+        [
+          76.779928,
+          12.48632
+        ],
+        [
+          76.780136,
+          12.486589
+        ],
+        [
+          76.780994,
+          12.487792
+        ],
+        [
+          76.781237,
+          12.488137
+        ],
+        [
+          76.781473,
+          12.488419
+        ],
+        [
+          76.781637,
+          12.488576
+        ],
+        [
+          76.781991,
+          12.488958
+        ],
+        [
+          76.782337,
+          12.489281
+        ],
+        [
+          76.782624,
+          12.489524
+        ],
+        [
+          76.782876,
+          12.489709
+        ],
+        [
+          76.783033,
+          12.489824
+        ],
+        [
+          76.783429,
+          12.490098
+        ],
+        [
+          76.78358,
+          12.490188
+        ],
+        [
+          76.784252,
+          12.490576
+        ],
+        [
+          76.785817,
+          12.491371
+        ],
+        [
+          76.79024,
+          12.493606
+        ],
+        [
+          76.790489,
+          12.493724
+        ],
+        [
+          76.790741,
+          12.493835
+        ],
+        [
+          76.790996,
+          12.493939
+        ],
+        [
+          76.791253,
+          12.494036
+        ],
+        [
+          76.791514,
+          12.494127
+        ],
+        [
+          76.791776,
+          12.49421
+        ],
+        [
+          76.792032,
+          12.494284
+        ],
+        [
+          76.79229,
+          12.494351
+        ],
+        [
+          76.79255,
+          12.494411
+        ],
+        [
+          76.792813,
+          12.494466
+        ],
+        [
+          76.794538,
+          12.494725
+        ],
+        [
+          76.800996,
+          12.495768
+        ],
+        [
+          76.802402,
+          12.495995
+        ],
+        [
+          76.803872,
+          12.49622
+        ],
+        [
+          76.804019,
+          12.496242
+        ],
+        [
+          76.80443,
+          12.496305
+        ],
+        [
+          76.805325,
+          12.496423
+        ],
+        [
+          76.806283,
+          12.49651
+        ],
+        [
+          76.806695,
+          12.496547
+        ],
+        [
+          76.810447,
+          12.496887
+        ],
+        [
+          76.811131,
+          12.496962
+        ],
+        [
+          76.811339,
+          12.496989
+        ],
+        [
+          76.811545,
+          12.497023
+        ],
+        [
+          76.81175,
+          12.497063
+        ],
+        [
+          76.811953,
+          12.497109
+        ],
+        [
+          76.812155,
+          12.497163
+        ],
+        [
+          76.812363,
+          12.497225
+        ],
+        [
+          76.812568,
+          12.497294
+        ],
+        [
+          76.81277,
+          12.497371
+        ],
+        [
+          76.81297,
+          12.497454
+        ],
+        [
+          76.813167,
+          12.497544
+        ],
+        [
+          76.813359,
+          12.497639
+        ],
+        [
+          76.814888,
+          12.498501
+        ],
+        [
+          76.815166,
+          12.498631
+        ],
+        [
+          76.815373,
+          12.498717
+        ],
+        [
+          76.815582,
+          12.498794
+        ],
+        [
+          76.815794,
+          12.498864
+        ],
+        [
+          76.816009,
+          12.498927
+        ],
+        [
+          76.816226,
+          12.498983
+        ],
+        [
+          76.816458,
+          12.499033
+        ],
+        [
+          76.816691,
+          12.499075
+        ],
+        [
+          76.816926,
+          12.499108
+        ],
+        [
+          76.817161,
+          12.499133
+        ],
+        [
+          76.818416,
+          12.499228
+        ],
+        [
+          76.818582,
+          12.499247
+        ],
+        [
+          76.819082,
+          12.499287
+        ],
+        [
+          76.819453,
+          12.499332
+        ],
+        [
+          76.819824,
+          12.499399
+        ],
+        [
+          76.820188,
+          12.499478
+        ],
+        [
+          76.820524,
+          12.499579
+        ],
+        [
+          76.820753,
+          12.499655
+        ],
+        [
+          76.820978,
+          12.499739
+        ],
+        [
+          76.821341,
+          12.499896
+        ],
+        [
+          76.8218,
+          12.500128
+        ],
+        [
+          76.82192,
+          12.50019
+        ],
+        [
+          76.822812,
+          12.50064
+        ],
+        [
+          76.824499,
+          12.501516
+        ],
+        [
+          76.825939,
+          12.502275
+        ],
+        [
+          76.826144,
+          12.502389
+        ],
+        [
+          76.827447,
+          12.503067
+        ],
+        [
+          76.827564,
+          12.503124
+        ],
+        [
+          76.831561,
+          12.505208
+        ],
+        [
+          76.83387,
+          12.506384
+        ],
+        [
+          76.834302,
+          12.506601
+        ],
+        [
+          76.834569,
+          12.506716
+        ],
+        [
+          76.834702,
+          12.506774
+        ],
+        [
+          76.834836,
+          12.506832
+        ],
+        [
+          76.838634,
+          12.508439
+        ],
+        [
+          76.838767,
+          12.508495
+        ],
+        [
+          76.840621,
+          12.50928
+        ],
+        [
+          76.841399,
+          12.509595
+        ],
+        [
+          76.844787,
+          12.51081
+        ],
+        [
+          76.844906,
+          12.510978
+        ],
+        [
+          76.845839,
+          12.511306
+        ],
+        [
+          76.847684,
+          12.511954
+        ],
+        [
+          76.848974,
+          12.512427
+        ],
+        [
+          76.850028,
+          12.512801
+        ],
+        [
+          76.850805,
+          12.513136
+        ],
+        [
+          76.851131,
+          12.513244
+        ],
+        [
+          76.851525,
+          12.513384
+        ],
+        [
+          76.851759,
+          12.513476
+        ],
+        [
+          76.852372,
+          12.513714
+        ],
+        [
+          76.852826,
+          12.513927
+        ],
+        [
+          76.853167,
+          12.514078
+        ],
+        [
+          76.85409,
+          12.514518
+        ],
+        [
+          76.85466,
+          12.514766
+        ],
+        [
+          76.855148,
+          12.515007
+        ],
+        [
+          76.85566,
+          12.515261
+        ],
+        [
+          76.856037,
+          12.515474
+        ],
+        [
+          76.856314,
+          12.515615
+        ],
+        [
+          76.856879,
+          12.515895
+        ],
+        [
+          76.857161,
+          12.516053
+        ],
+        [
+          76.857498,
+          12.516237
+        ],
+        [
+          76.857892,
+          12.516461
+        ],
+        [
+          76.858393,
+          12.516773
+        ],
+        [
+          76.85902,
+          12.5173
+        ],
+        [
+          76.859245,
+          12.517443
+        ],
+        [
+          76.859556,
+          12.517259
+        ],
+        [
+          76.859814,
+          12.517314
+        ],
+        [
+          76.860669,
+          12.517773
+        ],
+        [
+          76.862551,
+          12.518793
+        ],
+        [
+          76.864392,
+          12.519837
+        ],
+        [
+          76.864914,
+          12.520071
+        ],
+        [
+          76.867293,
+          12.521364
+        ],
+        [
+          76.868898,
+          12.522237
+        ],
+        [
+          76.870226,
+          12.522963
+        ],
+        [
+          76.871705,
+          12.523803
+        ],
+        [
+          76.872015,
+          12.523979
+        ],
+        [
+          76.872627,
+          12.524321
+        ],
+        [
+          76.872824,
+          12.52443
+        ],
+        [
+          76.87298,
+          12.524521
+        ],
+        [
+          76.873391,
+          12.524759
+        ],
+        [
+          76.874495,
+          12.525366
+        ],
+        [
+          76.874931,
+          12.525576
+        ],
+        [
+          76.876115,
+          12.526203
+        ],
+        [
+          76.87627,
+          12.526271
+        ],
+        [
+          76.876386,
+          12.526321
+        ],
+        [
+          76.876488,
+          12.526365
+        ],
+        [
+          76.87659,
+          12.526397
+        ],
+        [
+          76.876652,
+          12.52641
+        ],
+        [
+          76.876753,
+          12.526428
+        ],
+        [
+          76.876847,
+          12.526441
+        ],
+        [
+          76.877022,
+          12.526457
+        ],
+        [
+          76.877368,
+          12.526473
+        ],
+        [
+          76.878684,
+          12.526487
+        ],
+        [
+          76.879084,
+          12.526501
+        ],
+        [
+          76.879501,
+          12.526511
+        ],
+        [
+          76.88106,
+          12.526547
+        ],
+        [
+          76.881927,
+          12.526567
+        ],
+        [
+          76.882337,
+          12.526598
+        ],
+        [
+          76.882656,
+          12.526623
+        ],
+        [
+          76.883026,
+          12.526651
+        ],
+        [
+          76.883458,
+          12.526664
+        ],
+        [
+          76.88374,
+          12.526699
+        ],
+        [
+          76.883976,
+          12.526743
+        ],
+        [
+          76.884452,
+          12.526865
+        ],
+        [
+          76.884934,
+          12.526996
+        ],
+        [
+          76.885223,
+          12.527058
+        ],
+        [
+          76.885627,
+          12.527122
+        ],
+        [
+          76.886067,
+          12.52718
+        ],
+        [
+          76.886128,
+          12.527188
+        ],
+        [
+          76.887481,
+          12.52734
+        ],
+        [
+          76.887463,
+          12.527246
+        ],
+        [
+          76.887355,
+          12.52616
+        ],
+        [
+          76.887284,
+          12.525543
+        ],
+        [
+          76.887291,
+          12.525409
+        ],
+        [
+          76.887267,
+          12.525216
+        ],
+        [
+          76.887258,
+          12.525141
+        ],
+        [
+          76.887241,
+          12.524729
+        ],
+        [
+          76.887223,
+          12.524292
+        ],
+        [
+          76.887176,
+          12.523853
+        ],
+        [
+          76.888457,
+          12.523905
+        ],
+        [
+          76.888947,
+          12.523929
+        ],
+        [
+          76.889016,
+          12.52393
+        ],
+        [
+          76.888947,
+          12.523929
+        ],
+        [
+          76.888457,
+          12.523905
+        ],
+        [
+          76.887176,
+          12.523853
+        ],
+        [
+          76.887223,
+          12.524292
+        ],
+        [
+          76.887241,
+          12.524729
+        ],
+        [
+          76.887258,
+          12.525141
+        ],
+        [
+          76.887267,
+          12.525216
+        ],
+        [
+          76.887291,
+          12.525409
+        ],
+        [
+          76.887284,
+          12.525543
+        ],
+        [
+          76.887355,
+          12.52616
+        ],
+        [
+          76.887463,
+          12.527246
+        ],
+        [
+          76.887481,
+          12.52734
+        ],
+        [
+          76.888728,
+          12.52743
+        ],
+        [
+          76.889354,
+          12.527475
+        ],
+        [
+          76.890122,
+          12.527509
+        ],
+        [
+          76.890517,
+          12.52752
+        ],
+        [
+          76.890822,
+          12.527528
+        ],
+        [
+          76.891851,
+          12.527564
+        ],
+        [
+          76.89258,
+          12.527598
+        ],
+        [
+          76.893181,
+          12.527647
+        ],
+        [
+          76.893841,
+          12.527685
+        ],
+        [
+          76.894577,
+          12.527699
+        ],
+        [
+          76.895186,
+          12.527729
+        ],
+        [
+          76.896057,
+          12.527761
+        ],
+        [
+          76.896009,
+          12.52786
+        ],
+        [
+          76.895981,
+          12.528333
+        ],
+        [
+          76.895976,
+          12.528541
+        ],
+        [
+          76.895999,
+          12.528592
+        ],
+        [
+          76.896047,
+          12.528625
+        ],
+        [
+          76.896188,
+          12.528664
+        ],
+        [
+          76.896563,
+          12.528724
+        ],
+        [
+          76.896795,
+          12.528787
+        ],
+        [
+          76.897384,
+          12.528944
+        ],
+        [
+          76.897465,
+          12.529009
+        ],
+        [
+          76.897596,
+          12.52907
+        ],
+        [
+          76.897805,
+          12.529111
+        ],
+        [
+          76.897596,
+          12.52907
+        ],
+        [
+          76.897465,
+          12.529009
+        ],
+        [
+          76.897384,
+          12.528944
+        ],
+        [
+          76.896795,
+          12.528787
+        ],
+        [
+          76.896563,
+          12.528724
+        ],
+        [
+          76.896188,
+          12.528664
+        ],
+        [
+          76.896047,
+          12.528625
+        ],
+        [
+          76.895999,
+          12.528592
+        ],
+        [
+          76.895976,
+          12.528541
+        ],
+        [
+          76.895981,
+          12.528333
+        ],
+        [
+          76.896009,
+          12.52786
+        ],
+        [
+          76.896057,
+          12.527761
+        ],
+        [
+          76.897509,
+          12.527814
+        ],
+        [
+          76.897535,
+          12.527815
+        ],
+        [
+          76.898848,
+          12.527886
+        ],
+        [
+          76.898853,
+          12.527804
+        ],
+        [
+          76.89889,
+          12.526787
+        ],
+        [
+          76.89893,
+          12.525984
+        ],
+        [
+          76.898968,
+          12.525225
+        ],
+        [
+          76.897671,
+          12.525153
+        ],
+        [
+          76.897691,
+          12.524783
+        ]
+      ]
+    },
+    "routing_status": "FEASIBLE",
+    "weather_status": "AVAILABLE",
+    "advisory_status": "ADVISORY_UNKNOWN",
+    "advisory_research": {
+      "reason": "Advisory reports are unverified, undated, stale, or have insufficient location evidence; route conditions remain unverified",
+      "status": "ADVISORY_UNKNOWN",
+      "advisories": [],
+      "safety_notice": "Absence of travel advisories or warnings is not proof of safety; unmonitored conditions remain unverified.",
+      "expired_advisories": [],
+      "unrelated_advisories": [],
+      "checked_sources_count": 5,
+      "unverified_advisories": [
+        {
+          "reason": "Affected area has no coordinates to evaluate against selected road route geometry",
+          "status": "UNDATED",
+          "headline": "\ud83d\udea8 MYSURU DASARA TRAFFIC ALERT! MAJOR ROADS ...",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.instagram.com/p/DevexTtsvvx?hl=en",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "ROAD_CLOSURE",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "786cccc3-4141-48ce-8a56-e7d7300f6ab1",
+          "retrieval_time": "2026-11-23T15:59:04.363711+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Affected area has no coordinates to evaluate against selected road route geometry"
+        },
+        {
+          "reason": "Affected area has no coordinates to evaluate against selected road route geometry",
+          "status": "UNDATED",
+          "headline": "What is the weather and road condition from Bangalore to ...",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.facebook.com/groups/183158772374361/posts/1092484364775126",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "GENERAL_ADVISORY",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "e09345b1-b681-421f-836d-02fae758a828",
+          "retrieval_time": "2026-11-23T15:59:04.363711+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Affected area has no coordinates to evaluate against selected road route geometry"
+        },
+        {
+          "reason": "Affected area has no coordinates to evaluate against selected road route geometry",
+          "status": "UNDATED",
+          "headline": "Traffic inflow towards Mysuru this morning witnessed heavy ...",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.facebook.com/starofmysore.online/posts/traffic-inflow-towards-mysuru-this-morning-witnessed-heavy-rush-as-a-result-of-l/1597243205775537",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "ROAD_CLOSURE",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "becc3c90-b0e8-4a2c-ba49-051e67d70955",
+          "retrieval_time": "2026-11-23T15:59:04.363711+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Affected area has no coordinates to evaluate against selected road route geometry"
+        },
+        {
+          "reason": "Affected area has no coordinates to evaluate against selected road route geometry",
+          "status": "UNDATED",
+          "headline": "Mysore traffic alert",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.instagram.com/reel/Dcn2w61B4NF",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "GENERAL_ADVISORY",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "e0a5d682-ef64-42cc-9763-5ee23eb4848b",
+          "retrieval_time": "2026-11-23T15:59:04.363711+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Affected area has no coordinates to evaluate against selected road route geometry"
+        },
+        {
+          "reason": "Affected area has no coordinates to evaluate against selected road route geometry",
+          "status": "UNDATED",
+          "headline": "Regional and National Road Conditions",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.weather.gov/sgf/road_conditions",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "GENERAL_ADVISORY",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "b4381018-8915-46e4-95c5-4611995bcf3f",
+          "retrieval_time": "2026-11-23T15:59:04.363711+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Affected area has no coordinates to evaluate against selected road route geometry"
+        }
+      ],
+      "conflicting_advisories": [],
+      "authoritative_sources_count": 0
+    },
+    "discovered_places": [
+      {
+        "lat": 12.4218,
+        "lng": 76.6932,
+        "name": "Srirangapatna, Karnataka",
+        "category": "destination",
+        "latitude": 12.4218,
+        "longitude": 76.6932,
+        "confidence": 0.95,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 180
+      },
+      {
+        "lat": 12.5242,
+        "lng": 76.8958,
+        "name": "Mandya, Karnataka",
+        "category": "destination",
+        "latitude": 12.5242,
+        "longitude": 76.8958,
+        "confidence": 0.9,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 180
+      },
+      {
+        "lat": 22.4285,
+        "lng": 87.8712,
+        "name": "Kolaghat Express Highway Dhaba",
+        "address": "NH16, Kolaghat, West Bengal 721134",
+        "category": "restaurant",
+        "latitude": 22.4285,
+        "longitude": 87.8712,
+        "confidence": 0.95,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 45,
+        "opening_hours": "06:00 - 23:00",
+        "price_estimate_inr": 350.0
+      },
+      {
+        "lat": 22.4691,
+        "lng": 87.9154,
+        "name": "Deulti Rural Heritage Center",
+        "address": "Samtaber, Deulti, Howrah, West Bengal 711303",
+        "category": "heritage",
+        "latitude": 22.4691,
+        "longitude": 87.9154,
+        "confidence": 0.88,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 60,
+        "opening_hours": "09:00 - 17:30",
+        "price_estimate_inr": 50.0
+      },
+      {
+        "lat": 22.2982,
+        "lng": 87.9251,
+        "name": "Tamluk Bargabhima Temple",
+        "address": "Tamluk, Purba Medinipur, West Bengal 721636",
+        "category": "heritage",
+        "latitude": 22.2982,
+        "longitude": 87.9251,
+        "confidence": 0.92,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 45,
+        "opening_hours": "06:00 - 12:30, 15:30 - 20:30",
+        "price_estimate_inr": 0.0
+      },
+      {
+        "lat": 22.1865,
+        "lng": 87.9892,
+        "name": "Mahishadal Rajbari Palace",
+        "address": "Mahishadal, Purba Medinipur, West Bengal 721628",
+        "category": "heritage",
+        "latitude": 22.1865,
+        "longitude": 87.9892,
+        "confidence": 0.85,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 90,
+        "opening_hours": "10:00 - 17:00",
+        "price_estimate_inr": 100.0
+      },
+      {
+        "lat": 21.6264,
+        "lng": 87.5093,
+        "name": "Digha Sea Beach Promenade",
+        "address": "Old Digha, Purba Medinipur, West Bengal 721428",
+        "category": "nature",
+        "latitude": 21.6264,
+        "longitude": 87.5093,
+        "confidence": 0.98,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 120,
+        "opening_hours": "Open 24 hours",
+        "price_estimate_inr": 0.0
+      }
+    ],
+    "route_diagnostics": [],
+    "weather_advisories": [
+      {
+        "is_day": true,
+        "latitude": 26.7271,
+        "condition": "rainy",
+        "longitude": 88.4239,
+        "stop_name": "Siliguri Junction Point",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {},
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 63,
+        "forecast_time": "2026-11-01T10:00:00+05:30",
+        "overall_caution": "Severe monsoon conditions detected along corridor stops. Potential travel delays and localized waterlogging expected.",
+        "humidity_percent": 88,
+        "precipitation_mm": 18.0,
+        "temperature_celsius": 26.0,
+        "precipitation_probability": 75,
+        "apparent_temperature_celsius": 29.0
+      },
+      {
+        "is_day": true,
+        "latitude": 26.85,
+        "condition": "foggy",
+        "longitude": 88.28,
+        "stop_name": "Rohini Ghat Mountain Pass",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {},
+        "ghat_caution": "Dense fog and severe rainfall warning along ghat section; high risk of waterlogging, rockfall, and slick road surfaces.",
+        "monsoon_risk": "severe",
+        "weather_code": 45,
+        "forecast_time": "2026-11-01T12:00:00+05:30",
+        "overall_caution": "Severe monsoon conditions detected along corridor stops. Potential travel delays and localized waterlogging expected.",
+        "humidity_percent": 96,
+        "precipitation_mm": 32.0,
+        "temperature_celsius": 18.0,
+        "precipitation_probability": 85,
+        "apparent_temperature_celsius": 17.5
+      },
+      {
+        "is_day": true,
+        "latitude": 26.8804,
+        "condition": "rainy",
+        "longitude": 88.2778,
+        "stop_name": "Kurseong Tourist Lodge",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {},
+        "ghat_caution": "Wet road surfaces and reduced traction expected along ghat section; exercise caution on hairpin turns.",
+        "monsoon_risk": "moderate",
+        "weather_code": 61,
+        "forecast_time": "2026-11-01T14:30:00+05:30",
+        "overall_caution": "Severe monsoon conditions detected along corridor stops. Potential travel delays and localized waterlogging expected.",
+        "humidity_percent": 92,
+        "precipitation_mm": 15.0,
+        "temperature_celsius": 16.5,
+        "precipitation_probability": 80,
+        "apparent_temperature_celsius": 16.0
+      },
+      {
+        "is_day": true,
+        "latitude": 27.041,
+        "condition": "foggy",
+        "longitude": 88.2663,
+        "stop_name": "Darjeeling Mall Ridge",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {},
+        "ghat_caution": "Dense fog and reduced visibility expected along ghat section; reduce speed and engage fog lamps.",
+        "monsoon_risk": "moderate",
+        "weather_code": 48,
+        "forecast_time": "2026-11-01T16:00:00+05:30",
+        "overall_caution": "Severe monsoon conditions detected along corridor stops. Potential travel delays and localized waterlogging expected.",
+        "humidity_percent": 95,
+        "precipitation_mm": 11.0,
+        "temperature_celsius": 14.0,
+        "precipitation_probability": 70,
+        "apparent_temperature_celsius": 13.0
+      }
+    ],
+    "excluded_candidates": [
+      {
+        "point": {
+          "lat": 22.4285,
+          "lng": 87.8712
+        },
+        "category": "restaurant",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Kolaghat Express Highway Dhaba",
+            "point": {
+              "lat": 22.4285,
+              "lng": 87.8712
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (1601.0km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Kolaghat Express Highway Dhaba",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1601.0,
+        "suggested_stay_minutes": 45
+      },
+      {
+        "point": {
+          "lat": 22.4691,
+          "lng": 87.9154
+        },
+        "category": "heritage",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Deulti Rural Heritage Center",
+            "point": {
+              "lat": 22.4691,
+              "lng": 87.9154
+            },
+            "category": "heritage"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (1607.4km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Deulti Rural Heritage Center",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1607.39,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 22.2982,
+          "lng": 87.9251
+        },
+        "category": "heritage",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Tamluk Bargabhima Temple",
+            "point": {
+              "lat": 22.2982,
+              "lng": 87.9251
+            },
+            "category": "heritage"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (1595.6km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Tamluk Bargabhima Temple",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1595.58,
+        "suggested_stay_minutes": 45
+      },
+      {
+        "point": {
+          "lat": 22.1865,
+          "lng": 87.9892
+        },
+        "category": "heritage",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Mahishadal Rajbari Palace",
+            "point": {
+              "lat": 22.1865,
+              "lng": 87.9892
+            },
+            "category": "heritage"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (1592.4km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Mahishadal Rajbari Palace",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1592.45,
+        "suggested_stay_minutes": 90
+      },
+      {
+        "point": {
+          "lat": 21.6264,
+          "lng": 87.5093
+        },
+        "category": "nature",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Digha Sea Beach Promenade",
+            "point": {
+              "lat": 21.6264,
+              "lng": 87.5093
+            },
+            "category": "nature"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (1514.4km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Digha Sea Beach Promenade",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1514.38,
+        "suggested_stay_minutes": 120
+      }
+    ],
+    "provider_diagnostics": {
+      "weather": {
+        "provider": "fixture",
+        "attribution": "Weather data by Open Meteo.com",
+        "ghat_caution": "Dense fog and severe rainfall warning along ghat section; high risk of waterlogging, rockfall, and slick road surfaces.",
+        "overall_caution": "Severe monsoon conditions detected along corridor stops. Potential travel delays and localized waterlogging expected.",
+        "fixture_scenario": "monsoon_ghat_advisory",
+        "licensing_status": "non_commercial",
+        "forecast_horizon_days": 16,
+        "is_commercial_licensed": false
+      }
+    },
+    "validated_candidates": [
+      {
+        "point": {
+          "lat": 12.4218,
+          "lng": 76.6932
+        },
+        "category": "destination",
+        "place_id": "230eb908-7613-4b56-a4fb-d9c49beb2ce8",
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Srirangapatna, Karnataka",
+            "point": {
+              "lat": 12.4218,
+              "lng": 76.6932
+            },
+            "category": "destination"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.0
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Srirangapatna, Karnataka",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.0,
+        "suggested_stay_minutes": 180
+      },
+      {
+        "point": {
+          "lat": 12.5242,
+          "lng": 76.8958
+        },
+        "category": "destination",
+        "place_id": "736a1432-2932-4678-b721-ca7dc26e3d16",
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Mandya, Karnataka",
+            "point": {
+              "lat": 12.5242,
+              "lng": 76.8958
+            },
+            "category": "destination"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.0
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Mandya, Karnataka",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.0,
+        "suggested_stay_minutes": 180
+      },
+      {
+        "point": {
+          "lat": 12.424898899999999,
+          "lng": 76.67906839999999
+        },
+        "category": "heritage",
+        "place_id": "c003d389-a73f-43f9-96b6-5a0357a7d39f",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Sri Ranganathaswamy Temple",
+            "point": {
+              "lat": 12.424898899999999,
+              "lng": 76.67906839999999
+            },
+            "category": "heritage"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Sri+Ranganathaswamy+Temple"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.266914+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.6km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.57
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Sri Ranganathaswamy Temple",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.57,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.418926299999999,
+          "lng": 76.6832051
+        },
+        "category": "attraction",
+        "place_id": "3892f4b2-86d4-47f0-a292-32d75ec0a63f",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Srirangapatna Light and Sound Show",
+            "point": {
+              "lat": 12.418926299999999,
+              "lng": 76.6832051
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Srirangapatna+Light+and+Sound+Show"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.266914+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.88
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Srirangapatna Light and Sound Show",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.88,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.427311399999999,
+          "lng": 76.6833759
+        },
+        "category": "attraction",
+        "place_id": "b923cfa9-ff42-4a39-9c9d-9e3201b11539",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Srirangapattana Ghat",
+            "point": {
+              "lat": 12.427311399999999,
+              "lng": 76.6833759
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Srirangapattana+Ghat"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.266914+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.2km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.23
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Srirangapattana Ghat",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.23,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.418370699999999,
+          "lng": 76.69671
+        },
+        "category": "heritage",
+        "place_id": "961e8372-7288-43c9-9887-f56dd9aefefe",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "TIPU SULTAN SUMMER PALACE",
+            "point": {
+              "lat": 12.418370699999999,
+              "lng": 76.69671
+            },
+            "category": "heritage"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=TIPU+SULTAN+SUMMER+PALACE"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.266914+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.54
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "TIPU SULTAN SUMMER PALACE",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.54,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.4032324,
+          "lng": 76.72752919999999
+        },
+        "category": "attraction",
+        "place_id": "891a2bf6-53b6-4ded-ab04-2ebc2864299d",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Srirangapatna River Front",
+            "point": {
+              "lat": 12.4032324,
+              "lng": 76.72752919999999
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Srirangapatna+River+Front"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.266914+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (3.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 3.55
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Srirangapatna River Front",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 3.55,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.5281313,
+          "lng": 76.89749669999999
+        },
+        "category": "nature",
+        "place_id": "6a34dcf5-f135-46b1-ad88-ff62e348fda4",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Silver Jubliee Park",
+            "point": {
+              "lat": 12.5281313,
+              "lng": 76.89749669999999
+            },
+            "category": "nature"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Silver+Jubliee+Park"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.439441+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.47
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Silver Jubliee Park",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.47,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.5287334,
+          "lng": 76.897882
+        },
+        "category": "heritage",
+        "place_id": "251f97f1-c070-456d-9771-5c4b85a2df6a",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Shree Veeranjaneya Swamy Temple",
+            "point": {
+              "lat": 12.5287334,
+              "lng": 76.897882
+            },
+            "category": "heritage"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Shree+Veeranjaneya+Swamy+Temple"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.439441+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.6km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.55
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Shree Veeranjaneya Swamy Temple",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.55,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.5247817,
+          "lng": 76.8976591
+        },
+        "category": "nature",
+        "place_id": "97e69779-eaa3-4786-9049-3df2f7fbe23b",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Aane Park",
+            "point": {
+              "lat": 12.5247817,
+              "lng": 76.8976591
+            },
+            "category": "nature"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Aane+Park"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.439441+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.2km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.21
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Aane Park",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.21,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.523596,
+          "lng": 76.88902
+        },
+        "category": "nature",
+        "place_id": "b70e0dfb-105a-4c98-aa3b-dfcad9927ecf",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Shivananjappa Park",
+            "point": {
+              "lat": 12.523596,
+              "lng": 76.88902
+            },
+            "category": "nature"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Shivananjappa+Park"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.439441+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.6km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.62
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Shivananjappa Park",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.62,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.5263025,
+          "lng": 76.8919152
+        },
+        "category": "attraction",
+        "place_id": "2ba7bc67-412d-46e9-a853-6e6f61d038a2",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Sri Hallikeshwara Tours And Travels",
+            "point": {
+              "lat": 12.5263025,
+              "lng": 76.8919152
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://wizroi.com/SriHallikeshwaraToursAndTravels/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.439441+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.48
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Sri Hallikeshwara Tours And Travels",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.48,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.4219128,
+          "lng": 76.6920634
+        },
+        "category": "lodging",
+        "place_id": "d69cd04f-dab5-49b4-a7f1-3332d60cf23a",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Murali Hotel",
+            "point": {
+              "lat": 12.4219128,
+              "lng": 76.6920634
+            },
+            "category": "lodging"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Murali+Hotel"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.1km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.12
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Murali Hotel",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.12,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.418833,
+          "lng": 76.6765344
+        },
+        "category": "attraction",
+        "place_id": "1199328a-1d00-479c-9021-432becd09505",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ruchi Mane",
+            "point": {
+              "lat": 12.418833,
+              "lng": 76.6765344
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ruchi+Mane"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.6km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.56
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ruchi Mane",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.56,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.388458199999999,
+          "lng": 76.6664893
+        },
+        "category": "restaurant",
+        "place_id": "037cfd55-e96f-496f-860b-431d7222bf05",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Hallimane Veg Restaurant",
+            "point": {
+              "lat": 12.388458199999999,
+              "lng": 76.6664893
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Hallimane+Veg+Restaurant"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.3km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.25
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Hallimane Veg Restaurant",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.25,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.387736799999999,
+          "lng": 76.6665203
+        },
+        "category": "restaurant",
+        "place_id": "ace8fb3e-8cee-43bf-817d-f0d7ed2fc723",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Dakshina paaka veg restaurant@blr- mys expressway",
+            "point": {
+              "lat": 12.387736799999999,
+              "lng": 76.6665203
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://dakshinapaakamysuru.in/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.2km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.22
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Dakshina paaka veg restaurant@blr- mys expressway",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.22,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.448830099999999,
+          "lng": 76.6933409
+        },
+        "category": "attraction",
+        "place_id": "82b1213b-746b-44fa-9cdd-6a3fed7e77fc",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Thotada Mane",
+            "point": {
+              "lat": 12.448830099999999,
+              "lng": 76.6933409
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "http://www.facebook.com/ThotadaMane"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (2.7km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 2.67
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Thotada Mane",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 2.67,
+        "suggested_stay_minutes": 60
+      }
+    ],
+    "accommodation_research": {
+      "reason": "Accommodation options identified without source-supported indicative rates",
+      "status": "PARTIAL",
+      "pricing_notice": "All rates are indicative search estimates from web aggregators. Verified date specific offers, live room availability, and booking confirmations are not included.",
+      "verified_offers": [],
+      "indicative_options": [
+        {
+          "currency": null,
+          "source_url": "https://www.google.com/maps/search/?api=1&query=Murali+Hotel",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Murali+Hotel",
+            "https://www.google.com/maps/search?api=1&query=Murali+Hotel"
+          ],
+          "uncertainty": "UNVERIFIED",
+          "property_name": "Murali Hotel",
+          "evidence_class": null,
+          "observation_id": null,
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "price_per_night": null,
+          "booking_confirmed": false,
+          "is_verified_offer": false,
+          "availability_status": "PRICE_UNAVAILABLE",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "price_unsupported_by_source",
+            "live_room_availability_unverified",
+            "booking_unconfirmed"
+          ],
+          "is_indicative_search": false
+        }
+      ],
+      "availability_status": "PRICE_UNAVAILABLE",
+      "cheapest_claim_guarantee": "No cheapest hotel claims are asserted; search rates represent indicative pricing without live supplier confirmation."
+    },
+    "editorial_recommendations": [
+      {
+        "point": {
+          "lat": 12.4218,
+          "lng": 76.6932
+        },
+        "category": "destination",
+        "place_id": "230eb908-7613-4b56-a4fb-d9c49beb2ce8",
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Srirangapatna, Karnataka",
+            "point": {
+              "lat": 12.4218,
+              "lng": 76.6932
+            },
+            "category": "destination"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "No supporting source observations or verified claims exist. Candidate place preserved only as editorial recommendation.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.0,
+          "existence_verification": "UNVERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Srirangapatna, Karnataka",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.0,
+        "suggested_stay_minutes": 180
+      },
+      {
+        "point": {
+          "lat": 12.5242,
+          "lng": 76.8958
+        },
+        "category": "destination",
+        "place_id": "736a1432-2932-4678-b721-ca7dc26e3d16",
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Mandya, Karnataka",
+            "point": {
+              "lat": 12.5242,
+              "lng": 76.8958
+            },
+            "category": "destination"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "No supporting source observations or verified claims exist. Candidate place preserved only as editorial recommendation.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.0,
+          "existence_verification": "UNVERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Mandya, Karnataka",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.0,
+        "suggested_stay_minutes": 180
+      },
+      {
+        "point": {
+          "lat": 12.4219128,
+          "lng": 76.6920634
+        },
+        "category": "lodging",
+        "place_id": "d69cd04f-dab5-49b4-a7f1-3332d60cf23a",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Murali Hotel",
+            "point": {
+              "lat": 12.4219128,
+              "lng": 76.6920634
+            },
+            "category": "lodging"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Murali+Hotel",
+            "https://www.google.com/maps/search?api=1&query=Murali+Hotel"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (0.1km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 0.12,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Murali Hotel",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.12,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.388458199999999,
+          "lng": 76.6664893
+        },
+        "category": "restaurant",
+        "place_id": "037cfd55-e96f-496f-860b-431d7222bf05",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Hallimane Veg Restaurant",
+            "point": {
+              "lat": 12.388458199999999,
+              "lng": 76.6664893
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Hallimane+Veg+Restaurant",
+            "https://www.google.com/maps/search?api=1&query=Hallimane+Veg+Restaurant"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.3km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.25,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Hallimane Veg Restaurant",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.25,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.387736799999999,
+          "lng": 76.6665203
+        },
+        "category": "restaurant",
+        "place_id": "ace8fb3e-8cee-43bf-817d-f0d7ed2fc723",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Dakshina paaka veg restaurant@blr- mys expressway",
+            "point": {
+              "lat": 12.387736799999999,
+              "lng": 76.6665203
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://dakshinapaakamysuru.in/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.2km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.22,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Dakshina paaka veg restaurant@blr- mys expressway",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.22,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.5263025,
+          "lng": 76.8919152
+        },
+        "category": "attraction",
+        "place_id": "2ba7bc67-412d-46e9-a853-6e6f61d038a2",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Sri Hallikeshwara Tours And Travels",
+            "point": {
+              "lat": 12.5263025,
+              "lng": 76.8919152
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://wizroi.com/SriHallikeshwaraToursAndTravels/",
+            "https://wizroi.com/SriHallikeshwaraToursAndTravels"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:03.439441+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: candidate exceeds provider matrix cell capacity for route optimization (capacity=10 stops, max cells=100)",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 0.48,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Sri Hallikeshwara Tours And Travels",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.48,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.418833,
+          "lng": 76.6765344
+        },
+        "category": "attraction",
+        "place_id": "1199328a-1d00-479c-9021-432becd09505",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ruchi Mane",
+            "point": {
+              "lat": 12.418833,
+              "lng": 76.6765344
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ruchi+Mane",
+            "https://www.google.com/maps/search?api=1&query=Ruchi+Mane"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.6km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: candidate exceeds provider matrix cell capacity for route optimization (capacity=10 stops, max cells=100)",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.56,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Ruchi Mane",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.56,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 12.448830099999999,
+          "lng": 76.6933409
+        },
+        "category": "attraction",
+        "place_id": "82b1213b-746b-44fa-9cdd-6a3fed7e77fc",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Thotada Mane",
+            "point": {
+              "lat": 12.448830099999999,
+              "lng": 76.6933409
+            },
+            "category": "attraction"
+          },
+          "owner_id": "b0c0fef4-7418-4aa5-b3fc-bdfd3ed53489",
+          "source_urls": [
+            "http://www.facebook.com/ThotadaMane"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+          "retrieval_time": "2026-11-23T15:59:04.206401+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (2.7km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: candidate exceeds provider matrix cell capacity for route optimization (capacity=10 stops, max cells=100)",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 2.67,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Thotada Mane",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 2.67,
+        "suggested_stay_minutes": 60
+      }
+    ]
+  },
+  "completed_at": "2026-11-23T15:59:24.202598+00:00"
+}

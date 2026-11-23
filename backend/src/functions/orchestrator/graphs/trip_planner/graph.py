@@ -65,7 +65,7 @@ from contracts.routing import (
     StopType,
     VehicleFuelProfile,
 )
-from contracts.trips import DestinationPoint, TransportMode, TripBrief
+from contracts.trips import DestinationPoint, TransportMode, TripBrief, TripBriefDraft
 from contracts.weather import (
     CorridorWeatherRequest,
     WeatherAdvisoryStatus,
@@ -161,6 +161,7 @@ class TripPlanningState(TypedDict, total=False):
     max_locations: int
     max_matrix_cells: int
     provider_limits: dict[str, Any]
+    pending_question: dict[str, Any] | None
     _llm_client: HostedLlmClientPort
     _weather_client: WeatherClientPort
     _laya_adapter: LayaDecisionPort
@@ -173,6 +174,7 @@ class TripPlanningNode(StrEnum):
     """Canonical node identifiers for the trip planning workflow graph."""
 
     PARSE_BRIEF = "parse_brief"
+    AWAIT_USER_INPUT = "await_user_input"
     DISCOVER_CANDIDATES = "discover_candidates"
     ROUTE_EVIDENCE_DECISION = "route_evidence_decision"
     AWAIT_EVIDENCE_RESULTS = "await_evidence_results"
@@ -193,7 +195,7 @@ class TripPlanningNode(StrEnum):
 
 
 def parse_and_validate_brief_node(state: TripPlanningState) -> dict[str, Any]:
-    """Validates the input brief against the canonical TripBrief domain contract."""
+    """Validates the input brief against the canonical TripBrief or TripBriefDraft domain contract."""
     brief_data = state["brief"]
     try:
         brief = TripBrief.model_validate(brief_data)
@@ -201,11 +203,70 @@ def parse_and_validate_brief_node(state: TripPlanningState) -> dict[str, Any]:
             "current_step": "brief_validated",
             "status": "in_progress",
             "brief": brief.model_dump(mode="json"),
+            "pending_question": None,
         }
-    except Exception as e:
+    except Exception as exc:
+        try:
+            draft = TripBriefDraft.model_validate(brief_data)
+            if not draft.is_complete():
+                question_id = uuid.uuid4()
+                pending_question = {
+                    "id": str(question_id),
+                    "question_key": "travel_dates",
+                    "question_type": "DATE_RANGE",
+                    "prompt": (
+                        "Please specify your travel dates (start_date and end_date in YYYY-MM-DD format) "
+                        "to continue planning your trip."
+                    ),
+                    "validation_rules": {
+                        "type": "date_range",
+                        "fields": ["start_date", "end_date"],
+                    },
+                }
+                return {
+                    "current_step": "await_traveler_input",
+                    "status": "WAITING_USER",
+                    "pending_question": pending_question,
+                    "brief": draft.model_dump(mode="json"),
+                }
+            brief = draft.to_trip_brief()
+            return {
+                "current_step": "brief_validated",
+                "status": "in_progress",
+                "brief": brief.model_dump(mode="json"),
+                "pending_question": None,
+            }
+        except Exception as draft_exc:
+            return {
+                "status": "failed",
+                "errors": [f"Brief validation failed: {str(exc)}; draft validation failed: {str(draft_exc)}"],
+            }
+
+
+def parse_brief_routing_edge(state: TripPlanningState) -> str:
+    """Routes to user input waiting node if incomplete, or candidate discovery if valid."""
+    if state.get("status") == "WAITING_USER":
+        return TripPlanningNode.AWAIT_USER_INPUT
+    if state.get("status") in ("failed", "FAILED"):
+        return END
+    return TripPlanningNode.DISCOVER_CANDIDATES
+
+
+def await_user_input_node(state: TripPlanningState) -> dict[str, Any]:
+    """Validates complete brief after traveler answers and routes to candidate discovery."""
+    brief_data = state["brief"]
+    try:
+        brief = TripBrief.model_validate(brief_data)
+        return {
+            "current_step": "user_input_applied",
+            "status": "in_progress",
+            "pending_question": None,
+            "brief": brief.model_dump(mode="json"),
+        }
+    except Exception as exc:
         return {
             "status": "failed",
-            "errors": [f"Brief validation failed: {str(e)}"],
+            "errors": [f"Failed to validate brief after user input: {str(exc)}"],
         }
 
 
@@ -5610,6 +5671,7 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph: StateGraph[TripPlanningState, Any, Any, Any] = StateGraph(TripPlanningState)
 
     graph.add_node(TripPlanningNode.PARSE_BRIEF, parse_and_validate_brief_node)
+    graph.add_node(TripPlanningNode.AWAIT_USER_INPUT, await_user_input_node)
     graph.add_node(TripPlanningNode.DISCOVER_CANDIDATES, discover_candidates_node)
     graph.add_node(TripPlanningNode.ROUTE_EVIDENCE_DECISION, route_evidence_decision_node)
     graph.add_node(TripPlanningNode.AWAIT_EVIDENCE_RESULTS, await_evidence_results_node)
@@ -5625,7 +5687,16 @@ def build_trip_planning_graph() -> StateGraph[TripPlanningState, Any, Any, Any]:
     graph.add_node(TripPlanningNode.PUBLISH_PROPOSAL, publish_proposal_node)
 
     graph.add_edge(START, TripPlanningNode.PARSE_BRIEF)
-    graph.add_edge(TripPlanningNode.PARSE_BRIEF, TripPlanningNode.DISCOVER_CANDIDATES)
+    graph.add_conditional_edges(
+        TripPlanningNode.PARSE_BRIEF,
+        parse_brief_routing_edge,
+        {
+            TripPlanningNode.AWAIT_USER_INPUT: TripPlanningNode.AWAIT_USER_INPUT,
+            TripPlanningNode.DISCOVER_CANDIDATES: TripPlanningNode.DISCOVER_CANDIDATES,
+            END: END,
+        },
+    )
+    graph.add_edge(TripPlanningNode.AWAIT_USER_INPUT, TripPlanningNode.DISCOVER_CANDIDATES)
     graph.add_edge(TripPlanningNode.DISCOVER_CANDIDATES, TripPlanningNode.ROUTE_EVIDENCE_DECISION)
     graph.add_conditional_edges(
         TripPlanningNode.ROUTE_EVIDENCE_DECISION,
@@ -5668,11 +5739,15 @@ def compile_trip_planning_workflow(
     if interrupt_before is None:
         if checkpointer is not None:
             interrupt_before = [
+                TripPlanningNode.AWAIT_USER_INPUT,
                 TripPlanningNode.AWAIT_EVIDENCE_RESULTS,
                 TripPlanningNode.AWAIT_ROUTE_RESULTS,
             ]
         else:
-            interrupt_before = [TripPlanningNode.AWAIT_EVIDENCE_RESULTS]
+            interrupt_before = [
+                TripPlanningNode.AWAIT_USER_INPUT,
+                TripPlanningNode.AWAIT_EVIDENCE_RESULTS,
+            ]
     return build_trip_planning_graph().compile(
         checkpointer=checkpointer,
         interrupt_before=interrupt_before,

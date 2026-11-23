@@ -218,6 +218,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] REST API updates and Next.js frontend itinerary view integration (AC-8, AC-10, AC-11)
    - [ ] Gated scenario evaluation suite across offline and live gates (AC-12)
    - [x] Real runner execution, bounded research query planning, evidence task dispatch, browser fallback, and resume reconciliation (AC-13, AC-14, AC-15, AC-16)
+   - [x] Human in the loop (HITL) flow, question persistence, WAITING_USER pause, and direct Python pipeline runner (AC-17, AC-18)
 - [ ] Verify it: `/check verify 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, separately gated live smoke, strict mypy typing, and ruff linting)
@@ -235,6 +236,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Correct lodging night budget accounting: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
    - [x] Finish lodging budget review follow ups: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, PDF export fallback tests, strict mypy typing, and ruff linting)
    - [x] Correct overnight waiting and attraction visit boundaries: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, same day regression test, worker geometry hydration, graph consumption, strict mypy typing, and ruff linting)
+   - [x] Human in the loop (HITL) flow and direct Python pipeline runner: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 10 integration tests on live PostgreSQL, pause and resume demonstration on Mysuru corridor, clean ruff linting, and strict mypy typing)
 - [x] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
@@ -257,6 +259,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Correct lodging night budget accounting: [2026-11-22-0007-correct-lodging-night-budget-accounting.md](../reviews/2026-11-22-0007-correct-lodging-night-budget-accounting.md) (Approve)
    - [x] Finish lodging budget review follow ups: [2026-11-23-0007-lodging-budget-review-followups.md](../reviews/2026-11-23-0007-lodging-budget-review-followups.md) (Approve)
    - [x] Correct overnight waiting and attraction visit boundaries: [2026-11-23-0007-overnight-waiting-and-attraction-boundaries.md](../reviews/2026-11-23-0007-overnight-waiting-and-attraction-boundaries.md) (Approve)
+   - [x] Human in the loop (HITL) flow and direct Python pipeline runner: [2026-11-23-0007-backend-hitl-flow-and-direct-runner.md](../reviews/2026-11-23-0007-backend-hitl-flow-and-direct-runner.md) (Approve with nits)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

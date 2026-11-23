@@ -1,0 +1,21 @@
+{
+  "runner": "run_hitl_pipeline.py",
+  "started_at": "2026-11-23T15:58:51.309539+00:00",
+  "database_url": "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/acceptance_db",
+  "resume_mode": false,
+  "job_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
+  "question_presented": {
+    "id": "de51a486-0238-481b-84fa-6a8e540e9d1d",
+    "key": "travel_dates",
+    "type": "DATE_RANGE",
+    "prompt": "Please specify your travel dates (start_date and end_date in YYYY-MM-DD format) to continue planning your trip.",
+    "rules": {
+      "type": "date_range",
+      "fields": [
+        "start_date",
+        "end_date"
+      ]
+    }
+  },
+  "stopped_at_question": true
+}

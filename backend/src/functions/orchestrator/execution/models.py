@@ -235,3 +235,38 @@ class JobEventModel(Base):
         Index("ix_job_events_execution_sequence", "execution_id", "sequence"),
         Index("ix_job_events_cursor", "execution_id", "sequence", "timestamp"),
     )
+
+
+class TravelerQuestionModel(Base):
+    __tablename__ = "traveler_questions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    execution_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("executions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    trip_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trips.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    owner_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
+    context_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    question_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    question_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    validation_rules: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="PENDING", index=True)
+    answer_json: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_traveler_questions_execution_status", "execution_id", "status"),
+        Index("ix_traveler_questions_owner_status", "owner_id", "status"),
+    )
