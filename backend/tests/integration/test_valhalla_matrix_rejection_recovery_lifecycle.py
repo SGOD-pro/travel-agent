@@ -1,16 +1,14 @@
 """Integration test for Valhalla matrix distance rejection recovery conforming to Spec 0007.
 
 Verifies:
-1. Exact HTTP 400/154 response injected through the actual Valhalla client at the HTTP boundary.
-2. Route optimizer consumer claims task, catches classified rejection, and durably completes
-   under lease with degraded ROUTING_UNAVAILABLE output.
-3. No stranded claim (lease released, task COMPLETED).
-4. No phantom route (routes table has zero records for execution/trip).
-5. CompletionReconciliationService reconciles task completion and emits EXECUTION_RESUME.
-6. Checkpoint resume advances LangGraph through weather, budget, synthesis, and publication.
-7. Partial itinerary published in trips table and retrievable via GET /api/v1/trips/{trip_id}/itinerary.
-8. API response asserts ROUTING_UNAVAILABLE, route_id=None, map_geojson=None, preserved places/provenance.
-9. Redelivery of optimizer dispatch message is idempotent and safely discarded without duplicate publication.
+1. Matrix HTTP 400/154 rejection triggers bounded /route fallback under the durable execution cap.
+2. Controlled /route distance limit rejection (400/154) degrades TRAVEL tasks to ROUTING_UNAVAILABLE.
+3. No stranded claim (lease released, task COMPLETED) and no phantom route persisted.
+4. CompletionReconciliationService reconciles task completion and emits EXECUTION_RESUME.
+5. Checkpoint resume advances LangGraph through weather, budget, synthesis, and publication.
+6. Published itinerary preserves candidate research with status partial, incomplete budget, and unknown transport line.
+7. Execution completion (SUCCEEDED) stays separate from itinerary readiness (partial).
+8. Redelivery of optimizer dispatch message is idempotent with zero duplicate provider calls or deltas.
 """
 
 from __future__ import annotations
@@ -385,14 +383,14 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
         dispatch_payload = dispatch_outbox.payload_ref or dispatch_outbox.payload
         assert dispatch_payload is not None
 
-    # 4. Inject exact HTTP 400 / 154 response through actual Valhalla client at HTTP boundary
-    valhalla_call_count = 0
+    # 4. Inject controlled HTTP 400 / 154 rejections on matrix then /route fallback
+    calls_by_endpoint = {"/sources_to_targets": 0, "/route": 0}
+    unexpected_requests: list[str] = []
 
     def mock_valhalla_boundary_handler(request: httpx.Request) -> httpx.Response:
-        nonlocal valhalla_call_count
-        valhalla_call_count += 1
-        # Exact response returned by public Valhalla instance when inter-city distance exceeds 150km
-        if "/sources_to_targets" in str(request.url):
+        path = request.url.path
+        if path.endswith("/sources_to_targets"):
+            calls_by_endpoint["/sources_to_targets"] += 1
             return httpx.Response(
                 status_code=400,
                 headers={"Content-Type": "application/json"},
@@ -403,7 +401,20 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
                     "status": "Bad Request",
                 },
             )
-        return httpx.Response(status_code=200, json={})
+        if path.endswith("/route"):
+            calls_by_endpoint["/route"] += 1
+            return httpx.Response(
+                status_code=400,
+                headers={"Content-Type": "application/json"},
+                json={
+                    "error_code": 154,
+                    "error": "Path distance exceeds the max distance limit: 1500000 meters",
+                    "status_code": 400,
+                    "status": "Bad Request",
+                },
+            )
+        unexpected_requests.append(path)
+        return httpx.Response(status_code=404, json={"error": f"Unexpected endpoint: {path}"})
 
     transport = httpx.MockTransport(mock_valhalla_boundary_handler)
     async with httpx.AsyncClient(transport=transport) as http_client:
@@ -419,11 +430,26 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
             valhalla_client=injected_valhalla_client,
         )
 
-    # Fast-fail nonretryable verification: exact 1 call at HTTP boundary (no retries on 400/154)
-    assert valhalla_call_count == 1
+    # Assert exact calls by endpoint: 1 matrix 154 rejection + 1 bounded /route fallback attempt
+    assert not unexpected_requests
+    assert calls_by_endpoint == {"/sources_to_targets": 1, "/route": 1}
 
-    # 6. Verify durable task completion under lease
+    # 6. Verify durable task completion, fallback reservation cap, and specific failure reason
     async with session_factory() as session:
+        exec_after_worker = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
+        ).scalar_one()
+        rf_budget = (exec_after_worker.budget or {}).get("route_fallback") or {}
+        assert rf_budget.get("spent_attempts") == 1
+        assert rf_budget.get("reserved_attempts") == 0
+        assert rf_budget.get("remaining_attempts") == 2
+        reservations = rf_budget.get("reservations") or {}
+        assert len(reservations) == 1
+        assert len(reservations) <= 3
+        single_res = next(iter(reservations.values()))
+        assert single_res["status"] == "RECONCILED"
+        assert single_res["settled_as"] == "HTTP_400"
+
         task_after = (
             await session.execute(select(TaskModel).where(TaskModel.id == task_row.id))
         ).scalar_one()
@@ -442,7 +468,7 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
         ).scalars().all()
         assert len(route_check) == 0
 
-        # Invariant 3: Worker result contains degraded ROUTING_UNAVAILABLE output with honest diagnostic
+        # Invariant 3: Worker result records specific /route 400/154 distance limit reason
         res_stmt = select(WorkerResultModel).where(WorkerResultModel.id == task_after.result_id)
         worker_res = (await session.execute(res_stmt)).scalar_one()
         assert worker_res.status == "SUCCESS"
@@ -451,7 +477,13 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
         assert out_ref["status"] == "FAILED"
         assert out_ref["routing_status"] == "ROUTING_UNAVAILABLE"
         assert "route_id" not in out_ref
-        assert any("distance limit exceeded" in str(d).lower() for d in out_ref["diagnostics"])
+        err_info = out_ref["error"]
+        assert err_info["status_code"] == 400
+        assert err_info["error_code"] == 154
+        assert err_info["endpoint"] == "/route"
+        assert "error_code 154 on /route" in err_info["reason"]
+        assert "1500 km" in err_info["reason"]
+        assert any("1500 km" in str(d) for d in out_ref["diagnostics"])
 
         # Invariant 4: Outbox has TASK_COMPLETED event ready for reconciliation
         outbox_completed = (
@@ -523,35 +555,49 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
         assert res.status_code == 200, f"Expected 200, got {res.status_code}: {res.text}"
         itinerary = res.json()
 
-        # Invariant 5: Proposal is published in state 'proposed' with no route ID and ROUTING_UNAVAILABLE
+        # Invariant 5: Proposal published as partial without route ID while execution stays SUCCEEDED
         assert itinerary["state"] == "proposed"
-        assert itinerary["status"] == "ready_for_approval"
+        assert itinerary["status"] == "partial"
         assert itinerary["route_id"] is None
         assert itinerary["routing_status"] == "ROUTING_UNAVAILABLE"
         assert itinerary["map_geojson"] is None
 
-        # Invariant 6: Verified places and provenance are preserved
+        # Invariant 6: Verified places and candidate research are preserved
         assert len(itinerary["validated_candidates"]) >= 1
         assert len(itinerary["discovered_places"]) >= 1
 
-        # Invariant 7: Honest diagnostics explain provider rejection without Euclidean guesswork
+        # Invariant 7: Honest diagnostics explain provider distance rejection without Euclidean guesswork
         assert any(
             "Road routing engine unavailable" in d
             for d in itinerary["route_diagnostics"]
         )
         assert any(
-            "distance limit exceeded" in d.lower()
+            "error_code 154 on /route" in d and "1500 km" in d
             for d in itinerary["route_diagnostics"]
         )
 
-        # Invariant 8: Road geometry and driving schedule remain unknown
+        # Invariant 8: Road geometry and driving schedule remain empty, budget is incomplete with unknown transport line
         schedule = itinerary.get("schedule") or {}
         assert len(schedule.get("legs", [])) == 0
+        budget_summary = itinerary.get("budget_summary") or {}
+        assert budget_summary.get("is_complete") is False
+        assert int(budget_summary.get("unknown_count", 0)) >= 1
+        assert any(
+            "Transport cost unknown" in str(r)
+            for r in (budget_summary.get("unknown_reasons") or [])
+        )
+        budget_lines = itinerary.get("budget_lines") or []
+        assert any(
+            line.get("basis") == "intercity_transport"
+            and line.get("amount") is None
+            and "Transport cost unknown" in str(line.get("unknown_reason") or "")
+            for line in budget_lines
+        )
 
     app.dependency_overrides.clear()
 
     # 10. Invariant 9: Replay safety and duplicate redelivery
-    # Redelivering the exact same dispatch payload to the consumer must safely discard
+    # Redelivering the exact same dispatch payload to the consumer must safely discard without new provider calls
     async with httpx.AsyncClient(transport=transport) as http_client:
         injected_client_replay = ValhallaClient(
             "http://valhalla.provider.local",
@@ -563,7 +609,9 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
             valhalla_client=injected_client_replay,
         )
 
-    # Assert no duplicate delta was created and trip version remained unchanged
+    assert calls_by_endpoint == {"/sources_to_targets": 1, "/route": 1}
+
+    # Assert no duplicate delta was created and execution vs itinerary state remained consistent
     async with session_factory() as session:
         deltas = (
             await session.execute(
@@ -572,12 +620,20 @@ async def test_valhalla_matrix_rejection_degraded_recovery_lifecycle(
         ).scalars().all()
         assert len(deltas) == 1
 
+        exec_final = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
+        ).scalar_one()
+        assert exec_final.status == "SUCCEEDED"
+        rf_final = (exec_final.budget or {}).get("route_fallback") or {}
+        assert rf_final.get("spent_attempts") == 1
+
         trip_final = (
             await session.execute(select(TripModel).where(TripModel.id == trip_id))
         ).scalar_one()
         assert trip_final.current_version == 1
         assert trip_final.current_route_id is None
         assert trip_final.state == "proposed"
+        assert (trip_final.itinerary_json or {}).get("status") == "partial"
 
 
 @pytest.mark.asyncio
@@ -678,9 +734,14 @@ async def test_valhalla_matrix_rejection_propagates_for_route_optimizer_graph_wi
         "payload": req_dict,
     }
 
-    # Inject HTTP 400 / 154 at Valhalla HTTP boundary
+    # Inject HTTP 400 / 154 at Valhalla HTTP boundary and assert standalone graph does not invoke /route fallback
+    standalone_calls = {"/sources_to_targets": 0, "/route": 0}
+    unexpected_standalone_paths: list[str] = []
+
     def mock_valhalla_handler(request: httpx.Request) -> httpx.Response:
-        if "/sources_to_targets" in str(request.url):
+        path = request.url.path
+        if path.endswith("/sources_to_targets"):
+            standalone_calls["/sources_to_targets"] += 1
             return httpx.Response(
                 status_code=400,
                 headers={"Content-Type": "application/json"},
@@ -691,7 +752,11 @@ async def test_valhalla_matrix_rejection_propagates_for_route_optimizer_graph_wi
                     "status": "Bad Request",
                 },
             )
-        return httpx.Response(status_code=200, json={})
+        if path.endswith("/route"):
+            standalone_calls["/route"] += 1
+        else:
+            unexpected_standalone_paths.append(path)
+        return httpx.Response(status_code=404, json={"error": f"Unexpected endpoint: {path}"})
 
     transport = httpx.MockTransport(mock_valhalla_handler)
     async with httpx.AsyncClient(transport=transport) as http_client:
@@ -710,7 +775,10 @@ async def test_valhalla_matrix_rejection_propagates_for_route_optimizer_graph_wi
         assert exc_info.value.status_code == 400
         assert exc_info.value.error_code == 154
 
-    # Verify task was NOT completed with degraded ROUTING_UNAVAILABLE output
+    assert not unexpected_standalone_paths
+    assert standalone_calls == {"/sources_to_targets": 1, "/route": 0}
+
+    # Verify task was NOT completed with degraded ROUTING_UNAVAILABLE output and no proposal published
     async with session_factory() as session:
         task_after = (
             await session.execute(select(TaskModel).where(TaskModel.id == task_id))
@@ -718,6 +786,17 @@ async def test_valhalla_matrix_rejection_propagates_for_route_optimizer_graph_wi
 
         assert task_after.status != "COMPLETED"
         assert task_after.result_id is None
+
+        exec_standalone = (
+            await session.execute(select(ExecutionModel).where(ExecutionModel.id == execution_id))
+        ).scalar_one()
+        assert "route_fallback" not in (exec_standalone.budget or {})
+
+        trip_standalone = (
+            await session.execute(select(TripModel).where(TripModel.id == trip_id))
+        ).scalar_one()
+        assert trip_standalone.state == "planning"
+        assert trip_standalone.itinerary_json is None
 
         # Verify zero routes persisted
         route_check = (
