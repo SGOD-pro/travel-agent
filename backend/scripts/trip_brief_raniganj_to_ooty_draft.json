@@ -1,0 +1,31 @@
+{
+  "title": "Raniganj to Ooty Journey",
+  "origin_name": "Raniganj, West Bengal",
+  "origin_lat": 23.6238,
+  "origin_lng": 87.1309,
+  "destinations": [
+    {
+      "name": "Ooty, Tamil Nadu",
+      "latitude": 11.4102,
+      "longitude": 76.6950,
+      "stay_days": 2,
+      "confidence": 0.95
+    }
+  ],
+  "budget_limit": 25000,
+  "currency": "INR",
+  "budget_tier": "MODERATE",
+  "preferred_modes": [
+    "car_petrol"
+  ],
+  "traveler_preferences": [
+    "nature",
+    "scenic viewpoints",
+    "hill station"
+  ],
+  "dietary_preferences": [
+    "local vegetarian"
+  ],
+  "accessibility_requirements": [],
+  "hard_constraints": []
+}

@@ -1,0 +1,68 @@
+{
+  "verified_at": "2026-11-24T10:51:11.027375+00:00",
+  "baseline_route": {
+    "route_id": "96eb58a3-9e74-4ecd-8643-710fe95f2801",
+    "version": 1,
+    "status": "FEASIBLE",
+    "total_distance_m": 8079,
+    "total_travel_seconds": 1810,
+    "stops_count": 3,
+    "legs_count": 2
+  },
+  "explicit_detour_replan": {
+    "route_id": "6fa05ca4-440b-47ea-bad9-5209f1a0ee43",
+    "parent_route_id": "96eb58a3-9e74-4ecd-8643-710fe95f2801",
+    "version": 2,
+    "status": "FEASIBLE",
+    "total_distance_m": 10663,
+    "total_travel_seconds": 2324,
+    "distance_delta_m": 2584,
+    "duration_delta_seconds": 514,
+    "baseline_leg1_intersects_closure": true,
+    "detour_leg1_intersects_closure": false,
+    "closure_avoidance_verified": true,
+    "completed_stop_frozen": "Indian Museum",
+    "replan_origin": {
+      "latitude": 22.558,
+      "longitude": 88.351
+    }
+  },
+  "inescapable_closure_infeasible_proof": {
+    "route_id": "f6d4f319-e409-49cc-993c-722396c20168",
+    "parent_route_id": "6fa05ca4-440b-47ea-bad9-5209f1a0ee43",
+    "version": 3,
+    "status": "INFEASIBLE",
+    "legs_count": 0,
+    "warnings": [
+      "Mid-trip replan version 2 departing from current location at 2026-11-24T11:32:15+00:00",
+      "Mid-trip replan version 3 departing from current location at 2026-11-24T11:32:15+00:00",
+      "No valid detour found for mandatory stop 'Howrah Station'"
+    ],
+    "dropped_stops": [
+      {
+        "name": "Return to Victoria Memorial",
+        "is_skipped": true,
+        "skip_reason": "UNREACHABLE_STOP"
+      },
+      {
+        "name": "Indian Museum",
+        "is_skipped": true,
+        "skip_reason": "UNREACHABLE_STOP"
+      },
+      {
+        "name": "Howrah Station",
+        "is_skipped": true,
+        "skip_reason": "NO_FEASIBLE_DETOUR: No valid path found to mandatory stop 'Howra"
+      }
+    ],
+    "fail_closed_verified": true
+  },
+  "automatic_triggering": {
+    "implemented": false,
+    "mechanism": "Explicit caller API only",
+    "endpoints": [
+      "POST /api/v1/optimization/routes/{route_id}/replans"
+    ],
+    "findings": "No background polling daemon or road closure watcher automatically triggers mid trip replans for published routes. The replan workflow is strictly traveler initiated via explicit API request."
+  }
+}

@@ -47,6 +47,7 @@ from functions.route_optimizer.solver import OrToolsRoutingSolver
 from functions.route_optimizer.valhalla import (
     ValhallaClient,
     ValhallaConnectionError,
+    ValhallaRoutingError,
     validate_coordinates,
 )
 
@@ -554,21 +555,54 @@ class RouteReplanService:
             if from_stop is None or to_stop is None:
                 continue
 
-            route_res = await client.route(
-                locations=[from_stop.location, to_stop.location],
-                mode=leg.transport_mode,
-                exclude_polygons=leg_polys or None,
+            target_input = input_stops_by_id.get(to_stop.id) or (
+                input_stops_by_id.get(to_stop.stop_id) if to_stop.stop_id is not None else None
             )
+
+            try:
+                route_res = await client.route(
+                    locations=[from_stop.location, to_stop.location],
+                    mode=leg.transport_mode,
+                    exclude_polygons=leg_polys or None,
+                )
+            except ValhallaRoutingError as exc:
+                if exc.error_code in (442, 171) or "no path" in str(exc).lower():
+                    if target_input and target_input.is_must_visit:
+                        return new_route_solution.model_copy(
+                            update={
+                                "status": RouteStatus.INFEASIBLE,
+                                "solver_status": SolverStatus.INFEASIBLE,
+                                "stops": [],
+                                "dropped_stops": [
+                                    s.model_copy(
+                                        update={
+                                            "is_skipped": True,
+                                            "skip_reason": (
+                                                f"Mandatory stop '{to_stop.name}' unreachable due to road closure"
+                                                if s.name == to_stop.name
+                                                else "UNREACHABLE_STOP"
+                                            ),
+                                        }
+                                    )
+                                    for s in updated_stops
+                                ],
+                                "legs": [],
+                                "diagnostics": new_route_solution.diagnostics
+                                + [
+                                    f"NO_FEASIBLE_DETOUR: No valid path found to mandatory stop '{to_stop.name}' avoiding road closures"
+                                ],
+                                "warnings": new_route_solution.warnings
+                                + [f"No valid detour found for mandatory stop '{to_stop.name}'"],
+                            }
+                        )
+                raise
+
             leg_dist = route_res.total_distance_m
             leg_dur = route_res.total_travel_seconds
             leg_geom = route_res.legs[0].geometry if route_res.legs else route_res.geometry
 
             leg_dep = current_time
             arr_time = leg_dep + timedelta(seconds=leg_dur)
-
-            target_input = input_stops_by_id.get(to_stop.id) or (
-                input_stops_by_id.get(to_stop.stop_id) if to_stop.stop_id is not None else None
-            )
             dwell = target_input.dwell_seconds if target_input else to_stop.dwell_seconds
             wait_s = 0
             if target_input and target_input.window_start:

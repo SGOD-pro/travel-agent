@@ -238,7 +238,7 @@ class RouteRepository:
                 allowed_modes=list(r.allowed_modes or []),
                 effective_start=r.effective_start,
                 effective_end=r.effective_end,
-                claim_id=r.claim_id or r.id,
+                claim_id=r.claim_id,
                 was_applied=r.was_applied,
                 unresolved_reason=r.unresolved_reason,
             )
