@@ -1,0 +1,2278 @@
+{
+  "runner": "run_hitl_pipeline.py",
+  "started_at": "2026-11-24T18:20:59.977616+00:00",
+  "artifact_classification": "mixed",
+  "provider_modes": {
+    "llm": "fixture",
+    "weather": "fixture",
+    "search": "live_serpapi",
+    "routing": "live_valhalla"
+  },
+  "database_target": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "dbname": "acceptance_db"
+  },
+  "resume_mode": false,
+  "job_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+  "question_presented": {
+    "id": "a1c05a89-9922-41df-8876-6d21222f8150",
+    "key": "travel_dates",
+    "type": "DATE_RANGE",
+    "prompt": "Please specify your travel dates (start_date and end_date in YYYY-MM-DD format) to continue planning your trip.",
+    "rules": {
+      "type": "date_range",
+      "fields": [
+        "start_date",
+        "end_date"
+      ]
+    }
+  },
+  "submitted_answer": {
+    "start_date": "2026-11-28",
+    "end_date": "2026-11-29"
+  },
+  "answer_result": {
+    "status": "ANSWERED",
+    "context_version": 2
+  },
+  "final_status": "SUCCEEDED",
+  "timeline": [
+    {
+      "id": "55963810-ce8b-44a0-9f4b-b871e8d4a28f",
+      "sequence": 1,
+      "event_type": "JOB_ACCEPTED",
+      "safe_payload": {
+        "status": "CREATED",
+        "trip_id": "e1296f86-a732-419b-b437-3eb1cc42dd26",
+        "workflow": "TRAVEL",
+        "trip_version": 1
+      },
+      "timestamp": "2026-11-24T18:21:00.108116+00:00"
+    },
+    {
+      "id": "a134b432-deab-45ba-baf2-34dd6a508aed",
+      "sequence": 2,
+      "event_type": "EXECUTION_STARTED",
+      "safe_payload": {
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T18:21:00.402870+00:00"
+    },
+    {
+      "id": "c16cf653-cb63-490c-a538-6800d93e9fab",
+      "sequence": 3,
+      "event_type": "QUESTION_ASKED",
+      "safe_payload": {
+        "status": "WAITING_USER",
+        "question_id": "a1c05a89-9922-41df-8876-6d21222f8150",
+        "question_key": "travel_dates"
+      },
+      "timestamp": "2026-11-24T18:21:00.438794+00:00"
+    },
+    {
+      "id": "65cb84de-5aa7-4feb-a04f-00973e36722a",
+      "sequence": 4,
+      "event_type": "QUESTION_ANSWERED",
+      "safe_payload": {
+        "question_id": "a1c05a89-9922-41df-8876-6d21222f8150",
+        "question_key": "travel_dates",
+        "context_version": 2
+      },
+      "timestamp": "2026-11-24T18:21:01.293959+00:00"
+    },
+    {
+      "id": "b5da4c2c-f281-4cfd-8745-5c72a62f7c29",
+      "sequence": 5,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T18:21:01.396427+00:00"
+    },
+    {
+      "id": "4bba0c25-4cf0-4c3a-8964-88ad57f9b041",
+      "sequence": 6,
+      "event_type": "TASKS_DISPATCHED",
+      "safe_payload": {
+        "count": 1,
+        "status": "WAITING_TASKS"
+      },
+      "timestamp": "2026-11-24T18:21:01.442769+00:00"
+    },
+    {
+      "id": "339965e6-cc57-4c53-bf1a-1599c8464eac",
+      "sequence": 7,
+      "event_type": "TASK_COMPLETED",
+      "safe_payload": {
+        "action": "collect",
+        "worker": "EVIDENCE",
+        "attempt": 1,
+        "task_id": "62ef4ab5-0caf-4d3e-814f-1638accc63f7"
+      },
+      "timestamp": "2026-11-24T18:21:03.601732+00:00"
+    },
+    {
+      "id": "45c3d379-cd48-44f1-b88c-08d200e5e6b4",
+      "sequence": 8,
+      "event_type": "GRAPH_RESUMED",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T18:21:03.951503+00:00"
+    },
+    {
+      "id": "9a21d6dd-57a8-4932-9dd0-ba61549890a4",
+      "sequence": 9,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T18:21:04.271638+00:00"
+    },
+    {
+      "id": "016b9335-ba95-43aa-be74-ec8b5dc4d8e5",
+      "sequence": 10,
+      "event_type": "TASKS_DISPATCHED",
+      "safe_payload": {
+        "count": 1,
+        "status": "WAITING_TASKS"
+      },
+      "timestamp": "2026-11-24T18:21:05.975938+00:00"
+    },
+    {
+      "id": "14b65832-205f-420b-82ab-bc371c13682a",
+      "sequence": 11,
+      "event_type": "TASK_COMPLETED",
+      "safe_payload": {
+        "action": "render",
+        "worker": "BROWSER",
+        "attempt": 1,
+        "task_id": "0cf3a414-1dec-4e20-9d89-a0a40c588621"
+      },
+      "timestamp": "2026-11-24T18:21:11.370731+00:00"
+    },
+    {
+      "id": "d2e75ae8-966a-450e-9b3d-de75286c6b98",
+      "sequence": 12,
+      "event_type": "GRAPH_RESUMED",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T18:21:11.718389+00:00"
+    },
+    {
+      "id": "71483ea7-84ac-4257-b403-a3ce2d01a7b9",
+      "sequence": 13,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T18:21:12.044967+00:00"
+    },
+    {
+      "id": "8dd3b473-0425-4bc2-8c6e-f34f5f3724de",
+      "sequence": 14,
+      "event_type": "TASKS_DISPATCHED",
+      "safe_payload": {
+        "count": 1,
+        "status": "WAITING_TASKS"
+      },
+      "timestamp": "2026-11-24T18:21:12.963453+00:00"
+    },
+    {
+      "id": "47ccd6db-19c4-40d7-a811-97c0434a4bbe",
+      "sequence": 15,
+      "event_type": "TASK_COMPLETED",
+      "safe_payload": {
+        "action": "solve",
+        "worker": "OPTIMIZER",
+        "attempt": 1,
+        "task_id": "612d9a27-eb51-4330-b0d5-5f29bb886cd1"
+      },
+      "timestamp": "2026-11-24T18:21:14.021104+00:00"
+    },
+    {
+      "id": "f67fdeda-1190-4f22-86fb-a1dbf61d9b42",
+      "sequence": 16,
+      "event_type": "GRAPH_RESUMED",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T18:21:14.379039+00:00"
+    },
+    {
+      "id": "27db014d-c20a-457b-8346-c791998b49a7",
+      "sequence": 17,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T18:21:14.697693+00:00"
+    },
+    {
+      "id": "dc288de7-290d-4f5d-955d-18d72725ebab",
+      "sequence": 18,
+      "event_type": "PROPOSAL_PUBLISHED",
+      "safe_payload": {
+        "status": "partial",
+        "trip_id": "e1296f86-a732-419b-b437-3eb1cc42dd26",
+        "route_id": null,
+        "base_version": 2,
+        "routing_status": "ROUTING_UNAVAILABLE",
+        "proposal_status": "partial"
+      },
+      "timestamp": "2026-11-24T18:21:14.747581+00:00"
+    },
+    {
+      "id": "4ee59f60-face-41d4-aae2-df5a509f20b0",
+      "sequence": 19,
+      "event_type": "EXECUTION_SUCCEEDED",
+      "safe_payload": {
+        "status": "SUCCEEDED"
+      },
+      "timestamp": "2026-11-24T18:21:14.814719+00:00"
+    }
+  ],
+  "itinerary": {
+    "status": "partial",
+    "trip_id": "e1296f86-a732-419b-b437-3eb1cc42dd26",
+    "version": 2,
+    "route_id": null,
+    "schedule": {
+      "legs": [],
+      "stops": [],
+      "is_optimal": false,
+      "total_travel_minutes": 0
+    },
+    "advisories": [],
+    "budget_lines": [
+      {
+        "basis": "intercity_transport",
+        "amount": null,
+        "category": "miscellaneous",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "routing_engine",
+        "unknown_reason": "Transport cost unknown: Road routing engine unavailable; stops preserved without driving schedule or route polyline"
+      },
+      {
+        "basis": "hotel_stay_Ooty, Tamil Nadu (1 room, 1 night)",
+        "amount": "3500.00",
+        "category": "accommodation",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "benchmark_hotel_estimate",
+        "unknown_reason": null
+      }
+    ],
+    "generated_at": "2026-11-24T18:21:14.725246+00:00",
+    "route_status": "ROUTING_UNAVAILABLE",
+    "food_research": {
+      "reason": "Dining recommendations retrieved without source-backed regional culinary dishes",
+      "status": "PARTIAL",
+      "local_dishes": [],
+      "verified_dining_count": 3,
+      "dining_recommendations": [
+        {
+          "name": "Kailash Parbat - Pure Vegetarian Restaurant",
+          "address": null,
+          "category": "restaurant",
+          "identity": {
+            "name": "Kailash Parbat - Pure Vegetarian Restaurant",
+            "point": {
+              "lat": 11.4104653,
+              "lng": 76.70719009999999
+            },
+            "category": "restaurant"
+          },
+          "source_url": "https://www.kailashparbatgroup.com/",
+          "coordinates": {
+            "lat": 11.4104653,
+            "lng": 76.70719009999999
+          },
+          "is_verified": true,
+          "source_urls": [
+            "https://www.kailashparbatgroup.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ]
+        },
+        {
+          "name": "Ooty Junction - Pure Veg Restaurant",
+          "address": null,
+          "category": "restaurant",
+          "identity": {
+            "name": "Ooty Junction - Pure Veg Restaurant",
+            "point": {
+              "lat": 11.4132751,
+              "lng": 76.6983269
+            },
+            "category": "restaurant"
+          },
+          "source_url": "https://www.google.com/maps/search/?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant",
+          "coordinates": {
+            "lat": 11.4132751,
+            "lng": 76.6983269
+          },
+          "is_verified": true,
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant",
+            "https://www.google.com/maps/search?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant"
+          ],
+          "uncertainty": "VERIFIED",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ]
+        },
+        {
+          "name": "Pankaj Bhojanalaya(Pure veg & Jain food)",
+          "address": null,
+          "category": "restaurant",
+          "identity": {
+            "name": "Pankaj Bhojanalaya(Pure veg & Jain food)",
+            "point": {
+              "lat": 11.4116619,
+              "lng": 76.7078204
+            },
+            "category": "restaurant"
+          },
+          "source_url": "https://www.google.com/maps/search/?api=1&query=Pankaj+Bhojanalaya(Pure+veg+&+Jain+food)",
+          "coordinates": {
+            "lat": 11.4116619,
+            "lng": 76.7078204
+          },
+          "is_verified": true,
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Pankaj+Bhojanalaya(Pure+veg+&+Jain+food)",
+            "https://www.google.com/maps/search?api=1&query=Pankaj+Bhojanalaya%28Pure+veg+&+Jain+food%29="
+          ],
+          "uncertainty": "VERIFIED",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ]
+        }
+      ],
+      "unverified_dining_count": 0
+    },
+    "budget_summary": {
+      "is_complete": false,
+      "known_total": {
+        "amount": "3500.000000",
+        "currency": "INR"
+      },
+      "unknown_count": 1,
+      "estimated_count": 1,
+      "unknown_reasons": [
+        "Transport cost unknown: Road routing engine unavailable; stops preserved without driving schedule or route polyline"
+      ]
+    },
+    "route_geometry": null,
+    "routing_status": "ROUTING_UNAVAILABLE",
+    "weather_status": "AVAILABLE",
+    "advisory_status": "ADVISORY_UNKNOWN",
+    "advisory_research": {
+      "reason": "Advisory reports are unverified, undated, stale, or have insufficient location evidence; route conditions remain unverified",
+      "status": "ADVISORY_UNKNOWN",
+      "advisories": [],
+      "safety_notice": "Absence of travel advisories or warnings is not proof of safety; unmonitored conditions remain unverified.",
+      "expired_advisories": [],
+      "unrelated_advisories": [],
+      "checked_sources_count": 5,
+      "unverified_advisories": [
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "United States Road Conditions",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.weather.gov/cys/unitedstatesroadconditions",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "GENERAL_ADVISORY",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "2fdab409-11aa-492e-8ef9-663dc2b81ba2",
+          "retrieval_time": "2026-11-24T18:21:02.446731+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        },
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "Ooty Rain & Travel Update November 1: Safe Trip to Queen of ...",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.facebook.com/lulumon.newlulumon/videos/-ooty-rain-and-travel-update-011026%EF%B8%8Fafter-four-continuous-days-of-bright-sunshin/1089265023979514",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "ROAD_CLOSURE",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "14a8091b-cf74-41c5-9ce1-fb8abb0e7917",
+          "retrieval_time": "2026-11-24T18:21:02.446731+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        },
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "Ooty travel in November, rainy weather concerns?",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.facebook.com/groups/hvkumar/posts/10158862881684565",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "ROAD_CLOSURE",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "f94e3515-1d2a-4fd0-9016-0ffc1a33eeec",
+          "retrieval_time": "2026-11-24T18:21:02.446731+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        },
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "Planning a trip to Ooty soon \u2014 what are the current ...",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.reddit.com/r/ooty/comments/1xij0gb/planning_a_trip_to_ooty_soon_what_are_the_current",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "GENERAL_ADVISORY",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "94a2d474-0e80-46a1-a34a-4263c8625082",
+          "retrieval_time": "2026-11-24T18:21:02.446731+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        },
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "Before travelling, always check and confirm the bus status ...",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.instagram.com/reel/DfHqqhESBmi",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "WEATHER_WARNING",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "17e0dba6-7680-45c8-b64b-f004a894d46f",
+          "retrieval_time": "2026-11-24T18:21:02.446731+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        }
+      ],
+      "conflicting_advisories": [],
+      "authoritative_sources_count": 0
+    },
+    "discovered_places": [
+      {
+        "lat": 11.4102,
+        "lng": 76.695,
+        "name": "Ooty, Tamil Nadu",
+        "category": "destination",
+        "latitude": 11.4102,
+        "longitude": 76.695,
+        "confidence": 0.95,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 360
+      },
+      {
+        "lat": 22.4285,
+        "lng": 87.8712,
+        "name": "Kolaghat Express Highway Dhaba",
+        "address": "NH16, Kolaghat, West Bengal 721134",
+        "category": "restaurant",
+        "latitude": 22.4285,
+        "longitude": 87.8712,
+        "confidence": 0.95,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 45,
+        "opening_hours": "06:00 - 23:00",
+        "price_estimate_inr": 350.0
+      },
+      {
+        "lat": 22.4691,
+        "lng": 87.9154,
+        "name": "Deulti Rural Heritage Center",
+        "address": "Samtaber, Deulti, Howrah, West Bengal 711303",
+        "category": "heritage",
+        "latitude": 22.4691,
+        "longitude": 87.9154,
+        "confidence": 0.88,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 60,
+        "opening_hours": "09:00 - 17:30",
+        "price_estimate_inr": 50.0
+      },
+      {
+        "lat": 22.2982,
+        "lng": 87.9251,
+        "name": "Tamluk Bargabhima Temple",
+        "address": "Tamluk, Purba Medinipur, West Bengal 721636",
+        "category": "heritage",
+        "latitude": 22.2982,
+        "longitude": 87.9251,
+        "confidence": 0.92,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 45,
+        "opening_hours": "06:00 - 12:30, 15:30 - 20:30",
+        "price_estimate_inr": 0.0
+      },
+      {
+        "lat": 22.1865,
+        "lng": 87.9892,
+        "name": "Mahishadal Rajbari Palace",
+        "address": "Mahishadal, Purba Medinipur, West Bengal 721628",
+        "category": "heritage",
+        "latitude": 22.1865,
+        "longitude": 87.9892,
+        "confidence": 0.85,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 90,
+        "opening_hours": "10:00 - 17:00",
+        "price_estimate_inr": 100.0
+      },
+      {
+        "lat": 21.6264,
+        "lng": 87.5093,
+        "name": "Digha Sea Beach Promenade",
+        "address": "Old Digha, Purba Medinipur, West Bengal 721428",
+        "category": "nature",
+        "latitude": 21.6264,
+        "longitude": 87.5093,
+        "confidence": 0.98,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 120,
+        "opening_hours": "Open 24 hours",
+        "price_estimate_inr": 0.0
+      }
+    ],
+    "route_diagnostics": [
+      "Road routing engine unavailable; stops preserved without driving schedule or route polyline",
+      "Valhalla route distance limit exceeded (HTTP 400, error_code 154 on /route): leg distance exceeds provider threshold (1500 km)"
+    ],
+    "weather_advisories": [
+      {
+        "is_day": true,
+        "latitude": 22.5726,
+        "condition": "sunny",
+        "longitude": 88.3639,
+        "stop_name": "Kolkata (Howrah Hub)",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {},
+        "ghat_caution": null,
+        "monsoon_risk": "low",
+        "weather_code": 0,
+        "forecast_time": "2026-11-01T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+        "humidity_percent": 65,
+        "precipitation_mm": 0.0,
+        "temperature_celsius": 31.0,
+        "precipitation_probability": 10,
+        "apparent_temperature_celsius": 35.0
+      },
+      {
+        "is_day": true,
+        "latitude": 22.4285,
+        "condition": "sunny",
+        "longitude": 87.8712,
+        "stop_name": "Kolaghat Express Highway Plaza",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {},
+        "ghat_caution": null,
+        "monsoon_risk": "low",
+        "weather_code": 1,
+        "forecast_time": "2026-11-01T13:30:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+        "humidity_percent": 70,
+        "precipitation_mm": 0.0,
+        "temperature_celsius": 30.5,
+        "precipitation_probability": 15,
+        "apparent_temperature_celsius": 34.0
+      },
+      {
+        "is_day": true,
+        "latitude": 22.2341,
+        "condition": "cloudy",
+        "longitude": 87.9025,
+        "stop_name": "Nandakumar Junction",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {},
+        "ghat_caution": null,
+        "monsoon_risk": "low",
+        "weather_code": 2,
+        "forecast_time": "2026-11-01T15:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+        "humidity_percent": 75,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 29.8,
+        "precipitation_probability": 30,
+        "apparent_temperature_celsius": 33.5
+      },
+      {
+        "is_day": true,
+        "latitude": 21.6266,
+        "condition": "rainy",
+        "longitude": 87.5074,
+        "stop_name": "New Digha Sea Beach",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {},
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 61,
+        "forecast_time": "2026-11-01T17:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+        "humidity_percent": 85,
+        "precipitation_mm": 12.0,
+        "temperature_celsius": 28.5,
+        "precipitation_probability": 65,
+        "apparent_temperature_celsius": 32.0
+      }
+    ],
+    "excluded_candidates": [
+      {
+        "point": {
+          "lat": 22.4285,
+          "lng": 87.8712
+        },
+        "category": "restaurant",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Kolaghat Express Highway Dhaba",
+            "point": {
+              "lat": 22.4285,
+              "lng": 87.8712
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (144.9km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Kolaghat Express Highway Dhaba",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 144.85,
+        "suggested_stay_minutes": 45
+      },
+      {
+        "point": {
+          "lat": 22.4691,
+          "lng": 87.9154
+        },
+        "category": "heritage",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Deulti Rural Heritage Center",
+            "point": {
+              "lat": 22.4691,
+              "lng": 87.9154
+            },
+            "category": "heritage"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (147.0km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Deulti Rural Heritage Center",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 146.99,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 22.2982,
+          "lng": 87.9251
+        },
+        "category": "heritage",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Tamluk Bargabhima Temple",
+            "point": {
+              "lat": 22.2982,
+              "lng": 87.9251
+            },
+            "category": "heritage"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (156.7km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Tamluk Bargabhima Temple",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 156.7,
+        "suggested_stay_minutes": 45
+      },
+      {
+        "point": {
+          "lat": 22.1865,
+          "lng": 87.9892
+        },
+        "category": "heritage",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Mahishadal Rajbari Palace",
+            "point": {
+              "lat": 22.1865,
+              "lng": 87.9892
+            },
+            "category": "heritage"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (168.9km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Mahishadal Rajbari Palace",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 168.88,
+        "suggested_stay_minutes": 90
+      },
+      {
+        "point": {
+          "lat": 21.6264,
+          "lng": 87.5093
+        },
+        "category": "nature",
+        "place_id": null,
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Digha Sea Beach Promenade",
+            "point": {
+              "lat": 21.6264,
+              "lng": 87.5093
+            },
+            "category": "nature"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "corridor_validation_failed"
+          ],
+          "brief_corridor_validated": false
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_status": "OUTSIDE_CORRIDOR",
+          "rejection_reason": "Candidate distance (170.1km) exceeds maximum corridor boundary (100.0km). Discarded."
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Digha Sea Beach Promenade",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 170.1,
+        "suggested_stay_minutes": 120
+      }
+    ],
+    "provider_diagnostics": {
+      "weather": {
+        "provider": "fixture",
+        "attribution": "Weather data by Open Meteo.com",
+        "ghat_caution": null,
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads.",
+        "fixture_scenario": "kolkata_digha_standard",
+        "licensing_status": "non_commercial",
+        "forecast_horizon_days": 16,
+        "is_commercial_licensed": false
+      },
+      "routing_notes": [
+        "Train routing is unsupported in current routing engine; evaluated road routing for car_petrol",
+        "Destination alternatives are not generated in this workflow; travel to Ooty, Tamil Nadu from Raniganj, West Bengal is impractical by road and exceeds provider limits"
+      ]
+    },
+    "validated_candidates": [
+      {
+        "point": {
+          "lat": 11.4102,
+          "lng": 76.695
+        },
+        "category": "destination",
+        "place_id": "bf4e9a26-4114-4407-a639-ca8f6940915d",
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Ooty, Tamil Nadu",
+            "point": {
+              "lat": 11.4102,
+              "lng": 76.695
+            },
+            "category": "destination"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.0
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty, Tamil Nadu",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.0,
+        "suggested_stay_minutes": 360
+      },
+      {
+        "point": {
+          "lat": 11.4058361,
+          "lng": 76.6878842
+        },
+        "category": "nature",
+        "place_id": "bcc3085a-c744-4f76-9154-8361b29a80b9",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Tamilnadu Tourism Boat House, Ooty",
+            "point": {
+              "lat": 11.4058361,
+              "lng": 76.6878842
+            },
+            "category": "nature"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://ttdc.in/ttdc-public-boat/boat"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:01.804155+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.91
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Tamilnadu Tourism Boat House, Ooty",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.91,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4059244,
+          "lng": 76.6882704
+        },
+        "category": "nature",
+        "place_id": "b0f65503-15d8-4c7f-a303-db6b4d27793a",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty Lake View point",
+            "point": {
+              "lat": 11.4059244,
+              "lng": 76.6882704
+            },
+            "category": "nature"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Lake+View+point"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:01.804155+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.87
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty Lake View point",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.87,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4069218,
+          "lng": 76.6882567
+        },
+        "category": "nature",
+        "place_id": "1303142b-337f-4eeb-a645-c3f4f38c1931",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Thread Garden",
+            "point": {
+              "lat": 11.4069218,
+              "lng": 76.6882567
+            },
+            "category": "nature"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Thread+Garden"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:01.804155+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.8km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.82
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Thread Garden",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.82,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.3888985,
+          "lng": 76.7250646
+        },
+        "category": "attraction",
+        "place_id": "52803e32-f58c-4886-9201-0b7d34351806",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ketti Valley View Point",
+            "point": {
+              "lat": 11.3888985,
+              "lng": 76.7250646
+            },
+            "category": "attraction"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ketti+Valley+View+Point"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:01.804155+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (4.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 4.04
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ketti Valley View Point",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 4.04,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4188751,
+          "lng": 76.7113878
+        },
+        "category": "nature",
+        "place_id": "c30feb34-232f-4776-85be-0cf12f10cb94",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Government Botanical Garden",
+            "point": {
+              "lat": 11.4188751,
+              "lng": 76.7113878
+            },
+            "category": "nature"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://nilgiris.nic.in/tourist-place/botanical-garden/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:01.804155+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (2.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 2.03
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Government Botanical Garden",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 2.03,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4104653,
+          "lng": 76.70719009999999
+        },
+        "category": "restaurant",
+        "place_id": "f8d88e83-986c-4e1a-8cfa-3fcb42df3b50",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Kailash Parbat - Pure Vegetarian Restaurant",
+            "point": {
+              "lat": 11.4104653,
+              "lng": 76.70719009999999
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.kailashparbatgroup.com/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.3km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.33
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Kailash Parbat - Pure Vegetarian Restaurant",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.33,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.406845599999999,
+          "lng": 76.68711619999999
+        },
+        "category": "lodging",
+        "place_id": "0893de33-d89e-44ee-8de9-543a33aefdb9",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Darshan veg",
+            "point": {
+              "lat": 11.406845599999999,
+              "lng": 76.68711619999999
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "http://www.hoteldarshan.com/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.94
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Darshan veg",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.94,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4132751,
+          "lng": 76.6983269
+        },
+        "category": "restaurant",
+        "place_id": "690d44ee-eb5e-4960-804a-e306c29e1ba3",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty Junction - Pure Veg Restaurant",
+            "point": {
+              "lat": 11.4132751,
+              "lng": 76.6983269
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.5
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty Junction - Pure Veg Restaurant",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.5,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4136285,
+          "lng": 76.7086293
+        },
+        "category": "lodging",
+        "place_id": "7b3c81eb-0bff-400e-8fa8-00579cb78f44",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ruchi Bhavanam",
+            "point": {
+              "lat": 11.4136285,
+              "lng": 76.7086293
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://ruchibhavanam.com/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.53
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ruchi Bhavanam",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.53,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4116619,
+          "lng": 76.7078204
+        },
+        "category": "restaurant",
+        "place_id": "458c4821-7203-4240-9519-e7dbc143bba9",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Pankaj Bhojanalaya(Pure veg & Jain food)",
+            "point": {
+              "lat": 11.4116619,
+              "lng": 76.7078204
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Pankaj+Bhojanalaya(Pure+veg+&+Jain+food)"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.4km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.41
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Pankaj Bhojanalaya(Pure veg & Jain food)",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.41,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4056733,
+          "lng": 76.7096816
+        },
+        "category": "attraction",
+        "place_id": "f44767ea-94e0-44a0-9657-f06bac42140d",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Al Woodlands Residency",
+            "point": {
+              "lat": 11.4056733,
+              "lng": 76.7096816
+            },
+            "category": "attraction"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "http://www.alwoodlands.com/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.7km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.68
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Al Woodlands Residency",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.68,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4139216,
+          "lng": 76.67790029999999
+        },
+        "category": "attraction",
+        "place_id": "8a2977ec-2d72-4663-ba0f-2166ea6e7c96",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "goSTOPS OOTY",
+            "point": {
+              "lat": 11.4139216,
+              "lng": 76.67790029999999
+            },
+            "category": "attraction"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://gostops.com/book-rooms-in-ooty-hostel/?utm_source=gmb"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.91
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "goSTOPS OOTY",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.91,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4041526,
+          "lng": 76.678078
+        },
+        "category": "lodging",
+        "place_id": "2108328e-fc3f-476d-b8d3-1ba378de8e4b",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Hotel Lakeview",
+            "point": {
+              "lat": 11.4041526,
+              "lng": 76.678078
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "http://www.hotellakeview.com/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (2.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.96
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Hotel Lakeview",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.96,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.404416099999999,
+          "lng": 76.6995338
+        },
+        "category": "lodging",
+        "place_id": "bc77636e-6672-434d-a48e-89f5e0e6124e",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Hotel Maneck",
+            "point": {
+              "lat": 11.404416099999999,
+              "lng": 76.6995338
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "http://hotelmaneckooty.com/?utm_source=gmb&utm_medium=referral"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.8km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.81
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Hotel Maneck",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.81,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4133003,
+          "lng": 76.7083967
+        },
+        "category": "lodging",
+        "place_id": "32db9f1e-0aed-4875-a774-fc16c45dba91",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "HOTEL CHARRING CROSS, OOTY",
+            "point": {
+              "lat": 11.4133003,
+              "lng": 76.7083967
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=HOTEL+CHARRING+CROSS,+OOTY"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.5
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "HOTEL CHARRING CROSS, OOTY",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.5,
+        "suggested_stay_minutes": 60
+      }
+    ],
+    "accommodation_research": {
+      "reason": "Accommodation options identified without source-supported indicative rates",
+      "status": "PARTIAL",
+      "pricing_notice": "All rates are indicative search estimates from web aggregators. Verified date specific offers, live room availability, and booking confirmations are not included.",
+      "verified_offers": [],
+      "indicative_options": [
+        {
+          "currency": null,
+          "source_url": "http://www.hoteldarshan.com/",
+          "source_urls": [
+            "http://www.hoteldarshan.com/"
+          ],
+          "uncertainty": "UNVERIFIED",
+          "property_name": "Darshan veg",
+          "evidence_class": null,
+          "observation_id": null,
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "price_per_night": null,
+          "booking_confirmed": false,
+          "is_verified_offer": false,
+          "availability_status": "PRICE_UNAVAILABLE",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "price_unsupported_by_source",
+            "live_room_availability_unverified",
+            "booking_unconfirmed"
+          ],
+          "is_indicative_search": false
+        },
+        {
+          "currency": null,
+          "source_url": "https://ruchibhavanam.com/",
+          "source_urls": [
+            "https://ruchibhavanam.com/"
+          ],
+          "uncertainty": "UNVERIFIED",
+          "property_name": "Ruchi Bhavanam",
+          "evidence_class": null,
+          "observation_id": null,
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "price_per_night": null,
+          "booking_confirmed": false,
+          "is_verified_offer": false,
+          "availability_status": "PRICE_UNAVAILABLE",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "price_unsupported_by_source",
+            "live_room_availability_unverified",
+            "booking_unconfirmed"
+          ],
+          "is_indicative_search": false
+        },
+        {
+          "currency": null,
+          "source_url": "http://www.hotellakeview.com/",
+          "source_urls": [
+            "http://www.hotellakeview.com/"
+          ],
+          "uncertainty": "UNVERIFIED",
+          "property_name": "Hotel Lakeview",
+          "evidence_class": null,
+          "observation_id": null,
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "price_per_night": null,
+          "booking_confirmed": false,
+          "is_verified_offer": false,
+          "availability_status": "PRICE_UNAVAILABLE",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "price_unsupported_by_source",
+            "live_room_availability_unverified",
+            "booking_unconfirmed"
+          ],
+          "is_indicative_search": false
+        },
+        {
+          "currency": null,
+          "source_url": "http://hotelmaneckooty.com/?utm_source=gmb&utm_medium=referral",
+          "source_urls": [
+            "http://hotelmaneckooty.com/?utm_source=gmb&utm_medium=referral",
+            "http://hotelmaneckooty.com/"
+          ],
+          "uncertainty": "UNVERIFIED",
+          "property_name": "Hotel Maneck",
+          "evidence_class": null,
+          "observation_id": null,
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "price_per_night": null,
+          "booking_confirmed": false,
+          "is_verified_offer": false,
+          "availability_status": "PRICE_UNAVAILABLE",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "price_unsupported_by_source",
+            "live_room_availability_unverified",
+            "booking_unconfirmed"
+          ],
+          "is_indicative_search": false
+        },
+        {
+          "currency": null,
+          "source_url": "https://www.google.com/maps/search/?api=1&query=HOTEL+CHARRING+CROSS,+OOTY",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=HOTEL+CHARRING+CROSS,+OOTY",
+            "https://www.google.com/maps/search?api=1&query=HOTEL+CHARRING+CROSS%2C+OOTY"
+          ],
+          "uncertainty": "UNVERIFIED",
+          "property_name": "HOTEL CHARRING CROSS, OOTY",
+          "evidence_class": null,
+          "observation_id": null,
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "price_per_night": null,
+          "booking_confirmed": false,
+          "is_verified_offer": false,
+          "availability_status": "PRICE_UNAVAILABLE",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "price_unsupported_by_source",
+            "live_room_availability_unverified",
+            "booking_unconfirmed"
+          ],
+          "is_indicative_search": false
+        }
+      ],
+      "availability_status": "PRICE_UNAVAILABLE",
+      "cheapest_claim_guarantee": "No cheapest hotel claims are asserted; search rates represent indicative pricing without live supplier confirmation."
+    },
+    "editorial_recommendations": [
+      {
+        "point": {
+          "lat": 11.4102,
+          "lng": 76.695
+        },
+        "category": "destination",
+        "place_id": "bf4e9a26-4114-4407-a639-ca8f6940915d",
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Ooty, Tamil Nadu",
+            "point": {
+              "lat": 11.4102,
+              "lng": 76.695
+            },
+            "category": "destination"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "No supporting source observations or verified claims exist. Candidate place preserved only as editorial recommendation.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.0,
+          "existence_verification": "UNVERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty, Tamil Nadu",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.0,
+        "suggested_stay_minutes": 360
+      },
+      {
+        "point": {
+          "lat": 11.4104653,
+          "lng": 76.70719009999999
+        },
+        "category": "restaurant",
+        "place_id": "f8d88e83-986c-4e1a-8cfa-3fcb42df3b50",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Kailash Parbat - Pure Vegetarian Restaurant",
+            "point": {
+              "lat": 11.4104653,
+              "lng": 76.70719009999999
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.kailashparbatgroup.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.3km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.33,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Kailash Parbat - Pure Vegetarian Restaurant",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.33,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.406845599999999,
+          "lng": 76.68711619999999
+        },
+        "category": "lodging",
+        "place_id": "0893de33-d89e-44ee-8de9-543a33aefdb9",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Darshan veg",
+            "point": {
+              "lat": 11.406845599999999,
+              "lng": 76.68711619999999
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "http://www.hoteldarshan.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 0.94,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Darshan veg",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.94,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4132751,
+          "lng": 76.6983269
+        },
+        "category": "restaurant",
+        "place_id": "690d44ee-eb5e-4960-804a-e306c29e1ba3",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty Junction - Pure Veg Restaurant",
+            "point": {
+              "lat": 11.4132751,
+              "lng": 76.6983269
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant",
+            "https://www.google.com/maps/search?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 0.5,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Ooty Junction - Pure Veg Restaurant",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.5,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4136285,
+          "lng": 76.7086293
+        },
+        "category": "lodging",
+        "place_id": "7b3c81eb-0bff-400e-8fa8-00579cb78f44",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ruchi Bhavanam",
+            "point": {
+              "lat": 11.4136285,
+              "lng": 76.7086293
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://ruchibhavanam.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.53,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Ruchi Bhavanam",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.53,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4116619,
+          "lng": 76.7078204
+        },
+        "category": "restaurant",
+        "place_id": "458c4821-7203-4240-9519-e7dbc143bba9",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Pankaj Bhojanalaya(Pure veg & Jain food)",
+            "point": {
+              "lat": 11.4116619,
+              "lng": 76.7078204
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Pankaj+Bhojanalaya(Pure+veg+&+Jain+food)",
+            "https://www.google.com/maps/search?api=1&query=Pankaj+Bhojanalaya%28Pure+veg+&+Jain+food%29="
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.032784+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.4km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.41,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Pankaj Bhojanalaya(Pure veg & Jain food)",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.41,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4041526,
+          "lng": 76.678078
+        },
+        "category": "lodging",
+        "place_id": "2108328e-fc3f-476d-b8d3-1ba378de8e4b",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Hotel Lakeview",
+            "point": {
+              "lat": 11.4041526,
+              "lng": 76.678078
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "http://www.hotellakeview.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (2.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.96,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Hotel Lakeview",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.96,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.404416099999999,
+          "lng": 76.6995338
+        },
+        "category": "lodging",
+        "place_id": "bc77636e-6672-434d-a48e-89f5e0e6124e",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Hotel Maneck",
+            "point": {
+              "lat": 11.404416099999999,
+              "lng": 76.6995338
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "http://hotelmaneckooty.com/?utm_source=gmb&utm_medium=referral",
+            "http://hotelmaneckooty.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (0.8km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 0.81,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Hotel Maneck",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.81,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4133003,
+          "lng": 76.7083967
+        },
+        "category": "lodging",
+        "place_id": "32db9f1e-0aed-4875-a774-fc16c45dba91",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "HOTEL CHARRING CROSS, OOTY",
+            "point": {
+              "lat": 11.4133003,
+              "lng": 76.7083967
+            },
+            "category": "lodging"
+          },
+          "owner_id": "d3fa4ddc-b265-422d-b555-646be1987f29",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=HOTEL+CHARRING+CROSS,+OOTY",
+            "https://www.google.com/maps/search?api=1&query=HOTEL+CHARRING+CROSS%2C+OOTY"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "eeb316e8-f6f8-47cc-85a6-eedf76440304",
+          "retrieval_time": "2026-11-24T18:21:02.277066+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.5,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "HOTEL CHARRING CROSS, OOTY",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.5,
+        "suggested_stay_minutes": 60
+      }
+    ]
+  },
+  "completed_at": "2026-11-24T18:21:15.747824+00:00"
+}

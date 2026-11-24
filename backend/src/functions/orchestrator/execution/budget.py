@@ -46,6 +46,198 @@ def ensure_execution_budget_structure(budget: dict[str, Any] | None) -> dict[str
     return b
 
 
+def ensure_route_fallback_budget_structure(
+    budget: dict[str, Any] | None, *, default_cap: int = 3
+) -> dict[str, Any]:
+    """Ensures dedicated route fallback budget namespace exists on execution.budget dict."""
+    b = dict(budget or {})
+    rf = dict(b.get("route_fallback") or {})
+    rf.setdefault("remaining_attempts", default_cap)
+    rf.setdefault("reserved_attempts", 0)
+    rf.setdefault("spent_attempts", 0)
+    rf.setdefault("uncertain_attempts", 0)
+    rf.setdefault("reservations", {})
+    rf.setdefault("probes", {})
+    b["route_fallback"] = rf
+    return b
+
+
+async def reserve_route_fallback_attempt(
+    session: AsyncSession,
+    *,
+    execution_id: uuid.UUID,
+    probe_key: str,
+    task_id: uuid.UUID | None = None,
+    attempt: int | None = None,
+    lease_token: uuid.UUID | None = None,
+    reservation_id: str | None = None,
+    max_attempts_cap: int = 3,
+) -> tuple[str | None, str | None]:
+    """Atomically reserves and commits 1 outbound /route attempt under parent-first locks.
+
+    Returns (reservation_id, denial_reason). Rejects when lease, deadline, or attempt budget
+    is invalid or exhausted without leaving open transactions.
+    """
+    exec_stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
+    exec_res = await session.execute(exec_stmt)
+    execution = exec_res.scalar_one_or_none()
+    if execution is None:
+        return None, "execution_not_found"
+
+    if execution.status == "CANCELLED" or execution.cancelled_at is not None:
+        return None, "execution_cancelled"
+    if execution.status in ("SUCCEEDED", "FAILED", "PARTIAL", "SUPERSEDED", "COMPLETED"):
+        return None, "execution_terminal"
+
+    now = datetime.now(UTC)
+    if task_id is not None:
+        task_stmt = select(TaskModel).where(TaskModel.id == task_id).with_for_update()
+        task_res = await session.execute(task_stmt)
+        task = task_res.scalar_one_or_none()
+        now = datetime.now(UTC)
+        if task is None:
+            return None, "task_not_found"
+        if execution.deadline_at and execution.deadline_at <= now:
+            return None, "deadline_exceeded"
+        if task.deadline_at and task.deadline_at <= now:
+            return None, "deadline_exceeded"
+        if lease_token is None or task.lease_token != lease_token:
+            return None, "invalid_lease"
+        if task.lease_expiry is None or task.lease_expiry <= now:
+            return None, "lease_expired"
+        if attempt is not None and task.attempt != attempt:
+            return None, "stale_attempt"
+        if task.status not in ("CLAIMED", "RUNNING"):
+            return None, "task_not_active"
+    else:
+        if execution.deadline_at and execution.deadline_at <= now:
+            return None, "deadline_exceeded"
+        if lease_token is not None:
+            return None, "invalid_lease"
+
+    b = ensure_route_fallback_budget_structure(execution.budget, default_cap=max_attempts_cap)
+    rf = dict(b["route_fallback"])
+    remaining = int(rf.get("remaining_attempts", max_attempts_cap))
+    reserved = int(rf.get("reserved_attempts", 0))
+    if remaining - reserved < 1:
+        return None, "budget_exhausted"
+
+    res_id = reservation_id or str(uuid.uuid4())
+    reservations = dict(rf.get("reservations") or {})
+    reservations[res_id] = {
+        "reservation_id": res_id,
+        "task_id": str(task_id) if task_id else None,
+        "attempt": attempt,
+        "lease_token": str(lease_token) if lease_token else None,
+        "probe_key": probe_key,
+        "status": BudgetReservationStatus.ACTIVE,
+        "created_at": now.isoformat(),
+        "reconciled_at": None,
+        "recovered_at": None,
+        "settled_as": None,
+    }
+    rf["reservations"] = reservations
+    rf["reserved_attempts"] = reserved + 1
+    b["route_fallback"] = rf
+    execution.budget = b
+    flag_modified(execution, "budget")
+    await session.commit()
+    return res_id, None
+
+
+async def reconcile_route_fallback_attempt(
+    session: AsyncSession,
+    *,
+    execution_id: uuid.UUID,
+    reservation_id: str,
+    success: bool,
+    task_id: uuid.UUID | None = None,
+    attempt: int | None = None,
+    lease_token: uuid.UUID | None = None,
+    dispatched: bool = True,
+    outcome: str | None = None,
+    probe_key: str | None = None,
+    probe_payload: dict[str, Any] | None = None,
+) -> bool:
+    """Reconciles a durable /route fallback attempt reservation and optionally caches probe outcome."""
+    if not getattr(session, "is_active", True):
+        return False
+
+    exec_stmt = select(ExecutionModel).where(ExecutionModel.id == execution_id).with_for_update()
+    exec_res = await session.execute(exec_stmt)
+    execution = exec_res.scalar_one_or_none()
+    if execution is None or not execution.budget:
+        return False
+
+    now = datetime.now(UTC)
+    if task_id is not None:
+        task_stmt = select(TaskModel).where(TaskModel.id == task_id).with_for_update()
+        task_res = await session.execute(task_stmt)
+        task = task_res.scalar_one_or_none()
+        now = datetime.now(UTC)
+        if task is None:
+            return False
+        if lease_token is not None and task.lease_token != lease_token:
+            return False
+        if attempt is not None and task.attempt != attempt:
+            return False
+
+    b = ensure_route_fallback_budget_structure(execution.budget)
+    rf = dict(b["route_fallback"])
+    reservations = dict(rf.get("reservations") or {})
+    res_entry = reservations.get(reservation_id)
+    if not isinstance(res_entry, dict):
+        return False
+
+    if res_entry.get("task_id") is not None and (
+        task_id is None or str(task_id) != res_entry.get("task_id")
+    ):
+        return False
+    if res_entry.get("attempt") is not None and (
+        attempt is None or attempt != res_entry.get("attempt")
+    ):
+        return False
+    if res_entry.get("lease_token") is not None and (
+        lease_token is None or str(lease_token) != res_entry.get("lease_token")
+    ):
+        return False
+    if task_id is None and lease_token is not None:
+        return False
+
+    if res_entry.get("status") != BudgetReservationStatus.ACTIVE:
+        return True
+
+    res_entry = dict(res_entry)
+    res_entry["status"] = BudgetReservationStatus.RECONCILED
+    res_entry["reconciled_at"] = now.isoformat()
+    rf["reserved_attempts"] = max(0, int(rf.get("reserved_attempts", 0)) - 1)
+
+    if success:
+        res_entry["settled_as"] = "SUCCESS"
+        rf["spent_attempts"] = int(rf.get("spent_attempts", 0)) + 1
+        rf["remaining_attempts"] = max(0, int(rf.get("remaining_attempts", 0)) - 1)
+    elif not dispatched or outcome == "NOT_DISPATCHED":
+        res_entry["settled_as"] = "NOT_DISPATCHED"
+    else:
+        res_entry["settled_as"] = outcome or "UNCERTAIN"
+        rf["uncertain_attempts"] = int(rf.get("uncertain_attempts", 0)) + 1
+        rf["spent_attempts"] = int(rf.get("spent_attempts", 0)) + 1
+        rf["remaining_attempts"] = max(0, int(rf.get("remaining_attempts", 0)) - 1)
+
+    if probe_key and probe_payload is not None:
+        probes = dict(rf.get("probes") or {})
+        probes[probe_key] = probe_payload
+        rf["probes"] = probes
+
+    reservations[reservation_id] = res_entry
+    rf["reservations"] = reservations
+    b["route_fallback"] = rf
+    execution.budget = b
+    flag_modified(execution, "budget")
+    await session.commit()
+    return True
+
+
 async def reserve_budget_entry(
     session: AsyncSession,
     *,
@@ -463,12 +655,134 @@ async def recover_abandoned_budget_reservations(
             0, int(budget.get("remaining_cost_minor", 0)) - cost_minor
         )
 
+    # Also recover abandoned route_fallback reservations under the same parent-first lock
+    rf_recovered = await _recover_route_fallback_in_locked_execution(
+        session=session,
+        execution=execution,
+        budget=budget,
+        parent_terminal=parent_terminal,
+        task_id=task_id,
+        attempt=attempt,
+        recovery_reason=recovery_reason,
+        now=now,
+    )
+    recovered.extend(rf_recovered)
+
     if recovered:
         budget["reservations"] = reservations
         execution.budget = budget
         flag_modified(execution, "budget")
         await session.commit()
 
+    return recovered
+
+
+def _recover_route_fallback_reservations_dict(
+    *,
+    budget: dict[str, Any],
+    eligible_fn: Any,
+    recovery_reason: str,
+    now_iso: str,
+) -> list[dict[str, Any]]:
+    """Shared helper transitioning abandoned route_fallback reservations to ABANDONED_UNCERTAIN."""
+    raw_rf = budget.get("route_fallback")
+    if not isinstance(raw_rf, dict):
+        return []
+    rf = dict(raw_rf)
+    rf_reservations = dict(rf.get("reservations") or {})
+    recovered: list[dict[str, Any]] = []
+    for res_id, res in list(rf_reservations.items()):
+        if not isinstance(res, dict) or res.get("status") != BudgetReservationStatus.ACTIVE:
+            continue
+        if not eligible_fn(res):
+            continue
+        upd = dict(res)
+        upd["status"] = BudgetReservationStatus.ABANDONED_UNCERTAIN
+        upd["settled_as"] = "UNCERTAIN"
+        upd["recovered_at"] = now_iso
+        upd["recovery_reason"] = recovery_reason
+        rf_reservations[res_id] = upd
+        recovered.append(upd)
+        rf["reserved_attempts"] = max(0, int(rf.get("reserved_attempts", 0)) - 1)
+        rf["uncertain_attempts"] = int(rf.get("uncertain_attempts", 0)) + 1
+        rf["spent_attempts"] = int(rf.get("spent_attempts", 0)) + 1
+        rf["remaining_attempts"] = max(0, int(rf.get("remaining_attempts", 0)) - 1)
+    if recovered:
+        rf["reservations"] = rf_reservations
+        budget["route_fallback"] = rf
+    return recovered
+
+
+async def _recover_route_fallback_in_locked_execution(
+    *,
+    session: AsyncSession,
+    execution: ExecutionModel,
+    budget: dict[str, Any],
+    parent_terminal: bool,
+    task_id: uuid.UUID | None,
+    attempt: int | None,
+    recovery_reason: str,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    """Verifies task abandonment under lock before recovering route_fallback reservations."""
+    raw_rf = budget.get("route_fallback")
+    if not isinstance(raw_rf, dict):
+        return []
+    rf_reservations = raw_rf.get("reservations") or {}
+    if not rf_reservations:
+        return []
+
+    abandoned_ids: set[str] = set()
+    for res_id, res in rf_reservations.items():
+        if not isinstance(res, dict) or res.get("status") != BudgetReservationStatus.ACTIVE:
+            continue
+        if task_id is not None and res.get("task_id") != str(task_id):
+            continue
+        res_attempt = res.get("attempt")
+        if attempt is not None and isinstance(res_attempt, int) and res_attempt > attempt:
+            continue
+        if parent_terminal:
+            abandoned_ids.add(res_id)
+            continue
+        res_task_id_str = res.get("task_id")
+        if not res_task_id_str:
+            continue
+        res_task_uuid = uuid.UUID(res_task_id_str)
+        task_stmt = select(TaskModel).where(TaskModel.id == res_task_uuid).with_for_update()
+        task = (await session.execute(task_stmt)).scalar_one_or_none()
+        task_now = datetime.now(UTC)
+        if not task or task.status in ("CANCELLED", "FAILED", "SUCCEEDED", "COMPLETED", "PENDING"):
+            abandoned_ids.add(res_id)
+        elif task.status in ("CLAIMED", "RUNNING") and (
+            task.lease_expiry is None
+            or task.lease_expiry <= task_now
+            or (res.get("lease_token") and str(task.lease_token) != res.get("lease_token"))
+            or (isinstance(res_attempt, int) and task.attempt > res_attempt)
+        ):
+            abandoned_ids.add(res_id)
+
+    if not abandoned_ids:
+        return []
+
+    # Re-key filter by presence in abandoned_ids
+    rf = dict(raw_rf)
+    rf_res_copy = dict(rf_reservations)
+    recovered: list[dict[str, Any]] = []
+    now_iso = now.isoformat()
+    for res_id in abandoned_ids:
+        upd = dict(rf_res_copy[res_id])
+        upd["status"] = BudgetReservationStatus.ABANDONED_UNCERTAIN
+        upd["settled_as"] = "UNCERTAIN"
+        upd["recovered_at"] = now_iso
+        upd["recovery_reason"] = recovery_reason
+        rf_res_copy[res_id] = upd
+        recovered.append(upd)
+        rf["reserved_attempts"] = max(0, int(rf.get("reserved_attempts", 0)) - 1)
+        rf["uncertain_attempts"] = int(rf.get("uncertain_attempts", 0)) + 1
+        rf["spent_attempts"] = int(rf.get("spent_attempts", 0)) + 1
+        rf["remaining_attempts"] = max(0, int(rf.get("remaining_attempts", 0)) - 1)
+    rf["reservations"] = rf_res_copy
+    budget["route_fallback"] = rf
     return recovered
 
 
@@ -531,6 +845,17 @@ def recover_abandoned_budget_reservations_in_session(
         budget["remaining_cost_minor"] = max(
             0, int(budget.get("remaining_cost_minor", 0)) - cost_minor
         )
+
+    rf_recovered = _recover_route_fallback_reservations_dict(
+        budget=budget,
+        eligible_fn=lambda r: (
+            (task_id is None or r.get("task_id") == str(task_id))
+            and (attempt is None or r.get("attempt") is None or r.get("attempt") <= attempt)
+        ),
+        recovery_reason=recovery_reason,
+        now_iso=now_iso,
+    )
+    recovered.extend(rf_recovered)
 
     if recovered:
         budget["reservations"] = reservations

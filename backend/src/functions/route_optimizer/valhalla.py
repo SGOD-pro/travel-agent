@@ -15,13 +15,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from config.config import Settings, get_settings
-from contracts.routing import MatrixResponse, Point
+from contracts.routing import MatrixResponse as MatrixResponse
+from contracts.routing import Point
 from contracts.trips import TransportMode
 
 logger = logging.getLogger(__name__)
@@ -69,11 +71,30 @@ class ValhallaRoutingError(ValhallaError):
             )
         )
 
+    @property
+    def is_route_distance_limit_exceeded(self) -> bool:
+        """Determines if error is provider route distance limit rejection (HTTP 400 / 154 on /route)."""
+        return (
+            self.status_code == 400
+            and self.error_code == 154
+            and (
+                self.endpoint == "/route"
+                or (self.endpoint is not None and self.endpoint.endswith("/route"))
+            )
+        )
+
 
 def is_valhalla_matrix_distance_limit_error(exc: BaseException) -> bool:
     """Classifies if an exception is specifically Valhalla HTTP 400 with error_code 154 on /sources_to_targets."""
     if isinstance(exc, ValhallaRoutingError):
         return exc.is_matrix_distance_limit_exceeded
+    return False
+
+
+def is_valhalla_route_distance_limit_error(exc: BaseException) -> bool:
+    """Classifies if an exception is specifically Valhalla HTTP 400 with error_code 154 on /route."""
+    if isinstance(exc, ValhallaRoutingError):
+        return exc.is_route_distance_limit_exceeded
     return False
 
 
@@ -261,6 +282,10 @@ class ValhallaClient:
         self,
         endpoint_path: str,
         payload: dict[str, Any],
+        *,
+        on_before_attempt: Callable[[], Awaitable[str | None]] | None = None,
+        on_after_attempt: Callable[[str | None, bool, bool, str | None], Awaitable[None]]
+        | None = None,
     ) -> dict[str, Any]:
         """Sends an HTTP POST request to Valhalla with bounded exponential backoff retries."""
         if not self.base_url:
@@ -275,12 +300,18 @@ class ValhallaClient:
 
         attempt = 0
         while True:
+            res_id: str | None = None
+            if on_before_attempt is not None:
+                res_id = await on_before_attempt()
+
             self.call_count += 1
             try:
                 resp = await client.post(url, json=payload)
 
                 # 4xx Client Error: fast fail without retries
                 if 400 <= resp.status_code < 500:
+                    if on_after_attempt is not None:
+                        await on_after_attempt(res_id, False, True, f"HTTP_{resp.status_code}")
                     error_msg = (
                         f"Valhalla client error {resp.status_code} for {endpoint_path}: {resp.text}"
                     )
@@ -306,6 +337,8 @@ class ValhallaClient:
 
                 # 5xx Server Error: retry if budget remains
                 if resp.status_code >= 500:
+                    if on_after_attempt is not None:
+                        await on_after_attempt(res_id, False, True, f"HTTP_{resp.status_code}")
                     if attempt < max_retries:
                         self.retry_count += 1
                         logger.warning(
@@ -323,9 +356,14 @@ class ValhallaClient:
                         f"Valhalla server error {resp.status_code} exceeded retries: {resp.text}"
                     )
 
-                return resp.json()  # type: ignore[no-any-return]
+                parsed_json = resp.json()
+                if on_after_attempt is not None:
+                    await on_after_attempt(res_id, True, True, "SUCCESS")
+                return parsed_json  # type: ignore[no-any-return]
 
             except httpx.TimeoutException as exc:
+                if on_after_attempt is not None:
+                    await on_after_attempt(res_id, False, True, "TimeoutException")
                 if attempt < max_retries:
                     self.retry_count += 1
                     logger.warning(
@@ -344,6 +382,8 @@ class ValhallaClient:
                 ) from exc
 
             except httpx.TransportError as exc:
+                if on_after_attempt is not None:
+                    await on_after_attempt(res_id, False, True, "TransportError")
                 if attempt < max_retries:
                     self.retry_count += 1
                     logger.warning(
@@ -367,6 +407,7 @@ class ValhallaClient:
         destinations: list[Point],
         mode: TransportMode = TransportMode.CAR_PETROL,
         costing_options: dict[str, Any] | None = None,
+        allow_point_to_point_fallback: bool = True,
     ) -> MatrixResponse:
         """Queries Valhalla /sources_to_targets endpoint for distance and duration matrices."""
         if not origins or not destinations:
@@ -404,7 +445,11 @@ class ValhallaClient:
                     dur_row.append(None)
                     dist_row.append(None)
                 elif cell.get("distance") is None or cell.get("time") is None:
-                    if i < len(origins) and j < len(destinations):
+                    if (
+                        allow_point_to_point_fallback
+                        and i < len(origins)
+                        and j < len(destinations)
+                    ):
                         # Point-to-point fallback for public Valhalla distance limits
                         try:
                             leg_res = await self.route([origins[i], destinations[j]], mode=mode)
@@ -439,6 +484,9 @@ class ValhallaClient:
         mode: TransportMode = TransportMode.CAR_PETROL,
         exclude_polygons: list[list[list[float]]] | None = None,
         costing_options: dict[str, Any] | None = None,
+        _on_before_attempt: Callable[[], Awaitable[str | None]] | None = None,
+        _on_after_attempt: Callable[[str | None, bool, bool, str | None], Awaitable[None]]
+        | None = None,
     ) -> ValhallaRouteResult:
         """Queries Valhalla /route endpoint for turn-by-turn maneuvers and geometries.
 
@@ -463,7 +511,12 @@ class ValhallaClient:
         if costing_options:
             payload["costing_options"] = costing_options
 
-        data = await self._send_request("/route", payload)
+        data = await self._send_request(
+            "/route",
+            payload,
+            on_before_attempt=_on_before_attempt,
+            on_after_attempt=_on_after_attempt,
+        )
 
         trip = data.get("trip", {})
         trip_summary = trip.get("summary", {})

@@ -48,6 +48,87 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger("hitl_pipeline_runner")
 
 
+def classify_pipeline_providers(
+    settings_obj: Any,
+    *,
+    itinerary: dict[str, Any] | None = None,
+) -> tuple[dict[str, str], str]:
+    """Classifies runtime provider modes and overall artifact mode from diagnostics and settings."""
+    itinerary_obj = itinerary if isinstance(itinerary, dict) else {}
+    itinerary_diag = itinerary_obj.get("provider_diagnostics")
+    diag = itinerary_diag if isinstance(itinerary_diag, dict) else {}
+
+    raw_llm_diag = diag.get("llm")
+    llm_diag = raw_llm_diag if isinstance(raw_llm_diag, dict) else {}
+    llm_raw = str(llm_diag.get("provider") or getattr(settings_obj, "LLM_PROVIDER", "fixture")).lower()
+    if llm_raw == "fixture":
+        llm_mode = "fixture"
+    elif llm_raw.startswith("live_"):
+        llm_mode = llm_raw
+    else:
+        llm_mode = f"live_{llm_raw}"
+
+    raw_weather_diag = diag.get("weather")
+    weather_diag = raw_weather_diag if isinstance(raw_weather_diag, dict) else {}
+    w_status = str(itinerary_obj.get("weather_status") or "").upper()
+    w_raw = str(
+        weather_diag.get("provider") or getattr(settings_obj, "WEATHER_PROVIDER", "fixture")
+    ).lower()
+    if w_raw == "fixture" or w_status == "FIXTURE":
+        weather_mode = "fixture"
+    elif w_status == "WEATHER_UNAVAILABLE" and not weather_diag.get("provider"):
+        weather_mode = "unavailable"
+    elif w_raw.startswith("live_"):
+        weather_mode = w_raw
+    else:
+        weather_mode = f"live_{w_raw}"
+
+    raw_search_diag = diag.get("search")
+    search_diag = raw_search_diag if isinstance(raw_search_diag, dict) else {}
+    search_raw = str(search_diag.get("provider") or "").lower()
+    if search_raw == "fixture":
+        search_mode = "fixture"
+    elif search_raw:
+        search_mode = search_raw if search_raw.startswith("live_") else f"live_{search_raw}"
+    elif getattr(settings_obj, "SERPAPI_API_KEY", None):
+        search_mode = "live_serpapi"
+    else:
+        search_mode = "unavailable"
+
+    valhalla_url = str(getattr(settings_obj, "VALHALLA_ENDPOINT_URL", "") or "").strip()
+    route_diags_text = " ".join(str(d) for d in (itinerary_obj.get("route_diagnostics") or [])).lower()
+    routing_notes_text = " ".join(str(d) for d in (diag.get("routing_notes") or [])).lower()
+    valhalla_responded = (
+        itinerary_obj.get("route_id") is not None
+        or "valhalla" in route_diags_text
+        or "error_code 154" in route_diags_text
+        or "route distance limit" in routing_notes_text
+    )
+    if valhalla_url and (valhalla_responded or not itinerary_obj):
+        routing_mode = "live_valhalla"
+    elif valhalla_responded:
+        routing_mode = "live_valhalla"
+    else:
+        routing_mode = "unavailable"
+
+    provider_modes = {
+        "llm": llm_mode,
+        "weather": weather_mode,
+        "search": search_mode,
+        "routing": routing_mode,
+    }
+    modes = list(provider_modes.values())
+    all_live = all(m.startswith("live_") for m in modes)
+    any_live = any(m.startswith("live_") for m in modes)
+    if all_live:
+        classification = "live"
+    elif not any_live:
+        classification = "fixture"
+    else:
+        classification = "mixed"
+    return provider_modes, classification
+
+
 def validate_safe_acceptance_database(url: str | None) -> dict[str, Any]:
     """Validates that target database connects strictly to an authorized local acceptance database.
 
@@ -103,10 +184,15 @@ raw_db_url = os.environ.get(
     ),
 )
 safe_db_metadata = validate_safe_acceptance_database(raw_db_url)
-settings.DATABASE_URL = normalize_asyncpg_url(raw_db_url)
-settings.ACCEPTANCE_DATABASE_URL = raw_db_url
-db_module._engine = None
-db_module._session_factory = None
+
+
+def _activate_acceptance_db() -> None:
+    """Binds global db settings to the validated local acceptance database before running."""
+    validate_safe_acceptance_database(raw_db_url)
+    settings.DATABASE_URL = normalize_asyncpg_url(raw_db_url)
+    settings.ACCEPTANCE_DATABASE_URL = raw_db_url
+    db_module._engine = None
+    db_module._session_factory = None
 
 from functions.api.trip_planning_service import TripPlanningService
 from functions.browser import consumer as browser_consumer
@@ -375,6 +461,7 @@ async def run_pipeline(
     answer_override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Runs the HITL pipeline through question presentation, answer submission, and completion."""
+    _activate_acceptance_db()
     session_factory = db_module.get_session_factory()
     await ensure_acceptance_schema(session_factory)
 
@@ -606,6 +693,13 @@ async def run_pipeline(
         relay.stop()
         await relay_task
 
+    itinerary_obj = run_summary.get("itinerary")
+    provider_modes, classification = classify_pipeline_providers(
+        settings,
+        itinerary=itinerary_obj if isinstance(itinerary_obj, dict) else None,
+    )
+    run_summary["provider_modes"] = provider_modes
+    run_summary["artifact_classification"] = classification
     run_summary["completed_at"] = datetime.now(UTC).isoformat()
     return run_summary
 

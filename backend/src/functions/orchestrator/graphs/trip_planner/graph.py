@@ -239,7 +239,9 @@ def parse_and_validate_brief_node(state: TripPlanningState) -> dict[str, Any]:
         except Exception as draft_exc:
             return {
                 "status": "failed",
-                "errors": [f"Brief validation failed: {str(exc)}; draft validation failed: {str(draft_exc)}"],
+                "errors": [
+                    f"Brief validation failed: {str(exc)}; draft validation failed: {str(draft_exc)}"
+                ],
             }
 
 
@@ -318,13 +320,18 @@ async def discover_candidates_node(
     )
     llm_client = state.get("_llm_client") or configurable.get("llm_client")
 
+    llm_mode = "custom"
     if llm_client is None:
         settings = get_settings()
         # Keep fixture mode available only when explicitly configured
         if is_offline_fixture or settings.LLM_PROVIDER == "fixture":
             llm_client = create_llm_client(settings=settings, provider="fixture")
+            llm_mode = "fixture"
         else:
             llm_client = create_llm_client(settings=settings)
+            llm_mode = str(settings.LLM_PROVIDER or "bedrock")
+    elif is_offline_fixture:
+        llm_mode = "fixture"
 
     provider_diagnostics = dict(state.get("provider_diagnostics", {}))
     errors = list(state.get("errors", []))
@@ -392,21 +399,35 @@ async def discover_candidates_node(
         provider_diagnostics["llm_research"] = diag_msg
         errors.append(diag_msg)
 
+    provider_diagnostics["llm"] = {
+        "provider": llm_mode,
+        "client_class": type(llm_client).__name__,
+        "model_id": getattr(llm_client, "model_id", None),
+    }
+
     result: dict[str, Any] = {
         "current_step": "candidates_discovered",
         "discovered_places": discovered,
         "provider_diagnostics": provider_diagnostics,
     }
-    planned_from_research = getattr(research_resp, "planned_queries", None) if research_resp is not None else None
+    planned_from_research = (
+        getattr(research_resp, "planned_queries", None) if research_resp is not None else None
+    )
     if planned_from_research:
         result["planned_search_queries"] = planned_from_research
-        covered = getattr(research_resp, "covered_destinations", None) or getattr(planned_from_research, "covered_destinations", None)
+        covered = getattr(research_resp, "covered_destinations", None) or getattr(
+            planned_from_research, "covered_destinations", None
+        )
         if covered:
             result["covered_destinations"] = list(covered)
-        uncovered = getattr(research_resp, "uncovered_destinations", None) or getattr(planned_from_research, "uncovered_destinations", None)
+        uncovered = getattr(research_resp, "uncovered_destinations", None) or getattr(
+            planned_from_research, "uncovered_destinations", None
+        )
         if uncovered is not None:
             result["uncovered_destinations"] = list(uncovered)
-        cov_reason = getattr(research_resp, "coverage_reason", None) or getattr(planned_from_research, "coverage_reason", None)
+        cov_reason = getattr(research_resp, "coverage_reason", None) or getattr(
+            planned_from_research, "coverage_reason", None
+        )
         if cov_reason:
             result["coverage_reason"] = cov_reason
     if errors:
@@ -1097,12 +1118,20 @@ def _resolve_stop_window(
 
     if visit_date is None:
         # Match via destination name or geographic proximity to brief destinations
-        dest_hint = str(
-            stop_data.get("destination")
-            or stop_data.get("destination_name")
-            or (stop_data.get("provenance", {}).get("destination") if isinstance(stop_data.get("provenance"), dict) else "")
-            or ""
-        ).strip().lower()
+        dest_hint = (
+            str(
+                stop_data.get("destination")
+                or stop_data.get("destination_name")
+                or (
+                    stop_data.get("provenance", {}).get("destination")
+                    if isinstance(stop_data.get("provenance"), dict)
+                    else ""
+                )
+                or ""
+            )
+            .strip()
+            .lower()
+        )
         if dest_hint and dest_hint in dest_offsets:
             visit_date = brief.start_date + timedelta(days=dest_offsets[dest_hint])
         else:
@@ -1117,7 +1146,9 @@ def _resolve_stop_window(
                     if nearest is not None:
                         nearest_norm = nearest.name.strip().lower()
                         if nearest_norm in dest_offsets:
-                            visit_date = brief.start_date + timedelta(days=dest_offsets[nearest_norm])
+                            visit_date = brief.start_date + timedelta(
+                                days=dest_offsets[nearest_norm]
+                            )
                 except (ValueError, TypeError):
                     pass
 
@@ -1479,19 +1510,50 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
     trip_id_raw = state.get("trip_id")
     execution_id_raw = state.get("execution_id")
 
-    preferred_mode = brief.preferred_modes[0] if brief.preferred_modes else TransportMode.CAR_PETROL
+    road_modes = [
+        m for m in (brief.preferred_modes or []) if m not in (TransportMode.TRAIN, "train")
+    ]
+    preferred_mode = road_modes[0] if road_modes else TransportMode.CAR_PETROL
+
+    return_deadline_local = datetime.combine(brief.end_date, time(20, 0), tzinfo=trip_tz)
+    return_deadline_dt = return_deadline_local.astimezone(UTC)
 
     route_req = RouteRequest(
         owner_id=uuid.UUID(str(owner_id_raw)) if owner_id_raw else None,
         trip_id=uuid.UUID(str(trip_id_raw)) if trip_id_raw else None,
         execution_id=uuid.UUID(str(execution_id_raw)) if execution_id_raw else None,
         departure_at=departure_dt,
+        return_deadline=return_deadline_dt,
         stops=route_stops,
         objective=RouteObjective.FASTEST,
         is_round_trip=False,
         time_limit_seconds=10,
         transport_mode=preferred_mode,
     )
+
+    if brief.preferred_modes and any(
+        m in (TransportMode.TRAIN, "train") for m in brief.preferred_modes
+    ):
+        train_diag = (
+            "Train routing is unsupported in current routing engine; "
+            "evaluating road routing for car_petrol"
+        )
+        existing_notes = provider_diagnostics.setdefault("routing_notes", [])
+        if train_diag not in existing_notes:
+            existing_notes.append(train_diag)
+
+    brief_raw = state.get("brief")
+    brief_dict: dict[str, Any] = brief_raw if isinstance(brief_raw, dict) else {}
+    traveler_prefs = list(getattr(brief, "traveler_preferences", None) or brief_dict.get("traveler_preferences") or []) + list(
+        getattr(brief, "hard_constraints", None) or brief_dict.get("hard_constraints") or []
+    )
+    if traveler_prefs and any(
+        "alternative" in str(p).lower() or "impractical" in str(p).lower() for p in traveler_prefs
+    ):
+        alt_diag = "Destination alternatives were not researched or evaluated in this workflow."
+        existing_notes = provider_diagnostics.setdefault("routing_notes", [])
+        if alt_diag not in existing_notes:
+            existing_notes.append(alt_diag)
 
     exec_uuid_str = str(execution_id_raw or uuid.uuid4())
     opt_task_id = (
@@ -1776,7 +1838,9 @@ async def consume_route_result_node(
         or worker_output_dict.get("routing_status") == "ROUTING_UNAVAILABLE"
         or "error" in worker_output_dict
     )
-    if is_failed_worker and ("route_id" not in worker_output_dict or worker_output_dict.get("route_id") is None):
+    if is_failed_worker and (
+        "route_id" not in worker_output_dict or worker_output_dict.get("route_id") is None
+    ):
         logger.warning(
             "Optimizer worker reported failure or outage: %s",
             worker_output_dict.get("error") or worker_output_dict.get("status"),
@@ -2731,6 +2795,26 @@ async def compute_budget_node(
         lines = RoadBudgetCalculator.calculate_segment_budget(segment, profile)
         all_budget_lines.extend(lines)
 
+    if (
+        not legs_data
+        or state.get("routing_status") in ("ROUTING_UNAVAILABLE", "INFEASIBLE")
+        or state.get("route_id") is None
+    ):
+        unknown_reason = "Transport cost unknown: road routing is unavailable or infeasible"
+        if state.get("route_diagnostics"):
+            unknown_reason = f"Transport cost unknown: {state['route_diagnostics'][0]}"
+        all_budget_lines.append(
+            BudgetLine(
+                category=BudgetCategory.MISCELLANEOUS,
+                amount=None,
+                currency=Currency.INR,
+                basis="intercity_transport",
+                source_ref="routing_engine",
+                estimated=False,
+                unknown_reason=unknown_reason,
+            )
+        )
+
     # 2. Daily Estimated Accommodation (AC-7)
     # Lodging nights derived from local calendar dates; destination stay_days must not multiply hotel nights
     stops_data = schedule_data.get("stops", [])
@@ -3127,8 +3211,7 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
         source_urls = list(prov.get("source_urls") or [])
         retrieval_time = prov.get("retrieval_time")
         is_verified = (
-            str(c.get("existence_status", "")).upper()
-            == CandidateExistenceStatus.VERIFIED.value
+            str(c.get("existence_status", "")).upper() == CandidateExistenceStatus.VERIFIED.value
         )
         point_data = c.get("point")
         coords = (
@@ -3146,8 +3229,7 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
                 "source_urls": source_urls,
                 "source_url": source_urls[0] if source_urls else None,
                 "retrieval_time": retrieval_time,
-                "identity": prov.get("identity")
-                or {"name": name, "category": cat},
+                "identity": prov.get("identity") or {"name": name, "category": cat},
                 "uncertainty": "VERIFIED" if is_verified else "EDITORIAL_DISCOVERY",
                 "is_verified": is_verified,
                 "unavailable_details": list(prov.get("unavailable_details") or []),
@@ -3159,9 +3241,7 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
     raw_obs_list: list[Any] = list(state.get("observations") or [])
     task_outputs = state.get("task_outputs", {})
     if isinstance(task_outputs, dict):
-        if "observations" in task_outputs and isinstance(
-            task_outputs["observations"], list
-        ):
+        if "observations" in task_outputs and isinstance(task_outputs["observations"], list):
             raw_obs_list.extend(task_outputs["observations"])
         for sub in task_outputs.values():
             if (
@@ -3171,9 +3251,7 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
             ):
                 raw_obs_list.extend(sub["observations"])
 
-    local_dishes = PlaceExtractionService.extract_local_dishes_from_observations(
-        raw_obs_list
-    )
+    local_dishes = PlaceExtractionService.extract_local_dishes_from_observations(raw_obs_list)
 
     if not local_dishes and not dining_items:
         food_status = "UNAVAILABLE"
@@ -3194,9 +3272,7 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
         "local_dishes": local_dishes,
         "dining_recommendations": dining_items,
         "verified_dining_count": len([d for d in dining_items if d["is_verified"]]),
-        "unverified_dining_count": len(
-            [d for d in dining_items if not d["is_verified"]]
-        ),
+        "unverified_dining_count": len([d for d in dining_items if not d["is_verified"]]),
     }
 
 
@@ -3209,9 +3285,7 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
     task_outputs = state.get("task_outputs", {})
     raw_obs_list: list[Any] = list(state.get("observations") or [])
     if isinstance(task_outputs, dict):
-        if "observations" in task_outputs and isinstance(
-            task_outputs["observations"], list
-        ):
+        if "observations" in task_outputs and isinstance(task_outputs["observations"], list):
             raw_obs_list.extend(task_outputs["observations"])
         for sub in task_outputs.values():
             if (
@@ -3303,10 +3377,7 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
 
             # 3. Property name matching and substring protection
             title = str(
-                art.get("property_name")
-                or art.get("title")
-                or art.get("name")
-                or ""
+                art.get("property_name") or art.get("title") or art.get("name") or ""
             ).strip()
             if not title:
                 continue
@@ -3349,11 +3420,17 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
                         obs_coords_check = _extract_coordinates_from_dict(geo_check)
 
                 if (
-                    (set(cand_tokens).issubset(set(obs_tokens)) or set(obs_tokens).issubset(set(cand_tokens)))
+                    (
+                        set(cand_tokens).issubset(set(obs_tokens))
+                        or set(obs_tokens).issubset(set(cand_tokens))
+                    )
                     and cand_lat is not None
                     and cand_lng is not None
                     and obs_coords_check is not None
-                    and haversine_distance_km(cand_lat, cand_lng, obs_coords_check[0], obs_coords_check[1]) <= 1.0
+                    and haversine_distance_km(
+                        cand_lat, cand_lng, obs_coords_check[0], obs_coords_check[1]
+                    )
+                    <= 1.0
                 ):
                     is_same_name = True
                 else:
@@ -3378,9 +3455,8 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
                     continue
             elif cand_lat is not None and cand_lng is not None and obs_coords is None:
                 # Candidate has coordinates but observation has no location evidence: require explicit provenance
-                has_provenance = (
-                    src_url in source_urls_set
-                    or (obs_id is not None and obs_id in obs_ids_set)
+                has_provenance = src_url in source_urls_set or (
+                    obs_id is not None and obs_id in obs_ids_set
                 )
                 if not has_provenance:
                     continue
@@ -3517,9 +3593,7 @@ def _build_accommodation_research(state: TripPlanningState) -> dict[str, Any]:
         )
         cat = str(art_ref.get("category", "")).lower()
         if "lodging" in cat or "hotel" in cat:
-            prop_name = str(
-                art_ref.get("property_name") or art_ref.get("title") or ""
-            ).strip()
+            prop_name = str(art_ref.get("property_name") or art_ref.get("title") or "").strip()
             if not prop_name or prop_name.lower() in seen_hotels:
                 continue
             seen_hotels.add(prop_name.lower())
@@ -3769,9 +3843,9 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         else getattr(brief_data, "destinations", [])
     )
     dest_names = [
-        str(
-            (d.get("name") if isinstance(d, dict) else getattr(d, "name", None)) or ""
-        ).strip().lower()
+        str((d.get("name") if isinstance(d, dict) else getattr(d, "name", None)) or "")
+        .strip()
+        .lower()
         for d in (raw_dests if isinstance(raw_dests, list) else [])
     ]
 
@@ -3782,9 +3856,9 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         else getattr(opt_sched, "stops", [])
     )
     stop_names = [
-        str(
-            (s.get("name") if isinstance(s, dict) else getattr(s, "name", None)) or ""
-        ).strip().lower()
+        str((s.get("name") if isinstance(s, dict) else getattr(s, "name", None)) or "")
+        .strip()
+        .lower()
         for s in (sched_stops if isinstance(sched_stops, list) else [])
     ]
 
@@ -3832,9 +3906,7 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
     raw_obs_list: list[Any] = list(state.get("observations") or [])
     task_outputs = state.get("task_outputs", {})
     if isinstance(task_outputs, dict):
-        if "observations" in task_outputs and isinstance(
-            task_outputs["observations"], list
-        ):
+        if "observations" in task_outputs and isinstance(task_outputs["observations"], list):
             raw_obs_list.extend(task_outputs["observations"])
         for sub in task_outputs.values():
             if (
@@ -3913,21 +3985,14 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         raw_url = (
             getattr(obs, "canonical_url", None)
             or getattr(obs, "source_url", None)
-            or (
-                obs.get("canonical_url") or obs.get("source_url")
-                if isinstance(obs, dict)
-                else ""
-            )
+            or (obs.get("canonical_url") or obs.get("source_url") if isinstance(obs, dict) else "")
         )
         obs_url = str(raw_url).strip()
         obs_id = str(
-            getattr(obs, "id", None)
-            or (obs.get("id") if isinstance(obs, dict) else "")
-            or ""
+            getattr(obs, "id", None) or (obs.get("id") if isinstance(obs, dict) else "") or ""
         )
-        ret_time = (
-            getattr(obs, "retrieved_at", None)
-            or (obs.get("retrieved_at") if isinstance(obs, dict) else None)
+        ret_time = getattr(obs, "retrieved_at", None) or (
+            obs.get("retrieved_at") if isinstance(obs, dict) else None
         )
         ret_str: str | None = None
         if isinstance(ret_time, str):
@@ -3968,10 +4033,7 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
             headline = first_sent[:120] if first_sent else "Travel Advisory"
 
         affected_area = str(
-            art.get("affected_area")
-            or art.get("location")
-            or art.get("route")
-            or ""
+            art.get("affected_area") or art.get("location") or art.get("route") or ""
         ).strip()
 
         adv_type = str(art.get("advisory_type") or "").upper()
@@ -4004,9 +4066,8 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
         is_undated = parsed_start is None and parsed_end is None
 
         ret_dt = ret_time if isinstance(ret_time, datetime) else safe_parse_datetime(ret_time)
-        pub_dt = (
-            getattr(obs, "published_at", None)
-            or (obs.get("published_at") if isinstance(obs, dict) else None)
+        pub_dt = getattr(obs, "published_at", None) or (
+            obs.get("published_at") if isinstance(obs, dict) else None
         )
         if isinstance(pub_dt, str):
             pub_dt = safe_parse_datetime(pub_dt)
@@ -4069,14 +4130,10 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
                         dist_km = compute_corridor_distance_km(adv_pt, road_corridor_coords)
                         if dist_km <= 100.0:
                             spatial_relevance = "WITHIN_CORRIDOR"
-                            relevance_reason = (
-                                f"Notice coordinates are {dist_km:.1f} km from selected road route (within 100 km corridor)"
-                            )
+                            relevance_reason = f"Notice coordinates are {dist_km:.1f} km from selected road route (within 100 km corridor)"
                         else:
                             spatial_relevance = "OUTSIDE_CORRIDOR"
-                            relevance_reason = (
-                                f"Notice coordinates are {dist_km:.1f} km from selected road route (exceeds 100 km corridor)"
-                            )
+                            relevance_reason = f"Notice coordinates are {dist_km:.1f} km from selected road route (exceeds 100 km corridor)"
                     else:
                         spatial_relevance = "UNKNOWN"
                         relevance_reason = "Affected area coordinates are invalid or out of bounds"
@@ -4087,17 +4144,11 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
                 # Road route geometry exists but notice has only an affected area name without coordinates
                 spatial_relevance = "UNKNOWN"
                 if matched_trip_place:
-                    relevance_reason = (
-                        "Affected area mentions trip place but lacks coordinates to tie to selected road route geometry"
-                    )
+                    relevance_reason = "Affected area mentions trip place but lacks coordinates to tie to selected road route geometry"
                 elif affected_area:
-                    relevance_reason = (
-                        f"Affected area '{affected_area}' lacks coordinates; intermediate corridor location cannot be ruled out"
-                    )
+                    relevance_reason = f"Affected area '{affected_area}' lacks coordinates; intermediate corridor location cannot be ruled out"
                 else:
-                    relevance_reason = (
-                        "Affected area has no coordinates to evaluate against selected road route geometry"
-                    )
+                    relevance_reason = "Affected area has no coordinates to evaluate against selected road route geometry"
         else:
             # Selected road route geometry is unavailable
             spatial_relevance = "UNKNOWN"
@@ -4112,9 +4163,7 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
                     "spatial relevance cannot be verified"
                 )
             else:
-                relevance_reason = (
-                    "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
-                )
+                relevance_reason = "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
 
         # Determine status and uncertainty
         if is_lifted:
@@ -4282,8 +4331,12 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
     accommodation_research = _build_accommodation_research(state)
     advisory_research = _build_advisory_research(state)
 
+    # Inspect worker route_diagnostics before appending advisory notices
+    raw_route_diagnostics = list(state.get("route_diagnostics", []))
+    joined_worker_route_diag = " ".join(str(d) for d in raw_route_diagnostics).lower()
+
     # Route diagnostics: append advisory notices if active warnings exist, without mutating route
-    route_diagnostics = list(state.get("route_diagnostics", []))
+    route_diagnostics = list(raw_route_diagnostics)
     for adv in advisory_research.get("advisories", []):
         if adv.get("severity") in ("CRITICAL", "WARNING"):
             notice = (
@@ -4292,6 +4345,55 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
             )
             if notice not in route_diagnostics:
                 route_diagnostics.append(notice)
+
+    provider_diagnostics = dict(state.get("provider_diagnostics", {}))
+    routing_notes = list(provider_diagnostics.get("routing_notes", []))
+    # Only record provider distance rejection when an actual worker routing diagnostic shows it
+    if (
+        "error_code 154" in joined_worker_route_diag
+        or "error_code: 154" in joined_worker_route_diag
+        or "max distance limit" in joined_worker_route_diag
+        or "route distance limit" in joined_worker_route_diag
+    ):
+        dist_note = (
+            "Routing provider rejected a required leg due to its route distance limit."
+        )
+        if dist_note not in routing_notes:
+            routing_notes.append(dist_note)
+
+    brief_raw = state.get("brief")
+    brief_dict: dict[str, Any] = brief_raw if isinstance(brief_raw, dict) else {}
+    pref_modes = brief_dict.get("preferred_modes") or []
+    if any(m in (TransportMode.TRAIN, "train") for m in pref_modes):
+        train_diag = (
+            "Train routing is unsupported in current routing engine; "
+            "evaluating road routing for car_petrol"
+        )
+        if not any("train" in str(n).lower() and "unsupported" in str(n).lower() for n in routing_notes):
+            routing_notes.append(train_diag)
+    traveler_prefs = list(brief_dict.get("traveler_preferences") or []) + list(
+        brief_dict.get("hard_constraints") or []
+    )
+    if traveler_prefs and any(
+        "alternative" in str(p).lower() or "impractical" in str(p).lower() for p in traveler_prefs
+    ):
+        alt_diag = "Destination alternatives were not researched or evaluated in this workflow."
+        if not any(
+            "alternative" in str(n).lower()
+            and ("not researched" in str(n).lower() or "not evaluated" in str(n).lower())
+            for n in routing_notes
+        ):
+            routing_notes.append(alt_diag)
+
+    if routing_notes:
+        provider_diagnostics["routing_notes"] = routing_notes
+
+    is_routing_failed = (
+        state.get("routing_status") in ("ROUTING_UNAVAILABLE", "INFEASIBLE")
+        or state.get("route_status") in ("ROUTING_UNAVAILABLE", "INFEASIBLE")
+        or (state.get("routing_status") is not None and state.get("route_id") is None)
+    )
+    proposal_status = "partial" if is_routing_failed else "ready_for_approval"
 
     proposal = {
         "trip_id": state.get("trip_id"),
@@ -4318,9 +4420,9 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "routing_status": state.get("routing_status"),
         "route_geometry": state.get("route_geometry"),
         "route_diagnostics": route_diagnostics,
-        "provider_diagnostics": state.get("provider_diagnostics", {}),
+        "provider_diagnostics": provider_diagnostics,
         "generated_at": datetime.now(UTC).isoformat(),
-        "status": "ready_for_approval",
+        "status": proposal_status,
     }
 
     return {
@@ -4377,10 +4479,12 @@ async def publish_proposal_node(
             session_factory = None
 
     if is_offline_fixture:
+        proposal_obj = state.get("proposal") or {}
+        proposal_st = proposal_obj.get("status") if isinstance(proposal_obj, dict) else None
         return {
             "current_step": "proposal_published",
             "status": "completed",
-            "proposal_status": "PUBLISHED",
+            "proposal_status": "PARTIAL" if proposal_st == "partial" else "PUBLISHED",
         }
 
     # Production mode: fail closed if session_factory, trip_id, owner_id, execution identity, or runner_lease is missing
@@ -4690,6 +4794,7 @@ async def publish_proposal_node(
             if not has_pub_event:
                 from functions.orchestrator.execution.job_events import record_job_event
 
+                proposal_st = str(proposal.get("status", "ready_for_approval"))
                 await record_job_event(
                     session,
                     execution_id=execution_uuid,
@@ -4699,6 +4804,8 @@ async def publish_proposal_node(
                         "base_version": expected_base_version,
                         "route_id": str(route_uuid) if route_uuid else None,
                         "routing_status": state.get("routing_status"),
+                        "status": proposal_st,
+                        "proposal_status": proposal_st,
                     },
                 )
 
@@ -4706,10 +4813,11 @@ async def publish_proposal_node(
             if checkpointer and hasattr(checkpointer, "flush"):
                 await checkpointer.flush(session, str(execution_uuid))
 
+    proposal_st = str(proposal.get("status", "ready_for_approval"))
     return {
         "current_step": "proposal_published",
         "status": "completed",
-        "proposal_status": "PUBLISHED",
+        "proposal_status": "PARTIAL" if proposal_st == "partial" else "PUBLISHED",
     }
 
 
@@ -5271,9 +5379,7 @@ async def route_evidence_decision_node(
         if destinations_info:
             raw_uncovered = state.get("uncovered_destinations")
             uncovered_in_state = (
-                set(raw_uncovered)
-                if isinstance(raw_uncovered, (list, tuple, set))
-                else set()
+                set(raw_uncovered) if isinstance(raw_uncovered, (list, tuple, set)) else set()
             )
             expected_destinations = [
                 d for d in destinations_info if d["name"] not in uncovered_in_state
@@ -5308,9 +5414,7 @@ async def route_evidence_decision_node(
         if destinations_info:
             raw_uncovered = state.get("uncovered_destinations")
             uncovered_in_state = (
-                set(raw_uncovered)
-                if isinstance(raw_uncovered, (list, tuple, set))
-                else set()
+                set(raw_uncovered) if isinstance(raw_uncovered, (list, tuple, set)) else set()
             )
             expected_destinations = [
                 d for d in destinations_info if d["name"] not in uncovered_in_state
@@ -5583,9 +5687,8 @@ async def route_evidence_decision_node(
                 else []
             )
         )
-        cov_reason = (
-            getattr(planned_queries, "coverage_reason", None)
-            or state.get("coverage_reason")
+        cov_reason = getattr(planned_queries, "coverage_reason", None) or state.get(
+            "coverage_reason"
         )
 
         search_task = {

@@ -3,10 +3,13 @@
 from functions.orchestrator.execution.budget import (
     BudgetReservationStatus,
     ensure_execution_budget_structure,
+    ensure_route_fallback_budget_structure,
     reconcile_budget_entry,
+    reconcile_route_fallback_attempt,
     recover_abandoned_budget_reservations,
     recover_abandoned_budget_reservations_in_session,
     reserve_budget_entry,
+    reserve_route_fallback_attempt,
 )
 from functions.orchestrator.execution.checkpointer import TransactionBoundCheckpointer
 from functions.orchestrator.execution.fencing import (
@@ -134,8 +137,11 @@ __all__ = [
     "WorkerResultNotFoundError",
     "WrongWorkerError",
     "ensure_execution_budget_structure",
+    "ensure_route_fallback_budget_structure",
     "reconcile_budget_entry",
+    "reconcile_route_fallback_attempt",
     "recover_abandoned_budget_reservations",
     "recover_abandoned_budget_reservations_in_session",
     "reserve_budget_entry",
+    "reserve_route_fallback_attempt",
 ]

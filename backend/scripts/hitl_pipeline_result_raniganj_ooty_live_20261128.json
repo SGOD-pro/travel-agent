@@ -1,0 +1,1981 @@
+{
+  "runner": "run_hitl_pipeline.py",
+  "started_at": "2026-11-24T23:15:03.103121+00:00",
+  "database_target": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "dbname": "acceptance_db"
+  },
+  "resume_mode": false,
+  "job_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+  "question_presented": {
+    "id": "8717f8cc-ad8f-48e1-8fac-01c00a0c03b2",
+    "key": "travel_dates",
+    "type": "DATE_RANGE",
+    "prompt": "Please specify your travel dates (start_date and end_date in YYYY-MM-DD format) to continue planning your trip.",
+    "rules": {
+      "type": "date_range",
+      "fields": [
+        "start_date",
+        "end_date"
+      ]
+    }
+  },
+  "submitted_answer": {
+    "start_date": "2026-11-28",
+    "end_date": "2026-11-29"
+  },
+  "answer_result": {
+    "status": "ANSWERED",
+    "context_version": 2
+  },
+  "final_status": "SUCCEEDED",
+  "timeline": [
+    {
+      "id": "2239b5d8-2956-4295-97d9-44f150d6c00f",
+      "sequence": 1,
+      "event_type": "JOB_ACCEPTED",
+      "safe_payload": {
+        "status": "CREATED",
+        "trip_id": "f831c07e-12d6-4091-ab21-5843e41c3fdc",
+        "workflow": "TRAVEL",
+        "trip_version": 1
+      },
+      "timestamp": "2026-11-24T23:15:03.230701+00:00"
+    },
+    {
+      "id": "f3da7c5a-4cb5-49e3-9e67-5e4a3ef009c0",
+      "sequence": 2,
+      "event_type": "EXECUTION_STARTED",
+      "safe_payload": {
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T23:15:03.522763+00:00"
+    },
+    {
+      "id": "0660723f-6ca6-47b8-821a-62a09b38f1cc",
+      "sequence": 3,
+      "event_type": "QUESTION_ASKED",
+      "safe_payload": {
+        "status": "WAITING_USER",
+        "question_id": "8717f8cc-ad8f-48e1-8fac-01c00a0c03b2",
+        "question_key": "travel_dates"
+      },
+      "timestamp": "2026-11-24T23:15:03.573235+00:00"
+    },
+    {
+      "id": "305012bf-db23-4f59-acd0-7229197e26d3",
+      "sequence": 4,
+      "event_type": "QUESTION_ANSWERED",
+      "safe_payload": {
+        "question_id": "8717f8cc-ad8f-48e1-8fac-01c00a0c03b2",
+        "question_key": "travel_dates",
+        "context_version": 2
+      },
+      "timestamp": "2026-11-24T23:15:04.487898+00:00"
+    },
+    {
+      "id": "ee999e17-4291-4381-a02b-fb1d92e44e5e",
+      "sequence": 5,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T23:15:04.563336+00:00"
+    },
+    {
+      "id": "abe37749-9c30-4c33-8a34-472908b15788",
+      "sequence": 6,
+      "event_type": "TASKS_DISPATCHED",
+      "safe_payload": {
+        "count": 1,
+        "status": "WAITING_TASKS"
+      },
+      "timestamp": "2026-11-24T23:15:06.188517+00:00"
+    },
+    {
+      "id": "184e2f3f-8b34-4b5f-9885-10207f9e51a1",
+      "sequence": 7,
+      "event_type": "TASK_COMPLETED",
+      "safe_payload": {
+        "action": "collect",
+        "worker": "EVIDENCE",
+        "attempt": 1,
+        "task_id": "4bdd659e-708f-46aa-905c-89d30d9d9231"
+      },
+      "timestamp": "2026-11-24T23:15:21.088528+00:00"
+    },
+    {
+      "id": "9e7f89ca-5d04-4c80-9001-748904ef0acc",
+      "sequence": 8,
+      "event_type": "GRAPH_RESUMED",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T23:15:21.477612+00:00"
+    },
+    {
+      "id": "6209c205-7a48-4454-bcec-8497c819cdab",
+      "sequence": 9,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T23:15:21.806101+00:00"
+    },
+    {
+      "id": "57f8354b-3e3c-4278-b443-5f1382fabcc2",
+      "sequence": 10,
+      "event_type": "TASKS_DISPATCHED",
+      "safe_payload": {
+        "count": 1,
+        "status": "WAITING_TASKS"
+      },
+      "timestamp": "2026-11-24T23:15:25.088005+00:00"
+    },
+    {
+      "id": "cd55cc8b-7307-45bb-b9cb-2dc65a5380da",
+      "sequence": 11,
+      "event_type": "TASK_COMPLETED",
+      "safe_payload": {
+        "action": "solve",
+        "worker": "OPTIMIZER",
+        "attempt": 1,
+        "task_id": "1d46e0ba-cacd-4039-86ce-0076cee2afd6"
+      },
+      "timestamp": "2026-11-24T23:15:26.790228+00:00"
+    },
+    {
+      "id": "273db938-f930-49b8-95fe-35652c566514",
+      "sequence": 12,
+      "event_type": "GRAPH_RESUMED",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T23:15:27.177260+00:00"
+    },
+    {
+      "id": "f78cc6ec-eb10-4fda-9881-8025f48438f1",
+      "sequence": 13,
+      "event_type": "EXECUTION_RESUMING",
+      "safe_payload": {
+        "action": "resume_graph",
+        "status": "RUNNING"
+      },
+      "timestamp": "2026-11-24T23:15:27.505264+00:00"
+    },
+    {
+      "id": "9fa5cb4e-4e5b-49de-813b-fb94099cdcf9",
+      "sequence": 14,
+      "event_type": "PROPOSAL_PUBLISHED",
+      "safe_payload": {
+        "status": "partial",
+        "trip_id": "f831c07e-12d6-4091-ab21-5843e41c3fdc",
+        "route_id": null,
+        "base_version": 2,
+        "routing_status": "ROUTING_UNAVAILABLE",
+        "proposal_status": "partial"
+      },
+      "timestamp": "2026-11-24T23:15:28.433877+00:00"
+    },
+    {
+      "id": "8e8a83cd-b2d9-4ea0-9544-8d8e1b4cd8bf",
+      "sequence": 15,
+      "event_type": "EXECUTION_SUCCEEDED",
+      "safe_payload": {
+        "status": "SUCCEEDED"
+      },
+      "timestamp": "2026-11-24T23:15:28.531936+00:00"
+    }
+  ],
+  "itinerary": {
+    "status": "partial",
+    "trip_id": "f831c07e-12d6-4091-ab21-5843e41c3fdc",
+    "version": 2,
+    "route_id": null,
+    "schedule": {
+      "legs": [],
+      "stops": [],
+      "is_optimal": false,
+      "total_travel_minutes": 0
+    },
+    "advisories": [],
+    "budget_lines": [
+      {
+        "basis": "intercity_transport",
+        "amount": null,
+        "category": "miscellaneous",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": false,
+        "source_ref": "routing_engine",
+        "unknown_reason": "Transport cost unknown: Road routing engine unavailable; stops preserved without driving schedule or route polyline"
+      },
+      {
+        "basis": "hotel_stay_Ooty, Tamil Nadu (1 room, 1 night)",
+        "amount": "3500.00",
+        "category": "accommodation",
+        "currency": "INR",
+        "quantity": "1",
+        "estimated": true,
+        "source_ref": "benchmark_hotel_estimate",
+        "unknown_reason": null
+      }
+    ],
+    "generated_at": "2026-11-24T23:15:28.399204+00:00",
+    "route_status": "ROUTING_UNAVAILABLE",
+    "food_research": {
+      "reason": "Dining recommendations retrieved without source-backed regional culinary dishes",
+      "status": "PARTIAL",
+      "local_dishes": [],
+      "verified_dining_count": 2,
+      "dining_recommendations": [
+        {
+          "name": "Kailash Parbat - Pure Vegetarian Restaurant",
+          "address": null,
+          "category": "restaurant",
+          "identity": {
+            "name": "Kailash Parbat - Pure Vegetarian Restaurant",
+            "point": {
+              "lat": 11.4104653,
+              "lng": 76.70719009999999
+            },
+            "category": "restaurant"
+          },
+          "source_url": "https://www.kailashparbatgroup.com/",
+          "coordinates": {
+            "lat": 11.4104653,
+            "lng": 76.70719009999999
+          },
+          "is_verified": true,
+          "source_urls": [
+            "https://www.kailashparbatgroup.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ]
+        },
+        {
+          "name": "Ooty Junction - Pure Veg Restaurant",
+          "address": null,
+          "category": "restaurant",
+          "identity": {
+            "name": "Ooty Junction - Pure Veg Restaurant",
+            "point": {
+              "lat": 11.4132751,
+              "lng": 76.6983269
+            },
+            "category": "restaurant"
+          },
+          "source_url": "https://www.google.com/maps/search/?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant",
+          "coordinates": {
+            "lat": 11.4132751,
+            "lng": 76.6983269
+          },
+          "is_verified": true,
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant",
+            "https://www.google.com/maps/search?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant"
+          ],
+          "uncertainty": "VERIFIED",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ]
+        }
+      ],
+      "unverified_dining_count": 0
+    },
+    "budget_summary": {
+      "is_complete": false,
+      "known_total": {
+        "amount": "3500.000000",
+        "currency": "INR"
+      },
+      "unknown_count": 1,
+      "estimated_count": 1,
+      "unknown_reasons": [
+        "Transport cost unknown: Road routing engine unavailable; stops preserved without driving schedule or route polyline"
+      ]
+    },
+    "route_geometry": null,
+    "routing_status": "ROUTING_UNAVAILABLE",
+    "weather_status": "PARTIAL",
+    "advisory_status": "ADVISORY_UNKNOWN",
+    "advisory_research": {
+      "reason": "Advisory reports are unverified, undated, stale, or have insufficient location evidence; route conditions remain unverified",
+      "status": "ADVISORY_UNKNOWN",
+      "advisories": [],
+      "safety_notice": "Absence of travel advisories or warnings is not proof of safety; unmonitored conditions remain unverified.",
+      "expired_advisories": [],
+      "unrelated_advisories": [],
+      "checked_sources_count": 5,
+      "unverified_advisories": [
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "Driving directions, live traffic & road conditions updates",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.waze.com/live-map/directions?from=place.EitNaW5pIE9vdHkgUmQsIEFyaW1icmEsIEtlcmFsYSA2NzM2MzgsIEluZGlhIi4qLAoUChIJe1fAiEJJpjsRit0sxR1zvDMSFAoSCa2s2aVCSaY7EVYyJ1vqzO8T",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "GENERAL_ADVISORY",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "9a480399-b2cd-4e08-8496-390276cc3b4f",
+          "retrieval_time": "2026-11-24T23:15:10.881364+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        },
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "What are Ooty road conditions and tourist spot status?",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.facebook.com/groups/hvkumar/posts/10158875091959565",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "GENERAL_ADVISORY",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "92c0cb6e-8cd5-4ae2-9325-97513f0aae88",
+          "retrieval_time": "2026-11-24T23:15:10.881364+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        },
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "Ooty Traffic & Weather Update October 3 ...",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.instagram.com/reel/DeBZpJ3zgNG?hl=en",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "WEATHER_WARNING",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "cfd18f7f-0f33-4350-a32d-52dc3c61c9fe",
+          "retrieval_time": "2026-11-24T23:15:10.881364+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        },
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "Ooty Travel & Climate Update 4 Nov 2026: Roads, Weather ...",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.facebook.com/lulumon.newlulumon/videos/ooty-travel-climate-update-041126-ooty-has-been-experiencing-a-beautiful-mix-of/2199006397656804",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "WEATHER_WARNING",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "3ae4d0d6-8c6d-45a4-9338-6e0d988c1762",
+          "retrieval_time": "2026-11-24T23:15:10.881364+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        },
+        {
+          "reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified",
+          "status": "UNDATED",
+          "headline": "spiti valley weather forecast",
+          "severity": "WARNING",
+          "relevance": "UNKNOWN",
+          "source_url": "https://www.instagram.com/reel/DfJel5aT2gh",
+          "uncertainty": "UNVERIFIED_UNDATED",
+          "advisory_type": "GENERAL_ADVISORY",
+          "affected_area": "",
+          "applicable_end": null,
+          "authority_name": null,
+          "observation_id": "865cd847-ef46-4996-9d40-b1f24b4f4461",
+          "retrieval_time": "2026-11-24T23:15:10.881364+00:00",
+          "applicable_start": null,
+          "is_authoritative": false,
+          "relevance_reason": "Selected road route geometry is unavailable; spatial corridor relevance cannot be verified"
+        }
+      ],
+      "conflicting_advisories": [],
+      "authoritative_sources_count": 0
+    },
+    "discovered_places": [
+      {
+        "lat": 11.4102,
+        "lng": 76.695,
+        "name": "Ooty, Tamil Nadu",
+        "category": "destination",
+        "latitude": 11.4102,
+        "longitude": 76.695,
+        "confidence": 0.95,
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "is_candidate": true,
+        "stay_minutes": 360
+      }
+    ],
+    "route_diagnostics": [
+      "Road routing engine unavailable; stops preserved without driving schedule or route polyline",
+      "Valhalla route distance limit exceeded (HTTP 400, error_code 154 on /route): leg distance exceeds provider threshold (1500 km)"
+    ],
+    "weather_advisories": [
+      {
+        "is_day": true,
+        "latitude": 11.4104653,
+        "condition": "rainy",
+        "longitude": 76.70719009999999,
+        "stop_name": "Kailash Parbat - Pure Vegetarian Restaurant",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.5,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.6
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4132751,
+        "condition": "rainy",
+        "longitude": 76.6983269,
+        "stop_name": "Ooty Junction - Pure Veg Restaurant",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.5,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.6
+      },
+      {
+        "is_day": true,
+        "latitude": 11.406845599999999,
+        "condition": "unknown",
+        "longitude": 76.68711619999999,
+        "stop_name": "Darshan veg",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "error": "Open Meteo API rejected request with HTTP 429"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "unknown",
+        "weather_code": null,
+        "forecast_time": null,
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": null,
+        "precipitation_mm": null,
+        "temperature_celsius": null,
+        "precipitation_probability": null,
+        "apparent_temperature_celsius": null
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4136285,
+        "condition": "rainy",
+        "longitude": 76.7086293,
+        "stop_name": "Ruchi Bhavanam",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.5,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.6
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4199915,
+        "condition": "rainy",
+        "longitude": 76.698284,
+        "stop_name": "Earl's Secret",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 16.4,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 17.1
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4055763,
+        "condition": "rainy",
+        "longitude": 76.7196275,
+        "stop_name": "Ooty Viewpoint",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 16.2,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 16.9
+      },
+      {
+        "is_day": true,
+        "latitude": 11.3930188,
+        "condition": "rainy",
+        "longitude": 76.7169523,
+        "stop_name": "Ooty View point",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.5,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.6
+      },
+      {
+        "is_day": true,
+        "latitude": 11.386958,
+        "condition": "unknown",
+        "longitude": 76.73475429999999,
+        "stop_name": "Ooty mountain view",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "error": "Open Meteo API rejected request with HTTP 429"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "unknown",
+        "weather_code": null,
+        "forecast_time": null,
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": null,
+        "precipitation_mm": null,
+        "temperature_celsius": null,
+        "precipitation_probability": null,
+        "apparent_temperature_celsius": null
+      },
+      {
+        "is_day": true,
+        "latitude": 11.397382799999999,
+        "condition": "rainy",
+        "longitude": 76.7046762,
+        "stop_name": "Ooty City Night View Point",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.5,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.6
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4992295,
+        "condition": "rainy",
+        "longitude": 76.52084529999999,
+        "stop_name": "Needle Rock View Point",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "low",
+        "weather_code": 51,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 70,
+        "precipitation_mm": 0.2,
+        "temperature_celsius": 24.1,
+        "precipitation_probability": 42,
+        "apparent_temperature_celsius": 27.0
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4058361,
+        "condition": "rainy",
+        "longitude": 76.6878842,
+        "stop_name": "Tamilnadu Tourism Boat House, Ooty",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.5,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.6
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4059244,
+        "condition": "rainy",
+        "longitude": 76.6882704,
+        "stop_name": "Ooty Lake View point",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.5,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.6
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4069218,
+        "condition": "rainy",
+        "longitude": 76.6882567,
+        "stop_name": "Thread Garden",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.5,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.6
+      },
+      {
+        "is_day": true,
+        "latitude": 11.3888985,
+        "condition": "rainy",
+        "longitude": 76.7250646,
+        "stop_name": "Ketti Valley View Point",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "timing_note": "Arrival time omitted; defaulted to departure date midday (12:00 local time)"
+        },
+        "ghat_caution": "Wet road surfaces and reduced traction expected along ghat section; exercise caution on hairpin turns.",
+        "monsoon_risk": "moderate",
+        "weather_code": 53,
+        "forecast_time": "2026-11-28T12:00:00+05:30",
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": 81,
+        "precipitation_mm": 0.5,
+        "temperature_celsius": 17.1,
+        "precipitation_probability": 48,
+        "apparent_temperature_celsius": 18.2
+      },
+      {
+        "is_day": true,
+        "latitude": 11.4188751,
+        "condition": "unknown",
+        "longitude": 76.7113878,
+        "stop_name": "Government Botanical Garden",
+        "attribution": "Weather data by Open Meteo.com",
+        "diagnostics": {
+          "error": "Open Meteo API rejected request with HTTP 429"
+        },
+        "ghat_caution": null,
+        "monsoon_risk": "unknown",
+        "weather_code": null,
+        "forecast_time": null,
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "humidity_percent": null,
+        "precipitation_mm": null,
+        "temperature_celsius": null,
+        "precipitation_probability": null,
+        "apparent_temperature_celsius": null
+      }
+    ],
+    "excluded_candidates": [],
+    "provider_diagnostics": {
+      "llm": {
+        "model_id": "amazon.nova-lite-v1:0",
+        "provider": "bedrock",
+        "client_class": "BedrockLlmClient"
+      },
+      "weather": {
+        "provider": "open_meteo",
+        "attribution": "Weather data by Open Meteo.com",
+        "error_stops": 3,
+        "valid_stops": 12,
+        "ghat_caution": "Wet road surfaces and reduced traction expected along ghat section; exercise caution on hairpin turns.",
+        "stops_queried": 15,
+        "overall_caution": "Moderate rain showers expected along the travel corridor. Carry umbrellas and anticipate wet roads. Partial weather advisory: live forecasts available for 12 of 15 stops; remaining stops are beyond forecast horizon or unavailable.",
+        "licensing_status": "non_commercial",
+        "forecast_horizon_days": 16,
+        "horizon_exceeded_stops": 0,
+        "is_commercial_licensed": false
+      },
+      "routing_notes": [
+        "Train routing is unsupported in current routing engine; evaluating road routing for car_petrol",
+        "Destination alternatives were not researched or evaluated in this workflow.",
+        "Routing provider rejected a required leg due to its route distance limit."
+      ]
+    },
+    "validated_candidates": [
+      {
+        "point": {
+          "lat": 11.4102,
+          "lng": 76.695
+        },
+        "category": "destination",
+        "place_id": "bf4e9a26-4114-4407-a639-ca8f6940915d",
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Ooty, Tamil Nadu",
+            "point": {
+              "lat": 11.4102,
+              "lng": 76.695
+            },
+            "category": "destination"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.0
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty, Tamil Nadu",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.0,
+        "suggested_stay_minutes": 360
+      },
+      {
+        "point": {
+          "lat": 11.406845599999999,
+          "lng": 76.68711619999999
+        },
+        "category": "lodging",
+        "place_id": "0893de33-d89e-44ee-8de9-543a33aefdb9",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Darshan veg",
+            "point": {
+              "lat": 11.406845599999999,
+              "lng": 76.68711619999999
+            },
+            "category": "lodging"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "http://www.hoteldarshan.com/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.94
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Darshan veg",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.94,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4104653,
+          "lng": 76.70719009999999
+        },
+        "category": "restaurant",
+        "place_id": "f8d88e83-986c-4e1a-8cfa-3fcb42df3b50",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Kailash Parbat - Pure Vegetarian Restaurant",
+            "point": {
+              "lat": 11.4104653,
+              "lng": 76.70719009999999
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.kailashparbatgroup.com/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.3km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.33
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Kailash Parbat - Pure Vegetarian Restaurant",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.33,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4132751,
+          "lng": 76.6983269
+        },
+        "category": "restaurant",
+        "place_id": "690d44ee-eb5e-4960-804a-e306c29e1ba3",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty Junction - Pure Veg Restaurant",
+            "point": {
+              "lat": 11.4132751,
+              "lng": 76.6983269
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.5
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty Junction - Pure Veg Restaurant",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.5,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4199915,
+          "lng": 76.698284
+        },
+        "category": "attraction",
+        "place_id": "61f6c144-c659-4060-9fc0-6d84528724ae",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Earl's Secret",
+            "point": {
+              "lat": 11.4199915,
+              "lng": 76.698284
+            },
+            "category": "attraction"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.littlearth.in/kings-cliff/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.1km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.15
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Earl's Secret",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.15,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4136285,
+          "lng": 76.7086293
+        },
+        "category": "lodging",
+        "place_id": "7b3c81eb-0bff-400e-8fa8-00579cb78f44",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ruchi Bhavanam",
+            "point": {
+              "lat": 11.4136285,
+              "lng": 76.7086293
+            },
+            "category": "lodging"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://ruchibhavanam.com/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.53
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ruchi Bhavanam",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.53,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4055763,
+          "lng": 76.7196275
+        },
+        "category": "attraction",
+        "place_id": "0e736e9f-61cc-46dd-bfdd-b133bd43d4dd",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty Viewpoint",
+            "point": {
+              "lat": 11.4055763,
+              "lng": 76.7196275
+            },
+            "category": "attraction"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Viewpoint"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:08.594213+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (2.7km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 2.73
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty Viewpoint",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 2.73,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.3930188,
+          "lng": 76.7169523
+        },
+        "category": "nature",
+        "place_id": "de5b72f9-bb3e-43b3-a4ec-fbf2c9bdfcb1",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty View point",
+            "point": {
+              "lat": 11.3930188,
+              "lng": 76.7169523
+            },
+            "category": "nature"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+View+point"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:08.594213+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (3.1km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 3.06
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty View point",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 3.06,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.386958,
+          "lng": 76.73475429999999
+        },
+        "category": "nature",
+        "place_id": "15f6a263-cbfa-4490-9c22-030d5bf5be6f",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty mountain view",
+            "point": {
+              "lat": 11.386958,
+              "lng": 76.73475429999999
+            },
+            "category": "nature"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+mountain+view"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:08.594213+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (5.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 5.05
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty mountain view",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 5.05,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.397382799999999,
+          "lng": 76.7046762
+        },
+        "category": "nature",
+        "place_id": "7921ed34-2c00-4a08-8d9d-aca4e55df81b",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty City Night View Point",
+            "point": {
+              "lat": 11.397382799999999,
+              "lng": 76.7046762
+            },
+            "category": "nature"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+City+Night+View+Point"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:08.594213+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (1.8km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 1.77
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty City Night View Point",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.77,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4992295,
+          "lng": 76.52084529999999
+        },
+        "category": "attraction",
+        "place_id": "41bb5205-a03a-4072-98cf-49bf61683862",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Needle Rock View Point",
+            "point": {
+              "lat": 11.4992295,
+              "lng": 76.52084529999999
+            },
+            "category": "attraction"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Needle+Rock+View+Point"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:08.594213+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (21.4km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 21.41
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Needle Rock View Point",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 21.41,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4058361,
+          "lng": 76.6878842
+        },
+        "category": "nature",
+        "place_id": "bcc3085a-c744-4f76-9154-8361b29a80b9",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Tamilnadu Tourism Boat House, Ooty",
+            "point": {
+              "lat": 11.4058361,
+              "lng": 76.6878842
+            },
+            "category": "nature"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://ttdc.in/ttdc-public-boat/boat"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:10.365586+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.91
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Tamilnadu Tourism Boat House, Ooty",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.91,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4059244,
+          "lng": 76.6882704
+        },
+        "category": "nature",
+        "place_id": "b0f65503-15d8-4c7f-a303-db6b4d27793a",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty Lake View point",
+            "point": {
+              "lat": 11.4059244,
+              "lng": 76.6882704
+            },
+            "category": "nature"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Lake+View+point"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:10.365586+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.87
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty Lake View point",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.87,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4069218,
+          "lng": 76.6882567
+        },
+        "category": "nature",
+        "place_id": "1303142b-337f-4eeb-a645-c3f4f38c1931",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Thread Garden",
+            "point": {
+              "lat": 11.4069218,
+              "lng": 76.6882567
+            },
+            "category": "nature"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Thread+Garden"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:10.365586+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.8km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.82
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Thread Garden",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.82,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.3888985,
+          "lng": 76.7250646
+        },
+        "category": "attraction",
+        "place_id": "52803e32-f58c-4886-9201-0b7d34351806",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ketti Valley View Point",
+            "point": {
+              "lat": 11.3888985,
+              "lng": 76.7250646
+            },
+            "category": "attraction"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ketti+Valley+View+Point"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:10.365586+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (4.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 4.04
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ketti Valley View Point",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 4.04,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4188751,
+          "lng": 76.7113878
+        },
+        "category": "nature",
+        "place_id": "c30feb34-232f-4776-85be-0cf12f10cb94",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Government Botanical Garden",
+            "point": {
+              "lat": 11.4188751,
+              "lng": 76.7113878
+            },
+            "category": "nature"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://nilgiris.nic.in/tourist-place/botanical-garden/"
+          ],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:10.365586+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (2.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 2.03
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Government Botanical Garden",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 2.03,
+        "suggested_stay_minutes": 60
+      }
+    ],
+    "accommodation_research": {
+      "reason": "Accommodation options identified without source-supported indicative rates",
+      "status": "PARTIAL",
+      "pricing_notice": "All rates are indicative search estimates from web aggregators. Verified date specific offers, live room availability, and booking confirmations are not included.",
+      "verified_offers": [],
+      "indicative_options": [
+        {
+          "currency": null,
+          "source_url": "http://www.hoteldarshan.com/",
+          "source_urls": [
+            "http://www.hoteldarshan.com/"
+          ],
+          "uncertainty": "UNVERIFIED",
+          "property_name": "Darshan veg",
+          "evidence_class": null,
+          "observation_id": null,
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "price_per_night": null,
+          "booking_confirmed": false,
+          "is_verified_offer": false,
+          "availability_status": "PRICE_UNAVAILABLE",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "price_unsupported_by_source",
+            "live_room_availability_unverified",
+            "booking_unconfirmed"
+          ],
+          "is_indicative_search": false
+        },
+        {
+          "currency": null,
+          "source_url": "https://ruchibhavanam.com/",
+          "source_urls": [
+            "https://ruchibhavanam.com/"
+          ],
+          "uncertainty": "UNVERIFIED",
+          "property_name": "Ruchi Bhavanam",
+          "evidence_class": null,
+          "observation_id": null,
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "price_per_night": null,
+          "booking_confirmed": false,
+          "is_verified_offer": false,
+          "availability_status": "PRICE_UNAVAILABLE",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "price_unsupported_by_source",
+            "live_room_availability_unverified",
+            "booking_unconfirmed"
+          ],
+          "is_indicative_search": false
+        }
+      ],
+      "availability_status": "PRICE_UNAVAILABLE",
+      "cheapest_claim_guarantee": "No cheapest hotel claims are asserted; search rates represent indicative pricing without live supplier confirmation."
+    },
+    "editorial_recommendations": [
+      {
+        "point": {
+          "lat": 11.4102,
+          "lng": 76.695
+        },
+        "category": "destination",
+        "place_id": "bf4e9a26-4114-4407-a639-ca8f6940915d",
+        "provenance": {
+          "source": "llm_proposal",
+          "identity": {
+            "name": "Ooty, Tamil Nadu",
+            "point": {
+              "lat": 11.4102,
+              "lng": 76.695
+            },
+            "category": "destination"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [],
+          "uncertainty": "EDITORIAL_DISCOVERY",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": null,
+          "conflicting_details": [],
+          "unavailable_details": [
+            "existence_unverified"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": null,
+        "diagnostics": {
+          "corridor_note": "Candidate within corridor bounds (0.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "No supporting source observations or verified claims exist. Candidate place preserved only as editorial recommendation.",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "corridor_distance_km": 0.0,
+          "existence_verification": "UNVERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "UNKNOWN",
+        "is_candidate": true,
+        "primary_name": "Ooty, Tamil Nadu",
+        "window_start": null,
+        "existence_status": "UNVERIFIED",
+        "is_hours_assumed": false,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.0,
+        "suggested_stay_minutes": 360
+      },
+      {
+        "point": {
+          "lat": 11.4104653,
+          "lng": 76.70719009999999
+        },
+        "category": "restaurant",
+        "place_id": "f8d88e83-986c-4e1a-8cfa-3fcb42df3b50",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Kailash Parbat - Pure Vegetarian Restaurant",
+            "point": {
+              "lat": 11.4104653,
+              "lng": 76.70719009999999
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.kailashparbatgroup.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.3km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.33,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Kailash Parbat - Pure Vegetarian Restaurant",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.33,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4132751,
+          "lng": 76.6983269
+        },
+        "category": "restaurant",
+        "place_id": "690d44ee-eb5e-4960-804a-e306c29e1ba3",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ooty Junction - Pure Veg Restaurant",
+            "point": {
+              "lat": 11.4132751,
+              "lng": 76.6983269
+            },
+            "category": "restaurant"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant",
+            "https://www.google.com/maps/search?api=1&query=Ooty+Junction+-+Pure+Veg+Restaurant"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (0.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: dining choice preserved for dining recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 0.5,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Ooty Junction - Pure Veg Restaurant",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.5,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.406845599999999,
+          "lng": 76.68711619999999
+        },
+        "category": "lodging",
+        "place_id": "0893de33-d89e-44ee-8de9-543a33aefdb9",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Darshan veg",
+            "point": {
+              "lat": 11.406845599999999,
+              "lng": 76.68711619999999
+            },
+            "category": "lodging"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "http://www.hoteldarshan.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (0.9km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 0.94,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Darshan veg",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 0.94,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4136285,
+          "lng": 76.7086293
+        },
+        "category": "lodging",
+        "place_id": "7b3c81eb-0bff-400e-8fa8-00579cb78f44",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ruchi Bhavanam",
+            "point": {
+              "lat": 11.4136285,
+              "lng": 76.7086293
+            },
+            "category": "lodging"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://ruchibhavanam.com/"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:06.579002+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (1.5km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: accommodation option preserved for lodging recommendations rather than daytime route stop",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 1.53,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Ruchi Bhavanam",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 1.53,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.3888985,
+          "lng": 76.7250646
+        },
+        "category": "attraction",
+        "place_id": "52803e32-f58c-4886-9201-0b7d34351806",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Ketti Valley View Point",
+            "point": {
+              "lat": 11.3888985,
+              "lng": 76.7250646
+            },
+            "category": "attraction"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://www.google.com/maps/search/?api=1&query=Ketti+Valley+View+Point",
+            "https://www.google.com/maps/search?api=1&query=Ketti+Valley+View+Point"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:10.365586+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (4.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: candidate exceeds provider matrix cell capacity for route optimization (capacity=10 stops, max cells=100)",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 4.04,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Ketti Valley View Point",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 4.04,
+        "suggested_stay_minutes": 60
+      },
+      {
+        "point": {
+          "lat": 11.4188751,
+          "lng": 76.7113878
+        },
+        "category": "nature",
+        "place_id": "c30feb34-232f-4776-85be-0cf12f10cb94",
+        "provenance": {
+          "source": "evidence_observation",
+          "identity": {
+            "name": "Government Botanical Garden",
+            "point": {
+              "lat": 11.4188751,
+              "lng": 76.7113878
+            },
+            "category": "nature"
+          },
+          "owner_id": "4ce28379-fb34-4fa6-8e9d-cda566662417",
+          "source_urls": [
+            "https://nilgiris.nic.in/tourist-place/botanical-garden/",
+            "https://nilgiris.nic.in/tourist-place/botanical-garden"
+          ],
+          "uncertainty": "VERIFIED",
+          "execution_id": "7a4dcb7b-366c-4619-b484-f2474dc393d3",
+          "retrieval_time": "2026-11-24T23:15:10.365586+00:00",
+          "conflicting_details": [],
+          "unavailable_details": [
+            "opening_hours_assumed"
+          ],
+          "brief_corridor_validated": true
+        },
+        "window_end": "18:00:00",
+        "diagnostics": {
+          "hours_status": "HOURS_ASSUMED",
+          "corridor_note": "Candidate within corridor bounds (2.0km <= 100.0km). Coordinate match alone does not prove existence.",
+          "evidence_note": "Existence confirmed by verified fresh claims backed by supporting evidence",
+          "corridor_status": "WITHIN_CORRIDOR",
+          "deferral_reason": "Deferred: candidate exceeds provider matrix cell capacity for route optimization (capacity=10 stops, max cells=100)",
+          "provenance_note": "Candidate registered with editorial uncertainty; existence requires corroborating evidence",
+          "hours_diagnostic": "Operating hours unknown or unverified. Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED).",
+          "corridor_distance_km": 2.03,
+          "existence_verification": "VERIFIED"
+        },
+        "uncertainty": "EDITORIAL_DISCOVERY",
+        "hours_status": "HOURS_ASSUMED",
+        "is_candidate": true,
+        "primary_name": "Government Botanical Garden",
+        "window_start": "09:00:00",
+        "existence_status": "VERIFIED",
+        "is_hours_assumed": true,
+        "price_estimate_inr": null,
+        "corridor_distance_km": 2.03,
+        "suggested_stay_minutes": 60
+      }
+    ]
+  },
+  "provider_modes": {
+    "llm": "live_bedrock",
+    "weather": "live_open_meteo",
+    "search": "live_serpapi",
+    "routing": "live_valhalla"
+  },
+  "artifact_classification": "live",
+  "completed_at": "2026-11-24T23:15:28.855004+00:00"
+}
