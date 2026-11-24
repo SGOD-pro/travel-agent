@@ -87,21 +87,33 @@ Previous verification reports for Slices 1 through 6 proved contract compliance,
 ### Integration Test Suite Summary
 - **Test File**: `backend/tests/integration/test_hitl_pipeline.py`
 - **Database**: PostgreSQL PostGIS isolated acceptance database (`127.0.0.1:5432/acceptance_db`)
-- **Outcome**: 10 passed out of 10 in 6.56 seconds.
+- **Outcome**: 12 passed out of 12 in 13.14 seconds.
 - **Coverage**:
   1. `test_incomplete_brief_creates_question_and_enters_waiting_user`: Incomplete brief persists `TravelerQuestionModel`, sets execution status to `WAITING_USER`, releases lease, records `QUESTION_ASKED` timeline event.
   2. `test_valid_answer_advances_version_and_resumes_planning`: Valid answer advances `context_version` to 2, marks question `ANSWERED`, stages `EXECUTION_RESUME`, and resumes execution graph.
   3. `test_invalid_answer_rejected_and_leaves_question_pending`: Inverted dates fail validation with `AnswerValidationError`, leaving question `PENDING` and graph uncorrupted.
   4. `test_idempotent_duplicate_answer_replay_safe`: Duplicate identical submissions return `is_duplicate=True` without duplicate resume events.
-  5. `test_concurrent_conflicting_answer_rejected`: Conflicting answers for answered questions raise `ConflictingAnswerError`.
+  5. `test_concurrent_conflicting_answer_rejected`: True synchronized overlapping concurrency via `asyncio.gather` where contending submissions for the same question resolve atomically with one success and one `ConflictingAnswerError`.
   6. `test_owner_mismatch_and_stale_context_rejected`: Cross tenant submission raises `QuestionOwnerMismatchError`; stale versions raise `StaleContextError`; mismatched execution IDs raise `QuestionNotFoundError`.
   7. `test_cancellation_and_deadline_expiry_prevent_resume`: Cancelled or expired executions reject answers and block resumption.
-  8. `test_process_restart_preserves_question_and_resumes`: Fresh runner instance reads persisted question and resumes cleanly upon answer.
+  8. `test_process_restart_preserves_question_and_resumes`: True separate operating system subprocesses with parent enforced timeouts where Process A enters `WAITING_USER` and exits 0, and Process B resumes, answers, and completes.
   9. `test_resumed_planning_preserves_completed_work`: Checkpoint state preserves earlier candidate evidence through pause and resume.
   10. `test_complete_brief_bypasses_await_user_input`: Complete brief skips question generation and routes directly to candidate discovery.
+  11. `test_stale_answer_rejected_when_trip_brief_updated_independently`: When trip brief advances independently to a newer version while execution is paused, stale answer submissions are rejected with `StaleTripVersionError` without mutating newer brief, version, checkpoint, or outbox.
+  12. `test_deadline_rechecked_after_lock_wait`: Lock acquisition delay exceeding deadline rechecks time and state strictly after acquiring row locks, rejecting expired execution with `ExecutionDeadlineExceededError` without mutation surviving.
 
 ### Direct Runner Verification
 - **Script**: `backend/scripts/run_hitl_pipeline.py`
-- **Phase 1 (Pause Demonstration)**: Executed with `--stop-at-question --output scripts/hitl_pipeline_pause_demo.json`. Job `1b528ede-bf71-474d-bfc2-ab3cd7337e84` created via draft brief, paused in `WAITING_USER`, and displayed `travel_dates` question prompt.
-- **Phase 2 (Resume Demonstration)**: Executed in fresh process with `--resume 1b528ede-bf71-474d-bfc2-ab3cd7337e84 --non-interactive --start-date 2026-11-25 --end-date 2026-11-26`. Submitted answer via `POST /api/v1/jobs/{job_id}/responses`, advanced version to 2, resumed LangGraph execution through evidence collection, route optimization, weather, budget, and published finalized 10 stop itinerary to `trips.itinerary_json` with status `SUCCEEDED`.
-- **Artifact**: `backend/scripts/hitl_pipeline_result_mysuru_hitl_20261123.json`.
+- **Direct Service Invocation**: Shared application service `TripPlanningService` invoked directly using SQLAlchemy async sessions without ASGI server, synthetic JWTs, or HTTP clients.
+- **Acceptance Database Isolation**: Strict parsed validation via `acceptance_database.normalize_db_connection_target` and `is_loopback_host` rejecting remote hosts even when credentials or query parameters contain loopback substrings.
+- **Provider Respect**: Configured providers including active LAYA Cloudflare endpoint are respected without unconditional blanks.
+- **Phase 1 (Pause Demonstration)**: Executed with `--stop-at-question --output scripts/hitl_pipeline_pause_direct_demo.json`. Job `ddaca54c-e7d0-43d9-8897-157b6dd62eac` created via draft brief, paused in `WAITING_USER`, and displayed `travel_dates` question prompt.
+- **Phase 2 (Resume Demonstration)**: Executed in separate fresh process with `--resume ddaca54c-e7d0-43d9-8897-157b6dd62eac --non-interactive --start-date 2026-11-25 --end-date 2026-11-26 --output scripts/hitl_pipeline_result_direct.json`. Submitted answer directly via `TripPlanningService.submit_answer`, advanced version to 2, resumed LangGraph execution through evidence collection, route optimization, weather, budget, and published finalized 10 stop itinerary to `trips.itinerary_json` with status `SUCCEEDED`.
+- **Artifacts**: `backend/scripts/hitl_pipeline_pause_direct_demo.json` and `backend/scripts/hitl_pipeline_result_direct.json` recording safe database connection metadata without exposed credentials.
+
+### Review Findings Resolution (2026-11-24)
+- **Idempotency Conflict Detection**: Restored `planning_options` and full payload in `TripPlanningService.start_planning` and `trips.py`. Re-verified `test_api_trip_plans_endpoint_idempotency_integration` passing with HTTP 409 on conflicting planning options.
+- **Transactional State Integrity**: Removed ephemeral question status assignment on stale version rejection in `TravelerAnswerService.submit_answer`, ensuring rolled back transactions leave pending questions unmutated.
+- **Strict Typing Compliance**: Added explicit parameter and return type annotations across all 12 tests and coroutine helpers in `test_hitl_pipeline.py`. Strict mypy checks pass with zero errors.
+- **Modular Connection Parsing**: Reused `normalize_asyncpg_url` from `acceptance_database.py` in `run_hitl_pipeline.py`.
+- **Clean Route Module Imports**: Relocated `TripPlanningService` imports to top level in `jobs.py` and `trips.py`.

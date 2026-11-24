@@ -236,7 +236,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Correct lodging night budget accounting: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, and ruff linting)
    - [x] Finish lodging budget review follow ups: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, PDF export fallback tests, strict mypy typing, and ruff linting)
    - [x] Correct overnight waiting and attraction visit boundaries: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, same day regression test, worker geometry hydration, graph consumption, strict mypy typing, and ruff linting)
-   - [x] Human in the loop (HITL) flow and direct Python pipeline runner: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 10 integration tests on live PostgreSQL, pause and resume demonstration on Mysuru corridor, clean ruff linting, and strict mypy typing)
+   - [x] Human in the loop (HITL) flow and direct Python pipeline runner: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 12 integration tests on live PostgreSQL, pause and resume demonstration on Mysuru corridor, clean ruff linting, and strict mypy typing)
 - [x] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
@@ -260,6 +260,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Finish lodging budget review follow ups: [2026-11-23-0007-lodging-budget-review-followups.md](../reviews/2026-11-23-0007-lodging-budget-review-followups.md) (Approve)
    - [x] Correct overnight waiting and attraction visit boundaries: [2026-11-23-0007-overnight-waiting-and-attraction-boundaries.md](../reviews/2026-11-23-0007-overnight-waiting-and-attraction-boundaries.md) (Approve)
    - [x] Human in the loop (HITL) flow and direct Python pipeline runner: [2026-11-23-0007-backend-hitl-flow-and-direct-runner.md](../reviews/2026-11-23-0007-backend-hitl-flow-and-direct-runner.md) (Approve with nits)
+   - [x] Human in the loop (HITL) review findings and direct runner acceptance: [2026-11-24-0007-hitl-review-findings-and-direct-runner.md](../reviews/2026-11-24-0007-hitl-review-findings-and-direct-runner.md) (Blocked)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

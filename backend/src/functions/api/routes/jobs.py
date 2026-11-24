@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.db import get_session
 from contracts.question import AnswerSubmissionResult, QuestionAnswerRequest
+from functions.api.trip_planning_service import TripPlanningService
 from functions.orchestrator.execution.cancellation import cancel_execution
 from functions.orchestrator.execution.job_events import get_job_events
 from functions.orchestrator.execution.models import (
@@ -30,7 +31,6 @@ from functions.orchestrator.hitl import (
     QuestionNotPendingError,
     QuestionOwnerMismatchError,
     StaleContextError,
-    TravelerAnswerService,
 )
 from middleware.auth import AuthenticatedUser, get_current_user
 
@@ -302,15 +302,18 @@ async def submit_job_response(
             detail=f"Job {job_id} not found",
         )
 
-    service = TravelerAnswerService()
+    planning_service = TripPlanningService()
     try:
-        result = await service.submit_answer(
+        if request.expected_context_version is None:
+            raise StaleContextError("expected_context_version is required for answer submission")
+
+        result = await planning_service.submit_answer(
             session,
+            job_id=job_id,
             question_id=request.question_id,
-            caller_id=current_user.id,
+            owner_id=current_user.id,
             answer=request.answer,
             expected_context_version=request.expected_context_version,
-            execution_id=job_id,
         )
         await session.commit()
         return result

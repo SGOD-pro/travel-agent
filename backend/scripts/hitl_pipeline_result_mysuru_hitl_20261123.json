@@ -1,7 +1,11 @@
 {
   "runner": "run_hitl_pipeline.py",
   "started_at": "2026-11-23T15:59:02.394919+00:00",
-  "database_url": "postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/acceptance_db",
+  "database_target": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "dbname": "acceptance_db"
+  },
   "resume_mode": true,
   "job_id": "1b528ede-bf71-474d-bfc2-ab3cd7337e84",
   "question_presented": {

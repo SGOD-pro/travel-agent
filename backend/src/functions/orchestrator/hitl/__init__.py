@@ -9,6 +9,7 @@ from functions.orchestrator.hitl.service import (
     QuestionNotPendingError,
     QuestionOwnerMismatchError,
     StaleContextError,
+    StaleTripVersionError,
     TravelerAnswerService,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "QuestionNotPendingError",
     "QuestionOwnerMismatchError",
     "StaleContextError",
+    "StaleTripVersionError",
     "TravelerAnswerService",
 ]

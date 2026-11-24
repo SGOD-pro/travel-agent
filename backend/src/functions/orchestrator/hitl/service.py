@@ -56,6 +56,10 @@ class StaleContextError(Exception):
     """Raised when expected context version does not match current version."""
 
 
+class StaleTripVersionError(StaleContextError):
+    """Raised when question was formulated against an older trip brief version that was superseded."""
+
+
 class ConflictingAnswerError(Exception):
     """Raised when conflicting answer is submitted for answered question."""
 
@@ -125,8 +129,6 @@ class TravelerAnswerService:
         execution_id: uuid.UUID | None = None,
     ) -> AnswerSubmissionResult:
         """Validates answer, advances version atomically, and stages execution resume."""
-        now = datetime.now(UTC)
-
         # 1. Lock question row
         q_stmt = (
             select(TravelerQuestionModel)
@@ -148,35 +150,15 @@ class TravelerAnswerService:
                 f"Question {question_id} not found for job {execution_id}"
             )
 
-        # 3. Lock execution row
-        exec_stmt = (
-            select(ExecutionModel)
-            .where(ExecutionModel.id == question.execution_id)
-            .with_for_update()
-        )
-        execution = (await session.execute(exec_stmt)).scalar_one_or_none()
-        if execution is None:
-            raise QuestionNotFoundError(
-                f"Execution {question.execution_id} not found for question {question_id}"
-            )
-
-        # 4. Barriers on execution
-        if execution.status == "CANCELLED" or execution.cancelled_at is not None:
-            raise ExecutionCancelledError(f"Execution {execution.id} is cancelled")
-        if (execution.deadline_at and execution.deadline_at <= now) or execution.status == "FAILED":
-            raise ExecutionDeadlineExceededError(
-                f"Execution {execution.id} deadline exceeded or failed"
-            )
-
-        # 5. Replay and idempotency handling
+        # 3. Replay and idempotency handling
         if question.status == QuestionStatus.ANSWERED.value:
             if question.answer_json == answer:
                 return AnswerSubmissionResult(
                     question_id=question.id,
-                    execution_id=execution.id,
+                    execution_id=question.execution_id,
                     status=QuestionStatus.ANSWERED.value,
-                    new_context_version=execution.context_version,
-                    context_version=execution.context_version,
+                    new_context_version=question.context_version,
+                    context_version=question.context_version,
                     is_duplicate=True,
                     message="Answer already recorded with identical content",
                 )
@@ -189,70 +171,151 @@ class TravelerAnswerService:
                 f"Question {question_id} is in status {question.status}, cannot be answered"
             )
 
-        # 6. Stale context version checks
-        if (
-            expected_context_version is not None
-            and expected_context_version != question.context_version
-        ):
+        # 4. Require expected context version for new answer submissions
+        if expected_context_version is None:
+            raise StaleContextError("expected_context_version is required for answer submission")
+        if expected_context_version != question.context_version:
             raise StaleContextError(
                 f"Expected context version {expected_context_version} does not match question version {question.context_version}"
             )
+
+        # 5. Lock execution row (and trip row if execution has trip_id)
+        # Canonical lock ordering: ExecutionModel then TripModel
+        exec_stmt = (
+            select(ExecutionModel)
+            .where(ExecutionModel.id == question.execution_id)
+            .with_for_update()
+        )
+        execution = (await session.execute(exec_stmt)).scalar_one_or_none()
+        if execution is None:
+            raise QuestionNotFoundError(
+                f"Execution {question.execution_id} not found for question {question_id}"
+            )
+
+        trip: TripModel | None = None
+        if execution.trip_id is not None:
+            trip_stmt = (
+                select(TripModel).where(TripModel.id == execution.trip_id).with_for_update()
+            )
+            trip = (await session.execute(trip_stmt)).scalar_one_or_none()
+
+        # 6. Post-lock evaluation: evaluate current time, execution state, and deadlines AFTER acquiring all locks
+        now = datetime.now(UTC)
+
+        # Cancellation barriers
+        if execution.status == "CANCELLED" or execution.cancelled_at is not None:
+            raise ExecutionCancelledError(f"Execution {execution.id} is cancelled")
+
+        # Terminal or superseded execution barriers
+        if execution.status in ("FAILED", "SUCCEEDED", "PARTIAL"):
+            raise ExecutionDeadlineExceededError(
+                f"Execution {execution.id} is already terminal ({execution.status})"
+            )
+        if execution.status == "SUPERSEDED":
+            raise StaleTripVersionError(f"Execution {execution.id} is superseded")
+
+        # Deadline evaluation
+        if execution.deadline_at and now >= execution.deadline_at:
+            raise ExecutionDeadlineExceededError(
+                f"Execution {execution.id} deadline exceeded or failed"
+            )
+
+        # Context version coherence
         if question.context_version != execution.context_version:
             raise StaleContextError(
                 f"Question context version {question.context_version} does not match execution version {execution.context_version}"
             )
 
-        # 7. Validate answer content against rules
+        # 7. Check trip version coherence: prevent stale answers from modifying newer trip briefs
+        expected_base_version: int | None = None
+        if execution.trip_id is not None and trip is not None:
+            start_stmt = select(OutboxEventModel).where(
+                OutboxEventModel.execution_id == execution.id,
+                OutboxEventModel.kind == "EXECUTION_START",
+            )
+            start_evt = (await session.execute(start_stmt)).scalars().first()
+            if start_evt and isinstance(start_evt.payload, dict):
+                expected_base_version = start_evt.payload.get("version")
+
+            factory = self._session_factory
+            if factory is None and session.bind is not None:
+                factory = async_sessionmaker(
+                    bind=session.bind, expire_on_commit=False, class_=AsyncSession
+                )
+
+            if expected_base_version is None and factory is not None:
+                checkpointer = TransactionBoundCheckpointer(session_factory=factory)
+                config = {
+                    "configurable": {
+                        "thread_id": str(execution.id),
+                        "session_factory": factory,
+                    }
+                }
+                current_chk = await checkpointer.aget_tuple(config)
+                if current_chk and current_chk.checkpoint:
+                    channel_values = current_chk.checkpoint.get("channel_values", {})
+                    expected_base_version = channel_values.get("version")
+
+            if expected_base_version is not None and trip.current_version != expected_base_version:
+                logger.warning(
+                    "Trip %s version advanced independently (current=%s != expected=%s); question %s is stale",
+                    trip.id,
+                    trip.current_version,
+                    expected_base_version,
+                    question.id,
+                )
+                raise StaleTripVersionError(
+                    f"Trip {trip.id} has advanced to version {trip.current_version}, making question for base version {expected_base_version} stale"
+                )
+
+        # 8. Validate answer content against rules
         self._validate_answer_content(
             question_type=question.question_type,
             validation_rules=question.validation_rules or {},
             answer=answer,
         )
 
-        # 8. Mark question answered
+        # 9. Mark question answered
         question.status = QuestionStatus.ANSWERED.value
         question.answer_json = answer
         question.answered_at = now
 
-        # 9. Advance context version
+        # 10. Advance context version
         execution.context_version += 1
         execution.updated_at = now
         question.context_version = execution.context_version
 
-        # 10. Update trip and trip versions if trip associated
+        # 11. Update trip and trip versions if trip associated
         complete_brief_dict: dict[str, Any] = {}
-        if execution.trip_id is not None:
-            trip_stmt = (
-                select(TripModel).where(TripModel.id == execution.trip_id).with_for_update()
+        if execution.trip_id is not None and trip is not None:
+            ver_stmt = (
+                select(TripVersionModel)
+                .where(
+                    TripVersionModel.trip_id == trip.id,
+                    TripVersionModel.version == (expected_base_version if expected_base_version is not None else trip.current_version),
+                )
             )
-            trip = (await session.execute(trip_stmt)).scalar_one_or_none()
-            if trip is not None:
-                trip.current_version += 1
-                trip.updated_at = now
+            base_version = (await session.execute(ver_stmt)).scalars().first()
+            base_brief_json = dict(base_version.brief_json) if base_version else {}
+            if question.question_key == "travel_dates":
+                base_brief_json["start_date"] = str(answer["start_date"])
+                base_brief_json["end_date"] = str(answer["end_date"])
 
-                ver_stmt = (
-                    select(TripVersionModel)
-                    .where(TripVersionModel.trip_id == trip.id)
-                    .order_by(TripVersionModel.version.desc())
-                )
-                prev_version = (await session.execute(ver_stmt)).scalars().first()
-                base_brief_json = dict(prev_version.brief_json) if prev_version else {}
-                if question.question_key == "travel_dates":
-                    base_brief_json["start_date"] = str(answer["start_date"])
-                    base_brief_json["end_date"] = str(answer["end_date"])
+            validated_brief = TripBrief.model_validate(base_brief_json)
+            complete_brief_dict = validated_brief.model_dump(mode="json")
 
-                validated_brief = TripBrief.model_validate(base_brief_json)
-                complete_brief_dict = validated_brief.model_dump(mode="json")
+            trip.current_version += 1
+            trip.updated_at = now
 
-                new_ver = TripVersionModel(
-                    trip_id=trip.id,
-                    version=trip.current_version,
-                    brief_json=complete_brief_dict,
-                    schema_version=1,
-                    command_id=uuid.uuid4(),
-                    created_at=now,
-                )
-                session.add(new_ver)
+            new_ver = TripVersionModel(
+                trip_id=trip.id,
+                version=trip.current_version,
+                brief_json=complete_brief_dict,
+                schema_version=1,
+                command_id=uuid.uuid4(),
+                created_at=now,
+            )
+            session.add(new_ver)
 
         # 11. Update LangGraph checkpoint state thread
         factory = self._session_factory

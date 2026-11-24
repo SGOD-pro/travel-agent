@@ -71,6 +71,7 @@ def _format_addr_info_with_port(addr_info: list[Any], port: Any) -> list[Any]:
     formatted = []
     for item in addr_info:
         family, socktype, proto, canonname, sockaddr = item
+        new_sockaddr: tuple[Any, ...] | Any
         if isinstance(sockaddr, tuple):
             if len(sockaddr) == 2:
                 new_sockaddr = (sockaddr[0], target_port)
@@ -227,6 +228,16 @@ def normalize_db_connection_target(url: str | None) -> dict[str, Any] | None:
         }
     except Exception:
         return None
+
+
+def normalize_asyncpg_url(url: str) -> str:
+    """Ensures asyncpg scheme for SQLAlchemy async engine."""
+    cleaned = url.strip()
+    if cleaned.startswith("postgres://"):
+        return "postgresql+asyncpg://" + cleaned[len("postgres://") :]
+    if cleaned.startswith("postgresql://") and not cleaned.startswith("postgresql+asyncpg://"):
+        return "postgresql+asyncpg://" + cleaned[len("postgresql://") :]
+    return cleaned
 
 
 def are_db_urls_equivalent(url1: str | None, url2: str | None) -> bool:

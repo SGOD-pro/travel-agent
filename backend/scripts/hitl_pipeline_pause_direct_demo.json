@@ -1,0 +1,25 @@
+{
+  "runner": "run_hitl_pipeline.py",
+  "started_at": "2026-11-24T00:15:26.046569+00:00",
+  "database_target": {
+    "host": "127.0.0.1",
+    "port": 5432,
+    "dbname": "acceptance_db"
+  },
+  "resume_mode": false,
+  "job_id": "ba5c4e8a-d2ac-407c-b4c6-4e5e06a7cd8a",
+  "question_presented": {
+    "id": "c4ba992d-06e2-4dcd-aae3-e923dc50c43e",
+    "key": "travel_dates",
+    "type": "DATE_RANGE",
+    "prompt": "Please specify your travel dates (start_date and end_date in YYYY-MM-DD format) to continue planning your trip.",
+    "rules": {
+      "type": "date_range",
+      "fields": [
+        "start_date",
+        "end_date"
+      ]
+    }
+  },
+  "stopped_at_question": true
+}
