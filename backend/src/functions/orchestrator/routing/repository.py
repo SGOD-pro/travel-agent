@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from contracts.routing import OptimizedRoute
+from contracts.routing import OptimizedRoute, ScheduledStopOutput
 from functions.orchestrator.routing.models import (
     RouteLegModel,
     RouteModel,
@@ -156,10 +156,31 @@ class RouteRepository:
 
         # 4. Create RouteStopModels
         stop_id_map: dict[uuid.UUID, uuid.UUID] = {}
-        all_stops = list(route.stops) + list(route.dropped_stops)
+        active_stops = [s for s in route.stops if not getattr(s, "is_skipped", False)]
+        skipped_candidates = [s for s in route.stops if getattr(s, "is_skipped", False)] + list(
+            route.dropped_stops
+        )
+        # Preserve scheduled stop_order for active stops and assign unique trailing orders
+        # for skipped stops so uq_route_stops_route_order and readback order remain deterministic.
+        used_orders = {s.stop_order for s in active_stops}
+        next_skipped_order = max(used_orders, default=-1) + 1
+        seen_skipped_ids: set[uuid.UUID] = set()
+        ordered_stops: list[tuple[ScheduledStopOutput, int]] = [(s, s.stop_order) for s in active_stops]
+        for s in skipped_candidates:
+            sid = s.stop_id or s.id
+            if sid is not None:
+                if sid in seen_skipped_ids:
+                    continue
+                seen_skipped_ids.add(sid)
+            while next_skipped_order in used_orders:
+                next_skipped_order += 1
+            used_orders.add(next_skipped_order)
+            ordered_stops.append((s, next_skipped_order))
+            next_skipped_order += 1
+
         stop_models: list[RouteStopModel] = []
 
-        for s in all_stops:
+        for s, effective_stop_order in ordered_stops:
             s_id = uuid.uuid4()
             if s.stop_id is not None:
                 stop_id_map[s.stop_id] = s_id
@@ -173,7 +194,7 @@ class RouteRepository:
                 id=s_id,
                 route_id=route_id,
                 place_id=s.place_id,
-                stop_order=s.stop_order,
+                stop_order=effective_stop_order,
                 name=s.name,
                 location=loc_geom,
                 stop_type=s.stop_type.value,

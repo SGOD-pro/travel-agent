@@ -675,3 +675,105 @@ class TestItinerarySchedulingAndClosedDayHandling:
         assert proposal.get("must_visit_conflicts")
         assert any(c.get("name") == "Ooty Lake" for c in proposal.get("attractions_research", []))
         assert proposal.get("research_coverage", {}).get("uncovered_destinations") == ["Coonoor"]
+
+    def test_solver_enforces_last_entry_closing_ticketing_and_unmatched_must_visit(self) -> None:
+        from contracts.routing import RouteRequest, RouteStatus
+        from functions.route_optimizer.solver import OrToolsRoutingSolver
+
+        exec_id = uuid.uuid4()
+        state: TripPlanningState = {
+            "execution_id": str(exec_id),
+            "brief": {
+                "origin_name": "Bengaluru",
+                "origin_lat": 12.9716,
+                "origin_lng": 77.5946,
+                "destinations": [{"name": "Mysuru", "latitude": 12.2958, "longitude": 76.6394, "stay_days": 1}],
+                "must_visit_places": ["Palace Cutoffs", "Unmatched Monument"],
+                "start_date": "2026-11-28",
+                "end_date": "2026-11-29",
+            },
+            "eligible_stops": [
+                {
+                    "primary_name": "Mysuru",
+                    "category": "destination",
+                    "point": {"lat": 12.2958, "lng": 76.6394},
+                    "existence_status": "VERIFIED",
+                    "hours_status": "HOURS_ASSUMED",
+                },
+                {
+                    "primary_name": "Palace Cutoffs",
+                    "category": "heritage",
+                    "point": {"lat": 12.3052, "lng": 76.6552},
+                    "suggested_stay_minutes": 30,
+                    "existence_status": "VERIFIED",
+                    "hours_status": "VERIFIED_HOURS",
+                    "is_must_visit": True,
+                    "hours_details": {
+                        "opens": "09:00",
+                        "closes": "17:30",
+                        "ticketing_opens": "10:00",
+                        "ticketing_closes": "16:30",
+                        "last_entry": "16:15",
+                        "local_timezone": "Asia/Kolkata",
+                    },
+                },
+                {
+                    "primary_name": "Late Entry Optional",
+                    "category": "museum",
+                    "point": {"lat": 12.3100, "lng": 76.6600},
+                    "suggested_stay_minutes": 30,
+                    "existence_status": "VERIFIED",
+                    "hours_status": "VERIFIED_HOURS",
+                    "is_must_visit": False,
+                    "hours_details": {
+                        "opens": "09:00",
+                        "closes": "17:30",
+                        "last_entry": "16:15",
+                        "local_timezone": "Asia/Kolkata",
+                    },
+                },
+            ],
+        }
+
+        dispatched = dispatch_route_optimizer_node(state)
+        req = RouteRequest.model_validate(dispatched["pending_tasks"][0]["payload"])
+        by_name = {s.name: s for s in req.stops}
+
+        # Unmatched explicit must visit stays visible in conflicts; recommendation remains optional
+        assert any(c["place_name"] == "Unmatched Monument" for c in dispatched["must_visit_conflicts"])
+        assert by_name["Palace Cutoffs"].is_must_visit is True
+        assert by_name["Late Entry Optional"].is_must_visit is False
+
+        # Verify ticketing_opens=10:00 IST (04:30 UTC) and last_entry=16:15 + 30m dwell = 16:45 IST (11:15 UTC)
+        assert by_name["Palace Cutoffs"].window_start is not None
+        assert (by_name["Palace Cutoffs"].window_start.hour, by_name["Palace Cutoffs"].window_start.minute) == (4, 30)
+        assert by_name["Palace Cutoffs"].window_end is not None
+        assert (by_name["Palace Cutoffs"].window_end.hour, by_name["Palace Cutoffs"].window_end.minute) == (11, 15)
+
+        # Solver test: travel 7h40m from 09:00 arrives 16:40 IST (before 17:30 close, after 16:15 last_entry)
+        # Late Entry Optional must be dropped with TIME_WINDOW_EXCEEDED while Palace Cutoffs (travel 2h -> 11:00) succeeds
+        n = len(req.stops)
+        idx_origin = 0
+        idx_mysuru = next(i for i, s in enumerate(req.stops) if s.name == "Mysuru")
+        idx_palace = next(i for i, s in enumerate(req.stops) if s.name == "Palace Cutoffs")
+        idx_opt = next(i for i, s in enumerate(req.stops) if s.name == "Late Entry Optional")
+
+        durations = [[600] * n for _ in range(n)]
+        distances = [[2000] * n for _ in range(n)]
+        for i in range(n):
+            durations[i][i] = 0
+            distances[i][i] = 0
+        # Origin -> Mysuru / Palace takes 2h; anything -> Late Entry Optional takes 7h40m from start (27600s)
+        durations[idx_origin][idx_palace] = 7200
+        durations[idx_origin][idx_mysuru] = 7200
+        for j in range(n):
+            if j != idx_opt:
+                durations[j][idx_opt] = 27600
+
+        solved = OrToolsRoutingSolver().solve(req, durations, distances)
+        assert solved.status == RouteStatus.PARTIAL
+        scheduled_names = [s.name for s in solved.stops]
+        assert "Palace Cutoffs" in scheduled_names
+        assert "Late Entry Optional" not in scheduled_names
+        assert any(d.name == "Late Entry Optional" and d.skip_reason == "TIME_WINDOW_EXCEEDED" for d in solved.dropped_stops)
+

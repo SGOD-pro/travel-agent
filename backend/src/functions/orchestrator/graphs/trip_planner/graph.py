@@ -2368,6 +2368,8 @@ async def consume_route_result_node(
 
     # Verify that planned schedule timestamps exist on persisted stops in production
     for s in route_model.stops:
+        if getattr(s, "is_skipped", False):
+            continue
         if s.planned_arrival_at is None or s.planned_departure_at is None:
             logger.error(
                 "Persisted route stop %s lacks planned schedule timestamps in production",
@@ -2411,6 +2413,8 @@ async def consume_route_result_node(
 
     sched_stops = []
     for s in route_model.stops:
+        if getattr(s, "is_skipped", False):
+            continue
         s_name_norm = s.name.strip().lower()
         is_origin = s.stop_order == 0 or s.stop_type == StopType.ORIGIN
         if is_origin:
