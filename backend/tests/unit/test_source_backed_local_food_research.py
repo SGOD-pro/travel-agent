@@ -597,3 +597,147 @@ class TestSourceBackedLocalFoodResearch:
         assert len(pairings) == 1
         assert pairings[0]["source_url"] == "https://gurusweetmart.in/menu"
         assert "Mysore Pak" in pairings[0]["evidence_excerpt"]
+
+    def test_different_subject_across_from_venue_rejected(self) -> None:
+        """A serving statement whose subject is another shop across from the venue must remain unpaired."""
+        obs = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/mysuru-street",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "The shop across from Gufha Restaurant serves Mysore Pak.",
+            "artifact_ref": {"title": "Mysuru Street", "address": "Mysuru"},
+        }
+        venues = [{"name": "Gufha Restaurant", "source_urls": ["https://example.com/mysuru-street"]}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == []
+        assert len(dishes[0]["paired_venues"]) == 0
+
+    def test_sold_out_status_notice_alone_rejected(self) -> None:
+        """A sold-out status notice under a menu heading without a menu item listing must not pair."""
+        obs = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/gufha-menu",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Gufha Restaurant Menu:\nMysore Pak is sold out today.",
+            "artifact_ref": {"title": "Gufha Restaurant", "address": "Mysuru"},
+        }
+        venues = [{"name": "Gufha Restaurant", "source_urls": ["https://example.com/gufha-menu"]}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == []
+        assert len(dishes[0]["paired_venues"]) == 0
+
+    def test_explicit_subject_serving_statement_accepted(self) -> None:
+        """An explicit serving statement where the matched venue is the subject pairs with URL and excerpt."""
+        obs = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/gufha",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Gufha Restaurant serves Mysore Pak.",
+            "artifact_ref": {"title": "Gufha Restaurant", "address": "Mysuru"},
+        }
+        venues = [{"name": "Gufha Restaurant", "source_urls": ["https://example.com/gufha"]}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == ["Mysore Pak"]
+        pairings = cast(list[dict[str, Any]], venues[0].get("dish_pairings", []))
+        assert len(pairings) == 1
+        assert pairings[0]["source_url"] == "https://example.com/gufha"
+        assert "Gufha Restaurant serves Mysore Pak" in pairings[0]["evidence_excerpt"]
+        assert pairings[0].get("availability") == "UNKNOWN"
+
+    def test_venue_menu_listing_accepted_with_unknown_availability(self) -> None:
+        """A genuine menu item under the venue menu pairs with unknown availability."""
+        obs = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/gufha-menu",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Gufha Restaurant Menu:\n- Mysore Pak",
+            "artifact_ref": {"title": "Gufha Restaurant", "address": "Mysuru"},
+        }
+        venues = [{"name": "Gufha Restaurant", "source_urls": ["https://example.com/gufha-menu"]}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == ["Mysore Pak"]
+        pairings = cast(list[dict[str, Any]], venues[0].get("dish_pairings", []))
+        assert len(pairings) == 1
+        assert pairings[0]["source_url"] == "https://example.com/gufha-menu"
+        assert "Mysore Pak" in pairings[0]["evidence_excerpt"]
+        assert pairings[0].get("availability") == "UNKNOWN"
+
+    def test_historical_serving_statement_and_unusable_url_rejected(self) -> None:
+        """Historical serving claims and observations without a usable http(s) URL must remain unpaired."""
+        obs_hist = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/gufha-history",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Gufha Restaurant used to serve Mysore Pak.",
+            "artifact_ref": {"title": "Gufha Restaurant", "address": "Mysuru"},
+        }
+        obs_no_url = {
+            "id": str(uuid.uuid4()),
+            "source_url": "",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Gufha Restaurant serves Mysore Pak.",
+            "artifact_ref": {"title": "Gufha Restaurant", "address": "Mysuru"},
+        }
+        venues = [{"name": "Gufha Restaurant", "source_urls": []}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs_hist, obs_no_url],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == []
+        assert len(dishes[0]["paired_venues"]) == 0
+
+    def test_menu_listing_with_sold_out_notice_preserves_listing_without_in_stock(self) -> None:
+        """When both a valid menu listing and a sold-out notice exist, preserve listing with sold-out availability."""
+        obs = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/gufha-menu",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Gufha Restaurant Menu:\n- Mysore Pak\nMysore Pak is sold out today.",
+            "artifact_ref": {"title": "Gufha Restaurant", "address": "Mysuru"},
+        }
+        venues = [{"name": "Gufha Restaurant", "source_urls": ["https://example.com/gufha-menu"]}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == ["Mysore Pak"]
+        pairings = cast(list[dict[str, Any]], venues[0].get("dish_pairings", []))
+        assert len(pairings) == 1
+        assert pairings[0].get("availability") == "SOLD_OUT"
+        assert pairings[0].get("in_stock") is not True

@@ -617,13 +617,35 @@ class PlaceExtractionService:
         )
 
         negation_markers = (
-            "does not serve",
-            "doesn't serve",
-            "do not serve",
-            "don't serve",
-            "not serve",
-            "no longer serves",
-            "never serves",
+            "does not",
+            "doesn't",
+            "do not",
+            "don't",
+            "not ",
+            "no longer",
+            "never ",
+        )
+        historical_markers = (
+            "used to ",
+            "formerly ",
+            "previously ",
+            "once served",
+            "no longer ",
+        )
+        non_subject_prefixes = (
+            "across from",
+            "across",
+            "opposite to",
+            "opposite",
+            "near",
+            "next to",
+            "beside",
+            "behind",
+            "in front of",
+            "outside",
+            "around",
+            "unlike",
+            "after",
         )
         serving_markers = (
             "serves ",
@@ -632,6 +654,7 @@ class PlaceExtractionService:
             "famous for ",
             "known for ",
             "renowned for ",
+            "is the birthplace of ",
             "birthplace of ",
             "specialty is ",
             "specializes in ",
@@ -639,9 +662,13 @@ class PlaceExtractionService:
             "offers ",
             "offer ",
             "menu includes ",
-            "on the menu",
-            "try the ",
-            "must try ",
+        )
+        status_notice_markers = (
+            "sold out",
+            "out of stock",
+            "unavailable",
+            "not available",
+            "discontinued",
         )
 
         for obs in observations:
@@ -659,8 +686,10 @@ class PlaceExtractionService:
                 or _obs_attr(obs, "source_url")
                 or ""
             ).strip()
+            if not obs_url.startswith(("http://", "https://")):
+                continue
 
-            lines = [ln.strip() for ln in raw_excerpt.splitlines() if ln.strip()]
+            raw_lines = raw_excerpt.splitlines()
             sentences = [s.strip() for s in re.split(r"[.\n;!?]+", raw_excerpt) if s.strip()]
 
             for venue in venues:
@@ -692,7 +721,7 @@ class PlaceExtractionService:
 
                     matched_excerpt: str | None = None
 
-                    # 1. Check explicit serving statements in clauses
+                    # 1. Check explicit serving statements with subject=venue and object=dish
                     for sent in sentences:
                         clauses = [
                             c.strip()
@@ -705,34 +734,61 @@ class PlaceExtractionService:
                         ]
                         for clause in clauses:
                             clause_lower = clause.lower()
-                            v_in_clause = (v_name and v_name in clause_lower) or (
-                                v_norm and v_norm in clause_lower
-                            )
-                            if not v_in_clause:
-                                continue
+                            for sm in serving_markers:
+                                if sm not in clause_lower:
+                                    continue
+                                subj_part, obj_part = clause_lower.split(sm, 1)
 
-                            d_in_clause = d_name in clause_lower or (
-                                d_fallback is not None and d_fallback in clause_lower
-                            )
-                            if not d_in_clause:
-                                continue
+                                # Object must resolve to the dish
+                                d_in_obj = d_name in obj_part or (
+                                    d_fallback is not None and d_fallback in obj_part
+                                )
+                                if not d_in_obj:
+                                    continue
 
-                            if any(neg in clause_lower for neg in negation_markers):
-                                continue
-                            if f"no {d_name}" in clause_lower or f"without {d_name}" in clause_lower:
-                                continue
-                            if not any(sm in clause_lower for sm in serving_markers):
-                                continue
+                                # Reject negated or historical claims
+                                if any(neg in subj_part for neg in negation_markers):
+                                    continue
+                                if any(hist in subj_part for hist in historical_markers):
+                                    continue
+                                if f"no {d_name}" in obj_part or f"without {d_name}" in obj_part:
+                                    continue
+                                if d_fallback is not None and (
+                                    f"no {d_fallback}" in obj_part
+                                    or f"without {d_fallback}" in obj_part
+                                ):
+                                    continue
 
-                            matched_excerpt = sent[:200]
-                            break
+                                # Subject must resolve to the matched venue (not a prepositional modifier)
+                                v_match_term = (
+                                    v_name
+                                    if (v_name and v_name in subj_part)
+                                    else (v_norm if (v_norm and v_norm in subj_part) else None)
+                                )
+                                if not v_match_term:
+                                    continue
+
+                                idx = subj_part.rfind(v_match_term)
+                                before_venue = subj_part[:idx].strip()
+                                if any(before_venue.endswith(p) for p in non_subject_prefixes):
+                                    continue
+
+                                matched_excerpt = sent[:200]
+                                break
+                            if matched_excerpt is not None:
+                                break
                         if matched_excerpt is not None:
                             break
 
-                    # 2. Check venue-scoped menu items
-                    if matched_excerpt is None and len(lines) > 1:
+                    # 2. Check genuine menu items scoped under the matched venue's menu heading
+                    sold_out_detected = False
+                    if len(raw_lines) > 1:
                         active_heading: str | None = None
-                        for ln in lines:
+                        for raw_ln in raw_lines:
+                            ln = raw_ln.strip()
+                            if not ln:
+                                active_heading = None
+                                continue
                             ln_lower = ln.lower()
                             v_in_ln = (v_name and v_name in ln_lower) or (
                                 v_norm and v_norm in ln_lower
@@ -740,15 +796,30 @@ class PlaceExtractionService:
                             if "menu" in ln_lower:
                                 active_heading = ln if v_in_ln else None
                                 continue
+                            if ln.endswith(":"):
+                                # Another section header (e.g. "Reviews:", "Hours:") ends menu scope
+                                active_heading = None
+                                continue
+
                             if active_heading is not None:
                                 d_in_ln = d_name in ln_lower or (
                                     d_fallback is not None and d_fallback in ln_lower
                                 )
-                                if d_in_ln and not any(neg in ln_lower for neg in negation_markers):
+                                if not d_in_ln:
+                                    continue
+                                if any(st in ln_lower for st in status_notice_markers):
+                                    sold_out_detected = True
+                                    continue
+                                if any(neg in ln_lower for neg in negation_markers):
+                                    continue
+                                is_menu_item = ln.startswith(("- ", "* ", "• ")) or bool(
+                                    re.match(r"^\d+[.)]\s+", ln)
+                                )
+                                if is_menu_item and matched_excerpt is None:
                                     matched_excerpt = f"{active_heading} {ln}"[:200]
-                                    break
 
                     if matched_excerpt is not None:
+                        availability = "SOLD_OUT" if sold_out_detected else "UNKNOWN"
                         if dish["name"] not in venue["serves_dishes"]:
                             venue["serves_dishes"].append(dish["name"])
                             venue["dish_pairings"].append(
@@ -756,6 +827,7 @@ class PlaceExtractionService:
                                     "dish": dish["name"],
                                     "source_url": obs_url,
                                     "evidence_excerpt": matched_excerpt,
+                                    "availability": availability,
                                 }
                             )
                         if venue["name"] not in dish["paired_venues"]:
@@ -765,5 +837,6 @@ class PlaceExtractionService:
                                     "venue": venue["name"],
                                     "source_url": obs_url,
                                     "evidence_excerpt": matched_excerpt,
+                                    "availability": availability,
                                 }
                             )
