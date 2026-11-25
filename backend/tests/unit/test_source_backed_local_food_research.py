@@ -774,3 +774,202 @@ class TestSourceBackedLocalFoodResearch:
             assert venues[0]["dish_pairings"] == [], f"Failed for: {excerpt}"
             assert len(dishes[0]["paired_venues"]) == 0, f"Failed for: {excerpt}"
             assert len(dishes[0]["venue_pairings"]) == 0, f"Failed for: {excerpt}"
+
+    def test_menu_heading_owner_bound_to_menu_owner_not_parenthetical_reference(self) -> None:
+        """Menu heading 'Other Cafe Menu (near Gufha Restaurant):' must bind to Other Cafe, never Gufha Restaurant."""
+        obs = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/other-cafe-menu",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Other Cafe Menu (near Gufha Restaurant):\n- Mysore Pak",
+            "artifact_ref": {"title": "Other Cafe", "address": "Mysuru"},
+        }
+        # 1. Both Other Cafe and Gufha Restaurant are candidates -> pairs only with Other Cafe
+        venues_both = [
+            {"name": "Gufha Restaurant", "source_urls": ["https://example.com/other-cafe-menu"]},
+            {"name": "Other Cafe", "source_urls": ["https://example.com/other-cafe-menu"]},
+        ]
+        dishes_both = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues_both,
+            dishes=dishes_both,
+            observations=[obs],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        gufha = next(v for v in venues_both if v["name"] == "Gufha Restaurant")
+        other = next(v for v in venues_both if v["name"] == "Other Cafe")
+        assert gufha["serves_dishes"] == []
+        assert other["serves_dishes"] == ["Mysore Pak"]
+        assert list(dishes_both[0]["paired_venues"]) == ["Other Cafe"]
+
+        # 2. Only Gufha Restaurant is a candidate -> remains unpaired
+        venues_only_gufha = [
+            {"name": "Gufha Restaurant", "source_urls": ["https://example.com/other-cafe-menu"]},
+        ]
+        dishes_only_gufha = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues_only_gufha,
+            dishes=dishes_only_gufha,
+            observations=[obs],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues_only_gufha[0]["serves_dishes"] == []
+        assert len(dishes_only_gufha[0]["paired_venues"]) == 0
+
+    def test_menu_heading_ownership_r3_to_r6_and_c1_to_c4(self) -> None:
+        """Verifies R3-R6 and C1-C4 menu-heading ownership rules."""
+        # R3: Multi-owner heading ("Menu of Other Cafe and Gufha Restaurant:") -> neither pairs
+        obs_r3 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/r3",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Menu of Other Cafe and Gufha Restaurant:\n- Mysore Pak",
+            "artifact_ref": {"address": "Mysuru"},
+        }
+        v_r3: list[dict[str, Any]] = [{"name": "Other Cafe"}, {"name": "Gufha Restaurant"}]
+        d_r3 = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(v_r3, d_r3, [obs_r3], expected_cities={"Mysuru"})
+        assert v_r3[0]["serves_dishes"] == [] and v_r3[1]["serves_dishes"] == []
+
+        # R4: Qualifier-only heading ("Menu recommended by Gufha Restaurant:") -> Gufha stays unpaired
+        obs_r4 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/r4",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Menu recommended by Gufha Restaurant:\n- Mysore Pak",
+            "artifact_ref": {"address": "Mysuru"},
+        }
+        v_r4: list[dict[str, Any]] = [{"name": "Gufha Restaurant"}]
+        d_r4 = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(v_r4, d_r4, [obs_r4], expected_cities={"Mysuru"})
+        assert v_r4[0]["serves_dishes"] == []
+
+        # R5: Gufha's menu lists Masala Dosa, then unknown-owner menu recommends Gufha and lists Mysore Pak
+        obs_r5 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/r5",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": (
+                "Gufha Restaurant's Menu:\n- Masala Dosa\n"
+                "Menu recommended by Gufha Restaurant:\n- Mysore Pak"
+            ),
+            "artifact_ref": {"address": "Mysuru"},
+        }
+        v_r5: list[dict[str, Any]] = [{"name": "Gufha Restaurant"}]
+        d_r5 = [{"name": "Masala Dosa", "dish_type": "breakfast"}, {"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(v_r5, d_r5, [obs_r5], expected_cities={"Mysuru"})
+        assert v_r5[0]["serves_dishes"] == ["Masala Dosa"]
+
+        # R6: Gufha's menu lists Masala Dosa, then Other Cafe's menu lists Mysore Pak
+        obs_r6 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/r6",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": (
+                "Gufha Restaurant - Menu:\n- Masala Dosa\n"
+                "Menu of Other Cafe:\n- Mysore Pak"
+            ),
+            "artifact_ref": {"address": "Mysuru"},
+        }
+        v_r6: list[dict[str, Any]] = [{"name": "Gufha Restaurant"}, {"name": "Other Cafe"}]
+        d_r6 = [{"name": "Masala Dosa", "dish_type": "breakfast"}, {"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(v_r6, d_r6, [obs_r6], expected_cities={"Mysuru"})
+        assert v_r6[0]["serves_dishes"] == ["Masala Dosa"]
+        assert v_r6[1]["serves_dishes"] == ["Mysore Pak"]
+
+        # C1: "Gufha Restaurant Menu:" and "Menu at Gufha Restaurant:" each list Mysore Pak
+        for idx, heading in enumerate(["Gufha Restaurant Menu:", "Menu at Gufha Restaurant:"]):
+            obs_c1 = {
+                "id": str(uuid.uuid4()),
+                "source_url": f"https://example.com/c1-{idx}",
+                "extraction_method": "TRAFILATURA_TEXT",
+                "excerpt_text": f"{heading}\n- Mysore Pak",
+                "artifact_ref": {"address": "Mysuru"},
+            }
+            v_c1: list[dict[str, Any]] = [{"name": "Gufha Restaurant"}]
+            d_c1 = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+            PlaceExtractionService.pair_dishes_and_venues(v_c1, d_c1, [obs_c1], expected_cities={"Mysuru"})
+            assert v_c1[0]["serves_dishes"] == ["Mysore Pak"]
+            p = cast(list[dict[str, Any]], v_c1[0]["dish_pairings"])[0]
+            assert p["source_url"] == f"https://example.com/c1-{idx}"
+            assert p["availability"] == "UNKNOWN"
+
+        # C2: Conflicting city -> neither pairs
+        obs_c2 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/c2",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Other Cafe Menu (near Gufha Restaurant):\n- Mysore Pak",
+            "artifact_ref": {"address": "Kolkata, West Bengal"},
+        }
+        v_c2: list[dict[str, Any]] = [{"name": "Other Cafe"}, {"name": "Gufha Restaurant"}]
+        d_c2 = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(v_c2, d_c2, [obs_c2], expected_cities={"Mysuru", "Mysore"})
+        assert v_c2[0]["serves_dishes"] == [] and v_c2[1]["serves_dishes"] == []
+
+        # C3: Other Cafe's menu lists "- Mysore Pak - sold out" -> SOLD_OUT, no in-stock claim
+        obs_c3 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/c3",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Other Cafe Menu:\n- Mysore Pak - sold out",
+            "artifact_ref": {"address": "Mysuru"},
+        }
+        v_c3: list[dict[str, Any]] = [{"name": "Other Cafe"}]
+        d_c3 = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(v_c3, d_c3, [obs_c3], expected_cities={"Mysuru"})
+        assert v_c3[0]["serves_dishes"] == ["Mysore Pak"]
+        p_c3 = cast(list[dict[str, Any]], v_c3[0]["dish_pairings"])[0]
+        assert p_c3["availability"] == "SOLD_OUT"
+        assert p_c3.get("in_stock") is not True
+
+        # C4: Two candidate names normalize to the same owner -> neither pairs
+        obs_c4 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/c4",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Gufha Restaurant Menu:\n- Mysore Pak",
+            "artifact_ref": {"address": "Mysuru"},
+        }
+        v_c4: list[dict[str, Any]] = [{"name": "Gufha Restaurant"}, {"name": "The Gufha Restaurant"}]
+        d_c4 = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+        PlaceExtractionService.pair_dishes_and_venues(v_c4, d_c4, [obs_c4], expected_cities={"Mysuru"})
+        assert v_c4[0]["serves_dishes"] == [] and v_c4[1]["serves_dishes"] == []
+
+    def test_menu_heading_ownership_workflow_r1_and_c1(self) -> None:
+        """Drives R1 and C1 through _build_food_research and synthesize_proposal_node."""
+        obs_r1 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/r1-wf",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Other Cafe Menu (near Gufha Restaurant):\n- Mysore Pak",
+            "artifact_ref": {"address": "Mysuru"},
+        }
+        state_r1: dict[str, Any] = {
+            "eligible_stops": [],
+            "editorial_recommendations": [
+                {"primary_name": "Gufha Restaurant", "category": "restaurant", "existence_status": "VERIFIED"}
+            ],
+            "observations": [obs_r1],
+            "brief": {"destinations": [{"name": "Mysuru"}], "traveler_preferences": ["authentic local food"]},
+        }
+        prop_r1 = synthesize_proposal_node(cast(TripPlanningState, state_r1))["proposal"]
+        assert prop_r1["food_research"]["dining_recommendations"][0]["serves_dishes"] == []
+
+        obs_c1 = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/c1-wf",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Menu at Gufha Restaurant:\n- Mysore Pak",
+            "artifact_ref": {"address": "Mysuru"},
+        }
+        state_c1: dict[str, Any] = {
+            "eligible_stops": [],
+            "editorial_recommendations": [
+                {"primary_name": "Gufha Restaurant", "category": "restaurant", "existence_status": "VERIFIED"}
+            ],
+            "observations": [obs_c1],
+            "brief": {"destinations": [{"name": "Mysuru"}], "traveler_preferences": ["authentic local food"]},
+        }
+        prop_c1 = synthesize_proposal_node(cast(TripPlanningState, state_c1))["proposal"]
+        assert prop_c1["food_research"]["dining_recommendations"][0]["serves_dishes"] == ["Mysore Pak"]

@@ -609,6 +609,7 @@ class PlaceExtractionService:
             norm_expected = {c.strip().lower() for c in expected_cities if c and c.strip()}
 
         from functions.orchestrator.evidence.claim_ingestion import (
+            KNOWN_CONFLICTING_CITIES,
             SNIPPET_SOURCE_METHODS,
             _has_conflicting_city,
             _obs_attr,
@@ -681,8 +682,20 @@ class PlaceExtractionService:
             method = str(_obs_attr(obs, "extraction_method") or "").strip().upper()
             if method in SNIPPET_SOURCE_METHODS:
                 continue
-            if norm_expected and _has_conflicting_city(obs, norm_expected):
-                continue
+            if norm_expected:
+                if _has_conflicting_city(obs, norm_expected):
+                    continue
+                art_ref = _obs_attr(obs, "artifact_ref") or {}
+                art_dict = art_ref if isinstance(art_ref, dict) else {}
+                obs_addr = str(art_dict.get("address") or art_dict.get("location") or "").lower()
+                if obs_addr and not any(
+                    re.search(rf"\b{re.escape(exp)}\b", obs_addr) for exp in norm_expected
+                ):
+                    if any(
+                        re.search(rf"\b{re.escape(c)}\b", obs_addr)
+                        for c in (KNOWN_CONFLICTING_CITIES - norm_expected)
+                    ):
+                        continue
 
             raw_excerpt = str(_obs_attr(obs, "excerpt_text") or "").strip()
             if not raw_excerpt:
@@ -697,6 +710,12 @@ class PlaceExtractionService:
 
             raw_lines = raw_excerpt.splitlines()
             sentences = [s.strip() for s in re.split(r"[.\n;!?]+", raw_excerpt) if s.strip()]
+            norm_venue_counts: dict[str, int] = {}
+            for v in venues:
+                if isinstance(v, dict) and v.get("name"):
+                    vn = _normalize_place_name(str(v["name"])).lower()
+                    if vn:
+                        norm_venue_counts[vn] = norm_venue_counts.get(vn, 0) + 1
 
             for venue in venues:
                 if not isinstance(venue, dict):
@@ -787,11 +806,42 @@ class PlaceExtractionService:
                                 active_heading = None
                                 continue
                             ln_lower = ln.lower()
-                            v_in_ln = (v_name and v_name in ln_lower) or (
-                                v_norm and v_norm in ln_lower
-                            )
                             if "menu" in ln_lower:
-                                active_heading = ln if v_in_ln else None
+                                heading_clean = re.sub(r"\([^)]*\)", "", ln_lower).strip().rstrip(":").strip()
+                                heading_clean = re.sub(
+                                    r"\s+(?:near|beside|opposite|across\s+from|recommended\s+by|similar\s+to|like)\s+.+$",
+                                    "",
+                                    heading_clean,
+                                ).strip()
+                                owner_match = re.match(
+                                    r"^(?P<owner>.+?)(?:'s|’s)?\s*(?:[-–—:]\s*)?menu$|"
+                                    r"^menu\s+(?:of|at)\s+(?P<owner2>.+?)$|"
+                                    r"^menu\s*[-–—:]\s*(?P<owner3>.+?)$",
+                                    heading_clean,
+                                )
+                                menu_owner = (
+                                    (
+                                        owner_match.group("owner")
+                                        or owner_match.group("owner2")
+                                        or owner_match.group("owner3")
+                                        or ""
+                                    ).strip()
+                                    if owner_match
+                                    else ""
+                                )
+                                menu_owner_norm = _normalize_place_name(menu_owner).lower() if menu_owner else ""
+                                is_ambiguous = bool(
+                                    menu_owner_norm and norm_venue_counts.get(menu_owner_norm, 0) > 1
+                                )
+                                owner_matches_venue = bool(
+                                    menu_owner
+                                    and not is_ambiguous
+                                    and any(
+                                        menu_owner == vt or (menu_owner_norm and menu_owner_norm == vt)
+                                        for vt in v_terms
+                                    )
+                                )
+                                active_heading = ln if owner_matches_venue else None
                                 continue
                             if ln.endswith(":"):
                                 active_heading = None
