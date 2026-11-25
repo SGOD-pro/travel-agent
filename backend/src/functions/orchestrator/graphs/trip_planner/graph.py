@@ -140,6 +140,8 @@ class TripPlanningState(TypedDict, total=False):
     budget_lines: list[dict[str, Any]]
     budget_summary: dict[str, Any]
     proposal: dict[str, Any]
+    hidden_place_research: dict[str, Any]
+    skipped_research_areas: list[dict[str, str]]
     current_step: str
     status: str
     errors: list[str]
@@ -3444,15 +3446,20 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
     )
 
     brief_raw = state.get("brief")
-    brief_dict: dict[str, Any] = brief_raw if isinstance(brief_raw, dict) else {}
-    dest_objs = brief_dict.get("destinations") or []
-    destination_names: list[str] = [
-        str(d.get("name") if isinstance(d, dict) else getattr(d, "name", "")).strip()
-        for d in dest_objs
-        if (d.get("name") if isinstance(d, dict) else getattr(d, "name", ""))
-    ]
-    if not destination_names and brief_dict.get("destination_name"):
-        destination_names = [str(brief_dict["destination_name"]).strip()]
+    if isinstance(brief_raw, TripBrief):
+        destination_names = [
+            d.name.strip() for d in brief_raw.destinations if d.name and d.name.strip()
+        ]
+    else:
+        brief_dict: dict[str, Any] = brief_raw if isinstance(brief_raw, dict) else {}
+        dest_objs = brief_dict.get("destinations") or []
+        destination_names = [
+            str(d.get("name") if isinstance(d, dict) else getattr(d, "name", "")).strip()
+            for d in dest_objs
+            if (d.get("name") if isinstance(d, dict) else getattr(d, "name", ""))
+        ]
+        if not destination_names and brief_dict.get("destination_name"):
+            destination_names = [str(brief_dict["destination_name"]).strip()]
 
     expected_cities: set[str] = set()
     for dn in destination_names:
@@ -3622,6 +3629,99 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
         "coverage_reason": cov_reason,
         "verified_dining_count": len([d for d in dining_items if d["is_verified"]]),
         "unverified_dining_count": len([d for d in dining_items if not d["is_verified"]]),
+    }
+
+
+def _build_hidden_place_research(state: TripPlanningState) -> dict[str, Any]:
+    """Assembles structured hidden-place research separating verified optional stops from unverified/restricted."""
+    from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
+
+    brief_raw = state.get("brief")
+    if isinstance(brief_raw, TripBrief):
+        destination_names = [
+            d.name.strip() for d in brief_raw.destinations if d.name and d.name.strip()
+        ]
+        must_visits = [m.strip() for m in brief_raw.must_visit_places if m and m.strip()]
+    else:
+        brief_dict: dict[str, Any] = brief_raw if isinstance(brief_raw, dict) else {}
+        dest_objs = brief_dict.get("destinations") or []
+        destination_names = [
+            str(d.get("name") if isinstance(d, dict) else getattr(d, "name", "")).strip()
+            for d in dest_objs
+            if (d.get("name") if isinstance(d, dict) else getattr(d, "name", ""))
+        ]
+        if not destination_names and brief_dict.get("destination_name"):
+            destination_names = [str(brief_dict["destination_name"]).strip()]
+        must_visits = [
+            str(m).strip()
+            for m in (brief_dict.get("must_visit_places") or [])
+            if m and str(m).strip()
+        ]
+
+    expected_cities: set[str] = set()
+    for dn in destination_names:
+        dnl = dn.lower()
+        expected_cities.add(dnl)
+        if dnl in CITY_ALIASES:
+            expected_cities.update(CITY_ALIASES[dnl])
+
+    raw_obs_list: list[Any] = list(state.get("observations") or [])
+    task_outputs = state.get("task_outputs", {})
+    if isinstance(task_outputs, dict):
+        if "observations" in task_outputs and isinstance(task_outputs["observations"], list):
+            raw_obs_list.extend(task_outputs["observations"])
+        for sub in task_outputs.values():
+            if (
+                isinstance(sub, dict)
+                and "observations" in sub
+                and isinstance(sub["observations"], list)
+            ):
+                raw_obs_list.extend(sub["observations"])
+
+    excluded_names = set(must_visits) | set(destination_names)
+    eval_res = PlaceExtractionService.evaluate_hidden_place_candidates(
+        raw_obs_list,
+        expected_cities=expected_cities if expected_cities else None,
+        excluded_names=excluded_names,
+    )
+    verified = eval_res["verified_optional_stops"]
+    unverified = eval_res["unverified_candidates"]
+    restricted = eval_res["restricted_or_closed"]
+
+    primary_dest = destination_names[0] if destination_names else None
+    covered = [primary_dest] if primary_dest else []
+    uncovered = destination_names[1:] if len(destination_names) > 1 else []
+    cov_reason = state.get("coverage_reason")
+    if not cov_reason and uncovered and primary_dest:
+        cov_reason = (
+            f"Hidden-place research is scoped to primary destination ({primary_dest}). "
+            f"Uncovered destinations: {', '.join(uncovered)}."
+        )
+
+    if not verified and not unverified and not restricted:
+        status = "UNAVAILABLE"
+        reason: str | None = "No usable source-backed hidden-place evidence retrieved"
+    elif not verified:
+        status = "PARTIAL"
+        reason = "Hidden-place candidates found but none met all verification requirements for optional itinerary stops"
+    elif uncovered:
+        status = "PARTIAL"
+        reason = cov_reason
+    else:
+        status = "COMPLETED"
+        reason = None
+
+    return {
+        "status": status,
+        "reason": reason,
+        "primary_destination": primary_dest,
+        "covered_destinations": covered,
+        "uncovered_destinations": uncovered,
+        "coverage_reason": cov_reason,
+        "skipped_research_areas": list(state.get("skipped_research_areas") or []),
+        "verified_optional_stops": verified,
+        "unverified_candidates": unverified,
+        "restricted_or_closed": restricted,
     }
 
 
@@ -4677,6 +4777,7 @@ def _build_advisory_research(state: TripPlanningState) -> dict[str, Any]:
 def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
     """Assembles the final validated travel proposal."""
     food_research = _build_food_research(state)
+    hidden_place_research = _build_hidden_place_research(state)
     accommodation_research = _build_accommodation_research(state)
     advisory_research = _build_advisory_research(state)
 
@@ -4818,6 +4919,7 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
             or []
         ),
         "coverage_reason": state.get("coverage_reason") or dest_research_meta.get("coverage_reason"),
+        "skipped_research_areas": list(state.get("skipped_research_areas") or []),
     }
 
     proposal_status = "partial" if (is_routing_failed or bool(must_visit_conflicts)) else "ready_for_approval"
@@ -4843,6 +4945,7 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "validated_candidates": state.get("validated_candidates", []),
         "discovered_places": state.get("discovered_places", []),
         "food_research": food_research,
+        "hidden_place_research": hidden_place_research,
         "accommodation_research": accommodation_research,
         "advisory_research": advisory_research,
         "advisories": advisory_research.get("advisories", []),
@@ -4860,6 +4963,7 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "current_step": "proposal_synthesized",
         "proposal": proposal,
         "food_research": food_research,
+        "hidden_place_research": hidden_place_research,
         "accommodation_research": accommodation_research,
         "advisory_research": advisory_research,
         "advisory_status": advisory_research.get(
@@ -6077,10 +6181,19 @@ async def route_evidence_decision_node(
             else getattr(brief, "must_visit_places", None)
         )
         planned_queries: Any
-        is_food_only = state.get("research_focus") == "food" or (
-            not has_must_visits and QueryPlanningService.has_explicit_food_intent(brief)
+        is_hidden_only = state.get("research_focus") == "hidden_places" or (
+            not has_must_visits and QueryPlanningService.has_explicit_hidden_place_intent(brief)
         )
-        if is_food_only:
+        is_food_only = state.get("research_focus") == "food" or (
+            not has_must_visits
+            and not is_hidden_only
+            and QueryPlanningService.has_explicit_food_intent(brief)
+        )
+        if is_hidden_only:
+            planned_queries = QueryPlanningService.plan_hidden_place_queries(
+                brief, max_queries=DEFAULT_MAX_QUERIES
+            )
+        elif is_food_only:
             planned_queries = QueryPlanningService.plan_food_queries(
                 brief, max_queries=DEFAULT_MAX_QUERIES
             )
@@ -6154,9 +6267,14 @@ async def route_evidence_decision_node(
                 "origin": brief.get("origin_name", "")
                 if isinstance(brief, dict)
                 else getattr(brief, "origin_name", ""),
-                "categories": ["dining", "food"]
-                if is_food_only
-                else ["attractions", "lodging", "transit"],
+                "categories": ["hidden_places", "attractions"]
+                if is_hidden_only
+                else (
+                    ["dining", "food"]
+                    if is_food_only
+                    else ["attractions", "lodging", "transit"]
+                ),
+                "skipped_research_areas": list(getattr(planned_queries, "skipped_research_areas", []) or []),
             },
             "idempotency_key": f"{exec_uuid}:collect:{dest_hash[:16]}",
             "deadline_seconds": 60,
@@ -6169,6 +6287,7 @@ async def route_evidence_decision_node(
             "laya_decisions": updated_decisions,
             "covered_destinations": covered_dests,
             "uncovered_destinations": uncovered_dests,
+            "skipped_research_areas": list(getattr(planned_queries, "skipped_research_areas", []) or []),
             "coverage_reason": cov_reason,
         }
 

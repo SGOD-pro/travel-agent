@@ -282,6 +282,8 @@ class EvidenceCollectorService:
         cls,
         observations: list[RawObservation],
         max_urls: int = 5,
+        *,
+        skipped_purposes_out: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """Selects eligible venue or attraction web URLs directly from search observations.
 
@@ -308,7 +310,6 @@ class EvidenceCollectorService:
             ".svg",
         )
         selected: list[dict[str, Any]] = []
-        seen_urls: set[str] = set()
 
         def _score_url(url_val: str, title_val: str) -> int:
             parsed_val = urlparse(url_val)
@@ -332,7 +333,7 @@ class EvidenceCollectorService:
                 score -= 6
             return score
 
-        ranked_candidates: list[tuple[tuple[int, int], dict[str, Any]]] = []
+        ranked_by_clean_url: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
 
         for idx, obs in enumerate(observations):
             if isinstance(obs, dict):
@@ -359,10 +360,19 @@ class EvidenceCollectorService:
             except Exception:
                 continue
 
+            purpose_val = str(
+                art_ref.get("query_purpose") or art_ref.get("purpose") or "attractions"
+            ).strip().lower()
+            dest_val = str(art_ref.get("destination") or art_ref.get("query_dest") or "").strip()
+
             clean_url = url.split("?")[0] if "?" in url else url
-            if clean_url in seen_urls:
+            if clean_url in ranked_by_clean_url:
+                existing_entry = ranked_by_clean_url[clean_url][1]
+                if purpose_val and purpose_val not in existing_entry["purposes"]:
+                    existing_entry["purposes"].append(purpose_val)
+                if dest_val and dest_val not in existing_entry["destinations"]:
+                    existing_entry["destinations"].append(dest_val)
                 continue
-            seen_urls.add(clean_url)
 
             title = str(
                 art_ref.get("title") or art_ref.get("place_name") or art_ref.get("name") or ""
@@ -408,12 +418,59 @@ class EvidenceCollectorService:
                 "url": url,
                 "category": category,
                 "title": title,
+                "purpose": purpose_val,
+                "purposes": [purpose_val] if purpose_val else [],
+                "destination": dest_val,
+                "destinations": [dest_val] if dest_val else [],
             }
             rank_score = _score_url(url, title)
-            ranked_candidates.append(((rank_score, -idx), entry))
+            ranked_by_clean_url[clean_url] = ((rank_score, -idx), entry)
 
-        ranked_candidates.sort(key=lambda pair: pair[0], reverse=True)
-        selected = [entry for _, entry in ranked_candidates[:max_urls]]
+        all_ranked = sorted(ranked_by_clean_url.values(), key=lambda pair: pair[0], reverse=True)
+        required_purposes = {"hours", "advisory"}
+        req_entries = [
+            e for _, e in all_ranked if any(p in required_purposes for p in e["purposes"])
+        ]
+        opt_entries = [
+            e for _, e in all_ranked if not any(p in required_purposes for p in e["purposes"])
+        ]
+
+        selected = []
+        selected_urls: set[str] = set()
+
+        # 1. Required purposes (hours, advisory) first
+        for e in req_entries:
+            if len(selected) >= max_urls:
+                break
+            selected.append(e)
+            selected_urls.add(e["url"])
+
+        # 2. Deterministic 1-slot allocation per optional purpose (hidden_places, dining, attractions)
+        if len(selected) < max_urls and opt_entries:
+            for opt_p in ("hidden_places", "dining", "attractions"):
+                if len(selected) >= max_urls:
+                    break
+                for e in opt_entries:
+                    if e["url"] not in selected_urls and opt_p in e["purposes"]:
+                        selected.append(e)
+                        selected_urls.add(e["url"])
+                        break
+
+        # 3. Fill any remaining unused capacity by score
+        for _, e in all_ranked:
+            if len(selected) >= max_urls:
+                break
+            if e["url"] not in selected_urls:
+                selected.append(e)
+                selected_urls.add(e["url"])
+
+        if skipped_purposes_out is not None:
+            all_eligible_purposes = {p for _, e in all_ranked for p in e["purposes"]}
+            selected_purposes = {p for e in selected for p in e["purposes"]}
+            for p in sorted(all_eligible_purposes - selected_purposes):
+                skipped_purposes_out[p] = (
+                    f"Skipped {p} fetch: {max_urls}-URL fetch cap exhausted by higher-priority evidence."
+                )
 
         return selected
 
@@ -783,10 +840,16 @@ class EvidenceCollectorService:
                         page_url = str(url_entry.get("url") or "")
                         page_cat = str(url_entry.get("category") or "general")
                         page_title = str(url_entry.get("title") or "")
+                        page_purpose = str(url_entry.get("purpose") or "")
+                        page_purposes = list(url_entry.get("purposes") or [])
+                        page_dest = str(url_entry.get("destination") or "")
                     else:
                         page_url = str(url_entry)
                         page_cat = "general"
                         page_title = ""
+                        page_purpose = ""
+                        page_purposes = []
+                        page_dest = ""
 
                     if not page_url:
                         continue
@@ -836,13 +899,18 @@ class EvidenceCollectorService:
                             )
                             updated_obs_list: list[RawObservation] = []
                             for ext_obs in obs_list:
+                                ext_art = dict(ext_obs.artifact_ref or {})
                                 if page_title:
-                                    ext_art = dict(ext_obs.artifact_ref or {})
-                                    # Keep search result metadata separate from page extracted identity
                                     ext_art.setdefault("search_selected_title", page_title)
-                                    updated_obs_list.append(replace(ext_obs, artifact_ref=ext_art))
-                                else:
-                                    updated_obs_list.append(ext_obs)
+                                if page_purpose:
+                                    ext_art.setdefault("purpose", page_purpose)
+                                    ext_art.setdefault("query_purpose", page_purpose)
+                                if page_purposes:
+                                    ext_art.setdefault("purposes", page_purposes)
+                                    ext_art.setdefault("query_purposes", page_purposes)
+                                if page_dest:
+                                    ext_art.setdefault("destination", page_dest)
+                                updated_obs_list.append(replace(ext_obs, artifact_ref=ext_art))
                             collected_observations.extend(updated_obs_list)
                             emitted_browser_requests.extend(b_reqs)
                             if obs_list or b_reqs:
@@ -855,15 +923,18 @@ class EvidenceCollectorService:
                         elif hasattr(active_extraction_adapter, "extract"):
                             extracted_obs = await active_extraction_adapter.extract(page_url)
                             if extracted_obs:
+                                ext_art = dict(extracted_obs.artifact_ref or {})
                                 if page_title:
-                                    ext_art = dict(extracted_obs.artifact_ref or {})
-                                    # Keep search result metadata separate from page extracted identity
                                     ext_art.setdefault("search_selected_title", page_title)
-                                    collected_observations.append(
-                                        replace(extracted_obs, artifact_ref=ext_art)
-                                    )
-                                else:
-                                    collected_observations.append(extracted_obs)
+                                if page_purpose:
+                                    ext_art.setdefault("query_purpose", page_purpose)
+                                if page_purposes:
+                                    ext_art.setdefault("query_purposes", page_purposes)
+                                if page_dest:
+                                    ext_art.setdefault("destination", page_dest)
+                                collected_observations.append(
+                                    replace(extracted_obs, artifact_ref=ext_art)
+                                )
                                 if should_reserve_budget:
                                     calls_made += 1
                                     cost_spent += cost_per_call

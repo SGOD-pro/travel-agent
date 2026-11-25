@@ -239,6 +239,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Human in the loop (HITL) flow and direct Python pipeline runner: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 12 integration tests on live PostgreSQL, pause and resume demonstration on Mysuru corridor, clean ruff linting, and strict mypy typing)
    - [x] Mysuru opening hours acceptance run: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 122 tests across unit and PostgreSQL integration suites, ruff, strict mypy, and live Bengaluru to Mysuru pipeline trace)
    - [x] Source-backed local food research: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, ruff linting, and live Bengaluru to Mysuru pipeline trace)
+   - [x] Source-backed hidden-place research: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 11 hidden-place unit tests, 101 regression and PostgreSQL hours integration tests, ruff, strict mypy, and live Mysuru pipeline trace)
 - [x] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
@@ -266,6 +267,7 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Bounded Valhalla fallback and truthful partial itineraries: [2026-11-24-valhalla-bounded-fallback.md](../reviews/2026-11-24-valhalla-bounded-fallback.md) (Approve)
    - [x] Mysuru opening hours acceptance run: [2026-11-25-0007-mysuru-hours-acceptance.md](../reviews/2026-11-25-0007-mysuru-hours-acceptance.md) (Approve)
    - [x] Source-backed local food research: [2026-11-25-0007-food-research.md](../reviews/2026-11-25-0007-food-research.md) (Approve)
+   - [x] Source-backed hidden-place research: [2026-11-25-0007-hidden-places.md](../reviews/2026-11-25-0007-hidden-places.md) (Approve with nits)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 

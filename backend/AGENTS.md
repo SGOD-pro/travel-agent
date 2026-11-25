@@ -50,9 +50,9 @@ FastAPI modular monolith and asynchronous background workers for SWENA. This bac
 | `src/functions/orchestrator/places/corridor.py` | Geodesic corridor boundary calculation and coordinate bounds validation |
 | `src/functions/orchestrator/evidence/eligibility.py` | Deterministic evidence eligibility gate, assumed hours labeling, conflicted or closed day hours status, and contradiction exclusion |
 | `src/functions/orchestrator/evidence/hours_extraction.py` | Deterministic and validated language model opening hours, ticketing cutoffs, last entry, and closed day resolution from attributable source pages |
-| `src/functions/orchestrator/evidence/query_planner.py` | Deterministic query planning service incorporating dates, food research, traveler preferences, and budget tier within bounded limits |
+| `src/functions/orchestrator/evidence/query_planner.py` | Deterministic query planning service incorporating dates, food research, hidden-place research, traveler preferences, and budget tier within bounded limits |
 | `src/functions/orchestrator/evidence/claim_ingestion.py` | Safe claim derivation from observations with spatial and name corroboration, evidence linking, dish filtering, and indicative lodging classification |
-| `src/functions/orchestrator/evidence/place_extraction.py` | Place extraction from search and scraped observations, geolocation, dish versus business separation, attributable dish to venue pairing, and consensus ranking |
+| `src/functions/orchestrator/evidence/place_extraction.py` | Place extraction from search and scraped observations, geolocation, dish versus business separation, attributable dish to venue pairing, hidden-place qualification, and consensus ranking |
 | `src/functions/api/routes/trips.py` | Trip creation, brief updates, job acceptance, owner authorized itinerary proposal with GeoJSON map, and corridor weather endpoints |
 | `src/functions/api/trip_planning_service.py` | Shared application service for draft trip creation, job planning start, question retrieval, and answer submission |
 

@@ -900,3 +900,264 @@ class PlaceExtractionService:
                                     "availability": availability,
                                 }
                             )
+
+    @classmethod
+    def is_listicle_title(cls, title: str) -> bool:
+        """Determines whether a title is a listicle/roundup headline rather than a distinct place."""
+        t = title.strip().lower()
+        if not t:
+            return False
+        listicle_pat = (
+            r"^(?:\d+|top\s+\d+|best\s+\d+|best\s+(?:hidden|offbeat|secret|unexplored)|"
+            r"(?:hidden|secret|unexplored|offbeat)\s+(?:gems|places|spots)|places\s+to\s+visit|"
+            r"things\s+to\s+do|guide\s+to)\b"
+        )
+        return bool(re.match(listicle_pat, t))
+
+    @classmethod
+    def evaluate_hidden_place_candidates(
+        cls,
+        observations: list[Any],
+        expected_cities: set[str] | list[str] | None = None,
+        excluded_names: set[str] | list[str] | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Evaluates hidden-place candidates by merging observations per normalized place into
+        verified optional stops, unverified candidates (with missing_evidence), and restricted/closed places."""
+        from functions.orchestrator.evidence.claim_ingestion import (
+            KNOWN_CONFLICTING_CITIES,
+            SNIPPET_SOURCE_METHODS,
+            _extract_coordinates_from_dict,
+            _has_conflicting_city,
+            _obs_attr,
+        )
+
+        norm_expected = (
+            {c.strip().lower() for c in expected_cities if c and c.strip()}
+            if expected_cities
+            else set()
+        )
+        norm_excluded = (
+            {_normalize_place_name(n).lower() for n in excluded_names if n and n.strip()}
+            if excluded_names
+            else set()
+        )
+        restricted_markers = (
+            "private property",
+            "privately owned",
+            "no public access",
+            "no public entry",
+            "not open to the public",
+            "not open to visitors",
+            "restricted access",
+            "permit required",
+            "requires a special permit",
+            "special permit",
+            "permit only",
+            "with permit",
+            "by permit",
+            "prior permission required",
+            "closed to the public",
+            "permanently closed",
+            "temporarily closed",
+            "entry prohibited",
+            "access is prohibited",
+            "trespassing",
+        )
+        public_access_markers = (
+            "open to the public",
+            "open to visitors",
+            "public access",
+            "visitors are welcome",
+            "visitor entry",
+            "public park",
+            "public garden",
+            "open daily",
+            "free entry for visitors",
+            "visitors can explore",
+            "accessible to the public",
+            "publicly accessible",
+            "self-guided tours",
+        )
+        disqualifying_access_words = (
+            "not ",
+            "no ",
+            "never ",
+            "permit",
+            "prohibited",
+            "restricted",
+            "closed",
+            "private",
+        )
+
+        # Merge observations per normalized place name
+        grouped: dict[str, dict[str, Any]] = {}
+
+        for obs in observations:
+            if norm_expected:
+                if _has_conflicting_city(obs, norm_expected):
+                    continue
+                art_ref = _obs_attr(obs, "artifact_ref") or {}
+                art_dict = art_ref if isinstance(art_ref, dict) else {}
+                obs_addr = str(art_dict.get("address") or art_dict.get("location") or "").lower()
+                if obs_addr and not any(
+                    re.search(rf"\b{re.escape(exp)}\b", obs_addr) for exp in norm_expected
+                ):
+                    if any(
+                        re.search(rf"\b{re.escape(c)}\b", obs_addr)
+                        for c in (KNOWN_CONFLICTING_CITIES - norm_expected)
+                    ):
+                        continue
+
+            art_ref = _obs_attr(obs, "artifact_ref") or {}
+            art_dict = art_ref if isinstance(art_ref, dict) else {}
+            purpose = extract_observation_purpose(art_dict)
+            if purpose in ("advisory", "dining", "lodging"):
+                continue
+
+            status_val = str(art_dict.get("status") or "").strip().upper()
+            if status_val in ("UNAVAILABLE", "BLOCKED", "ERROR", "FAILED"):
+                continue
+
+            raw_title = str(
+                art_dict.get("title")
+                or art_dict.get("place_name")
+                or art_dict.get("name")
+                or ""
+            ).strip()
+            if not raw_title or cls.is_listicle_title(raw_title) or cls.is_culinary_dish(raw_title):
+                continue
+
+            norm_name = _normalize_place_name(raw_title).lower()
+            if not norm_name or norm_name in norm_excluded:
+                continue
+
+            method = str(_obs_attr(obs, "extraction_method") or "").strip().upper()
+            is_fetched = bool(
+                method and method not in SNIPPET_SOURCE_METHODS and method != "NEEDS_BROWSER"
+            )
+            obs_url = str(
+                _obs_attr(obs, "canonical_url") or _obs_attr(obs, "source_url") or ""
+            ).strip()
+            raw_excerpt = str(_obs_attr(obs, "excerpt_text") or "").strip()
+            address = str(art_dict.get("address") or "").strip()
+
+            coords_tuple = _extract_coordinates_from_dict(art_dict)
+            coords: dict[str, float] | None = (
+                {"lat": coords_tuple[0], "lng": coords_tuple[1]}
+                if coords_tuple is not None and coords_tuple != (0.0, 0.0)
+                else None
+            )
+
+            entry = grouped.setdefault(
+                norm_name,
+                {
+                    "name": raw_title,
+                    "address": address or None,
+                    "coordinates": coords,
+                    "source_urls": [],
+                    "fetched_excerpts": [],
+                    "snippet_excerpts": [],
+                    "dest_tied": False,
+                },
+            )
+            if not entry["address"] and address:
+                entry["address"] = address
+            if entry["coordinates"] is None and coords is not None:
+                entry["coordinates"] = coords
+            if obs_url.startswith(("http://", "https://")) and obs_url not in entry["source_urls"]:
+                entry["source_urls"].append(obs_url)
+            if raw_excerpt:
+                if is_fetched:
+                    entry["fetched_excerpts"].append(raw_excerpt)
+                else:
+                    entry["snippet_excerpts"].append(raw_excerpt)
+            if not norm_expected:
+                entry["dest_tied"] = True
+            else:
+                combined_loc = f"{raw_title} {address} {raw_excerpt}".lower()
+                if any(re.search(rf"\b{re.escape(exp)}\b", combined_loc) for exp in norm_expected):
+                    entry["dest_tied"] = True
+
+        verified_optional_stops: list[dict[str, Any]] = []
+        unverified_candidates: list[dict[str, Any]] = []
+        restricted_or_closed: list[dict[str, Any]] = []
+
+        for entry in grouped.values():
+            fetched_text = " ".join(entry["fetched_excerpts"])
+            fetched_lower = fetched_text.lower()
+            has_fetched_content = len(entry["fetched_excerpts"]) > 0
+            best_excerpt = (
+                entry["fetched_excerpts"][0]
+                if entry["fetched_excerpts"]
+                else (entry["snippet_excerpts"][0] if entry["snippet_excerpts"] else "")
+            )
+
+            is_restricted = has_fetched_content and any(
+                rm in fetched_lower for rm in restricted_markers
+            )
+            has_public_access = False
+            if has_fetched_content and not is_restricted:
+                for sent in re.split(r"[.\n;!?]+", fetched_lower):
+                    if any(pm in sent for pm in public_access_markers):
+                        if not any(dw in sent for dw in disqualifying_access_words):
+                            has_public_access = True
+                            break
+
+            base_entry: dict[str, Any] = {
+                "name": entry["name"],
+                "address": entry["address"],
+                "coordinates": entry["coordinates"],
+                "source_urls": entry["source_urls"],
+                "supporting_excerpt": best_excerpt[:200] if best_excerpt else None,
+                "is_must_visit": False,
+                "opening_hours": None,
+                "entry_fee_inr": None,
+            }
+
+            if is_restricted:
+                restricted_or_closed.append(
+                    {
+                        **base_entry,
+                        "access_status": "RESTRICTED_OR_CLOSED",
+                        "eligible_for_itinerary": False,
+                        "missing_evidence": [],
+                    }
+                )
+                continue
+
+            missing: list[str] = []
+            if not has_fetched_content:
+                missing.append("fetched_page_content")
+            if not entry["dest_tied"]:
+                missing.append("destination_match")
+            if entry["coordinates"] is None:
+                missing.append("routable_coordinates")
+            if not entry["source_urls"]:
+                missing.append("source_url")
+            if not has_public_access:
+                missing.append("public_visitor_access")
+
+            if not missing:
+                verified_optional_stops.append(
+                    {
+                        **base_entry,
+                        "access_status": "PUBLIC_ACCESS_VERIFIED",
+                        "eligible_for_itinerary": True,
+                        "missing_evidence": [],
+                    }
+                )
+            else:
+                unverified_candidates.append(
+                    {
+                        **base_entry,
+                        "access_status": "UNVERIFIED",
+                        "eligible_for_itinerary": False,
+                        "missing_evidence": missing,
+                    }
+                )
+
+        return {
+            "verified_optional_stops": verified_optional_stops,
+            "unverified_candidates": unverified_candidates,
+            "restricted_or_closed": restricted_or_closed,
+        }

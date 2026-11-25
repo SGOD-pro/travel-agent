@@ -38,11 +38,11 @@ class PlannedQuery(dict[str, Any]):
         **kwargs: Any,
     ) -> None:
         clean_purpose = str(purpose or "attractions").strip().lower()
-        if clean_purpose not in ("attractions", "hours", "dining", "lodging", "advisory"):
+        if clean_purpose not in ("attractions", "hours", "dining", "lodging", "advisory", "hidden_places"):
             clean_purpose = "attractions"
 
         # Explicit purpose determines permitted search engine
-        if clean_purpose in ("advisory", "hours"):
+        if clean_purpose in ("advisory", "hours", "hidden_places"):
             target_engine = "google"
         else:
             target_engine = "google_maps"
@@ -90,11 +90,13 @@ class PlannedQueryList(list[PlannedQuery]):
         uncovered_destinations: list[str] | None = None,
         coverage_reason: str | None = None,
         is_complete_coverage: bool | None = None,
+        skipped_research_areas: list[dict[str, str]] | None = None,
     ) -> None:
         super().__init__(queries or [])
         self.covered_destinations: list[str] = list(covered_destinations or [])
         self.uncovered_destinations: list[str] = list(uncovered_destinations or [])
         self.coverage_reason: str | None = coverage_reason
+        self.skipped_research_areas: list[dict[str, str]] = list(skipped_research_areas or [])
         if is_complete_coverage is not None:
             self.is_complete_coverage: bool = is_complete_coverage
         else:
@@ -111,6 +113,7 @@ class PlannedQueryList(list[PlannedQuery]):
                 uncovered_destinations=self.uncovered_destinations,
                 coverage_reason=self.coverage_reason,
                 is_complete_coverage=self.is_complete_coverage,
+                skipped_research_areas=self.skipped_research_areas,
             )
         return res
 
@@ -495,35 +498,46 @@ class QueryPlanningService:
                     )
                 )
 
-            # Fill remaining budget slot with food research if traveler expressed culinary interest
-            if len(query_candidates) < ceiling and destinations:
-                raw_prefs = (
-                    list(brief.dietary_preferences) + list(brief.traveler_preferences)
-                    if isinstance(brief, TripBrief)
-                    else list(brief.get("dietary_preferences", []))
-                    + list(brief.get("traveler_preferences", []))
-                )
-                food_kw = next(
-                    (
-                        str(p)
-                        for p in raw_prefs
-                        if any(
-                            k in str(p).lower()
-                            for k in ("food", "dining", "cuisine", "veg", "sweet")
+            # Fill remaining budget slots with requested food and hidden-place research
+            skipped_areas: list[dict[str, str]] = []
+            if destinations:
+                d0 = destinations[0]
+                if cls.has_explicit_food_intent(brief):
+                    if len(query_candidates) < ceiling:
+                        query_candidates.append(
+                            PlannedQuery(
+                                f"{d0} authentic local food restaurants",
+                                purpose="dining",
+                                destination=d0,
+                                engine="google_maps",
+                            )
                         )
-                    ),
-                    None,
-                )
-                if food_kw:
-                    d0 = destinations[0]
-                    query_candidates.append(
-                        PlannedQuery(
-                            f"{d0} {food_kw} restaurants authentic local food",
-                            purpose="dining",
-                            destination=d0,
-                            engine="google_maps",
+                    else:
+                        skipped_areas.append(
+                            {
+                                "area": "food",
+                                "reason": f"Skipped food research: collector query ceiling ({ceiling}) exhausted by must-visit and opening-hours queries.",
+                            }
                         )
-                    )
+                if cls.has_explicit_hidden_place_intent(brief):
+                    if len(query_candidates) < ceiling:
+                        query_candidates.append(
+                            PlannedQuery(
+                                f"{d0} hidden gems offbeat places public entry visitor information",
+                                purpose="hidden_places",
+                                destination=d0,
+                                engine="google",
+                            )
+                        )
+                    else:
+                        skipped_areas.append(
+                            {
+                                "area": "hidden_places",
+                                "reason": f"Skipped hidden_places research: collector query ceiling ({ceiling}) exhausted by must-visit and opening-hours queries.",
+                            }
+                        )
+        else:
+            skipped_areas = []
 
         final_queries = query_candidates[:ceiling]
         covered = [
@@ -550,6 +564,115 @@ class QueryPlanningService:
             covered_destinations=covered,
             uncovered_destinations=uncovered,
             coverage_reason=coverage_reason,
+            skipped_research_areas=skipped_areas,
+        )
+
+    @classmethod
+    def has_explicit_hidden_place_intent(cls, brief: dict[str, Any] | TripBrief) -> bool:
+        """Determines whether a trip brief explicitly requests hidden or offbeat place research."""
+        if isinstance(brief, TripBrief):
+            raw_prefs = list(brief.traveler_preferences)
+        elif isinstance(brief, dict):
+            raw_prefs = list(brief.get("traveler_preferences") or [])
+        else:
+            raw_prefs = []
+        hidden_keywords = (
+            "hidden",
+            "offbeat",
+            "lesser known",
+            "lesser-known",
+            "unexplored",
+            "secret",
+            "off the beaten path",
+        )
+        return any(any(kw in str(p).lower() for kw in hidden_keywords) for p in raw_prefs)
+
+    @classmethod
+    def plan_hidden_place_queries(
+        cls,
+        brief: dict[str, Any] | TripBrief,
+        max_queries: int = DEFAULT_MAX_QUERIES,
+    ) -> PlannedQueryList:
+        """Generates bounded hidden-place queries scoped deterministically to the primary destination."""
+        ceiling = min(max(1, max_queries), DEFAULT_MAX_QUERIES)
+        destinations: list[str] = []
+        if isinstance(brief, TripBrief):
+            destinations = [d.name.strip() for d in brief.destinations if d.name and d.name.strip()]
+        elif isinstance(brief, dict):
+            raw_dests = brief.get("destinations", [])
+            if isinstance(raw_dests, list):
+                for item in raw_dests:
+                    if isinstance(item, str) and item.strip():
+                        destinations.append(item.strip())
+                    elif isinstance(item, dict) and item.get("name"):
+                        destinations.append(str(item["name"]).strip())
+                    elif hasattr(item, "name") and item.name:
+                        destinations.append(str(item.name).strip())
+            if not destinations and brief.get("destination_name"):
+                destinations = [str(brief["destination_name"]).strip()]
+
+        primary = destinations[0] if destinations else "Unknown Destination"
+        uncovered = destinations[1:] if len(destinations) > 1 else []
+        covered = [primary] if destinations else []
+
+        query_candidates = [
+            PlannedQuery(
+                f"{primary} hidden gems offbeat places public entry visitor information",
+                purpose="hidden_places",
+                destination=primary,
+                engine="google",
+            ),
+            PlannedQuery(
+                f"{primary} lesser known attractions public access coordinates",
+                purpose="attractions",
+                destination=primary,
+                engine="google_maps",
+            ),
+        ]
+        skipped_areas: list[dict[str, str]] = []
+        if cls.has_explicit_food_intent(brief):
+            if len(query_candidates) < ceiling:
+                query_candidates.append(
+                    PlannedQuery(
+                        f"{primary} authentic local food restaurants",
+                        purpose="dining",
+                        destination=primary,
+                        engine="google_maps",
+                    )
+                )
+            else:
+                skipped_areas.append(
+                    {
+                        "area": "food",
+                        "reason": f"Skipped food research: collector query ceiling ({ceiling}) exhausted.",
+                    }
+                )
+        if len(query_candidates) < ceiling:
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary} offbeat heritage nature spots visitor timings",
+                    purpose="hidden_places",
+                    destination=primary,
+                    engine="google",
+                )
+            )
+        final_queries = query_candidates[:ceiling]
+
+        cov_reason: str | None = None
+        if uncovered:
+            cov_reason = (
+                f"Hidden-place research is scoped to primary destination ({primary}). "
+                f"Uncovered destinations: {', '.join(uncovered)}."
+            )
+        elif not destinations:
+            cov_reason = "No destinations provided in trip brief."
+
+        return PlannedQueryList(
+            final_queries,
+            covered_destinations=covered,
+            uncovered_destinations=uncovered,
+            coverage_reason=cov_reason,
+            skipped_research_areas=skipped_areas,
         )
 
     @classmethod
@@ -795,7 +918,7 @@ class QueryPlanningService:
             # Explicit purpose is authoritative. Keyword inference must NOT be the authority.
             if explicit_purpose is not None:
                 norm_purpose = str(explicit_purpose).strip().lower()
-                if norm_purpose in ("attractions", "hours", "dining", "lodging", "advisory"):
+                if norm_purpose in ("attractions", "hours", "dining", "lodging", "advisory", "hidden_places"):
                     purpose = norm_purpose
                 else:
                     # Unsupported purpose value -> safely normalize to attractions
