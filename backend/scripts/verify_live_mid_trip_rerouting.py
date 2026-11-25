@@ -10,18 +10,18 @@ Exercises:
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
 import json
 import os
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shapely.geometry import LineString, Polygon
 
 from config.db import get_session_factory
 from contracts.routing import (
-    Point,
     OptimizedRoute,
+    Point,
     RestrictionType,
     RouteLegOutput,
     RouteReplanRequest,
@@ -335,7 +335,10 @@ async def run_rerouting_verification() -> dict[str, Any]:
             "detour_leg1_intersects_closure": detour_intersects,
             "closure_avoidance_verified": baseline_intersects and (not detour_intersects),
             "completed_stop_frozen": completed_stop.name,
-            "replan_origin": {"latitude": replan_origin_point.latitude, "longitude": replan_origin_point.longitude},
+            "replan_origin": {
+                "latitude": replan_origin_point.latitude,
+                "longitude": replan_origin_point.longitude,
+            },
         },
         "inescapable_closure_infeasible_proof": {
             "route_id": str(infeasible_route_id),
@@ -349,7 +352,8 @@ async def run_rerouting_verification() -> dict[str, Any]:
                 for s in (loaded_infeasible.stops or [])
                 if s.is_skipped
             ],
-            "fail_closed_verified": loaded_infeasible.status == "INFEASIBLE" and len(loaded_infeasible.legs or []) == 0,
+            "fail_closed_verified": loaded_infeasible.status == "INFEASIBLE"
+            and len(loaded_infeasible.legs or []) == 0,
         },
         "automatic_triggering": automatic_triggering_status,
     }

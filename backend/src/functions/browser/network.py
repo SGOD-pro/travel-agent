@@ -86,7 +86,9 @@ def _lookup_etc_hosts(hostname: str, *, include_hosts_file: bool = True) -> list
         hosts_path = Path("/etc/hosts")
         try:
             if hosts_path.exists():
-                for raw_line in hosts_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                for raw_line in hosts_path.read_text(
+                    encoding="utf-8", errors="ignore"
+                ).splitlines():
                     line = raw_line.split("#", 1)[0].strip()
                     if not line:
                         continue

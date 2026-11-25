@@ -495,6 +495,36 @@ class QueryPlanningService:
                     )
                 )
 
+            # Fill remaining budget slot with food research if traveler expressed culinary interest
+            if len(query_candidates) < ceiling and destinations:
+                raw_prefs = (
+                    list(brief.dietary_preferences) + list(brief.traveler_preferences)
+                    if isinstance(brief, TripBrief)
+                    else list(brief.get("dietary_preferences", []))
+                    + list(brief.get("traveler_preferences", []))
+                )
+                food_kw = next(
+                    (
+                        str(p)
+                        for p in raw_prefs
+                        if any(
+                            k in str(p).lower()
+                            for k in ("food", "dining", "cuisine", "veg", "sweet")
+                        )
+                    ),
+                    None,
+                )
+                if food_kw:
+                    d0 = destinations[0]
+                    query_candidates.append(
+                        PlannedQuery(
+                            f"{d0} {food_kw} restaurants authentic local food",
+                            purpose="dining",
+                            destination=d0,
+                            engine="google_maps",
+                        )
+                    )
+
         final_queries = query_candidates[:ceiling]
         covered = [
             d
@@ -509,6 +539,185 @@ class QueryPlanningService:
         if uncovered:
             coverage_reason = (
                 f"Destination count ({len(destinations)}) exceeds available attractions and hours "
+                f"query slots ({len(final_queries)}). Uncovered destinations: {', '.join(uncovered)} "
+                f"due to collector query ceiling ({ceiling})."
+            )
+        elif not destinations:
+            coverage_reason = "No destinations provided in trip brief."
+
+        return PlannedQueryList(
+            final_queries,
+            covered_destinations=covered,
+            uncovered_destinations=uncovered,
+            coverage_reason=coverage_reason,
+        )
+
+    @classmethod
+    def plan_food_queries(
+        cls,
+        brief: dict[str, Any] | TripBrief,
+        max_queries: int = DEFAULT_MAX_QUERIES,
+    ) -> PlannedQueryList:
+        """Plans bounded local food, regional dish, and authentic dining queries across destinations.
+
+        Enforces:
+        1. Query ceiling constraint (at most max_queries, capped at DEFAULT_MAX_QUERIES = 4).
+        2. Formulates queries for regional culinary specialties and authentic dining venues.
+        3. Incorporates traveler dietary preferences and culinary keywords from brief.
+        4. Explicit destination coverage: tracks covered destinations, uncovered destinations,
+           and records an explicit coverage reason when destination count exceeds available slots.
+        """
+        ceiling = min(max(1, max_queries), DEFAULT_MAX_QUERIES)
+        destinations: list[str] = []
+        dietary: list[str] = []
+        traveler_prefs: list[str] = []
+
+        if isinstance(brief, TripBrief):
+            destinations = [d.name.strip() for d in brief.destinations if d.name and d.name.strip()]
+            dietary = list(brief.dietary_preferences)
+            traveler_prefs = list(brief.dietary_preferences) + list(brief.traveler_preferences)
+        elif isinstance(brief, dict):
+            raw_dests = brief.get("destinations", [])
+            if isinstance(raw_dests, list):
+                for item in raw_dests:
+                    if isinstance(item, dict) and item.get("name"):
+                        destinations.append(str(item["name"]).strip())
+                    elif hasattr(item, "name") and item.name:
+                        destinations.append(str(item.name).strip())
+                    elif isinstance(item, str) and item.strip():
+                        destinations.append(item.strip())
+            if not destinations and brief.get("destination_name"):
+                destinations.append(str(brief["destination_name"]).strip())
+            raw_dietary = brief.get("dietary_preferences", [])
+            if isinstance(raw_dietary, list):
+                dietary = [str(x).strip() for x in raw_dietary if x and str(x).strip()]
+            raw_prefs = brief.get("traveler_preferences", [])
+            if isinstance(raw_prefs, list):
+                traveler_prefs = [str(x).strip() for x in raw_prefs if x and str(x).strip()]
+
+        # Food preferences context
+        diet_context = ""
+        if dietary:
+            diet_context = f" {dietary[0]}"
+        elif traveler_prefs:
+            food_terms = [
+                p
+                for p in traveler_prefs
+                if any(
+                    k in str(p).lower()
+                    for k in ("food", "dining", "cuisine", "street", "sweet", "veg", "dish")
+                )
+            ]
+            if food_terms:
+                diet_context = f" {food_terms[0]}"
+
+        query_candidates: list[PlannedQuery] = []
+        dest_count = len(destinations)
+
+        if dest_count == 0:
+            primary = "Unknown Destination"
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary}{diet_context} famous local dishes authentic regional food specialties",
+                    purpose="dining",
+                    destination=primary,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{primary}{diet_context} authentic local food restaurants iconic eateries",
+                    purpose="dining",
+                    destination=primary,
+                    engine="google_maps",
+                )
+            )
+        elif dest_count == 1:
+            d0 = destinations[0]
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0}{diet_context} famous local dishes authentic regional food specialties",
+                    purpose="dining",
+                    destination=d0,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0}{diet_context} authentic local food restaurants iconic eateries",
+                    purpose="dining",
+                    destination=d0,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0}{diet_context} street food sweet shops traditional cuisine",
+                    purpose="dining",
+                    destination=d0,
+                    engine="google_maps",
+                )
+            )
+        elif dest_count == 2:
+            d0, d1 = destinations[0], destinations[1]
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0}{diet_context} famous local dishes authentic regional food specialties",
+                    purpose="dining",
+                    destination=d0,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0}{diet_context} authentic local food restaurants iconic eateries",
+                    purpose="dining",
+                    destination=d0,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d1}{diet_context} famous local dishes authentic regional food specialties",
+                    purpose="dining",
+                    destination=d1,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d1}{diet_context} authentic local food restaurants iconic eateries",
+                    purpose="dining",
+                    destination=d1,
+                    engine="google_maps",
+                )
+            )
+        else:
+            # dest_count >= 3: Distribute queries across destinations up to ceiling
+            for dest_name_str in destinations[:ceiling]:
+                query_candidates.append(
+                    PlannedQuery(
+                        f"{dest_name_str}{diet_context} authentic local food restaurants regional dishes",
+                        purpose="dining",
+                        destination=dest_name_str,
+                        engine="google_maps",
+                    )
+                )
+
+        final_queries = query_candidates[:ceiling]
+        covered = [
+            d
+            for d in destinations
+            if any(
+                q.destination == d or d in [x.strip() for x in q.destination.split(",")]
+                for q in final_queries
+            )
+        ]
+        uncovered = [d for d in destinations if d not in covered]
+        coverage_reason: str | None = None
+        if uncovered:
+            coverage_reason = (
+                f"Destination count ({len(destinations)}) exceeds available food research "
                 f"query slots ({len(final_queries)}). Uncovered destinations: {', '.join(uncovered)} "
                 f"due to collector query ceiling ({ceiling})."
             )

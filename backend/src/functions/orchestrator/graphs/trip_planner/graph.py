@@ -106,6 +106,23 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_RUNNABLE_CONFIG: RunnableConfig = cast(RunnableConfig, {})
 
+CITY_ALIASES: dict[str, set[str]] = {
+    "mysuru": {"mysuru", "mysore"},
+    "mysore": {"mysuru", "mysore"},
+    "bengaluru": {"bengaluru", "bangalore"},
+    "bangalore": {"bengaluru", "bangalore"},
+    "kolkata": {"kolkata", "calcutta"},
+    "calcutta": {"kolkata", "calcutta"},
+    "kochi": {"kochi", "cochin"},
+    "cochin": {"kochi", "cochin"},
+    "chennai": {"chennai", "madras"},
+    "madras": {"chennai", "madras"},
+    "mumbai": {"mumbai", "bombay"},
+    "bombay": {"mumbai", "bombay"},
+    "madikeri": {"madikeri", "coorg"},
+    "coorg": {"madikeri", "coorg"},
+}
+
 
 class TripPlanningState(TypedDict, total=False):
     trip_id: str
@@ -573,10 +590,23 @@ async def evaluate_candidates_node(
 
         default_lat = brief.destinations[0].latitude if brief.destinations else None
         default_lng = brief.destinations[0].longitude if brief.destinations else None
+        expected_city_names: set[str] = set()
+        for d in brief.destinations:
+            d_name = (
+                getattr(d, "name", "")
+                if hasattr(d, "name")
+                else (d.get("name", "") if isinstance(d, dict) else "")
+            )
+            if d_name and str(d_name).strip():
+                d_norm = str(d_name).strip().lower()
+                expected_city_names.add(d_norm)
+                if d_norm in CITY_ALIASES:
+                    expected_city_names.update(CITY_ALIASES[d_norm])
         evidence_proposals = PlaceExtractionService.extract_candidates_from_observations(
             obs_for_extraction,
             default_destination_lat=default_lat,
             default_destination_lng=default_lng,
+            expected_cities=expected_city_names if expected_city_names else None,
         )
         existing_names = {p.name.strip().lower() for p in candidate_proposals}
         for ep in evidence_proposals:
@@ -2368,7 +2398,7 @@ async def consume_route_result_node(
 
     # Verify that planned schedule timestamps exist on persisted stops in production
     for s in route_model.stops:
-        if getattr(s, "is_skipped", False):
+        if getattr(s, "is_skipped", False) is True:
             continue
         if s.planned_arrival_at is None or s.planned_departure_at is None:
             logger.error(
@@ -2413,7 +2443,7 @@ async def consume_route_result_node(
 
     sched_stops = []
     for s in route_model.stops:
-        if getattr(s, "is_skipped", False):
+        if getattr(s, "is_skipped", False) is True:
             continue
         s_name_norm = s.name.strip().lower()
         is_origin = s.stop_order == 0 or s.stop_type == StopType.ORIGIN
@@ -3413,6 +3443,24 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
         PlaceExtractionService,
     )
 
+    brief_raw = state.get("brief")
+    brief_dict: dict[str, Any] = brief_raw if isinstance(brief_raw, dict) else {}
+    dest_objs = brief_dict.get("destinations") or []
+    destination_names: list[str] = [
+        str(d.get("name") if isinstance(d, dict) else getattr(d, "name", "")).strip()
+        for d in dest_objs
+        if (d.get("name") if isinstance(d, dict) else getattr(d, "name", ""))
+    ]
+    if not destination_names and brief_dict.get("destination_name"):
+        destination_names = [str(brief_dict["destination_name"]).strip()]
+
+    expected_cities: set[str] = set()
+    for dn in destination_names:
+        dnl = dn.lower()
+        expected_cities.add(dnl)
+        if dnl in CITY_ALIASES:
+            expected_cities.update(CITY_ALIASES[dnl])
+
     eligible_stops = list(state.get("eligible_stops", []))
     editorial_recs = list(state.get("editorial_recommendations", []))
     all_candidates = eligible_stops + editorial_recs
@@ -3432,6 +3480,19 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
             continue
         if PlaceExtractionService.is_culinary_dish(name):
             continue
+
+        # Check for wrong-city venue matches against expected destination cities
+        if expected_cities:
+            from functions.orchestrator.evidence.claim_ingestion import _has_conflicting_city
+
+            cand_addr = str(c.get("diagnostics", {}).get("address") or c.get("address") or "")
+            mock_cand_obs = {
+                "artifact_ref": {"address": cand_addr, "title": name},
+                "excerpt_text": cand_addr,
+            }
+            if _has_conflicting_city(mock_cand_obs, expected_cities):
+                continue
+
         seen_names.add(name.lower())
 
         prov = c.get("provenance") or {}
@@ -3447,6 +3508,10 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
             else None
         )
 
+        unav_details = list(prov.get("unavailable_details") or [])
+        # Unsupported pricing, hours, and dietary claims kept strictly unknown
+        unav_details.extend(["pricing: UNKNOWN", "opening_hours: UNKNOWN", "dietary_claims: UNKNOWN"])
+
         dining_items.append(
             {
                 "name": name,
@@ -3459,7 +3524,12 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
                 "identity": prov.get("identity") or {"name": name, "category": cat},
                 "uncertainty": "VERIFIED" if is_verified else "EDITORIAL_DISCOVERY",
                 "is_verified": is_verified,
-                "unavailable_details": list(prov.get("unavailable_details") or []),
+                "is_must_visit": False,  # Keep food suggestions optional
+                "serves_dishes": [],
+                "price_estimate_inr": None,
+                "opening_hours": None,
+                "dietary_claims": None,
+                "unavailable_details": unav_details,
                 "conflicting_details": list(prov.get("conflicting_details") or []),
             }
         )
@@ -3478,7 +3548,49 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
             ):
                 raw_obs_list.extend(sub["observations"])
 
-    local_dishes = PlaceExtractionService.extract_local_dishes_from_observations(raw_obs_list)
+    local_dishes = PlaceExtractionService.extract_local_dishes_from_observations(
+        raw_obs_list, expected_cities=expected_cities if expected_cities else None
+    )
+
+    # Pair venues and dishes strictly when supported by non-conflicting attributable source content
+    PlaceExtractionService.pair_dishes_and_venues(
+        dining_items,
+        local_dishes,
+        raw_obs_list,
+        expected_cities=expected_cities if expected_cities else None,
+    )
+
+    # Determine coverage by destination
+    covered_destinations: list[str] = []
+    uncovered_destinations: list[str] = []
+    cov_reason: str | None = None
+
+    raw_cov = state.get("covered_destinations")
+    raw_uncov = state.get("uncovered_destinations")
+    if raw_cov is not None or raw_uncov is not None:
+        covered_destinations = list(raw_cov or [])
+        uncovered_destinations = list(raw_uncov or [])
+        cov_reason = state.get("coverage_reason")
+    elif destination_names:
+        for dn in destination_names:
+            d_aliases = CITY_ALIASES.get(dn.lower(), {dn.lower()})
+            if any(
+                any(
+                    alias
+                    in str(
+                        getattr(obs, "excerpt_text", None)
+                        or (obs.get("excerpt_text") if isinstance(obs, dict) else "")
+                        or ""
+                    ).lower()
+                    for alias in d_aliases
+                )
+                for obs in raw_obs_list
+            ):
+                covered_destinations.append(dn)
+            else:
+                uncovered_destinations.append(dn)
+        if uncovered_destinations:
+            cov_reason = f"Uncovered food research destinations: {', '.join(uncovered_destinations)}."
 
     if not local_dishes and not dining_items:
         food_status = "UNAVAILABLE"
@@ -3489,6 +3601,12 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
     elif not dining_items:
         food_status = "PARTIAL"
         reason = "Regional culinary dishes retrieved without verified dining venues"
+    elif uncovered_destinations:
+        food_status = "PARTIAL"
+        reason = (
+            f"Food research partially covered ({len(covered_destinations)}/{len(destination_names)} destinations). "
+            f"Uncovered destinations: {', '.join(uncovered_destinations)} due to query budget limit."
+        )
     else:
         food_status = "COMPLETED"
         reason = None
@@ -3498,6 +3616,10 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
         "reason": reason,
         "local_dishes": local_dishes,
         "dining_recommendations": dining_items,
+        "destinations": destination_names,
+        "covered_destinations": covered_destinations,
+        "uncovered_destinations": uncovered_destinations,
+        "coverage_reason": cov_reason,
         "verified_dining_count": len([d for d in dining_items if d["is_verified"]]),
         "unverified_dining_count": len([d for d in dining_items if not d["is_verified"]]),
     }
@@ -5955,7 +6077,11 @@ async def route_evidence_decision_node(
             else getattr(brief, "must_visit_places", None)
         )
         planned_queries: Any
-        if has_must_visits or state.get("research_focus") == "attractions_hours":
+        if state.get("research_focus") == "food":
+            planned_queries = QueryPlanningService.plan_food_queries(
+                brief, max_queries=DEFAULT_MAX_QUERIES
+            )
+        elif has_must_visits or state.get("research_focus") == "attractions_hours":
             planned_queries = QueryPlanningService.plan_attractions_and_hours_queries(
                 brief, max_queries=DEFAULT_MAX_QUERIES
             )
@@ -6025,7 +6151,9 @@ async def route_evidence_decision_node(
                 "origin": brief.get("origin_name", "")
                 if isinstance(brief, dict)
                 else getattr(brief, "origin_name", ""),
-                "categories": ["attractions", "lodging", "transit"],
+                "categories": ["dining", "food"]
+                if state.get("research_focus") == "food"
+                else ["attractions", "lodging", "transit"],
             },
             "idempotency_key": f"{exec_uuid}:collect:{dest_hash[:16]}",
             "deadline_seconds": 60,

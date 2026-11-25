@@ -23,9 +23,9 @@ def extract_observation_purpose(artifact_ref: Any) -> str:
     """Extract normalized observation query purpose from artifact metadata."""
     if not isinstance(artifact_ref, dict):
         return ""
-    return str(
-        artifact_ref.get("query_purpose") or artifact_ref.get("purpose") or ""
-    ).lower().strip()
+    return (
+        str(artifact_ref.get("query_purpose") or artifact_ref.get("purpose") or "").lower().strip()
+    )
 
 
 @dataclass
@@ -90,6 +90,7 @@ class PlaceExtractionService:
         observations: list[Any],
         default_destination_lat: float | None = None,
         default_destination_lng: float | None = None,
+        expected_cities: set[str] | list[str] | None = None,
     ) -> list[PlaceProposal]:
         """Extracts candidate places from observations and ranks them by multi-site consensus.
 
@@ -97,17 +98,36 @@ class PlaceExtractionService:
             observations: List of SourceObservationModel or RawObservation instances.
             default_destination_lat: Optional fallback latitude for coordinate bounding.
             default_destination_lng: Optional fallback longitude for coordinate bounding.
+            expected_cities: Optional set/list of expected destination city names to exclude conflicting cities.
 
         Returns:
             List of PlaceProposal domain contracts ordered by consensus appearance count.
         """
         accumulators: list[PlaceEvidenceAccumulator] = []
+        norm_expected = (
+            {c.strip().lower() for c in expected_cities if c and c.strip()}
+            if expected_cities
+            else None
+        )
 
         for obs in observations:
-            publisher = str(
-                (obs.get("publisher") if isinstance(obs, dict) else getattr(obs, "publisher", ""))
-                or "web"
-            ).strip().lower()
+            if norm_expected:
+                from functions.orchestrator.evidence.claim_ingestion import _has_conflicting_city
+
+                if _has_conflicting_city(obs, norm_expected):
+                    continue
+            publisher = (
+                str(
+                    (
+                        obs.get("publisher")
+                        if isinstance(obs, dict)
+                        else getattr(obs, "publisher", "")
+                    )
+                    or "web"
+                )
+                .strip()
+                .lower()
+            )
             source_url = str(
                 (obs.get("source_url") if isinstance(obs, dict) else getattr(obs, "source_url", ""))
                 or ""
@@ -118,7 +138,11 @@ class PlaceExtractionService:
                 else getattr(obs, "artifact_ref", None)
             ) or {}
             excerpt_text = str(
-                (obs.get("excerpt_text") if isinstance(obs, dict) else getattr(obs, "excerpt_text", ""))
+                (
+                    obs.get("excerpt_text")
+                    if isinstance(obs, dict)
+                    else getattr(obs, "excerpt_text", "")
+                )
                 or ""
             ).strip()
             retrieved_at = (
@@ -186,7 +210,9 @@ class PlaceExtractionService:
                                 longitude=lng,
                                 address=artifact_ref.get("address"),
                                 description=excerpt_text or f"Discovered via search on {publisher}",
-                                price_estimate_inr=int(price_val) if price_val is not None else None,
+                                price_estimate_inr=int(price_val)
+                                if price_val is not None
+                                else None,
                             )
                             accumulators.append(matched_acc)
                         elif price_val is not None and matched_acc.price_estimate_inr is None:
@@ -330,9 +356,14 @@ class PlaceExtractionService:
             "bakery",
             "cabin",
             "sweet shop",
+            "sweets",
+            "mart",
             "bazaar",
             "joint",
             "outlet",
+            "mess",
+            "tiffin",
+            "kitchen",
         )
         if any(v in name_lower for v in venue_indicators):
             return False
@@ -364,6 +395,30 @@ class PlaceExtractionService:
             "fish fry",
             "daab chingri",
             "ilish bhapa",
+            "mysore pak",
+            "mysuru pak",
+            "masala dosa",
+            "mysore masala dosa",
+            "benne dosa",
+            "set dosa",
+            "neer dosa",
+            "rava dosa",
+            "thatte idli",
+            "bisi bele bath",
+            "bisibelebath",
+            "maddur vada",
+            "ragi mudde",
+            "akki rotti",
+            "akki roti",
+            "kesari bath",
+            "chow chow bath",
+            "pandi curry",
+            "mangalore buns",
+            "jolada rotti",
+            "filter coffee",
+            "filter kaapi",
+            "puliyogare",
+            "chiroti",
         )
         return any(
             name_lower == d or name_lower.endswith(f" {d}") or f"{d} " in name_lower
@@ -374,6 +429,7 @@ class PlaceExtractionService:
     def extract_local_dishes_from_observations(
         cls,
         observations: list[Any],
+        expected_cities: set[str] | list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Extracts authentic regional culinary dishes from collected search and scraping observations.
 
@@ -384,6 +440,11 @@ class PlaceExtractionService:
 
         dishes: list[dict[str, Any]] = []
         seen_names: set[str] = set()
+        norm_expected = (
+            {c.strip().lower() for c in expected_cities if c and c.strip()}
+            if expected_cities
+            else None
+        )
 
         dish_definitions: list[tuple[str, str, str]] = [
             ("kathi roll", "Kathi Roll", "street_food"),
@@ -410,9 +471,36 @@ class PlaceExtractionService:
             ("shukto", "Shukto", "traditional"),
             ("fish fry", "Fish Fry", "snack"),
             ("ilish bhapa", "Ilish Bhapa", "specialty"),
+            ("mysore pak", "Mysore Pak", "sweet"),
+            ("mysuru pak", "Mysore Pak", "sweet"),
+            ("mysore masala dosa", "Mysore Masala Dosa", "breakfast"),
+            ("masala dosa", "Masala Dosa", "breakfast"),
+            ("benne dosa", "Benne Dosa", "breakfast"),
+            ("set dosa", "Set Dosa", "breakfast"),
+            ("neer dosa", "Neer Dosa", "breakfast"),
+            ("thatte idli", "Thatte Idli", "breakfast"),
+            ("bisi bele bath", "Bisi Bele Bath", "main_course"),
+            ("bisibelebath", "Bisi Bele Bath", "main_course"),
+            ("maddur vada", "Maddur Vada", "snack"),
+            ("ragi mudde", "Ragi Mudde", "main_course"),
+            ("akki rotti", "Akki Rotti", "breakfast"),
+            ("akki roti", "Akki Rotti", "breakfast"),
+            ("kesari bath", "Kesari Bath", "sweet"),
+            ("chow chow bath", "Chow Chow Bath", "breakfast"),
+            ("pandi curry", "Pandi Curry", "main_course"),
+            ("mangalore buns", "Mangalore Buns", "breakfast"),
+            ("jolada rotti", "Jolada Rotti", "main_course"),
+            ("filter coffee", "Filter Coffee", "beverage"),
+            ("filter kaapi", "Filter Coffee", "beverage"),
         ]
 
         for obs in observations:
+            if norm_expected:
+                from functions.orchestrator.evidence.claim_ingestion import _has_conflicting_city
+
+                if _has_conflicting_city(obs, norm_expected):
+                    continue
+
             obs_id = (
                 str(getattr(obs, "id", None) or (obs.get("id") if isinstance(obs, dict) else ""))
                 or None
@@ -436,9 +524,8 @@ class PlaceExtractionService:
             if not source_url:
                 continue
 
-            retrieved_at = (
-                getattr(obs, "retrieved_at", None)
-                or (obs.get("retrieved_at") if isinstance(obs, dict) else None)
+            retrieved_at = getattr(obs, "retrieved_at", None) or (
+                obs.get("retrieved_at") if isinstance(obs, dict) else None
             )
             retrieved_str: str | None = None
             if isinstance(retrieved_at, str):
@@ -461,7 +548,11 @@ class PlaceExtractionService:
                     dish_name = f"Hyderabadi {base_name}"
                 elif f"lucknowi {term}" in text_lower:
                     dish_name = f"Lucknowi {base_name}"
-                elif term == "luchi" and ("luchi alur dom" in text_lower or "luchi aloo dum" in text_lower):
+                elif f"mysore {term}" in text_lower or f"mysuru {term}" in text_lower:
+                    dish_name = f"Mysore {base_name}"
+                elif term == "luchi" and (
+                    "luchi alur dom" in text_lower or "luchi aloo dum" in text_lower
+                ):
                     dish_name = "Luchi Alur Dom"
 
                 if dish_name.lower() in seen_names:
@@ -485,7 +576,104 @@ class PlaceExtractionService:
                         "observation_id": obs_id,
                         "retrieval_time": retrieved_str,
                         "uncertainty": "EDITORIAL_DISCOVERY",
+                        "paired_venues": [],
                     }
                 )
 
         return dishes
+
+    @classmethod
+    def pair_dishes_and_venues(
+        cls,
+        venues: list[dict[str, Any]],
+        dishes: list[dict[str, Any]],
+        observations: list[Any],
+        expected_cities: set[str] | list[str] | None = None,
+    ) -> None:
+        """Pairs dining venues and regional dishes strictly when supported by attributable source content."""
+        if not venues or not dishes:
+            return
+
+        for v in venues:
+            if isinstance(v, dict) and "serves_dishes" not in v:
+                v["serves_dishes"] = []
+        for d in dishes:
+            if isinstance(d, dict) and "paired_venues" not in d:
+                d["paired_venues"] = []
+
+        if not observations:
+            return
+
+        norm_expected: set[str] | None = None
+        if expected_cities:
+            norm_expected = {c.strip().lower() for c in expected_cities if c and c.strip()}
+
+        from functions.orchestrator.evidence.claim_ingestion import (
+            SNIPPET_SOURCE_METHODS,
+            _has_conflicting_city,
+            _obs_attr,
+        )
+
+        for obs in observations:
+            method = str(_obs_attr(obs, "extraction_method") or "").strip().upper()
+            if method in SNIPPET_SOURCE_METHODS:
+                continue
+            if norm_expected and _has_conflicting_city(obs, norm_expected):
+                continue
+
+            raw_excerpt = str(_obs_attr(obs, "excerpt_text") or "").strip().lower()
+            art_ref = _obs_attr(obs, "artifact_ref") or {}
+            art_dict = art_ref if isinstance(art_ref, dict) else {}
+            art_title = str(
+                art_dict.get("title")
+                or art_dict.get("page_title")
+                or art_dict.get("place_name")
+                or ""
+            ).strip().lower()
+            art_snippet = str(art_dict.get("snippet") or "").strip().lower()
+            obs_url = str(
+                _obs_attr(obs, "canonical_url")
+                or _obs_attr(obs, "source_url")
+                or ""
+            ).strip().lower()
+            full_obs_text = f"{art_title} {art_snippet} {raw_excerpt} {obs_url}"
+
+            for venue in venues:
+                if not isinstance(venue, dict):
+                    continue
+                v_name = str(venue.get("name") or "").strip().lower()
+                v_norm = _normalize_place_name(venue.get("name") or "").lower()
+                v_urls = [str(u).lower() for u in (venue.get("source_urls") or []) if u]
+
+                venue_matched = False
+                if v_name and (v_name in full_obs_text or (v_norm and v_norm in full_obs_text)):
+                    venue_matched = True
+                elif v_urls and any(u in obs_url or obs_url in u for u in v_urls if len(u) > 10):
+                    venue_matched = True
+
+                if not venue_matched:
+                    continue
+
+                if "serves_dishes" not in venue or not isinstance(venue["serves_dishes"], list):
+                    venue["serves_dishes"] = []
+
+                for dish in dishes:
+                    if not isinstance(dish, dict):
+                        continue
+                    if "paired_venues" not in dish or not isinstance(dish["paired_venues"], list):
+                        dish["paired_venues"] = []
+
+                    d_name = str(dish.get("name") or "").strip().lower()
+                    dish_matched = False
+                    if d_name and d_name in full_obs_text:
+                        dish_matched = True
+                    else:
+                        d_words = d_name.split()
+                        if len(d_words) >= 2 and " ".join(d_words[-2:]) in full_obs_text:
+                            dish_matched = True
+
+                    if dish_matched:
+                        if dish["name"] not in venue["serves_dishes"]:
+                            venue["serves_dishes"].append(dish["name"])
+                        if venue["name"] not in dish["paired_venues"]:
+                            dish["paired_venues"].append(venue["name"])

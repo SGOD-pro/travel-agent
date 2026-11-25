@@ -35,7 +35,9 @@ OBSCURA_BINARY_UNPACKED_BYTES: int = 81_194_528
 # Unpacked function includes all dependencies and Obscura binary in a single artifact without external layers.
 MAX_FUNCTION_COMPRESSED_BYTES: int = 100 * 1024 * 1024  # 100 MB (measured ~90.4 MB)
 MAX_FUNCTION_UNCOMPRESSED_BYTES: int = 250 * 1024 * 1024  # 250 MB (262,144,000 bytes hard ceiling)
-CHROMIUM_LAYER_UNCOMPRESSED_BYTES: int = 0  # Eliminated: Obscura runs standalone without external layers
+CHROMIUM_LAYER_UNCOMPRESSED_BYTES: int = (
+    0  # Eliminated: Obscura runs standalone without external layers
+)
 MAX_COMBINED_UNCOMPRESSED_BYTES: int = 250 * 1024 * 1024  # 250 MB (262,144,000 bytes hard ceiling)
 TARGET_COMBINED_UNCOMPRESSED_BYTES: int = 240 * 1024 * 1024  # 240 MB target with safety margin
 
@@ -647,9 +649,7 @@ print("STRUCTURED_RENDER_RESULT:" + json.dumps(result))
         or structured_data.get("rendered_text") != "HYDRATED_SUCCESS"
         or structured_data.get("title") != "Isolated Artifact Render"
     ):
-        raise RuntimeError(
-            f"Isolated browser rendering failed or was skipped:\n{structured_data}"
-        )
+        raise RuntimeError(f"Isolated browser rendering failed or was skipped:\n{structured_data}")
 
     return {
         "local_proof": "VERIFIED",

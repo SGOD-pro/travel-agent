@@ -863,11 +863,11 @@ class GraphRunnerService:
                         from functions.orchestrator.execution.models import TravelerQuestionModel
 
                         q_id = (
-                            uuid.UUID(str(pending_q["id"]))
-                            if pending_q.get("id")
-                            else uuid.uuid4()
+                            uuid.UUID(str(pending_q["id"])) if pending_q.get("id") else uuid.uuid4()
                         )
-                        q_stmt = select(TravelerQuestionModel).where(TravelerQuestionModel.id == q_id)
+                        q_stmt = select(TravelerQuestionModel).where(
+                            TravelerQuestionModel.id == q_id
+                        )
                         existing_q = (await session.execute(q_stmt)).scalar_one_or_none()
                         if existing_q is None:
                             q_row = TravelerQuestionModel(
@@ -876,7 +876,9 @@ class GraphRunnerService:
                                 trip_id=execution.trip_id,
                                 owner_id=execution.owner_id,
                                 context_version=execution.context_version,
-                                question_key=str(pending_q.get("question_key", "missing_constraint")),
+                                question_key=str(
+                                    pending_q.get("question_key", "missing_constraint")
+                                ),
                                 question_type=str(pending_q.get("question_type", "TEXT")),
                                 prompt=str(pending_q.get("prompt", "")),
                                 validation_rules=dict(pending_q.get("validation_rules", {})),
@@ -891,7 +893,9 @@ class GraphRunnerService:
                                 event_type="QUESTION_ASKED",
                                 safe_payload={
                                     "question_id": str(q_id),
-                                    "question_key": pending_q.get("question_key", "missing_constraint"),
+                                    "question_key": pending_q.get(
+                                        "question_key", "missing_constraint"
+                                    ),
                                     "status": "WAITING_USER",
                                 },
                             )

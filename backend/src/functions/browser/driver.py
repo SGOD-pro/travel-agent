@@ -493,7 +493,9 @@ class PlaywrightBrowserAdapter(BrowserExtractionPort):
             )
         except Exception as exc:
             duration_ms = int((time.monotonic() - start_time) * 1000)
-            logger.warning("Obscura process startup or connection error for %s: %s", payload.url, exc)
+            logger.warning(
+                "Obscura process startup or connection error for %s: %s", payload.url, exc
+            )
             exc_str = str(exc)
             is_timeout = "timeout" in exc_str.lower()
             is_blocked = "blocked" in exc_str.lower() or "403" in exc_str

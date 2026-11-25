@@ -240,9 +240,7 @@ async def process_batch(
                     cleanup_sec = DEFAULT_CLEANUP_TIMEOUT_SECONDS
 
                 try:
-                    done_clean, pending_clean = await asyncio.wait(
-                        {task}, timeout=cleanup_sec
-                    )
+                    done_clean, pending_clean = await asyncio.wait({task}, timeout=cleanup_sec)
                     if pending_clean:
                         logger.warning(
                             "Evidence record %s cleanup exceeded bounded window of %.2fs; abandoning task to protect invocation deadline",
@@ -270,9 +268,13 @@ async def process_batch(
                             StaleQueueMessageError,
                         ),
                     ):
-                        logger.info("Safely discarding task dispatch for %s: %s", message_id, task_exc)
+                        logger.info(
+                            "Safely discarding task dispatch for %s: %s", message_id, task_exc
+                        )
                         return None
-                    logger.exception("Error processing evidence record %s: %s", message_id, task_exc)
+                    logger.exception(
+                        "Error processing evidence record %s: %s", message_id, task_exc
+                    )
                     return {"itemIdentifier": message_id} if message_id else None
 
             return None
@@ -406,9 +408,7 @@ def lambda_handler(
                 failures = loop.run_until_complete(batch_task)
         except Exception as e:
             logger.exception("Unexpected exception in handler execution: %s", e)
-            failures = [
-                {"itemIdentifier": r["messageId"]} for r in records if r.get("messageId")
-            ]
+            failures = [{"itemIdentifier": r["messageId"]} for r in records if r.get("messageId")]
 
         # Bounded shutdown of all lingering tasks on this invocation's event loop
         pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
@@ -440,9 +440,7 @@ def lambda_handler(
 
         # Shutdown async generators cleanly
         try:
-            loop.run_until_complete(
-                asyncio.wait_for(loop.shutdown_asyncgens(), timeout=0.05)
-            )
+            loop.run_until_complete(asyncio.wait_for(loop.shutdown_asyncgens(), timeout=0.05))
         except Exception:
             pass
 

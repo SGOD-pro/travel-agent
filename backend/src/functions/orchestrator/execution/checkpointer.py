@@ -228,6 +228,8 @@ class TransactionBoundCheckpointer(BaseCheckpointSaver):
 
         chk_id = row["checkpoint_id"]
         chk_type = row["type"] or "msgpack"
+        if not isinstance(chk_type, str):
+            return None
         chk_bytes = bytes(row["checkpoint"])
         meta_bytes = bytes(row["metadata"])
 

@@ -146,9 +146,7 @@ class TravelerAnswerService:
             )
 
         if execution_id is not None and question.execution_id != execution_id:
-            raise QuestionNotFoundError(
-                f"Question {question_id} not found for job {execution_id}"
-            )
+            raise QuestionNotFoundError(f"Question {question_id} not found for job {execution_id}")
 
         # 3. Replay and idempotency handling
         if question.status == QuestionStatus.ANSWERED.value:
@@ -194,9 +192,7 @@ class TravelerAnswerService:
 
         trip: TripModel | None = None
         if execution.trip_id is not None:
-            trip_stmt = (
-                select(TripModel).where(TripModel.id == execution.trip_id).with_for_update()
-            )
+            trip_stmt = select(TripModel).where(TripModel.id == execution.trip_id).with_for_update()
             trip = (await session.execute(trip_stmt)).scalar_one_or_none()
 
         # 6. Post-lock evaluation: evaluate current time, execution state, and deadlines AFTER acquiring all locks
@@ -288,12 +284,14 @@ class TravelerAnswerService:
         # 11. Update trip and trip versions if trip associated
         complete_brief_dict: dict[str, Any] = {}
         if execution.trip_id is not None and trip is not None:
-            ver_stmt = (
-                select(TripVersionModel)
-                .where(
-                    TripVersionModel.trip_id == trip.id,
-                    TripVersionModel.version == (expected_base_version if expected_base_version is not None else trip.current_version),
-                )
+            ver_stmt = select(TripVersionModel).where(
+                TripVersionModel.trip_id == trip.id,
+                TripVersionModel.version
+                == (
+                    expected_base_version
+                    if expected_base_version is not None
+                    else trip.current_version
+                ),
             )
             base_version = (await session.execute(ver_stmt)).scalars().first()
             base_brief_json = dict(base_version.brief_json) if base_version else {}

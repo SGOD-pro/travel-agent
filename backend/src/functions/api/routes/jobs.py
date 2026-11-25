@@ -335,4 +335,3 @@ async def submit_job_response(
     except AnswerValidationError as e:
         await session.rollback()
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e)) from e
-
