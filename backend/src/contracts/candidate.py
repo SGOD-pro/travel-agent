@@ -65,6 +65,8 @@ class CandidateHoursStatus(StrEnum):
 
     VERIFIED_HOURS = "VERIFIED_HOURS"
     HOURS_ASSUMED = "HOURS_ASSUMED"
+    HOURS_CONFLICTED = "HOURS_CONFLICTED"
+    CLOSED_ON_TRIP_DAY = "CLOSED_ON_TRIP_DAY"
     UNKNOWN = "UNKNOWN"
     USER_SUPPLIED_UNVERIFIED = "USER_SUPPLIED_UNVERIFIED"
 
@@ -99,6 +101,8 @@ class RegisteredCandidate(BaseModel):
     is_hours_assumed: bool = Field(default=False)
     suggested_stay_minutes: int = Field(default=60, ge=5, le=1440)
     price_estimate_inr: float | None = None
+    is_must_visit: bool = Field(default=False)
+    hours_details: dict[str, Any] = Field(default_factory=dict)
     diagnostics: dict[str, Any] = Field(default_factory=dict)
     provenance: dict[str, Any] = Field(default_factory=dict)
 

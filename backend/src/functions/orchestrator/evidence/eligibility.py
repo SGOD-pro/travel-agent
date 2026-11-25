@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from typing import Any
 
 from sqlalchemy import select
@@ -28,6 +28,7 @@ from contracts.candidate import (
     CandidateHoursStatus,
     RegisteredCandidate,
 )
+from functions.orchestrator.evidence.hours_extraction import resolve_hours_for_dates
 from functions.orchestrator.evidence.models import ClaimEvidenceModel, ClaimModel
 from functions.orchestrator.evidence.schemas import (
     AvailabilityStatus,
@@ -83,6 +84,8 @@ class DeterministicEvidenceEligibilityGate:
         owner_id: uuid.UUID | None = None,
         fixture_observations: list[Any] | None = None,
         fixture_claims: list[Any] | None = None,
+        visit_dates: list[date] | None = None,
+        local_timezone: str = "Asia/Kolkata",
     ) -> CandidateEligibilityReport:
         """Evaluates each candidate place against evidence observations and claims.
 
@@ -191,8 +194,11 @@ class DeterministicEvidenceEligibilityGate:
             hours_status, start_t, end_t, is_assumed, hours_diag = self._evaluate_hours(
                 candidate=candidate,
                 claims=claims_list,
+                visit_dates=visit_dates,
+                local_timezone=local_timezone,
             )
 
+            hours_details = dict(hours_diag.pop("hours_details", {}) or {})
             updated_diag = dict(candidate.diagnostics)
             updated_diag.update(existence_diag)
             updated_diag.update(hours_diag)
@@ -216,10 +222,21 @@ class DeterministicEvidenceEligibilityGate:
                 "category": candidate.category,
                 "point": {"lat": candidate.point.lat, "lng": candidate.point.lng},
             }
-            updated_prov["uncertainty"] = "VERIFIED"
-            updated_prov["conflicting_details"] = []
+            updated_prov["uncertainty"] = (
+                "CONFLICTED_HOURS"
+                if hours_status == CandidateHoursStatus.HOURS_CONFLICTED
+                else "VERIFIED"
+            )
+            conflicting_details: list[str] = []
+            if hours_status == CandidateHoursStatus.HOURS_CONFLICTED:
+                conflicting_details.append(
+                    str(hours_diag.get("hours_diagnostic") or "Conflicting operating hours across sources")
+                )
+            updated_prov["conflicting_details"] = conflicting_details
             unavailable: list[str] = []
-            if is_assumed:
+            if hours_status == CandidateHoursStatus.CLOSED_ON_TRIP_DAY:
+                unavailable.append("closed_on_trip_day")
+            elif is_assumed:
                 unavailable.append("opening_hours_assumed")
             elif hours_status == CandidateHoursStatus.UNKNOWN:
                 unavailable.append("opening_hours_unverified")
@@ -232,6 +249,7 @@ class DeterministicEvidenceEligibilityGate:
                     "window_start": start_t,
                     "window_end": end_t,
                     "is_hours_assumed": is_assumed,
+                    "hours_details": hours_details,
                     "diagnostics": updated_diag,
                     "provenance": updated_prov,
                 }
@@ -630,7 +648,14 @@ class DeterministicEvidenceEligibilityGate:
                 or {}
             )
 
+            cat_upper = str(
+                getattr(clm, "category", "")
+                or (clm.get("category", "") if isinstance(clm, dict) else "")
+            ).upper()
             if str(verif).upper() in (VerificationStatus.CONFLICTED.value, "CONFLICTED"):
+                if cat_upper == ClaimCategory.HOURS.value:
+                    # Conflicting operating hours are surfaced via CandidateHoursStatus.HOURS_CONFLICTED
+                    continue
                 return CandidateExistenceStatus.CONTRADICTED, {
                     "contradiction_reason": "Conflicting claims detected for place identity or existence"
                 }
@@ -712,8 +737,14 @@ class DeterministicEvidenceEligibilityGate:
             valid_until = getattr(clm, "valid_until", None) or (
                 clm.get("valid_until") if isinstance(clm, dict) else None
             )
+            as_of_utc = self._as_of if self._as_of.tzinfo is not None else self._as_of.replace(tzinfo=UTC)
+            valid_until_utc = (
+                valid_until
+                if valid_until is None or valid_until.tzinfo is not None
+                else valid_until.replace(tzinfo=UTC)
+            )
             if freshness == FreshnessStatus.STALE.value or (
-                valid_until is not None and self._as_of > valid_until
+                valid_until_utc is not None and as_of_utc > valid_until_utc
             ):
                 # Stale claims do not verify existence
                 continue
@@ -832,12 +863,14 @@ class DeterministicEvidenceEligibilityGate:
         self,
         candidate: RegisteredCandidate,
         claims: list[Any],
+        visit_dates: list[date] | None = None,
+        local_timezone: str = "Asia/Kolkata",
     ) -> tuple[CandidateHoursStatus, time, time, bool, dict[str, Any]]:
         """Evaluates operating hours for a verified existence place.
 
-        If hours are known and verified, uses the verified window (is_assumed=False).
-        If hours are unknown, missing, unverified, or stale, applies the assumed daytime window
-        (09:00 to 18:00) with is_assumed=True, explicitly labeled as HOURS_ASSUMED.
+        Rejects snippet only claims from granting VERIFIED_HOURS, surfaces conflicted sources as
+        HOURS_CONFLICTED, detects closures across trip dates as CLOSED_ON_TRIP_DAY, and labels
+        missing or stale hours explicitly as HOURS_ASSUMED.
         """
         hours_claims = [
             c
@@ -848,57 +881,166 @@ class DeterministicEvidenceEligibilityGate:
             == ClaimCategory.HOURS.value
         ]
 
+        fresh_attributable: list[tuple[str, dict[str, Any]]] = []
+        saw_stale = False
+        saw_snippet_only = False
+        has_conflict = False
+        conflict_entries: list[dict[str, Any]] = []
+        snippet_sources = {"SERPAPI_SEARCH", "SEARCH_SNIPPET", "SEARCH_RESULT"}
+        as_of_utc = self._as_of if self._as_of.tzinfo is not None else self._as_of.replace(tzinfo=UTC)
+
         for clm in hours_claims:
             verif = getattr(clm, "verification", None)
             freshness = getattr(clm, "freshness", None)
             typed_val = getattr(clm, "typed_value", {}) or {}
             valid_until = getattr(clm, "valid_until", None)
+            evidence_links = getattr(clm, "evidence_links", None) or []
 
             if isinstance(clm, dict):
                 verif = clm.get("verification")
                 freshness = clm.get("freshness")
-                typed_val = clm.get("typed_value", {})
+                typed_val = clm.get("typed_value", {}) or {}
                 valid_until = clm.get("valid_until")
+                evidence_links = clm.get("evidence_links") or []
 
-            # Check freshness bound
+            valid_until_utc = (
+                valid_until
+                if valid_until is None or valid_until.tzinfo is not None
+                else valid_until.replace(tzinfo=UTC)
+            )
             is_stale = str(freshness).upper() in (FreshnessStatus.STALE.value, "STALE") or (
-                valid_until is not None and self._as_of > valid_until
+                valid_until_utc is not None and as_of_utc > valid_until_utc
+            )
+            if is_stale:
+                saw_stale = True
+                continue
+
+            source_kind = str(typed_val.get("source_kind") or "").upper().strip()
+            ext_method = str(typed_val.get("extraction_method") or "").upper().strip()
+            link_methods: list[str] = []
+            for link in evidence_links:
+                obs_obj = getattr(link, "observation", None) if not isinstance(link, dict) else link.get("observation")
+                if obs_obj is not None:
+                    lm = (
+                        obs_obj.get("extraction_method")
+                        if isinstance(obs_obj, dict)
+                        else getattr(obs_obj, "extraction_method", None)
+                    )
+                    if lm:
+                        link_methods.append(str(lm).upper().strip())
+
+            is_snippet = (
+                source_kind in snippet_sources
+                or ext_method in snippet_sources
+                or (bool(link_methods) and all(m in snippet_sources for m in link_methods))
+            )
+            if is_snippet:
+                saw_snippet_only = True
+                continue
+
+            verif_upper = str(verif).upper()
+            if verif_upper in (VerificationStatus.CONFLICTED.value, "CONFLICTED"):
+                has_conflict = True
+                conflict_entries.append(dict(typed_val))
+            elif verif_upper in (VerificationStatus.VERIFIED.value, "VERIFIED"):
+                fresh_attributable.append((verif_upper, dict(typed_val)))
+
+        if not has_conflict and len(fresh_attributable) >= 2:
+            signatures = {
+                (
+                    str(tv.get("opens") or tv.get("open") or ""),
+                    str(tv.get("closes") or tv.get("close") or ""),
+                    str(tv.get("ticketing_closes") or ""),
+                    str(tv.get("last_entry") or ""),
+                    tuple(sorted(str(d).lower() for d in (tv.get("closed_days") or []))),
+                )
+                for _, tv in fresh_attributable
+            }
+            if len(signatures) > 1:
+                has_conflict = True
+                conflict_entries.extend(tv for _, tv in fresh_attributable)
+
+        if has_conflict:
+            return (
+                CandidateHoursStatus.HOURS_CONFLICTED,
+                DEFAULT_ASSUMED_WINDOW_START,
+                DEFAULT_ASSUMED_WINDOW_END,
+                True,
+                {
+                    "hours_status": "HOURS_CONFLICTED",
+                    "hours_diagnostic": (
+                        "Conflicting operating hours found across attributable sources (HOURS_CONFLICTED)."
+                    ),
+                    "hours_details": {
+                        "conflicts": conflict_entries,
+                        "local_timezone": local_timezone,
+                    },
+                },
             )
 
-            if is_stale:
+        for _, typed_val in fresh_attributable:
+            resolved = resolve_hours_for_dates(
+                typed_val,
+                visit_dates=visit_dates,
+                local_timezone=local_timezone,
+            )
+            if resolved.get("all_closed"):
+                closed_list = resolved.get("closed_days") or []
                 return (
-                    CandidateHoursStatus.HOURS_ASSUMED,
+                    CandidateHoursStatus.CLOSED_ON_TRIP_DAY,
                     DEFAULT_ASSUMED_WINDOW_START,
                     DEFAULT_ASSUMED_WINDOW_END,
                     True,
                     {
-                        "hours_status": "HOURS_ASSUMED",
+                        "hours_status": "CLOSED_ON_TRIP_DAY",
                         "hours_diagnostic": (
-                            "Existing hours claim is STALE. "
-                            "Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED)."
+                            f"Venue closed on requested trip dates ({', '.join(closed_list)})."
                         ),
+                        "hours_details": resolved,
                     },
                 )
 
-            if str(verif).upper() in (VerificationStatus.VERIFIED.value, "VERIFIED"):
-                opens_str = typed_val.get("opens") or typed_val.get("open")
-                closes_str = typed_val.get("closes") or typed_val.get("close")
-                start_t = parse_time_str(opens_str)
-                end_t = parse_time_str(closes_str)
+            start_t = parse_time_str(resolved.get("opens"))
+            end_t = parse_time_str(resolved.get("closes"))
+            if start_t is not None and end_t is not None:
+                return (
+                    CandidateHoursStatus.VERIFIED_HOURS,
+                    start_t,
+                    end_t,
+                    False,
+                    {
+                        "hours_status": "VERIFIED_HOURS",
+                        "hours_diagnostic": (
+                            f"Verified operating hours applied: {start_t.strftime('%H:%M')} to {end_t.strftime('%H:%M')}"
+                        ),
+                        "hours_details": resolved,
+                    },
+                )
 
-                if start_t is not None and end_t is not None:
-                    return (
-                        CandidateHoursStatus.VERIFIED_HOURS,
-                        start_t,
-                        end_t,
-                        False,
-                        {
-                            "hours_status": "VERIFIED_HOURS",
-                            "hours_diagnostic": f"Verified operating hours applied: {start_t.strftime('%H:%M')} to {end_t.strftime('%H:%M')}",
-                        },
-                    )
+        if saw_stale:
+            return (
+                CandidateHoursStatus.HOURS_ASSUMED,
+                DEFAULT_ASSUMED_WINDOW_START,
+                DEFAULT_ASSUMED_WINDOW_END,
+                True,
+                {
+                    "hours_status": "HOURS_ASSUMED",
+                    "hours_diagnostic": (
+                        "Existing hours claim is STALE. "
+                        "Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED)."
+                    ),
+                },
+            )
 
-        # Unknown or missing hours -> fallback to explicitly labeled assumed daytime window
+        diag_msg = (
+            "Search snippet hours excluded without attributable source page content. "
+            "Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED)."
+            if saw_snippet_only
+            else (
+                "Operating hours unknown or unverified. "
+                "Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED)."
+            )
+        )
         return (
             CandidateHoursStatus.HOURS_ASSUMED,
             DEFAULT_ASSUMED_WINDOW_START,
@@ -906,9 +1048,7 @@ class DeterministicEvidenceEligibilityGate:
             True,
             {
                 "hours_status": "HOURS_ASSUMED",
-                "hours_diagnostic": (
-                    "Operating hours unknown or unverified. "
-                    "Assumed daytime window 09:00-18:00 applied (HOURS_ASSUMED)."
-                ),
+                "snippet_only_hours_ignored": saw_snippet_only,
+                "hours_diagnostic": diag_msg,
             },
         )

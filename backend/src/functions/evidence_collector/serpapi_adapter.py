@@ -392,9 +392,8 @@ class SerpApiAdapter:
                 "SERPAPI_API_KEY is not configured; live search requires valid credentials"
             )
 
-        query_purpose = (
-            (extra_params or {}).get("purpose")
-            or (extra_params or {}).get("query_purpose")
+        query_purpose = (extra_params or {}).get("purpose") or (extra_params or {}).get(
+            "query_purpose"
         )
         if query_purpose:
             query_purpose = str(query_purpose).strip().lower()
@@ -402,9 +401,8 @@ class SerpApiAdapter:
         query_dest = (extra_params or {}).get("destination")
 
         # Explicit purpose determines the permitted search engine
-        if query_purpose == "advisory":
-            # Road travel advisory MUST route to web search (engine="google").
-            # Reject or safely normalize advisory + google_maps and unsupported values.
+        if query_purpose in ("advisory", "hours"):
+            # Road travel advisory and hours research route to web search (engine="google").
             selected_engine = "google"
         elif query_purpose in ("attractions", "dining", "lodging"):
             # Venue discovery MUST route to place search (engine="google_maps").
@@ -429,9 +427,7 @@ class SerpApiAdapter:
             "device",
             "safe",
         }
-        filtered_extra = {
-            k: v for k, v in (extra_params or {}).items() if k in serpapi_param_keys
-        }
+        filtered_extra = {k: v for k, v in (extra_params or {}).items() if k in serpapi_param_keys}
         params: dict[str, Any] = {
             **filtered_extra,
             "engine": selected_engine,

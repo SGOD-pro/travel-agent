@@ -370,6 +370,13 @@ class ScraplingExtractionAdapter(WebExtractionPort):
                 addr_elem = item.css(".address, .location, .locality").first
                 address = getattr(addr_elem, "text", "").strip() if addr_elem else ""
 
+                body_elem = item.css("p, .description, .details, .info").first
+                body_text = (
+                    body_elem.get_all_text().strip()
+                    if body_elem and hasattr(body_elem, "get_all_text")
+                    else (getattr(body_elem, "text", "").strip() if body_elem else "")
+                )
+
                 parts = [f"Attraction: {name}"]
                 if hours:
                     parts.append(f"Hours: {hours}")
@@ -379,6 +386,8 @@ class ScraplingExtractionAdapter(WebExtractionPort):
                     parts.append(f"Fee Notice: {fee_text}")
                 if address:
                     parts.append(f"Location: {address}")
+                if body_text:
+                    parts.append(f"Details: {' '.join(body_text.split())[:600]}")
 
                 excerpt = " | ".join(parts)
                 content_hash = compute_content_hash(excerpt)
@@ -581,7 +590,11 @@ class ScraplingExtractionAdapter(WebExtractionPort):
 
         elif category in ("destination", "poi", "attraction"):
             obs = self.parse_destination_html(html_content, effective_url, retrieved_at)
-            if obs:
+            has_structured_hours = any(
+                isinstance(o.artifact_ref, dict) and bool(o.artifact_ref.get("hours"))
+                for o in obs
+            )
+            if obs and (has_structured_hours or "timings" not in html_content.lower()):
                 return obs, []
 
         elif category in ("festival", "traffic", "advisory", "restriction"):
@@ -593,11 +606,15 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         page = Selector(html_content)
         main_elem = page.css("main, article, .content, #content, body").first
         raw_text = (
-            main_elem.get_all_text()
-            if hasattr(main_elem, "get_all_text")
-            else getattr(main_elem, "text", "")
-        ) if main_elem else ""
-        clean_text = " ".join(raw_text.split())[:1000]
+            (
+                main_elem.get_all_text()
+                if hasattr(main_elem, "get_all_text")
+                else getattr(main_elem, "text", "")
+            )
+            if main_elem
+            else ""
+        )
+        clean_text = " ".join(raw_text.split())[:4000]
 
         if not clean_text:
             return [], []
@@ -624,6 +641,36 @@ class ScraplingExtractionAdapter(WebExtractionPort):
                 if raw_t:
                     page_title = raw_t.split("|")[0].split("-")[0].strip()
 
+        city_hint: str | None = None
+        for selector in (
+            "meta[property='og:locality']",
+            "meta[name='locality']",
+            ".locality",
+            ".city",
+            "[itemprop='addressLocality']",
+        ):
+            el = page.css(selector).first
+            if el:
+                val = (
+                    el.attrib.get("content", "")
+                    if selector.startswith("meta") and hasattr(el, "attrib")
+                    else getattr(el, "text", "")
+                )
+                if val and str(val).strip():
+                    city_hint = str(val).strip()
+                    break
+
+        address_hint: str | None = None
+        addr_el = page.css("[itemprop='streetAddress'], .address, address").first
+        if addr_el:
+            raw_addr = (
+                addr_el.get_all_text().strip()
+                if hasattr(addr_el, "get_all_text")
+                else getattr(addr_el, "text", "").strip()
+            )
+            if raw_addr:
+                address_hint = " ".join(raw_addr.split())[:240]
+
         artifact_metadata: dict[str, Any] = {
             "category": category,
             "evidence_class": EvidenceClass.INDICATIVE_SEARCH.value,
@@ -631,6 +678,12 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         if page_title:
             artifact_metadata["title"] = page_title
             artifact_metadata["page_title"] = page_title
+        if city_hint:
+            artifact_metadata["city_hint"] = city_hint
+        if address_hint:
+            artifact_metadata["address"] = address_hint
+        if title:
+            artifact_metadata["search_selected_title"] = title
         if title:
             # Preserve search result context separately from page extracted identity
             artifact_metadata["search_selected_title"] = title

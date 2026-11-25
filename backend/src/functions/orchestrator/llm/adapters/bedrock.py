@@ -135,11 +135,40 @@ class BedrockLlmClient(HostedLlmClientPort):
 
         return session.client("bedrock-runtime", region_name=region, config=client_config)
 
+    async def generate(
+        self,
+        prompt: str,
+        *,
+        system_prompt: str | None = None,
+        max_tokens: int = 1200,
+        temperature: float = 0.0,
+    ) -> str:
+        """Invokes Bedrock Converse for structured text completion using configured model."""
+        messages = [{"role": "user", "content": [{"text": prompt}]}]
+        system = [{"text": system_prompt}] if system_prompt else None
+        inference_cfg = {"maxTokens": max_tokens, "temperature": temperature}
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._sync_invoke_converse,
+                    self.model_id,
+                    messages,
+                    system,
+                    inference_cfg,
+                ),
+                timeout=self.timeout_seconds,
+            )
+        except TimeoutError as exc:
+            raise TimeoutError(
+                f"Bedrock LLM request timed out after {self.timeout_seconds}s"
+            ) from exc
+
     def _sync_invoke_converse(
         self,
         model_id: str,
         messages: list[dict[str, Any]],
         system: list[dict[str, Any]] | None = None,
+        inference_config: dict[str, Any] | None = None,
     ) -> str:
         """Synchronously invokes the Bedrock converse API with automatic inference profile fallback."""
         kwargs: dict[str, Any] = {
@@ -148,6 +177,8 @@ class BedrockLlmClient(HostedLlmClientPort):
         }
         if system:
             kwargs["system"] = system
+        if inference_config:
+            kwargs["inferenceConfig"] = inference_config
 
         try:
             response = self._client.converse(**kwargs)

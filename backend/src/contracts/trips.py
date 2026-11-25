@@ -51,6 +51,7 @@ class DestinationPoint(BaseModel):
     stay_days: int = Field(default=1, ge=1)
     visit_date: date | None = None
     day_offset: int | None = Field(default=None, ge=0)
+    is_must_visit: bool = Field(default=True)
 
 
 class TripBrief(BaseModel):
@@ -72,6 +73,8 @@ class TripBrief(BaseModel):
     rooms: int = Field(default=1, ge=1)
     target_budget: Money | None = None
     preferred_modes: list[TransportMode] = Field(default_factory=lambda: [TransportMode.CAR_PETROL])
+    traveler_preferences: list[str] = Field(default_factory=list)
+    must_visit_places: list[str] = Field(default_factory=list)
     dietary_preferences: list[str] = Field(default_factory=list)
     accessibility_requirements: list[str] = Field(default_factory=list)
     hard_constraints: list[str] = Field(default_factory=list)
@@ -123,6 +126,8 @@ class TripBriefDraft(BaseModel):
     rooms: int = Field(default=1, ge=1)
     target_budget: Money | None = None
     preferred_modes: list[TransportMode] = Field(default_factory=lambda: [TransportMode.CAR_PETROL])
+    traveler_preferences: list[str] = Field(default_factory=list)
+    must_visit_places: list[str] = Field(default_factory=list)
     dietary_preferences: list[str] = Field(default_factory=list)
     accessibility_requirements: list[str] = Field(default_factory=list)
     hard_constraints: list[str] = Field(default_factory=list)
@@ -182,6 +187,8 @@ class TripBriefDraft(BaseModel):
             rooms=self.rooms,
             target_budget=self.target_budget,
             preferred_modes=self.preferred_modes,
+            traveler_preferences=self.traveler_preferences,
+            must_visit_places=self.must_visit_places,
             dietary_preferences=self.dietary_preferences,
             accessibility_requirements=self.accessibility_requirements,
             hard_constraints=self.hard_constraints,

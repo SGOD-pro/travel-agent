@@ -310,8 +310,41 @@ class EvidenceCollectorService:
         selected: list[dict[str, Any]] = []
         seen_urls: set[str] = set()
 
-        for obs in observations:
-            url = (obs.canonical_url or obs.source_url or "").strip()
+        def _score_url(url_val: str, title_val: str) -> int:
+            parsed_val = urlparse(url_val)
+            host = parsed_val.netloc.lower()
+            path_val = parsed_val.path.lower()
+            score = 0
+            if any(tok in host for tok in (".gov", ".nic.in", "tourism", "incredibleindia")):
+                score += 10
+            elif host.endswith(".org") or host.endswith(".org.in") or host.endswith(".edu"):
+                score += 5
+            if any(tok in f"{host}{path_val}" for tok in ("museum", "garden", "palace", "fort", "temple", "official", "ticket", "timing")):
+                score += 3
+            title_tokens = [
+                t for t in title_val.lower().replace("-", " ").split() if len(t) >= 4
+            ]
+            if any(tok in host for tok in title_tokens):
+                score += 4
+            if any(agg in host for agg in ("tripadvisor", "makemytrip", "thrillophilia", "holidify", "goibibo", "cleartrip", "yatra")):
+                score -= 4
+            if any(soc in host for soc in ("quora", "reddit", "youtube", "instagram", "facebook", "pinterest")):
+                score -= 6
+            return score
+
+        ranked_candidates: list[tuple[tuple[int, int], dict[str, Any]]] = []
+
+        for idx, obs in enumerate(observations):
+            if isinstance(obs, dict):
+                url = str(obs.get("canonical_url") or obs.get("source_url") or "").strip()
+                raw_art = obs.get("artifact_ref")
+                obs_excerpt = str(obs.get("excerpt_text") or "").lower()
+            else:
+                url = (obs.canonical_url or obs.source_url or "").strip()
+                raw_art = obs.artifact_ref
+                obs_excerpt = str(obs.excerpt_text or "").lower()
+            art_ref: dict[str, Any] = raw_art if isinstance(raw_art, dict) else {}
+
             if not url or not (url.startswith("http://") or url.startswith("https://")):
                 continue
 
@@ -331,29 +364,56 @@ class EvidenceCollectorService:
                 continue
             seen_urls.add(clean_url)
 
-            art_ref = obs.artifact_ref if isinstance(obs.artifact_ref, dict) else {}
-            title = art_ref.get("title") or art_ref.get("place_name") or art_ref.get("name") or ""
+            title = str(
+                art_ref.get("title") or art_ref.get("place_name") or art_ref.get("name") or ""
+            )
             category = art_ref.get("category")
             if not category:
-                excerpt = str(obs.excerpt_text or "").lower()
                 url_lower = url.lower()
-                combined_hint = f"{title.lower()} {excerpt} {url_lower}"
-                if any(w in combined_hint for w in ("hotel", "resort", "homestay", "lodge", "inn", "hostel", "accommodation")):
+                combined_hint = f"{title.lower()} {obs_excerpt} {url_lower}"
+                if any(
+                    w in combined_hint
+                    for w in (
+                        "hotel",
+                        "resort",
+                        "homestay",
+                        "lodge",
+                        "inn",
+                        "hostel",
+                        "accommodation",
+                    )
+                ):
                     category = "lodging"
-                elif any(w in combined_hint for w in ("restaurant", "food", "cafe", "dhaba", "dining", "cuisine", "bakery", "street food", "sweets", "chaat", "eatery")):
+                elif any(
+                    w in combined_hint
+                    for w in (
+                        "restaurant",
+                        "food",
+                        "cafe",
+                        "dhaba",
+                        "dining",
+                        "cuisine",
+                        "bakery",
+                        "street food",
+                        "sweets",
+                        "chaat",
+                        "eatery",
+                    )
+                ):
                     category = "restaurant"
                 else:
                     category = "attraction"
 
-            selected.append(
-                {
-                    "url": obs.canonical_url or obs.source_url,
-                    "category": category,
-                    "title": title,
-                }
-            )
-            if len(selected) >= max_urls:
-                break
+            entry = {
+                "url": url,
+                "category": category,
+                "title": title,
+            }
+            rank_score = _score_url(url, title)
+            ranked_candidates.append(((rank_score, -idx), entry))
+
+        ranked_candidates.sort(key=lambda pair: pair[0], reverse=True)
+        selected = [entry for _, entry in ranked_candidates[:max_urls]]
 
         return selected
 
@@ -639,7 +699,7 @@ class EvidenceCollectorService:
                         q_engine = q.get("engine")
                         if q_purpose:
                             p_clean = str(q_purpose).strip().lower()
-                            if p_clean == "advisory":
+                            if p_clean in ("advisory", "hours"):
                                 q_engine = "google"
                             elif p_clean in ("attractions", "dining", "lodging"):
                                 q_engine = "google_maps"
@@ -745,7 +805,9 @@ class EvidenceCollectorService:
                             and (now + timedelta(seconds=DEADLINE_ADVANCE_GUARD_SECONDS))
                             >= exec_model.deadline_at
                         ):
-                            logger.warning("Execution deadline approaching; halting extraction loop")
+                            logger.warning(
+                                "Execution deadline approaching; halting extraction loop"
+                            )
                             break
 
                     # If this is a dedicated URL task without search queries, enforce budget reservations
@@ -778,9 +840,7 @@ class EvidenceCollectorService:
                                     ext_art = dict(ext_obs.artifact_ref or {})
                                     # Keep search result metadata separate from page extracted identity
                                     ext_art.setdefault("search_selected_title", page_title)
-                                    updated_obs_list.append(
-                                        replace(ext_obs, artifact_ref=ext_art)
-                                    )
+                                    updated_obs_list.append(replace(ext_obs, artifact_ref=ext_art))
                                 else:
                                     updated_obs_list.append(ext_obs)
                             collected_observations.extend(updated_obs_list)

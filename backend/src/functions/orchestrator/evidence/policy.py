@@ -119,6 +119,7 @@ def safe_parse_datetime(val: Any) -> datetime | None:
                 pass
     return None
 
+
 # Category freshness validity windows per spec 0002
 CATEGORY_FRESHNESS_WINDOWS: dict[str, timedelta] = {
     ClaimCategory.WEATHER.value: timedelta(hours=6),
@@ -362,12 +363,31 @@ class ClaimVerificationPolicy:
                 return True, f"Conflicting boolean {key}: {b_a} vs {b_b}"
 
         # Check opening and closing hours
-        for key in ("hours", "opening_hours", "schedule", "open_time", "close_time"):
+        for key in (
+            "hours",
+            "opening_hours",
+            "schedule",
+            "open_time",
+            "close_time",
+            "opens",
+            "closes",
+            "ticketing_closes",
+            "last_entry",
+        ):
             h_a = val_a.get(key)
             h_b = val_b.get(key)
             if h_a is not None and h_b is not None:
                 if str(h_a).strip() != str(h_b).strip():
                     return True, f"Conflicting {key}: {h_a} vs {h_b}"
+
+        # Check closed days conflict for HOURS claims
+        closed_a = val_a.get("closed_days")
+        closed_b = val_b.get("closed_days")
+        if isinstance(closed_a, list) and isinstance(closed_b, list):
+            norm_a = sorted(str(d).strip().lower() for d in closed_a if str(d).strip())
+            norm_b = sorted(str(d).strip().lower() for d in closed_b if str(d).strip())
+            if norm_a != norm_b:
+                return True, f"Conflicting closed_days: {norm_a} vs {norm_b}"
 
         # Check fees or pricing amounts
         for key in ("fee", "fee_inr", "price", "price_inr", "amount", "entry_fee"):

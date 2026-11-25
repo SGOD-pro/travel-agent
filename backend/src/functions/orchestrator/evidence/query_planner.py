@@ -38,11 +38,11 @@ class PlannedQuery(dict[str, Any]):
         **kwargs: Any,
     ) -> None:
         clean_purpose = str(purpose or "attractions").strip().lower()
-        if clean_purpose not in ("attractions", "dining", "lodging", "advisory"):
+        if clean_purpose not in ("attractions", "hours", "dining", "lodging", "advisory"):
             clean_purpose = "attractions"
 
         # Explicit purpose determines permitted search engine
-        if clean_purpose == "advisory":
+        if clean_purpose in ("advisory", "hours"):
             target_engine = "google"
         else:
             target_engine = "google_maps"
@@ -151,7 +151,9 @@ class QueryPlanningService:
                 if d.name and d.name.strip():
                     destinations.append(d.name.strip())
             dietary = list(brief.dietary_preferences)
-            traveler_prefs = list(brief.dietary_preferences) + list(brief.accessibility_requirements)
+            traveler_prefs = list(brief.dietary_preferences) + list(
+                brief.accessibility_requirements
+            )
             start_date_val = brief.start_date
             if brief.target_budget is not None:
                 budget_tier = (
@@ -206,8 +208,7 @@ class QueryPlanningService:
                 p
                 for p in traveler_prefs
                 if any(
-                    k in p.lower()
-                    for k in ("food", "dining", "cuisine", "street", "sweet", "veg")
+                    k in p.lower() for k in ("food", "dining", "cuisine", "street", "sweet", "veg")
                 )
             ]
             if food_terms:
@@ -405,6 +406,123 @@ class QueryPlanningService:
         )
 
     @classmethod
+    def plan_attractions_and_hours_queries(
+        cls,
+        brief: dict[str, Any] | TripBrief,
+        max_queries: int = DEFAULT_MAX_QUERIES,
+    ) -> PlannedQueryList:
+        """Plans bounded attractions and visit hours queries across destinations and must visits."""
+        ceiling = min(max(1, max_queries), DEFAULT_MAX_QUERIES)
+        destinations: list[str] = []
+        must_visits: list[str] = []
+        start_date_val: Any = None
+
+        if isinstance(brief, TripBrief):
+            destinations = [d.name.strip() for d in brief.destinations if d.name and d.name.strip()]
+            must_visits = [p.strip() for p in brief.must_visit_places if p and p.strip()]
+            start_date_val = brief.start_date
+        elif isinstance(brief, dict):
+            raw_dests = brief.get("destinations", [])
+            if isinstance(raw_dests, list):
+                for item in raw_dests:
+                    if isinstance(item, dict) and item.get("name"):
+                        destinations.append(str(item["name"]).strip())
+                    elif hasattr(item, "name") and item.name:
+                        destinations.append(str(item.name).strip())
+                    elif isinstance(item, str) and item.strip():
+                        destinations.append(item.strip())
+            if not destinations and brief.get("destination_name"):
+                destinations.append(str(brief["destination_name"]).strip())
+            raw_mv = brief.get("must_visit_places", [])
+            if isinstance(raw_mv, list):
+                must_visits = [str(p).strip() for p in raw_mv if p and str(p).strip()]
+            start_date_val = brief.get("start_date")
+
+        date_context = ""
+        if start_date_val is not None:
+            if hasattr(start_date_val, "strftime"):
+                date_context = f" {start_date_val.strftime('%B')}"
+            elif isinstance(start_date_val, str) and len(start_date_val) >= 7:
+                try:
+                    date_context = f" {dt_date.fromisoformat(start_date_val[:10]).strftime('%B')}"
+                except Exception:
+                    pass
+
+        primary = destinations[0] if destinations else "Destination"
+        query_candidates: list[PlannedQuery] = []
+
+        # Prioritize explicit traveler must visit hours within query budget
+        for mv_place in must_visits:
+            if len(query_candidates) >= max(1, ceiling // 2):
+                break
+            query_candidates.append(
+                PlannedQuery(
+                    f"{mv_place} {primary} opening hours timings last entry official",
+                    purpose="hours",
+                    destination=primary,
+                    engine="google",
+                )
+            )
+
+        # Cover primary destination attractions and official visiting hours
+        if destinations:
+            d0 = destinations[0]
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0} top attractions sightseeing places to visit",
+                    purpose="attractions",
+                    destination=d0,
+                    engine="google_maps",
+                )
+            )
+            query_candidates.append(
+                PlannedQuery(
+                    f"{d0} tourist attractions opening hours timings closed day{date_context}".strip(),
+                    purpose="hours",
+                    destination=d0,
+                    engine="google",
+                )
+            )
+            for extra_dest in destinations[1:]:
+                if len(query_candidates) >= ceiling:
+                    break
+                query_candidates.append(
+                    PlannedQuery(
+                        f"{extra_dest} attractions opening hours visit timings",
+                        purpose="attractions",
+                        destination=extra_dest,
+                        engine="google_maps",
+                    )
+                )
+
+        final_queries = query_candidates[:ceiling]
+        covered = [
+            d
+            for d in destinations
+            if any(
+                q.destination == d or d in [x.strip() for x in q.destination.split(",")]
+                for q in final_queries
+            )
+        ]
+        uncovered = [d for d in destinations if d not in covered]
+        coverage_reason: str | None = None
+        if uncovered:
+            coverage_reason = (
+                f"Destination count ({len(destinations)}) exceeds available attractions and hours "
+                f"query slots ({len(final_queries)}). Uncovered destinations: {', '.join(uncovered)} "
+                f"due to collector query ceiling ({ceiling})."
+            )
+        elif not destinations:
+            coverage_reason = "No destinations provided in trip brief."
+
+        return PlannedQueryList(
+            final_queries,
+            covered_destinations=covered,
+            uncovered_destinations=uncovered,
+            coverage_reason=coverage_reason,
+        )
+
+    @classmethod
     def structure_and_validate_queries(
         cls,
         queries: list[Any],
@@ -445,7 +563,7 @@ class QueryPlanningService:
             # Explicit purpose is authoritative. Keyword inference must NOT be the authority.
             if explicit_purpose is not None:
                 norm_purpose = str(explicit_purpose).strip().lower()
-                if norm_purpose in ("attractions", "dining", "lodging", "advisory"):
+                if norm_purpose in ("attractions", "hours", "dining", "lodging", "advisory"):
                     purpose = norm_purpose
                 else:
                     # Unsupported purpose value -> safely normalize to attractions
@@ -470,7 +588,7 @@ class QueryPlanningService:
                     purpose = "attractions"
 
             # 2. Explicit purpose determines permitted search engine:
-            if purpose == "advisory":
+            if purpose in ("advisory", "hours"):
                 engine = "google"
             else:
                 engine = "google_maps"

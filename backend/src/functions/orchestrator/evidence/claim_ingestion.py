@@ -22,6 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from contracts.candidate import RegisteredCandidate
 from contracts.evidence import EvidenceClass
 from functions.evidence_collector.models import SourceObservationModel
+from functions.orchestrator.evidence.hours_extraction import (
+    extract_structured_hours_from_text,
+    extract_structured_hours_with_llm,
+)
 from functions.orchestrator.evidence.models import ClaimModel
 from functions.orchestrator.evidence.place_extraction import (
     extract_observation_purpose,
@@ -173,9 +177,9 @@ def _is_casual_mention(text: str) -> bool:
     return any(p.search(text) for p in CASUAL_PATTERNS)
 
 
-def _is_place_closed_or_unavailable(obs: SourceObservationModel) -> bool:
+def _is_place_closed_or_unavailable(obs: SourceObservationModel | dict[str, Any]) -> bool:
     """Detects whether observation indicates the place is permanently closed or unavailable."""
-    art_ref = getattr(obs, "artifact_ref", None)
+    art_ref = _obs_attr(obs, "artifact_ref")
     if isinstance(art_ref, dict):
         bus_status = str(art_ref.get("business_status") or "").upper()
         if bus_status in ("CLOSED_PERMANENTLY", "CLOSED_TEMPORARILY", "INACTIVE"):
@@ -196,7 +200,7 @@ def _is_place_closed_or_unavailable(obs: SourceObservationModel) -> bool:
         if art_ref.get("permanently_closed") is True or art_ref.get("is_closed") is True:
             return True
 
-    excerpt = getattr(obs, "excerpt_text", "") or ""
+    excerpt = _obs_attr(obs, "excerpt_text") or ""
     if any(p.search(excerpt) for p in CLOSED_OR_UNAVAILABLE_PATTERNS):
         return True
 
@@ -287,16 +291,172 @@ def _extract_observation_coordinates(obs: SourceObservationModel) -> tuple[float
     return None
 
 
-def _extract_observation_title(obs: SourceObservationModel) -> str | None:
+KNOWN_CONFLICTING_CITIES: frozenset[str] = frozenset(
+    {
+        "kolkata",
+        "calcutta",
+        "howrah",
+        "west bengal",
+        "bengaluru",
+        "bangalore",
+        "chennai",
+        "mumbai",
+        "delhi",
+        "new delhi",
+        "hyderabad",
+        "pune",
+        "jaipur",
+        "ahmedabad",
+        "kochi",
+        "cochin",
+        "thiruvananthapuram",
+        "shimla",
+        "manali",
+        "darjeeling",
+        "gangtok",
+        "goa",
+        "panaji",
+        "varanasi",
+        "lucknow",
+        "patna",
+        "bhubaneswar",
+        "guwahati",
+        "shillong",
+        "srinagar",
+        "leh",
+        "ladakh",
+        "udaipur",
+        "jodhpur",
+        "agra",
+        "amritsar",
+        "chandigarh",
+        "dehradun",
+        "rishikesh",
+        "haridwar",
+        "munnar",
+        "alleppey",
+        "madurai",
+        "coimbatore",
+        "kodaikanal",
+        "mysuru",
+        "mysore",
+        "madikeri",
+        "coorg",
+        "puducherry",
+        "pondicherry",
+        "tirupati",
+        "visakhapatnam",
+        "vizag",
+        "raniganj",
+        "asansol",
+        "durgapur",
+        "ooty",
+        "udhagamandalam",
+    }
+)
+
+
+def _obs_attr(obs: SourceObservationModel | dict[str, Any], field: str, default: Any = None) -> Any:
+    if isinstance(obs, dict):
+        return obs.get(field, default)
+    return getattr(obs, field, default)
+
+
+ALLOWED_VENUE_INFO_TOKENS: frozenset[str] = ALLOWED_MONUMENT_DESCRIPTORS | frozenset(
+    {
+        "timings",
+        "timing",
+        "hours",
+        "hour",
+        "opening",
+        "visiting",
+        "visit",
+        "official",
+        "website",
+        "ticket",
+        "tickets",
+        "ticketing",
+        "entry",
+        "fee",
+        "fees",
+        "guide",
+        "tourism",
+        "tourist",
+        "attractions",
+        "attraction",
+        "places",
+        "welcome",
+        "home",
+        "info",
+        "information",
+        "portal",
+        "india",
+    }
+)
+
+SNIPPET_SOURCE_METHODS: frozenset[str] = frozenset(
+    {"SERPAPI_SEARCH", "SEARCH_SNIPPET", "SEARCH_RESULT"}
+)
+
+
+def _has_conflicting_city(
+    obs: SourceObservationModel | dict[str, Any],
+    expected_cities: set[str] | None,
+) -> bool:
+    """Rejects observations whose explicit city or address points outside expected destination cities."""
+    if not expected_cities:
+        return False
+    norm_expected = {c.strip().lower() for c in expected_cities if c and c.strip()}
+    if not norm_expected:
+        return False
+
+    art_ref = _obs_attr(obs, "artifact_ref")
+    art_dict = art_ref if isinstance(art_ref, dict) else {}
+    city_hint = str(art_dict.get("city_hint") or "").strip().lower()
+    address = str(art_dict.get("address") or art_dict.get("location") or "").strip().lower()
+    obs_title = str(
+        _obs_attr(obs, "title")
+        or art_dict.get("page_title")
+        or art_dict.get("title")
+        or ""
+    ).strip().lower()
+    excerpt = str(_obs_attr(obs, "excerpt_text") or "").strip().lower()
+    obs_url = str(_obs_attr(obs, "canonical_url") or _obs_attr(obs, "source_url") or "").lower()
+
+    # Reject immediately if structured city_hint explicitly names a non expected city
+    if city_hint and not any(exp in city_hint or city_hint in exp for exp in norm_expected):
+        return True
+
+    header_context = f"{city_hint} {address} {obs_title}"
+    if any(re.search(rf"\b{re.escape(exp)}\b", header_context) for exp in norm_expected):
+        return False
+
+    conflicting_pool = KNOWN_CONFLICTING_CITIES - norm_expected
+    full_context = f"{city_hint} {address} {obs_title} {excerpt[:300]} {obs_url}"
+    expected_in_full = any(
+        re.search(rf"\b{re.escape(exp)}\b", full_context) for exp in norm_expected
+    )
+    if not expected_in_full:
+        check_scope = f"{address} {obs_title} {excerpt[:220]}"
+        for city in conflicting_pool:
+            if re.search(rf"\b{re.escape(city)}\b", check_scope):
+                return True
+    return False
+
+
+def _extract_observation_title(obs: SourceObservationModel | dict[str, Any]) -> str | None:
     """Extracts structured place title or name from observation metadata or excerpt prefix."""
-    art_ref = getattr(obs, "artifact_ref", None)
+    art_ref = _obs_attr(obs, "artifact_ref")
     if isinstance(art_ref, dict):
         # Extract strictly from page or place identity fields, never from search origin title
         for k in ("page_title", "title", "place_name", "name", "property_name"):
             val = art_ref.get(k)
             if val and isinstance(val, str) and val.strip():
                 return val.strip()
-    excerpt = getattr(obs, "excerpt_text", "") or ""
+    obs_title = _obs_attr(obs, "title")
+    if obs_title and isinstance(obs_title, str) and obs_title.strip():
+        return obs_title.strip()
+    excerpt = _obs_attr(obs, "excerpt_text") or ""
     if excerpt.startswith("Place: "):
         first_segment = excerpt.split("|")[0].replace("Place: ", "").strip()
         if first_segment:
@@ -305,13 +465,18 @@ def _extract_observation_title(obs: SourceObservationModel) -> str | None:
 
 
 def _match_observation_entity(
-    obs: SourceObservationModel,
+    obs: SourceObservationModel | dict[str, Any],
     candidate: RegisteredCandidate,
+    *,
+    expected_cities: set[str] | None = None,
 ) -> tuple[bool, bool, tuple[float, float] | None]:
     """Matches an observation to candidate entity and checks active vs closed status.
 
     Returns a tuple of (is_entity_match, is_closed_or_unavailable, verified_coordinates).
     """
+    if _has_conflicting_city(obs, expected_cities):
+        return False, False, None
+
     cand_name = candidate.primary_name.strip()
     cand_norm = _normalize_name(cand_name)
     cand_tokens = cand_norm.split()
@@ -322,7 +487,7 @@ def _match_observation_entity(
     obs_title_norm = _normalize_name(obs_title) if obs_title else ""
     title_tokens = obs_title_norm.split() if obs_title_norm else []
 
-    art_ref = getattr(obs, "artifact_ref", None)
+    art_ref = _obs_attr(obs, "artifact_ref")
     if extract_observation_purpose(art_ref) == "advisory":
         # Road advisory observations cannot match candidate place existence
         return False, False, None
@@ -390,33 +555,35 @@ def _match_observation_entity(
                 return False, False, None
 
             # Shorter candidate name matching a different longer title:
-            # If candidate has fewer words than entity, reject unless candidate has >= 2 words
-            # and ALL extra tokens in entity are allowed monument descriptors.
+            # Allow expected destination city tokens and benign info/hours words alongside monument descriptors.
+            allowed_extras = set(ALLOWED_VENUE_INFO_TOKENS)
+            if expected_cities:
+                for ec in expected_cities:
+                    allowed_extras.update(_normalize_name(ec).split())
+
             if len(cand_tokens) < len(entity_tokens):
-                if len(cand_tokens) < 2 or not extra_in_entity.issubset(
-                    ALLOWED_MONUMENT_DESCRIPTORS
-                ):
+                if len(cand_tokens) < 2 or not extra_in_entity.issubset(allowed_extras):
                     return False, False, None
                 if set(cand_tokens).issubset(set(entity_tokens)):
                     title_matches = True
 
             # Candidate name has more words than entity:
             elif len(cand_tokens) > len(entity_tokens):
-                if len(entity_tokens) < 2 or not extra_in_cand.issubset(
-                    ALLOWED_MONUMENT_DESCRIPTORS
-                ):
+                if len(entity_tokens) < 2 or not extra_in_cand.issubset(allowed_extras):
                     return False, False, None
                 if set(entity_tokens).issubset(set(cand_tokens)):
                     title_matches = True
 
-    excerpt = (obs.excerpt_text or "").strip()
+    excerpt = (_obs_attr(obs, "excerpt_text") or "").strip()
     excerpt_lower = excerpt.lower()
+    obs_ext_method = str(_obs_attr(obs, "extraction_method") or "").upper().strip()
+    is_page_observation = bool(obs_ext_method and obs_ext_method not in SNIPPET_SOURCE_METHODS)
     excerpt_matches = False
-    if not title_matches and not entity_norm and excerpt:
-        # Check text-only observations when no structured title is present
+    if not title_matches and excerpt and (not entity_norm or is_page_observation):
+        # Check text observations when untitled or when matching attributable scraped page content
         if cand_norm in excerpt_lower or cand_name.lower() in excerpt_lower:
             if not _is_casual_mention(excerpt):
-                cand_lower = cand_norm
+                cand_lower = cand_norm if cand_norm in excerpt_lower else cand_name.lower()
                 idx = excerpt_lower.find(cand_lower)
                 trailing_text = excerpt_lower[idx + len(cand_lower) : idx + len(cand_lower) + 30]
                 trailing_words = set(re.findall(r"\b\w+\b", trailing_text))
@@ -429,7 +596,14 @@ def _match_observation_entity(
         return False, False, None
 
     # Spatial verification against candidate location
-    obs_coords = _extract_observation_coordinates(obs)
+    obs_coords: tuple[float, float] | None = None
+    art_dict = _obs_attr(obs, "artifact_ref")
+    if isinstance(art_dict, dict):
+        obs_coords = _extract_coordinates_from_dict(art_dict)
+    if obs_coords is None:
+        geo_dict = _obs_attr(obs, "geographic_scope")
+        if isinstance(geo_dict, dict):
+            obs_coords = _extract_coordinates_from_dict(geo_dict)
     if obs_coords is not None and candidate.point is not None:
         dist = haversine_distance_km(
             candidate.point.lat,
@@ -470,6 +644,10 @@ async def ingest_claims_from_observations(
     candidates: list[RegisteredCandidate],
     owner_id: uuid.UUID | None = None,
     as_of: datetime | None = None,
+    expected_cities: set[str] | None = None,
+    local_timezone: str = "Asia/Kolkata",
+    llm_client: Any | None = None,
+    include_hours_claims: bool = False,
 ) -> list[ClaimModel]:
     """Derives and persists claims from genuine collected source observations for candidate places.
 
@@ -581,7 +759,11 @@ async def ingest_claims_from_observations(
         refuting_coords: tuple[float, float] | None = None
 
         for obs in valid_observations:
-            is_match, is_closed, coords = _match_observation_entity(obs, candidate)
+            is_match, is_closed, coords = _match_observation_entity(
+                obs,
+                candidate,
+                expected_cities=expected_cities,
+            )
             if not is_match:
                 continue
             if is_closed:
@@ -633,7 +815,9 @@ async def ingest_claims_from_observations(
                 ingested_claims.append(created)
                 logger.info("Ingested active claim %s for candidate '%s'", created.id, cand_name)
             except Exception as exc:
-                logger.warning("Failed submitting active claim for candidate '%s': %s", cand_name, exc)
+                logger.warning(
+                    "Failed submitting active claim for candidate '%s': %s", cand_name, exc
+                )
 
         # Conflicting evidence: if supporting observations coexist with refuting observations,
         # ingest closed claim so policy preserves the conflict honestly as CONFLICTED
@@ -684,6 +868,98 @@ async def ingest_claims_from_observations(
                     exc,
                 )
 
+        # Ingest source backed HOURS claims strictly from non snippet page observations when enabled
+        if include_hours_claims:
+            existing_hours_stmt = select(ClaimModel).where(
+                ClaimModel.execution_id == execution_id,
+                ClaimModel.subject_id == cand_name_norm,
+                ClaimModel.category == ClaimCategory.HOURS.value,
+            )
+            if candidate.place_id is not None:
+                existing_hours_stmt = existing_hours_stmt.where(
+                    ClaimModel.place_id == candidate.place_id
+                )
+            existing_hours_claims = list((await session.execute(existing_hours_stmt)).scalars().all())
+            existing_hours_urls = {
+                str((c.typed_value or {}).get("source_url") or "").strip()
+                for c in existing_hours_claims
+                if isinstance(c.typed_value, dict) and (c.typed_value or {}).get("source_url")
+            }
+
+            for obs in supporting_obs:
+                ext_method = str(getattr(obs, "extraction_method", "") or "").upper().strip()
+                obs_url = str(getattr(obs, "canonical_url", None) or getattr(obs, "source_url", None) or "").strip()
+                if not obs_url or obs_url in existing_hours_urls:
+                    continue
+
+                obs_art = obs.artifact_ref if isinstance(obs.artifact_ref, dict) else {}
+                raw_hours_hint = str(obs_art.get("hours") or obs_art.get("timings") or "").strip()
+                page_text = f"{raw_hours_hint}. {obs.excerpt_text or ''}".strip(". ")
+                is_snippet_only = ext_method in SNIPPET_SOURCE_METHODS
+
+                extracted = extract_structured_hours_from_text(
+                    page_text,
+                    source_url=obs_url,
+                    local_timezone=local_timezone,
+                    place_name=cand_name,
+                    source_kind="SEARCH_SNIPPET" if is_snippet_only else "PAGE_CONTENT",
+                )
+                if (
+                    extracted is None
+                    and not is_snippet_only
+                    and llm_client is not None
+                    and any(
+                        k in page_text.lower()
+                        for k in ("open", "close", "hour", "timing", "entry", "ticket")
+                    )
+                ):
+                    extracted = await extract_structured_hours_with_llm(
+                        llm_client,
+                        place_name=cand_name,
+                        destination_name=", ".join(sorted(expected_cities)) if expected_cities else cand_name,
+                        page_text=page_text,
+                        source_url=obs_url,
+                        local_timezone=local_timezone,
+                    )
+
+                if extracted is None or is_snippet_only:
+                    continue
+
+                existing_hours_urls.add(obs_url)
+                hours_claim = ClaimCreate(
+                    subject_id=cand_name_norm,
+                    category=ClaimCategory.HOURS,
+                    place_id=candidate.place_id,
+                    execution_id=execution_id,
+                    typed_value={
+                        **extracted.model_dump(),
+                        "extraction_method": ext_method or "SCRAPLING_HTTP",
+                        "source_kind": "PAGE_CONTENT",
+                    },
+                    confidence=0.9,
+                    valid_from=obs.retrieved_at or now,
+                    valid_until=now + timedelta(days=90),
+                    geographic_scope={
+                        "lat": verified_coords[0],
+                        "lng": verified_coords[1],
+                    }
+                    if verified_coords
+                    else None,
+                )
+                try:
+                    created_hours = await claim_service.submit_claim(
+                        claim_data=hours_claim,
+                        observations_with_support=[(obs, EvidenceSupportType.SUPPORTS, obs_url)],
+                        as_of=now,
+                    )
+                    ingested_claims.append(created_hours)
+                except Exception as hours_exc:
+                    logger.warning(
+                        "Failed submitting hours claim for candidate '%s': %s",
+                        cand_name,
+                        hours_exc,
+                    )
+
     # 3. Ingest accommodation observations, strictly preserving INDICATIVE_SEARCH
     for obs in valid_observations:
         art_ref = obs.artifact_ref or {}
@@ -691,17 +967,11 @@ async def ingest_claims_from_observations(
         is_stay = "lodging" in cat or "hotel" in cat or "stay" in cat
         if not is_stay and isinstance(art_ref, dict):
             t = str(art_ref.get("property_name") or art_ref.get("title") or "").lower()
-            if any(
-                w in t
-                for w in ("hotel", "resort", "homestay", "lodge", "inn", "hostel")
-            ):
+            if any(w in t for w in ("hotel", "resort", "homestay", "lodge", "inn", "hostel")):
                 is_stay = True
         if is_stay:
             hotel_name = str(
-                art_ref.get("property_name")
-                or art_ref.get("name")
-                or art_ref.get("title")
-                or ""
+                art_ref.get("property_name") or art_ref.get("name") or art_ref.get("title") or ""
             ).strip()
             if not hotel_name or hotel_name.lower() in ("lodging", "hotel"):
                 continue
@@ -717,17 +987,19 @@ async def ingest_claims_from_observations(
             hotel_coords = (
                 _extract_coordinates_from_dict(art_ref) if isinstance(art_ref, dict) else None
             )
-            raw_price = (
-                art_ref.get("price_per_night")
-                if isinstance(art_ref, dict)
-                else None
-            )
+            raw_price = art_ref.get("price_per_night") if isinstance(art_ref, dict) else None
             if raw_price is None and isinstance(art_ref, dict):
                 raw_price = art_ref.get("indicative_price_inr")
             currency_val = art_ref.get("currency") if isinstance(art_ref, dict) else None
-            obs_url = str(getattr(obs, "canonical_url", None) or getattr(obs, "source_url", None) or "").strip()
-            has_usable_url = bool(obs_url and (obs_url.startswith("http://") or obs_url.startswith("https://")))
-            has_valid_indicative_price = raw_price is not None and bool(currency_val) and has_usable_url
+            obs_url = str(
+                getattr(obs, "canonical_url", None) or getattr(obs, "source_url", None) or ""
+            ).strip()
+            has_usable_url = bool(
+                obs_url and (obs_url.startswith("http://") or obs_url.startswith("https://"))
+            )
+            has_valid_indicative_price = (
+                raw_price is not None and bool(currency_val) and has_usable_url
+            )
 
             stay_claim = ClaimCreate(
                 subject_id=hotel_norm,
@@ -779,10 +1051,7 @@ async def ingest_claims_from_observations(
         excerpt = str(getattr(obs, "excerpt_text", "") or "")
         headline = (
             str(
-                art_ref.get("headline")
-                or art_ref.get("title")
-                or art_ref.get("summary")
-                or ""
+                art_ref.get("headline") or art_ref.get("title") or art_ref.get("summary") or ""
             ).strip()
             if isinstance(art_ref, dict)
             else ""
@@ -841,9 +1110,7 @@ async def ingest_claims_from_observations(
         )
 
         adv_type = (
-            str(art_ref.get("advisory_type") or "").upper()
-            if isinstance(art_ref, dict)
-            else ""
+            str(art_ref.get("advisory_type") or "").upper() if isinstance(art_ref, dict) else ""
         )
         combined_text = (cat + " " + headline + " " + excerpt).lower()
         if not adv_type:
@@ -897,12 +1164,8 @@ async def ingest_claims_from_observations(
         ):
             status_val = "LIFTED"
 
-        start_time_val = (
-            art_ref.get("applicable_start") if isinstance(art_ref, dict) else None
-        )
-        end_time_val = (
-            art_ref.get("applicable_end") if isinstance(art_ref, dict) else None
-        )
+        start_time_val = art_ref.get("applicable_start") if isinstance(art_ref, dict) else None
+        end_time_val = art_ref.get("applicable_end") if isinstance(art_ref, dict) else None
 
         # 3. Time and freshness validation
         parsed_start = safe_parse_datetime(start_time_val)
@@ -951,9 +1214,7 @@ async def ingest_claims_from_observations(
         subject_id = f"advisory:{adv_type.lower()}:{subject_key}"
 
         claim_category = (
-            "RESTRICTION"
-            if adv_type in ("ROAD_CLOSURE", "TRAVEL_RESTRICTION")
-            else "WEATHER"
+            "RESTRICTION" if adv_type in ("ROAD_CLOSURE", "TRAVEL_RESTRICTION") else "WEATHER"
         )
 
         existing_adv_stmt = select(ClaimModel).where(
@@ -964,9 +1225,7 @@ async def ingest_claims_from_observations(
         if (await session.execute(existing_adv_stmt)).scalar_one_or_none() is not None:
             continue
 
-        adv_coords = (
-            _extract_coordinates_from_dict(art_ref) if isinstance(art_ref, dict) else None
-        )
+        adv_coords = _extract_coordinates_from_dict(art_ref) if isinstance(art_ref, dict) else None
 
         advisory_claim = ClaimCreate(
             subject_id=subject_id,
@@ -1000,9 +1259,7 @@ async def ingest_claims_from_observations(
         try:
             created = await claim_service.submit_claim(
                 claim_data=advisory_claim,
-                observations_with_support=[
-                    (obs, EvidenceSupportType.SUPPORTS, obs.canonical_url)
-                ],
+                observations_with_support=[(obs, EvidenceSupportType.SUPPORTS, obs.canonical_url)],
                 as_of=now,
             )
             ingested_claims.append(created)

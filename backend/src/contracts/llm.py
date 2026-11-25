@@ -25,6 +25,19 @@ class DayOpeningHours(BaseModel):
     is_closed: bool = Field(
         default=False, description="Flag indicating place is closed on this day"
     )
+    dates_covered: str | None = Field(
+        default=None, description="Optional date range or season covered by this schedule"
+    )
+    ticketing_opens: str | None = Field(
+        default=None, description="Ticket counter opening time in HH:MM format"
+    )
+    ticketing_closes: str | None = Field(
+        default=None, description="Ticket counter closing time in HH:MM format"
+    )
+    last_entry: str | None = Field(
+        default=None, description="Last entry cutoff time in HH:MM format"
+    )
+    note: str | None = Field(default=None, description="Additional source schedule note")
 
 
 class StructuredOpeningHours(BaseModel):
@@ -34,6 +47,11 @@ class StructuredOpeningHours(BaseModel):
 
     days: list[DayOpeningHours] = Field(default_factory=list, description="Day schedules")
     raw_text: str | None = Field(default=None, description="Original human readable hours string")
+    timezone: str | None = Field(default=None, description="Local IANA timezone name")
+    source_url: str | None = Field(default=None, description="Attributable source page URL")
+    dates_covered: str | None = Field(
+        default=None, description="Optional date range or season covered"
+    )
 
 
 class PlaceProposal(BaseModel):

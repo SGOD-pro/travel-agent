@@ -158,6 +158,10 @@ class TripPlanningState(TypedDict, total=False):
     covered_destinations: list[str]
     uncovered_destinations: list[str]
     coverage_reason: str | None
+    destination_research: dict[str, Any]
+    must_visit_conflicts: list[dict[str, Any]]
+    deferred_candidates: list[str]
+    research_focus: str | None
     max_locations: int
     max_matrix_cells: int
     provider_limits: dict[str, Any]
@@ -478,6 +482,13 @@ async def evaluate_candidates_node(
 
     discovered = state.get("discovered_places", [])
     candidate_proposals: list[PlaceProposal] = []
+    must_visit_norms = {
+        m.strip().lower() for m in getattr(brief, "must_visit_places", []) or [] if m and m.strip()
+    }
+    expected_cities = {d.name.strip() for d in brief.destinations if d.name and d.name.strip()}
+    total_days = max(1, (brief.end_date - brief.start_date).days + 1)
+    visit_dates = [brief.start_date + timedelta(days=i) for i in range(total_days)]
+
     for p in discovered:
         p_name = p.get("name", "")
         if p_name.strip().lower() in brief_dest_names:
@@ -641,11 +652,16 @@ async def evaluate_candidates_node(
             )
 
             if exec_uuid is not None:
+                llm_client_for_claims = state.get("_llm_client") or configurable.get("llm_client")
                 await ingest_claims_from_observations(
                     session=session,
                     execution_id=exec_uuid,
                     candidates=valid_cands,
                     owner_id=owner_uuid,
+                    expected_cities=expected_cities,
+                    local_timezone=brief.timezone,
+                    llm_client=llm_client_for_claims,
+                    include_hours_claims=True,
                 )
             if is_caller_owned:
                 await session.flush()
@@ -658,7 +674,37 @@ async def evaluate_candidates_node(
             owner_id=owner_uuid,
             fixture_observations=fixture_obs_list if is_offline_fixture else None,
             fixture_claims=fixture_claims_list if is_offline_fixture else None,
+            visit_dates=visit_dates,
+            local_timezone=brief.timezone,
         )
+        # Preserve distinction between explicit traveler must visits and research recommendations
+        if must_visit_norms:
+            tagged_eligible = [
+                c.model_copy(
+                    update={
+                        "is_must_visit": bool(
+                            c.is_must_visit or c.primary_name.strip().lower() in must_visit_norms
+                        )
+                    }
+                )
+                for c in elig_report.eligible_stops
+            ]
+            tagged_editorial = [
+                c.model_copy(
+                    update={
+                        "is_must_visit": bool(
+                            c.is_must_visit or c.primary_name.strip().lower() in must_visit_norms
+                        )
+                    }
+                )
+                for c in elig_report.editorial_recommendations
+            ]
+            elig_report = elig_report.model_copy(
+                update={
+                    "eligible_stops": tagged_eligible,
+                    "editorial_recommendations": tagged_editorial,
+                }
+            )
         return valid_cands, elig_report, excluded_corr
 
     valid_cands: list[RegisteredCandidate] = []
@@ -1158,13 +1204,49 @@ def _resolve_stop_window(
     if visit_date < brief.start_date:
         visit_date = brief.start_date
 
+    hours_details = stop_data.get("hours_details") or {}
+    if not isinstance(hours_details, dict):
+        hours_details = {}
+
+    open_visit_dates = [
+        item
+        for item in (hours_details.get("open_visit_dates") or [])
+        if isinstance(item, dict) and item.get("date")
+    ]
+    selected_day_entry: dict[str, Any] = {}
+    if open_visit_dates:
+        by_iso = {str(item["date"]): item for item in open_visit_dates}
+        if visit_date.isoformat() in by_iso:
+            selected_day_entry = by_iso[visit_date.isoformat()]
+        else:
+            # Tentative visit date is closed; move to an open trip date from resolved schedule
+            selected_day_entry = open_visit_dates[0]
+            try:
+                visit_date = date.fromisoformat(str(selected_day_entry["date"]))
+            except ValueError:
+                pass
+
     is_assumed = bool(
-        stop_data.get("is_hours_assumed", False) or stop_data.get("hours_status") == "HOURS_ASSUMED"
+        stop_data.get("is_hours_assumed", False)
+        or stop_data.get("hours_status")
+        in ("HOURS_ASSUMED", "HOURS_CONFLICTED", "UNKNOWN", "USER_SUPPLIED_UNVERIFIED")
     )
-    t_start = _parse_window_time(stop_data.get("window_start")) or (
-        time(9, 0) if is_assumed else None
+    t_start = _parse_window_time(
+        selected_day_entry.get("opens")
+        or stop_data.get("window_start")
+        or hours_details.get("opens")
+    ) or (time(9, 0) if is_assumed else None)
+    t_end = _parse_window_time(
+        selected_day_entry.get("closes")
+        or stop_data.get("window_end")
+        or hours_details.get("closes")
+    ) or (time(18, 0) if is_assumed else None)
+
+    tick_open = _parse_window_time(
+        selected_day_entry.get("ticketing_opens") or hours_details.get("ticketing_opens")
     )
-    t_end = _parse_window_time(stop_data.get("window_end")) or (time(18, 0) if is_assumed else None)
+    if tick_open is not None and t_start is not None and tick_open > t_start:
+        t_start = tick_open
 
     if t_start is None or t_end is None:
         dt_start = (
@@ -1182,6 +1264,25 @@ def _resolve_stop_window(
     # Midnight date boundary crossing: if end time is earlier than or equal to start time,
     # venue closes on the next morning.
     end_date = visit_date + timedelta(days=1) if t_end <= t_start else visit_date
+
+    # Enforce earliest admission or ticketing cutoff against dwell duration so solver arrival
+    # obeys ticketing_closes and last_entry without exceeding venue close.
+    eff_tick_close = selected_day_entry.get("ticketing_closes") or hours_details.get("ticketing_closes")
+    eff_last_entry = selected_day_entry.get("last_entry") or hours_details.get("last_entry")
+    entry_cutoffs = [
+        ct
+        for raw_c in (eff_tick_close, eff_last_entry)
+        if (ct := _parse_window_time(raw_c)) is not None
+    ]
+    if entry_cutoffs and end_date == visit_date:
+        earliest_cutoff = min(entry_cutoffs)
+        dwell_minutes = int(stop_data.get("suggested_stay_minutes") or 60)
+        cutoff_dt = datetime.combine(visit_date, earliest_cutoff, tzinfo=trip_tz) + timedelta(
+            minutes=dwell_minutes
+        )
+        close_dt = datetime.combine(end_date, t_end, tzinfo=trip_tz)
+        if cutoff_dt < close_dt:
+            t_end = cutoff_dt.timetz().replace(tzinfo=None)
 
     dt_start = datetime.combine(visit_date, t_start, tzinfo=trip_tz).astimezone(UTC)
     dt_end = datetime.combine(end_date, t_end, tzinfo=trip_tz).astimezone(UTC)
@@ -1430,10 +1531,85 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
             # Semantic category is sightseeing
             sightseeing_candidates.append(s_dict)
 
-        # Candidate capacity enforcement: deterministically schedule top candidates up to available slots
-        for s in sightseeing_candidates:
+        must_visit_norms = {
+            m.strip().lower() for m in getattr(brief, "must_visit_places", []) or [] if m and m.strip()
+        }
+        must_visit_conflicts: list[dict[str, Any]] = []
+        deferred_candidates: list[str] = list(state.get("deferred_candidates") or [])
+        scheduled_stop_names: set[str] = {d.name.strip().lower() for d in brief.destinations}
+
+        # Candidate capacity enforcement: schedule must visit places first, then top optional candidates
+        ordered_sightseeing = sorted(
+            sightseeing_candidates,
+            key=lambda item: (
+                0
+                if (
+                    bool(item.get("is_must_visit"))
+                    or str(item.get("primary_name") or item.get("name") or "").strip().lower()
+                    in must_visit_norms
+                )
+                else 1
+            ),
+        )
+        for s in ordered_sightseeing:
             s_name = str(s.get("primary_name") or s.get("name") or "").strip()
             s_name_norm = s_name.lower()
+            is_mv = bool(s.get("is_must_visit") or s_name_norm in must_visit_norms)
+            hours_status_val = str(s.get("hours_status") or "")
+            raw_hd = s.get("hours_details")
+            hours_det: dict[str, Any] = raw_hd if isinstance(raw_hd, dict) else {}
+            raw_prov = s.get("provenance")
+            prov_dict: dict[str, Any] = raw_prov if isinstance(raw_prov, dict) else {}
+            source_url = hours_det.get("source_url") or next(
+                iter(prov_dict.get("source_urls") or []), None
+            )
+
+            # Handle venues closed across the target trip day(s)
+            if hours_status_val == CandidateHoursStatus.CLOSED_ON_TRIP_DAY.value:
+                closed_days_txt = ", ".join(hours_det.get("closed_days") or []) or "trip dates"
+                closed_reason = (
+                    f"{s_name}: closed on {closed_days_txt}"
+                    + (f" (source: {source_url})" if source_url else "")
+                )
+                if is_mv:
+                    must_visit_conflicts.append(
+                        {
+                            "place_name": s_name,
+                            "hours_status": hours_status_val,
+                            "reason": closed_reason,
+                            "source_url": source_url,
+                        }
+                    )
+                else:
+                    deferred_candidates.append(closed_reason)
+                if s_name_norm not in existing_rec_names:
+                    rec_item = dict(s)
+                    rec_item["uncertainty"] = "CLOSED_ON_TRIP_DAY"
+                    rec_item["is_candidate"] = True
+                    rec_item.setdefault("diagnostics", {})["deferral_reason"] = closed_reason
+                    editorial_recs.append(rec_item)
+                    existing_rec_names.add(s_name_norm)
+                continue
+
+            # Record explicit uncertainty when traveler must visit has unverified or conflicted hours
+            if is_mv and hours_status_val in (
+                CandidateHoursStatus.HOURS_ASSUMED.value,
+                CandidateHoursStatus.HOURS_CONFLICTED.value,
+                CandidateHoursStatus.UNKNOWN.value,
+                CandidateHoursStatus.USER_SUPPLIED_UNVERIFIED.value,
+            ):
+                must_visit_conflicts.append(
+                    {
+                        "place_name": s_name,
+                        "hours_status": hours_status_val,
+                        "reason": (
+                            f"{s_name}: opening hours status is {hours_status_val} "
+                            "(not confirmed against source page)"
+                        ),
+                        "source_url": source_url,
+                    }
+                )
+
             pt = s.get("point", {})
             raw_lat = pt.get("lat") if isinstance(pt, dict) else getattr(pt, "lat", 0.0)
             raw_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", 0.0)
@@ -1447,30 +1623,48 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
             dt_w_start, dt_w_end = _resolve_stop_window(s, brief, None, trip_tz)
             dwell_s = int(s.get("suggested_stay_minutes", 60)) * 60
 
-            # Check if dwell exceeds daily opening window
+            # Check if dwell exceeds daily opening or last entry cutoff window
             if dt_w_start and dt_w_end:
                 win_len = int((dt_w_end - dt_w_start).total_seconds())
                 if dwell_s > win_len:
+                    cutoff_reason = (
+                        f"Deferred: suggested dwell ({dwell_s}s) exceeds available daily opening window ({win_len}s)"
+                    )
+                    if hours_det.get("last_entry") or hours_det.get("ticketing_closes"):
+                        cutoff_reason = (
+                            f"Deferred: {s_name} stay ({dwell_s}s) exceeds available visit or "
+                            f"last entry window ({win_len}s) [suggested dwell ({dwell_s}s) exceeds available daily opening window ({win_len}s)]"
+                        )
+                    if is_mv:
+                        must_visit_conflicts.append(
+                            {
+                                "place_name": s_name,
+                                "hours_status": hours_status_val,
+                                "reason": cutoff_reason,
+                                "source_url": source_url,
+                            }
+                        )
+                    else:
+                        deferred_candidates.append(cutoff_reason)
                     if s_name_norm not in existing_rec_names:
                         rec_item = dict(s)
-                        rec_item["uncertainty"] = "EDITORIAL_DISCOVERY"
+                        rec_item["uncertainty"] = "WINDOW_CONFLICT" if is_mv else "EDITORIAL_DISCOVERY"
                         rec_item["is_candidate"] = True
-                        rec_item.setdefault("diagnostics", {})["deferral_reason"] = (
-                            f"Deferred: suggested dwell ({dwell_s}s) exceeds available daily opening window ({win_len}s)"
-                        )
+                        rec_item.setdefault("diagnostics", {})["deferral_reason"] = cutoff_reason
                         editorial_recs.append(rec_item)
                         existing_rec_names.add(s_name_norm)
                     continue
 
             if len(route_stops) < effective_max_stops:
                 p_id = s.get("place_id")
+                scheduled_stop_names.add(s_name_norm)
                 route_stops.append(
                     RouteStopInput(
                         place_id=uuid.UUID(str(p_id)) if p_id else None,
                         name=s_name,
                         location=Point(latitude=lat_val, longitude=lng_val),
                         stop_type=StopType.DESTINATION,
-                        is_must_visit=False,  # Discovered candidate places are optional recommendations
+                        is_must_visit=is_mv,
                         dwell_seconds=dwell_s,
                         window_start=dt_w_start,
                         window_end=dt_w_end,
@@ -1478,17 +1672,44 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
                 )
             else:
                 # Excess candidate beyond provider capacity
+                defer_msg = (
+                    f"Deferred: candidate exceeds provider matrix cell capacity for route optimization "
+                    f"(capacity={effective_max_stops} stops, max cells={max_matrix_cells})"
+                )
+                if is_mv:
+                    must_visit_conflicts.append(
+                        {
+                            "place_name": s_name,
+                            "hours_status": hours_status_val,
+                            "reason": defer_msg,
+                            "source_url": source_url,
+                        }
+                    )
+                else:
+                    deferred_candidates.append(defer_msg)
                 if s_name_norm not in existing_rec_names:
                     rec_item = dict(s)
                     rec_item["uncertainty"] = "EDITORIAL_DISCOVERY"
                     rec_item["is_candidate"] = True
-                    rec_item.setdefault("diagnostics", {})["deferral_reason"] = (
-                        f"Deferred: candidate exceeds provider matrix cell capacity for route optimization "
-                        f"(capacity={effective_max_stops} stops, max cells={max_matrix_cells})"
-                    )
+                    rec_item.setdefault("diagnostics", {})["deferral_reason"] = defer_msg
                     editorial_recs.append(rec_item)
                     existing_rec_names.add(s_name_norm)
+
+        conflict_names = {str(c.get("place_name") or "").strip().lower() for c in must_visit_conflicts}
+        for mv_raw in getattr(brief, "must_visit_places", []) or []:
+            mv_clean = str(mv_raw).strip()
+            mv_norm = mv_clean.lower()
+            if mv_norm and mv_norm not in scheduled_stop_names and mv_norm not in conflict_names:
+                must_visit_conflicts.append(
+                    {
+                        "place_name": mv_clean,
+                        "hours_status": CandidateHoursStatus.UNKNOWN.value,
+                        "reason": f"{mv_clean}: could not verify location or opening hours in research evidence",
+                    }
+                )
     else:
+        must_visit_conflicts = list(state.get("must_visit_conflicts") or [])
+        deferred_candidates = list(state.get("deferred_candidates") or [])
         discovered = state.get("discovered_places", [])
         for p in discovered:
             p_name = p.get("name", "")
@@ -1577,6 +1798,8 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
         "status": "RUNNING",
         "pending_tasks": [task_spec],
         "editorial_recommendations": editorial_recs,
+        "must_visit_conflicts": must_visit_conflicts,
+        "deferred_candidates": list(dict.fromkeys(deferred_candidates)),
         "optimizer_task_id": str(opt_task_id),
         "optimizer_idempotency_key": idemp_key,
         "timezone": str(trip_tz),
@@ -4393,7 +4616,85 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         or state.get("route_status") in ("ROUTING_UNAVAILABLE", "INFEASIBLE")
         or (state.get("routing_status") is not None and state.get("route_id") is None)
     )
-    proposal_status = "partial" if is_routing_failed else "ready_for_approval"
+
+    must_visit_conflicts = list(state.get("must_visit_conflicts") or [])
+    must_visit_norms = {
+        str(m).strip().lower()
+        for m in (brief_dict.get("must_visit_places") or [])
+        if m and str(m).strip()
+    }
+    attractions_research: list[dict[str, Any]] = []
+    seen_attr_names: set[str] = set()
+    for cand_pool in (state.get("eligible_stops") or [], state.get("editorial_recommendations") or []):
+        for item in cand_pool:
+            if not isinstance(item, dict):
+                continue
+            c_name = str(item.get("primary_name") or item.get("name") or "").strip()
+            c_cat = str(item.get("category") or "")
+            if not c_name or _classify_candidate_category(c_cat, c_name) != "sightseeing":
+                continue
+            if c_cat.lower() == "destination":
+                continue
+            norm_n = c_name.lower()
+            if norm_n in seen_attr_names:
+                continue
+            seen_attr_names.add(norm_n)
+            h_status = str(item.get("hours_status") or "UNKNOWN")
+            raw_h_det = item.get("hours_details")
+            h_det: dict[str, Any] = raw_h_det if isinstance(raw_h_det, dict) else {}
+            raw_item_prov = item.get("provenance")
+            item_prov: dict[str, Any] = raw_item_prov if isinstance(raw_item_prov, dict) else {}
+            is_mv = bool(item.get("is_must_visit") or norm_n in must_visit_norms)
+            if is_mv and h_status != CandidateHoursStatus.VERIFIED_HOURS.value:
+                if not any(
+                    str(mc.get("place_name") or "").strip().lower() == norm_n
+                    for mc in must_visit_conflicts
+                ):
+                    must_visit_conflicts.append(
+                        {
+                            "place_name": c_name,
+                            "hours_status": h_status,
+                            "reason": f"{c_name}: opening hours unverified or conflicted ({h_status})",
+                            "source_url": h_det.get("source_url"),
+                        }
+                    )
+            attractions_research.append(
+                {
+                    "name": c_name,
+                    "category": c_cat or "attraction",
+                    "is_must_visit": is_mv,
+                    "existence_status": item.get("existence_status"),
+                    "hours_status": h_status,
+                    "is_hours_confirmed": h_status == CandidateHoursStatus.VERIFIED_HOURS.value,
+                    "opens": h_det.get("opens"),
+                    "closes": h_det.get("closes"),
+                    "ticketing_opens": h_det.get("ticketing_opens"),
+                    "ticketing_closes": h_det.get("ticketing_closes"),
+                    "last_entry": h_det.get("last_entry"),
+                    "closed_days": h_det.get("closed_days", []),
+                    "days_covered": h_det.get("days_covered", []),
+                    "dates_covered": h_det.get("dates_covered"),
+                    "local_timezone": h_det.get("local_timezone") or state.get("timezone"),
+                    "source_url": h_det.get("source_url")
+                    or next(iter(item_prov.get("source_urls") or []), None),
+                }
+            )
+
+    raw_drm = state.get("destination_research")
+    dest_research_meta: dict[str, Any] = raw_drm if isinstance(raw_drm, dict) else {}
+    research_coverage = {
+        "covered_destinations": list(
+            state.get("covered_destinations") or dest_research_meta.get("covered_destinations") or []
+        ),
+        "uncovered_destinations": list(
+            state.get("uncovered_destinations")
+            or dest_research_meta.get("uncovered_destinations")
+            or []
+        ),
+        "coverage_reason": state.get("coverage_reason") or dest_research_meta.get("coverage_reason"),
+    }
+
+    proposal_status = "partial" if (is_routing_failed or bool(must_visit_conflicts)) else "ready_for_approval"
 
     proposal = {
         "trip_id": state.get("trip_id"),
@@ -4403,6 +4704,10 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
         "budget_lines": state.get("budget_lines"),
         "editorial_recommendations": state.get("editorial_recommendations", []),
         "excluded_candidates": state.get("excluded_candidates", []),
+        "attractions_research": attractions_research,
+        "must_visit_conflicts": must_visit_conflicts,
+        "deferred_candidates": list(state.get("deferred_candidates") or []),
+        "research_coverage": research_coverage,
         "weather_advisories": state.get("weather_advisories", []),
         "weather_status": state.get("weather_status")
         or WeatherAdvisoryStatus.ADVISORY_UNKNOWN.value,
@@ -5640,8 +5945,17 @@ async def route_evidence_decision_node(
     if envelope.allowed_choice == DecisionAction.DISPATCH_EVIDENCE_SEARCH:
         dest_hash = hashlib.sha256(dest_name.encode("utf-8")).hexdigest()
         existing_planned = state.get("planned_search_queries")
+        has_must_visits = bool(
+            brief.get("must_visit_places")
+            if isinstance(brief, dict)
+            else getattr(brief, "must_visit_places", None)
+        )
         planned_queries: Any
-        if isinstance(existing_planned, list) and existing_planned:
+        if has_must_visits or state.get("research_focus") == "attractions_hours":
+            planned_queries = QueryPlanningService.plan_attractions_and_hours_queries(
+                brief, max_queries=DEFAULT_MAX_QUERIES
+            )
+        elif isinstance(existing_planned, list) and existing_planned:
             clean_dests_for_val = (
                 [d["name"] for d in destinations_info]
                 if destinations_info
