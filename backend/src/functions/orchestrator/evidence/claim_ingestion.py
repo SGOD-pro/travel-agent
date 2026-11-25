@@ -395,7 +395,7 @@ ALLOWED_VENUE_INFO_TOKENS: frozenset[str] = ALLOWED_MONUMENT_DESCRIPTORS | froze
 )
 
 SNIPPET_SOURCE_METHODS: frozenset[str] = frozenset(
-    {"SERPAPI_SEARCH", "SEARCH_SNIPPET", "SEARCH_RESULT"}
+    {"SERPAPI_SEARCH", "SERPAPI_WEB_SEARCH", "SERPAPI_LOCAL_SEARCH", "SEARCH_SNIPPET", "SEARCH_RESULT"}
 )
 
 
@@ -711,6 +711,34 @@ async def ingest_claims_from_observations(
     claim_service = ClaimVerificationService(session=session)
     ingested_claims: list[ClaimModel] = []
 
+    from functions.orchestrator.evidence.place_extraction import (
+        PlaceExtractionService,
+        extract_observation_purposes,
+    )
+
+    has_any_hidden_obs = any(
+        "hidden_places" in extract_observation_purposes(_obs_attr(o, "artifact_ref"))
+        for o in valid_observations
+    )
+    hidden_eval = (
+        PlaceExtractionService.evaluate_hidden_place_candidates(
+            valid_observations,
+            expected_cities=expected_cities,
+        )
+        if has_any_hidden_obs
+        else {"verified_optional_stops": [], "restricted_or_closed": []}
+    )
+    verified_hidden_names = {
+        _normalize_name(str(item.get("name") or ""))
+        for item in hidden_eval.get("verified_optional_stops", [])
+        if item.get("name")
+    }
+    restricted_hidden_names = {
+        _normalize_name(str(item.get("name") or ""))
+        for item in hidden_eval.get("restricted_or_closed", [])
+        if item.get("name")
+    }
+
     # 2. Ingest existence claims for matching candidates
     for candidate in candidates:
         cand_name = candidate.primary_name.strip()
@@ -719,8 +747,6 @@ async def ingest_claims_from_observations(
             continue
 
         # Distinguish local dishes from physical businesses
-        from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
-
         if PlaceExtractionService.is_culinary_dish(cand_name):
             # A culinary dish is a regional preparation or specialty, not a physical venue
             logger.info("Skipping candidate existence claim for culinary dish '%s'", cand_name)
@@ -778,6 +804,31 @@ async def ingest_claims_from_observations(
         if not supporting_obs and not refuting_obs:
             continue
 
+        cand_norm_key = _normalize_name(cand_name)
+        has_hidden_obs = any(
+            "hidden_places" in extract_observation_purposes(_obs_attr(o, "artifact_ref"))
+            for o in [*supporting_obs, *refuting_obs]
+        )
+        has_non_hidden_fetched_page = any(
+            "hidden_places" not in extract_observation_purposes(_obs_attr(o, "artifact_ref"))
+            and str(_obs_attr(o, "extraction_method") or "").upper().strip()
+            not in SNIPPET_SOURCE_METHODS
+            and str(_obs_attr(o, "extraction_method") or "").upper().strip() != "NEEDS_BROWSER"
+            for o in supporting_obs
+        )
+        is_restricted_hidden = has_hidden_obs and cand_norm_key in restricted_hidden_names
+        if is_restricted_hidden:
+            refuting_obs = list(dict.fromkeys([*refuting_obs, *supporting_obs]))
+            supporting_obs = []
+        elif (
+            has_hidden_obs
+            and cand_norm_key not in verified_hidden_names
+            and not has_non_hidden_fetched_page
+        ):
+            # Unverified hidden-place candidates (snippet-only, missing coords, or unknown public access)
+            # must not receive active existence claims and must stay out of eligible_stops.
+            supporting_obs = []
+
         # Positive active support: ingest active claim
         if supporting_obs and "active" not in existing_statuses:
             support_links = [
@@ -819,9 +870,8 @@ async def ingest_claims_from_observations(
                     "Failed submitting active claim for candidate '%s': %s", cand_name, exc
                 )
 
-        # Conflicting evidence: if supporting observations coexist with refuting observations,
-        # ingest closed claim so policy preserves the conflict honestly as CONFLICTED
-        if supporting_obs and refuting_obs and "closed" not in existing_statuses:
+        # Conflicting or restricted hidden-place evidence: ingest closed/refuting claim
+        if (supporting_obs or is_restricted_hidden) and refuting_obs and "closed" not in existing_statuses:
             conflict_links = [
                 (obs, EvidenceSupportType.REFUTES, obs.canonical_url or obs.source_url)
                 for obs in refuting_obs

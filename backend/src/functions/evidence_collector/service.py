@@ -334,6 +334,7 @@ class EvidenceCollectorService:
             return score
 
         ranked_by_clean_url: dict[str, tuple[tuple[int, int], dict[str, Any]]] = {}
+        all_seen_purposes: set[str] = set()
 
         for idx, obs in enumerate(observations):
             if isinstance(obs, dict):
@@ -345,6 +346,12 @@ class EvidenceCollectorService:
                 raw_art = obs.artifact_ref
                 obs_excerpt = str(obs.excerpt_text or "").lower()
             art_ref: dict[str, Any] = raw_art if isinstance(raw_art, dict) else {}
+
+            raw_purpose = str(
+                art_ref.get("query_purpose") or art_ref.get("purpose") or ""
+            ).strip().lower()
+            if raw_purpose:
+                all_seen_purposes.add(raw_purpose)
 
             if not url or not (url.startswith("http://") or url.startswith("https://")):
                 continue
@@ -372,6 +379,11 @@ class EvidenceCollectorService:
                     existing_entry["purposes"].append(purpose_val)
                 if dest_val and dest_val not in existing_entry["destinations"]:
                     existing_entry["destinations"].append(dest_val)
+                if purpose_val or dest_val:
+                    pair = {"purpose": purpose_val, "destination": dest_val}
+                    existing_pairs = existing_entry.setdefault("purpose_destinations", [])
+                    if pair not in existing_pairs:
+                        existing_pairs.append(pair)
                 continue
 
             title = str(
@@ -414,6 +426,9 @@ class EvidenceCollectorService:
                 else:
                     category = "attraction"
 
+            purpose_destinations: list[dict[str, str]] = []
+            if purpose_val or dest_val:
+                purpose_destinations.append({"purpose": purpose_val, "destination": dest_val})
             entry = {
                 "url": url,
                 "category": category,
@@ -422,6 +437,7 @@ class EvidenceCollectorService:
                 "purposes": [purpose_val] if purpose_val else [],
                 "destination": dest_val,
                 "destinations": [dest_val] if dest_val else [],
+                "purpose_destinations": purpose_destinations,
             }
             rank_score = _score_url(url, title)
             ranked_by_clean_url[clean_url] = ((rank_score, -idx), entry)
@@ -467,9 +483,13 @@ class EvidenceCollectorService:
         if skipped_purposes_out is not None:
             all_eligible_purposes = {p for _, e in all_ranked for p in e["purposes"]}
             selected_purposes = {p for e in selected for p in e["purposes"]}
+            for p in sorted(all_seen_purposes - all_eligible_purposes):
+                skipped_purposes_out[p] = (
+                    f"Skipped {p} fetch: no eligible URL found in search results."
+                )
             for p in sorted(all_eligible_purposes - selected_purposes):
                 skipped_purposes_out[p] = (
-                    f"Skipped {p} fetch: {max_urls}-URL fetch cap exhausted by higher-priority evidence."
+                    f"Skipped {p} fetch: fetch capacity exhausted ({max_urls}-URL fetch cap reached by higher-priority evidence)."
                 )
 
         return selected
@@ -484,6 +504,8 @@ class EvidenceCollectorService:
         browser_requests: list[dict[str, Any]] | None = None,
         unavailable_sources: list[dict[str, Any]] | None = None,
         budget_exhausted: bool = False,
+        skipped_purposes: dict[str, str] | None = None,
+        fetch_outcomes: dict[str, Any] | None = None,
     ) -> tuple[uuid.UUID, list[uuid.UUID]]:
         """Stages observations, detects syndication (AC 4), and completes the task atomically.
 
@@ -618,6 +640,8 @@ class EvidenceCollectorService:
             "browser_requests": browser_requests or [],
             "usage": usage or {},
             "budget_exhausted": budget_exhausted,
+            "skipped_purposes": skipped_purposes or {},
+            "fetch_outcomes": fetch_outcomes or {},
         }
 
         # 3. Call complete_task: commits staged observations and completion atomically on success
@@ -828,14 +852,34 @@ class EvidenceCollectorService:
 
             # 4. Process web page extractions if provided or selected from search results
             target_entries = list(target_urls)
+            skipped_purposes: dict[str, str] = {}
+            requested_purposes: set[str] = {
+                str(q.get("purpose") or q.get("query_purpose")).strip().lower()
+                for q in queries
+                if isinstance(q, dict) and (q.get("purpose") or q.get("query_purpose"))
+            }
             if not target_entries and collected_observations:
                 target_entries = self.select_eligible_search_urls(
-                    collected_observations, max_urls=3
+                    collected_observations,
+                    max_urls=3,
+                    skipped_purposes_out=skipped_purposes,
                 )
+            for req_p in sorted(requested_purposes):
+                if req_p not in skipped_purposes and not any(
+                    isinstance(e, dict) and req_p in (e.get("purposes") or [e.get("purpose")])
+                    for e in target_entries
+                ):
+                    skipped_purposes[req_p] = (
+                        f"Skipped {req_p} fetch: no eligible URL found in search results."
+                    )
+
+            purpose_success_counts: dict[str, int] = {}
+            purpose_failure_errors: dict[str, list[str]] = {}
+            purpose_capacity_skipped: set[str] = set()
 
             if target_entries:
                 static_extractions_successful = 0
-                for url_entry in target_entries:
+                for idx_url, url_entry in enumerate(target_entries):
                     if isinstance(url_entry, dict):
                         page_url = str(url_entry.get("url") or "")
                         page_cat = str(url_entry.get("category") or "general")
@@ -843,6 +887,9 @@ class EvidenceCollectorService:
                         page_purpose = str(url_entry.get("purpose") or "")
                         page_purposes = list(url_entry.get("purposes") or [])
                         page_dest = str(url_entry.get("destination") or "")
+                        page_purpose_destinations = list(
+                            url_entry.get("purpose_destinations") or []
+                        )
                     else:
                         page_url = str(url_entry)
                         page_cat = "general"
@@ -850,6 +897,9 @@ class EvidenceCollectorService:
                         page_purpose = ""
                         page_purposes = []
                         page_dest = ""
+                        page_purpose_destinations = []
+
+                    entry_purposes = page_purposes or ([page_purpose] if page_purpose else [])
 
                     if not page_url:
                         continue
@@ -891,6 +941,7 @@ class EvidenceCollectorService:
                     dispatched = False
                     call_success = False
                     call_outcome = None
+                    fetch_error: str | None = None
                     try:
                         dispatched = True
                         if hasattr(active_extraction_adapter, "extract_page"):
@@ -910,6 +961,10 @@ class EvidenceCollectorService:
                                     ext_art.setdefault("query_purposes", page_purposes)
                                 if page_dest:
                                     ext_art.setdefault("destination", page_dest)
+                                if page_purpose_destinations:
+                                    ext_art.setdefault(
+                                        "purpose_destinations", page_purpose_destinations
+                                    )
                                 updated_obs_list.append(replace(ext_obs, artifact_ref=ext_art))
                             collected_observations.extend(updated_obs_list)
                             emitted_browser_requests.extend(b_reqs)
@@ -920,6 +975,8 @@ class EvidenceCollectorService:
                                 call_success = True
                                 call_outcome = "SUCCESS"
                                 static_extractions_successful += 1
+                            else:
+                                fetch_error = "empty extraction"
                         elif hasattr(active_extraction_adapter, "extract"):
                             extracted_obs = await active_extraction_adapter.extract(page_url)
                             if extracted_obs:
@@ -932,6 +989,10 @@ class EvidenceCollectorService:
                                     ext_art.setdefault("query_purposes", page_purposes)
                                 if page_dest:
                                     ext_art.setdefault("destination", page_dest)
+                                if page_purpose_destinations:
+                                    ext_art.setdefault(
+                                        "purpose_destinations", page_purpose_destinations
+                                    )
                                 collected_observations.append(
                                     replace(extracted_obs, artifact_ref=ext_art)
                                 )
@@ -941,15 +1002,18 @@ class EvidenceCollectorService:
                                 call_success = True
                                 call_outcome = "SUCCESS"
                                 static_extractions_successful += 1
+                            else:
+                                fetch_error = "empty extraction"
                     except TimeoutError as e:
                         logger.warning("Extraction timed out for URL '%s': %s", page_url, e)
                         call_outcome = "TIMEOUT"
+                        fetch_error = f"Extraction timed out: {e}"
                         unavailable_sources.append(
                             {
                                 "source_type": "WEB_EXTRACTION",
                                 "url": page_url,
                                 "status": "UNAVAILABLE",
-                                "error": f"Extraction timed out: {e}",
+                                "error": fetch_error,
                             }
                         )
                     except asyncio.CancelledError:
@@ -958,12 +1022,13 @@ class EvidenceCollectorService:
                     except Exception as e:
                         logger.warning("Extraction failed for URL '%s': %s", page_url, e)
                         call_outcome = "UNCERTAIN" if dispatched else "NOT_DISPATCHED"
+                        fetch_error = str(e)
                         unavailable_sources.append(
                             {
                                 "source_type": "WEB_EXTRACTION",
                                 "url": page_url,
                                 "status": "UNAVAILABLE",
-                                "error": str(e),
+                                "error": fetch_error,
                             }
                         )
                     finally:
@@ -981,8 +1046,40 @@ class EvidenceCollectorService:
                             )
 
                     # Bounded static extractions: stop once at least 2 static pages have been extracted
+                    if call_success:
+                        for ep in entry_purposes:
+                            purpose_success_counts[ep] = purpose_success_counts.get(ep, 0) + 1
+                    else:
+                        err_msg = fetch_error or str(call_outcome or "fetch failed")
+                        for ep in entry_purposes:
+                            purpose_failure_errors.setdefault(ep, []).append(err_msg)
+
                     if static_extractions_successful >= 2:
+                        for rem_entry in target_entries[idx_url + 1 :]:
+                            if isinstance(rem_entry, dict):
+                                rem_purposes = list(rem_entry.get("purposes") or []) or (
+                                    [str(rem_entry.get("purpose"))]
+                                    if rem_entry.get("purpose")
+                                    else []
+                                )
+                                for rp in rem_purposes:
+                                    purpose_capacity_skipped.add(rp)
                         break
+
+            for ep, errs in purpose_failure_errors.items():
+                if purpose_success_counts.get(ep, 0) == 0 and ep not in skipped_purposes:
+                    skipped_purposes[ep] = f"Skipped {ep} fetch: fetch failure ({errs[0]})."
+            for rp in sorted(purpose_capacity_skipped):
+                if purpose_success_counts.get(rp, 0) == 0 and rp not in skipped_purposes:
+                    skipped_purposes[rp] = (
+                        f"Skipped {rp} fetch: fetch capacity exhausted (2-page extraction cap reached)."
+                    )
+
+            fetch_outcomes: dict[str, Any] = {
+                "selected_count": len(target_entries),
+                "successful_fetches": static_extractions_successful if target_entries else 0,
+                "skipped_purposes": dict(skipped_purposes),
+            }
 
             usage_summary = {
                 "tool_calls_made": calls_made,
@@ -998,6 +1095,8 @@ class EvidenceCollectorService:
                 browser_requests=emitted_browser_requests,
                 unavailable_sources=unavailable_sources,
                 budget_exhausted=budget_exhausted,
+                skipped_purposes=skipped_purposes,
+                fetch_outcomes=fetch_outcomes,
             )
         except Exception as e:
             logger.exception(

@@ -587,23 +587,20 @@ async def evaluate_candidates_node(
         except Exception as obs_err:
             logger.debug("Failed querying observations for candidate extraction: %s", obs_err)
 
+    expected_city_names: set[str] = set()
+    for d in brief.destinations:
+        d_name = getattr(d, "name", "") or ""
+        if str(d_name).strip():
+            d_norm = str(d_name).strip().lower()
+            expected_city_names.add(d_norm)
+            if d_norm in CITY_ALIASES:
+                expected_city_names.update(CITY_ALIASES[d_norm])
+
     if obs_for_extraction:
         from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
 
         default_lat = brief.destinations[0].latitude if brief.destinations else None
         default_lng = brief.destinations[0].longitude if brief.destinations else None
-        expected_city_names: set[str] = set()
-        for d in brief.destinations:
-            d_name = (
-                getattr(d, "name", "")
-                if hasattr(d, "name")
-                else (d.get("name", "") if isinstance(d, dict) else "")
-            )
-            if d_name and str(d_name).strip():
-                d_norm = str(d_name).strip().lower()
-                expected_city_names.add(d_norm)
-                if d_norm in CITY_ALIASES:
-                    expected_city_names.update(CITY_ALIASES[d_norm])
         evidence_proposals = PlaceExtractionService.extract_candidates_from_observations(
             obs_for_extraction,
             default_destination_lat=default_lat,
@@ -615,6 +612,43 @@ async def evaluate_candidates_node(
             if ep.name.strip().lower() not in existing_names:
                 candidate_proposals.append(ep)
                 existing_names.add(ep.name.strip().lower())
+
+        # Ensure positively verified hidden-place stops (with merged coords & public access)
+        # are also proposed for claim-backed registration/eligibility if not already extracted.
+        must_visit_raw = list(brief.must_visit_places or [])
+        dest_names_raw = [str(d.name).strip() for d in brief.destinations if str(d.name).strip()]
+        hidden_eval = PlaceExtractionService.evaluate_hidden_place_candidates(
+            obs_for_extraction,
+            expected_cities=expected_city_names if expected_city_names else None,
+            excluded_names=set(must_visit_raw) | set(dest_names_raw),
+        )
+        for v_stop in hidden_eval.get("verified_optional_stops", []):
+            v_name = str(v_stop.get("name") or "").strip()
+            v_coords = v_stop.get("coordinates") or {}
+            if (
+                v_name
+                and v_name.lower() not in existing_names
+                and isinstance(v_coords, dict)
+                and v_coords.get("lat") is not None
+                and v_coords.get("lng") is not None
+            ):
+                candidate_proposals.append(
+                    PlaceProposal(
+                        name=v_name,
+                        category="attraction",
+                        estimated_latitude=float(v_coords["lat"]),
+                        estimated_longitude=float(v_coords["lng"]),
+                        address=v_stop.get("address"),
+                        description=v_stop.get("supporting_excerpt")
+                        or f"Source-backed hidden place in {v_stop.get('address') or 'destination'}.",
+                        fit_score=0.85,
+                        suggested_stay_minutes=60,
+                        uncertainty="EDITORIAL_DISCOVERY",
+                        source_urls=list(v_stop.get("source_urls") or []),
+                        is_candidate=True,
+                    )
+                )
+                existing_names.add(v_name.lower())
 
     proposals = brief_proposals + candidate_proposals
 
@@ -690,7 +724,7 @@ async def evaluate_candidates_node(
                     execution_id=exec_uuid,
                     candidates=valid_cands,
                     owner_id=owner_uuid,
-                    expected_cities=expected_cities,
+                    expected_cities=expected_city_names if expected_city_names else expected_cities,
                     local_timezone=brief.timezone,
                     llm_client=llm_client_for_claims,
                     include_hours_claims=True,
@@ -3632,6 +3666,46 @@ def _build_food_research(state: TripPlanningState) -> dict[str, Any]:
     }
 
 
+def _collect_skipped_research_areas(state: TripPlanningState) -> list[dict[str, str]]:
+    """Merges planner skipped_research_areas with collector skipped_purposes from task_outputs."""
+    merged: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for raw_item in state.get("skipped_research_areas") or []:
+        if not isinstance(raw_item, dict):
+            continue
+        area_or_purpose = str(raw_item.get("purpose") or raw_item.get("area") or "").strip()
+        r_str = str(raw_item.get("reason") or "").strip()
+        if area_or_purpose and r_str and (area_or_purpose, r_str) not in seen:
+            seen.add((area_or_purpose, r_str))
+            merged.append(
+                {
+                    "area": str(raw_item.get("area") or area_or_purpose),
+                    "purpose": str(raw_item.get("purpose") or area_or_purpose),
+                    "reason": r_str,
+                }
+            )
+
+    def _add_from_mapping(raw_map: Any) -> None:
+        if not isinstance(raw_map, dict):
+            return
+        for purpose, reason in raw_map.items():
+            p_str = str(purpose or "").strip()
+            r_str = str(reason or "").strip()
+            if p_str and r_str and (p_str, r_str) not in seen:
+                seen.add((p_str, r_str))
+                merged.append({"area": p_str, "purpose": p_str, "reason": r_str})
+
+    task_outputs = state.get("task_outputs", {})
+    if isinstance(task_outputs, dict):
+        if "skipped_purposes" in task_outputs:
+            _add_from_mapping(task_outputs.get("skipped_purposes"))
+        for sub in task_outputs.values():
+            if isinstance(sub, dict) and "skipped_purposes" in sub:
+                _add_from_mapping(sub.get("skipped_purposes"))
+    return merged
+
+
 def _build_hidden_place_research(state: TripPlanningState) -> dict[str, Any]:
     """Assembles structured hidden-place research separating verified optional stops from unverified/restricted."""
     from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
@@ -3718,7 +3792,7 @@ def _build_hidden_place_research(state: TripPlanningState) -> dict[str, Any]:
         "covered_destinations": covered,
         "uncovered_destinations": uncovered,
         "coverage_reason": cov_reason,
-        "skipped_research_areas": list(state.get("skipped_research_areas") or []),
+        "skipped_research_areas": _collect_skipped_research_areas(state),
         "verified_optional_stops": verified,
         "unverified_candidates": unverified,
         "restricted_or_closed": restricted,
@@ -4919,7 +4993,7 @@ def synthesize_proposal_node(state: TripPlanningState) -> dict[str, Any]:
             or []
         ),
         "coverage_reason": state.get("coverage_reason") or dest_research_meta.get("coverage_reason"),
-        "skipped_research_areas": list(state.get("skipped_research_areas") or []),
+        "skipped_research_areas": _collect_skipped_research_areas(state),
     }
 
     proposal_status = "partial" if (is_routing_failed or bool(must_visit_conflicts)) else "ready_for_approval"

@@ -513,3 +513,288 @@ class TestSourceBackedHiddenPlaces:
         assert enriched.artifact_ref["query_purpose"] == "hidden_places"
         assert enriched.artifact_ref["purposes"] == ["hidden_places", "attractions"]
         assert enriched.artifact_ref["destination"] == "Mysuru"
+
+    async def test_execute_collection_task_surfaces_skip_reasons_and_shared_url_purpose_destinations(
+        self,
+    ) -> None:
+        """Real execute_collection_task surfaces fetch skip reasons and preserves exact purpose_destinations pairs."""
+        from datetime import UTC, datetime, timedelta
+
+        from functions.evidence_collector import service as ec_service
+        from functions.evidence_collector.service import (
+            EvidenceCollectorService,
+            TaskDispatchEnvelope,
+        )
+        from functions.orchestrator.execution.fencing import TaskClaimResult
+
+        exec_id = uuid.uuid4()
+        task_id = uuid.uuid4()
+        captured_output: dict[str, Any] = {}
+        captured_staged_observations: list[Any] = []
+        fetch_calls: list[str] = []
+
+        class _ScalarNoneResult:
+            def scalar_one_or_none(self) -> None:
+                return None
+
+        class _StubSession:
+            async def execute(self, stmt: Any) -> Any:
+                return _ScalarNoneResult()
+
+            async def flush(self) -> None:
+                return None
+
+            async def rollback(self) -> None:
+                return None
+
+        class _StubFencingService:
+            async def claim_task(self, **kwargs: Any) -> TaskClaimResult:
+                return TaskClaimResult(
+                    task_id=task_id,
+                    execution_id=exec_id,
+                    worker="evidence_collector",
+                    action="collect_evidence",
+                    attempt=1,
+                    lease_token=uuid.uuid4(),
+                    lease_expiry=datetime.now(UTC) + timedelta(minutes=5),
+                    context_version=1,
+                    payload_ref={},
+                )
+
+            async def complete_task(self, **kwargs: Any) -> uuid.UUID:
+                captured_output.update(kwargs.get("output") or {})
+                return uuid.uuid4()
+
+        class _StubSearchAdapter:
+            async def search(self, query: str, **kwargs: Any) -> list[Any]:
+                now = datetime.now(UTC)
+                q_low = query.lower()
+                if "opening hours" in q_low:
+                    return [
+                        ec_service.RawObservation(  # type: ignore[attr-defined]
+                            source_url="https://mysurupalace.karnataka.gov.in/",
+                            canonical_url="https://mysurupalace.karnataka.gov.in/",
+                            publisher="mysurupalace.karnataka.gov.in",
+                            retrieved_at=now,
+                            extraction_method="SERPAPI_WEB_SEARCH",
+                            content_hash="h-palace",
+                            excerpt_text="Mysuru Palace opening hours 10:00 AM to 5:30 PM",
+                            excerpt_locator="snippet",
+                            artifact_ref={"title": "Mysuru Palace", "purpose": "hours", "destination": "Mysuru"},
+                        ),
+                        ec_service.RawObservation(  # type: ignore[attr-defined]
+                            source_url="https://karnatakatourism.org/melody-world",
+                            canonical_url="https://karnatakatourism.org/melody-world",
+                            publisher="karnatakatourism.org",
+                            retrieved_at=now,
+                            extraction_method="SERPAPI_WEB_SEARCH",
+                            content_hash="h-shared-1",
+                            excerpt_text="Melody World Wax Museum in Mysuru",
+                            excerpt_locator="snippet",
+                            artifact_ref={"title": "Melody World Wax Museum", "purpose": "hours", "destination": "Mysuru"},
+                        ),
+                    ]
+                if "advisory" in q_low:
+                    return [
+                        ec_service.RawObservation(  # type: ignore[attr-defined]
+                            source_url="https://karnataka.gov.in/palace-road-advisory-official",
+                            canonical_url="https://karnataka.gov.in/palace-road-advisory-official",
+                            publisher="karnataka.gov.in",
+                            retrieved_at=now,
+                            extraction_method="SERPAPI_WEB_SEARCH",
+                            content_hash="h-adv",
+                            excerpt_text="Mysuru road advisory",
+                            excerpt_locator="snippet",
+                            artifact_ref={"title": "Road Advisory", "purpose": "advisory", "destination": "Mysuru"},
+                        ),
+                    ]
+                if "food" in q_low:
+                    return [
+                        ec_service.RawObservation(  # type: ignore[attr-defined]
+                            source_url="https://www.google.com/maps/search/?api=1&query=Mysuru+Food",
+                            canonical_url="https://www.google.com/maps/search/?api=1&query=Mysuru+Food",
+                            publisher="google.com",
+                            retrieved_at=now,
+                            extraction_method="SERPAPI_WEB_SEARCH",
+                            content_hash="h-food-maps",
+                            excerpt_text="Maps link",
+                            excerpt_locator="snippet",
+                            artifact_ref={"title": "Mysuru Food", "purpose": "food", "destination": "Mysuru"},
+                        ),
+                    ]
+                if "attractions" in q_low:
+                    return [
+                        ec_service.RawObservation(  # type: ignore[attr-defined]
+                            source_url="https://karnatakatourism.org/melody-world",
+                            canonical_url="https://karnatakatourism.org/melody-world",
+                            publisher="karnatakatourism.org",
+                            retrieved_at=now,
+                            extraction_method="SERPAPI_WEB_SEARCH",
+                            content_hash="h-shared-2",
+                            excerpt_text="Melody World attraction",
+                            excerpt_locator="snippet",
+                            artifact_ref={"title": "Melody World Wax Museum", "purpose": "attractions", "destination": "Ooty"},
+                        ),
+                    ]
+                return [
+                    ec_service.RawObservation(  # type: ignore[attr-defined]
+                        source_url="https://ootygardens.example/secret-grove",
+                        canonical_url="https://ootygardens.example/secret-grove",
+                        publisher="ootygardens.example",
+                        retrieved_at=now,
+                        extraction_method="SERPAPI_WEB_SEARCH",
+                        content_hash="h-ooty-hidden",
+                        excerpt_text="Secret Grove Ooty",
+                        excerpt_locator="snippet",
+                        artifact_ref={"title": "Secret Grove", "purpose": "hidden_places", "destination": "Ooty"},
+                    ),
+                ]
+
+        class _StubExtractAdapter:
+            async def extract_page(
+                self, url: str, *, category: str = "general", title: str | None = None
+            ) -> tuple[list[Any], list[dict[str, Any]]]:
+                fetch_calls.append(url)
+                if "advisory" in url:
+                    raise RuntimeError("upstream 503")
+                now = datetime.now(UTC)
+                return [
+                    ec_service.RawObservation(  # type: ignore[attr-defined]
+                        source_url=url,
+                        canonical_url=url,
+                        publisher="example.org",
+                        retrieved_at=now,
+                        extraction_method="SCRAPLING_HTTP",
+                        content_hash=f"page-{len(fetch_calls)}",
+                        excerpt_text=f"{title or 'Place'} is open to visitors daily.",
+                        excerpt_locator="body",
+                        artifact_ref={"title": title or "Place"},
+                    )
+                ], []
+
+        collector = EvidenceCollectorService(_StubSession())  # type: ignore[arg-type]
+        collector._fencing_service = _StubFencingService()  # type: ignore[assignment]
+
+        async def _noop_init_budget(*args: Any, **kwargs: Any) -> None:
+            return None
+
+        async def _allow_budget(*args: Any, **kwargs: Any) -> str | None:
+            return "res-1"
+
+        async def _noop_reconcile(*args: Any, **kwargs: Any) -> bool:
+            return True
+
+        collector.initialize_execution_budget_if_needed = _noop_init_budget  # type: ignore[method-assign]
+        collector.reserve_budget = _allow_budget  # type: ignore[method-assign]
+        collector.reconcile_budget = _noop_reconcile  # type: ignore[method-assign]
+
+        # Stub _session.execute for SourceObservationModel select inside stage_observations_and_complete
+        class _ObsRow:
+            def __init__(self, obs: Any) -> None:
+                self.id = uuid.uuid4()
+                self.canonical_url = obs.canonical_url
+                self.content_hash = obs.content_hash
+
+        class _ObsQueryResult:
+            def __init__(self, rows: list[_ObsRow], *, is_lookup: bool = False) -> None:
+                self._rows = rows
+                self._is_lookup = is_lookup
+
+            def __iter__(self) -> Any:
+                return iter(self._rows if self._is_lookup else [])
+
+            def scalars(self) -> Any:
+                return self
+
+            def all(self) -> list[_ObsRow]:
+                return self._rows
+
+        async def _session_execute(stmt: Any) -> Any:
+            sql_text = str(stmt)
+            if "source_observations" in sql_text.lower() and "select" in sql_text.lower():
+                is_lookup = "execution_id" in sql_text.lower()
+                return _ObsQueryResult(
+                    [_ObsRow(o) for o in captured_staged_observations], is_lookup=is_lookup
+                )
+            return _ScalarNoneResult()
+
+        collector._session.execute = _session_execute  # type: ignore[method-assign,assignment]
+
+        # Capture observations passed to stage_observations_and_complete
+        orig_stage = collector.stage_observations_and_complete
+
+        async def _wrapped_stage(**kwargs: Any) -> tuple[uuid.UUID, list[uuid.UUID]]:
+            captured_staged_observations.extend(kwargs["observations"])
+            return await orig_stage(**kwargs)
+
+        collector.stage_observations_and_complete = _wrapped_stage  # type: ignore[method-assign]
+
+        envelope = TaskDispatchEnvelope(
+            event_id=uuid.uuid4(),
+            task_id=task_id,
+            execution_id=exec_id,
+            kind="task_dispatch",
+            task_attempt=1,
+            outbox_delivery_attempts=1,
+            worker="evidence_collector",
+            action="collect_evidence",
+            context_version=1,
+            inner_payload={
+                "queries": [
+                    {"query": "Mysuru Palace opening hours", "purpose": "hours", "destination": "Mysuru"},
+                    {"query": "Mysuru road advisory", "purpose": "advisory", "destination": "Mysuru"},
+                    {"query": "Mysuru food", "purpose": "food", "destination": "Mysuru"},
+                    {"query": "Ooty attractions", "purpose": "attractions", "destination": "Ooty"},
+                    {"query": "Ooty hidden places", "purpose": "hidden_places", "destination": "Ooty"},
+                ],
+                "budget": {"currency": "INR", "cost_per_call_minor": 100},
+            },
+        )
+
+        await collector.execute_collection_task(
+            envelope,
+            adapter=_StubSearchAdapter(),
+            extraction_adapter=_StubExtractAdapter(),
+        )
+
+        # Shared URL fetched once
+        assert fetch_calls.count("https://karnatakatourism.org/melody-world") == 1
+        shared_page_obs = [
+            o
+            for o in captured_staged_observations
+            if o.extraction_method == "SCRAPLING_HTTP"
+            and o.canonical_url == "https://karnatakatourism.org/melody-world"
+        ]
+        assert len(shared_page_obs) == 1
+        # Exact purpose-to-destination pairs preserved (not cross-product)
+        pairs = shared_page_obs[0].artifact_ref.get("purpose_destinations")
+        assert pairs == [
+            {"purpose": "hours", "destination": "Mysuru"},
+            {"purpose": "attractions", "destination": "Ooty"},
+        ]
+
+        # Fetch outcomes / skipped purposes distinguish all three failure modes
+        skipped_purposes = captured_output.get("skipped_purposes") or {}
+        assert "food" in skipped_purposes
+        assert "no eligible url" in skipped_purposes["food"].lower()
+        assert "advisory" in skipped_purposes
+        assert "fetch failure" in skipped_purposes["advisory"].lower()
+        assert "hidden_places" in skipped_purposes
+        assert "fetch capacity exhausted" in skipped_purposes["hidden_places"].lower()
+
+        # Downstream research diagnostics surface collector skip reasons
+        synth_state = cast(
+            TripPlanningState,
+            {
+                "execution_id": str(exec_id),
+                "brief": {"destinations": [{"name": "Mysuru", "latitude": 12.2958, "longitude": 76.6394}]},
+                "task_outputs": {str(task_id): captured_output},
+                "route_status": "OK",
+            },
+        )
+        synth_res = synthesize_proposal_node(synth_state)
+        skipped_areas = synth_res["proposal"]["research_coverage"]["skipped_research_areas"]
+        area_reasons = {a.get("purpose"): str(a.get("reason", "")).lower() for a in skipped_areas}
+        assert "no eligible url" in area_reasons.get("food", "")
+        assert "fetch failure" in area_reasons.get("advisory", "")
+        assert "fetch capacity exhausted" in area_reasons.get("hidden_places", "")

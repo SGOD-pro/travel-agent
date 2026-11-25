@@ -28,6 +28,31 @@ def extract_observation_purpose(artifact_ref: Any) -> str:
     )
 
 
+def extract_observation_purposes(artifact_ref: Any) -> set[str]:
+    """Extract all normalized query purposes (single, list, and purpose_destinations) from artifact metadata."""
+    if not isinstance(artifact_ref, dict):
+        return set()
+    purposes: set[str] = set()
+    primary = extract_observation_purpose(artifact_ref)
+    if primary:
+        purposes.add(primary)
+    for key in ("purposes", "query_purposes"):
+        raw_list = artifact_ref.get(key)
+        if isinstance(raw_list, list):
+            for item in raw_list:
+                val = str(item or "").lower().strip()
+                if val:
+                    purposes.add(val)
+    raw_pairs = artifact_ref.get("purpose_destinations")
+    if isinstance(raw_pairs, list):
+        for pair in raw_pairs:
+            if isinstance(pair, dict):
+                val = str(pair.get("purpose") or "").lower().strip()
+                if val:
+                    purposes.add(val)
+    return purposes
+
+
 @dataclass
 class PlaceEvidenceAccumulator:
     """Internal accumulator tracking appearance across distinct web sources."""
