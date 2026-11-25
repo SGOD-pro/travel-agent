@@ -608,10 +608,40 @@ class PlaceExtractionService:
         if expected_cities:
             norm_expected = {c.strip().lower() for c in expected_cities if c and c.strip()}
 
+        import re
+
         from functions.orchestrator.evidence.claim_ingestion import (
             SNIPPET_SOURCE_METHODS,
             _has_conflicting_city,
             _obs_attr,
+        )
+
+        negation_markers = (
+            "does not serve",
+            "doesn't serve",
+            "do not serve",
+            "don't serve",
+            "not serve",
+            "no longer serves",
+            "never serves",
+        )
+        serving_markers = (
+            "serves ",
+            "serve ",
+            "serving ",
+            "famous for ",
+            "known for ",
+            "renowned for ",
+            "birthplace of ",
+            "specialty is ",
+            "specializes in ",
+            "specialises in ",
+            "offers ",
+            "offer ",
+            "menu includes ",
+            "on the menu",
+            "try the ",
+            "must try ",
         )
 
         for obs in observations:
@@ -621,59 +651,119 @@ class PlaceExtractionService:
             if norm_expected and _has_conflicting_city(obs, norm_expected):
                 continue
 
-            raw_excerpt = str(_obs_attr(obs, "excerpt_text") or "").strip().lower()
-            art_ref = _obs_attr(obs, "artifact_ref") or {}
-            art_dict = art_ref if isinstance(art_ref, dict) else {}
-            art_title = str(
-                art_dict.get("title")
-                or art_dict.get("page_title")
-                or art_dict.get("place_name")
-                or ""
-            ).strip().lower()
-            art_snippet = str(art_dict.get("snippet") or "").strip().lower()
+            raw_excerpt = str(_obs_attr(obs, "excerpt_text") or "").strip()
+            if not raw_excerpt:
+                continue
             obs_url = str(
                 _obs_attr(obs, "canonical_url")
                 or _obs_attr(obs, "source_url")
                 or ""
-            ).strip().lower()
-            full_obs_text = f"{art_title} {art_snippet} {raw_excerpt} {obs_url}"
+            ).strip()
+
+            lines = [ln.strip() for ln in raw_excerpt.splitlines() if ln.strip()]
+            sentences = [s.strip() for s in re.split(r"[.\n;!?]+", raw_excerpt) if s.strip()]
 
             for venue in venues:
                 if not isinstance(venue, dict):
                     continue
                 v_name = str(venue.get("name") or "").strip().lower()
                 v_norm = _normalize_place_name(venue.get("name") or "").lower()
-                v_urls = [str(u).lower() for u in (venue.get("source_urls") or []) if u]
-
-                venue_matched = False
-                if v_name and (v_name in full_obs_text or (v_norm and v_norm in full_obs_text)):
-                    venue_matched = True
-                elif v_urls and any(u in obs_url or obs_url in u for u in v_urls if len(u) > 10):
-                    venue_matched = True
-
-                if not venue_matched:
+                if not v_name and not v_norm:
                     continue
 
                 if "serves_dishes" not in venue or not isinstance(venue["serves_dishes"], list):
                     venue["serves_dishes"] = []
+                if "dish_pairings" not in venue or not isinstance(venue["dish_pairings"], list):
+                    venue["dish_pairings"] = []
 
                 for dish in dishes:
                     if not isinstance(dish, dict):
                         continue
                     if "paired_venues" not in dish or not isinstance(dish["paired_venues"], list):
                         dish["paired_venues"] = []
+                    if "venue_pairings" not in dish or not isinstance(dish["venue_pairings"], list):
+                        dish["venue_pairings"] = []
 
                     d_name = str(dish.get("name") or "").strip().lower()
-                    dish_matched = False
-                    if d_name and d_name in full_obs_text:
-                        dish_matched = True
-                    else:
-                        d_words = d_name.split()
-                        if len(d_words) >= 2 and " ".join(d_words[-2:]) in full_obs_text:
-                            dish_matched = True
+                    if not d_name:
+                        continue
+                    d_words = d_name.split()
+                    d_fallback = " ".join(d_words[-2:]) if len(d_words) >= 2 else None
 
-                    if dish_matched:
+                    matched_excerpt: str | None = None
+
+                    # 1. Check explicit serving statements in clauses
+                    for sent in sentences:
+                        clauses = [
+                            c.strip()
+                            for c in re.split(
+                                r"(?:,|\bwhile\b|\bwhereas\b|\bunlike\b|\bbut\b)",
+                                sent,
+                                flags=re.IGNORECASE,
+                            )
+                            if c.strip()
+                        ]
+                        for clause in clauses:
+                            clause_lower = clause.lower()
+                            v_in_clause = (v_name and v_name in clause_lower) or (
+                                v_norm and v_norm in clause_lower
+                            )
+                            if not v_in_clause:
+                                continue
+
+                            d_in_clause = d_name in clause_lower or (
+                                d_fallback is not None and d_fallback in clause_lower
+                            )
+                            if not d_in_clause:
+                                continue
+
+                            if any(neg in clause_lower for neg in negation_markers):
+                                continue
+                            if f"no {d_name}" in clause_lower or f"without {d_name}" in clause_lower:
+                                continue
+                            if not any(sm in clause_lower for sm in serving_markers):
+                                continue
+
+                            matched_excerpt = sent[:200]
+                            break
+                        if matched_excerpt is not None:
+                            break
+
+                    # 2. Check venue-scoped menu items
+                    if matched_excerpt is None and len(lines) > 1:
+                        active_heading: str | None = None
+                        for ln in lines:
+                            ln_lower = ln.lower()
+                            v_in_ln = (v_name and v_name in ln_lower) or (
+                                v_norm and v_norm in ln_lower
+                            )
+                            if "menu" in ln_lower:
+                                active_heading = ln if v_in_ln else None
+                                continue
+                            if active_heading is not None:
+                                d_in_ln = d_name in ln_lower or (
+                                    d_fallback is not None and d_fallback in ln_lower
+                                )
+                                if d_in_ln and not any(neg in ln_lower for neg in negation_markers):
+                                    matched_excerpt = f"{active_heading} {ln}"[:200]
+                                    break
+
+                    if matched_excerpt is not None:
                         if dish["name"] not in venue["serves_dishes"]:
                             venue["serves_dishes"].append(dish["name"])
+                            venue["dish_pairings"].append(
+                                {
+                                    "dish": dish["name"],
+                                    "source_url": obs_url,
+                                    "evidence_excerpt": matched_excerpt,
+                                }
+                            )
                         if venue["name"] not in dish["paired_venues"]:
                             dish["paired_venues"].append(venue["name"])
+                            dish["venue_pairings"].append(
+                                {
+                                    "venue": venue["name"],
+                                    "source_url": obs_url,
+                                    "evidence_excerpt": matched_excerpt,
+                                }
+                            )

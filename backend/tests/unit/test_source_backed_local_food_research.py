@@ -28,6 +28,7 @@ from functions.orchestrator.evidence.query_planner import (
 from functions.orchestrator.graphs.trip_planner.graph import (
     TripPlanningState,
     _build_food_research,
+    route_evidence_decision_node,
     synthesize_proposal_node,
 )
 
@@ -425,3 +426,174 @@ class TestSourceBackedLocalFoodResearch:
         assert len(proposal["food_research"]["local_dishes"]) > 0
         assert len(proposal["food_research"]["dining_recommendations"]) > 0
         assert proposal["food_research"]["dining_recommendations"][0]["name"] == "Guru Sweet Mart"
+
+    async def test_food_intent_from_trip_brief_dispatches_food_queries_without_state_override(self) -> None:
+        """A food request entering through TripBrief dispatches food queries without setting research_focus."""
+        state: dict[str, Any] = {
+            "execution_id": str(uuid.uuid4()),
+            "trip_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Bengaluru",
+                "origin_lat": 12.9716,
+                "origin_lng": 77.5946,
+                "destinations": [{"name": "Mysuru", "latitude": 12.2958, "longitude": 76.6394}],
+                "traveler_preferences": ["authentic local food", "street food"],
+                "must_visit_places": [],
+            },
+            "_offline_fixture_mode": True,
+        }
+        res = await route_evidence_decision_node(cast(TripPlanningState, state))
+        tasks = res.get("pending_tasks", [])
+        assert len(tasks) == 1
+        payload = tasks[0]["payload"]
+        assert payload["categories"] == ["dining", "food"]
+        assert any(q.get("purpose") == "dining" for q in payload["queries"])
+
+    async def test_mixed_request_preserves_must_visit_and_hours_with_food_slot(self) -> None:
+        """A mixed request with must_visit_places and food preferences preserves hours queries and adds food."""
+        state: dict[str, Any] = {
+            "execution_id": str(uuid.uuid4()),
+            "trip_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Bengaluru",
+                "origin_lat": 12.9716,
+                "origin_lng": 77.5946,
+                "destinations": [{"name": "Mysuru", "latitude": 12.2958, "longitude": 76.6394}],
+                "traveler_preferences": ["heritage architecture", "authentic local cuisine"],
+                "must_visit_places": ["Mysuru Palace"],
+            },
+            "_offline_fixture_mode": True,
+        }
+        res = await route_evidence_decision_node(cast(TripPlanningState, state))
+        tasks = res.get("pending_tasks", [])
+        assert len(tasks) == 1
+        queries = tasks[0]["payload"]["queries"]
+        assert any(q.get("purpose") == "hours" for q in queries)
+        assert any(q.get("purpose") == "dining" for q in queries)
+
+    def test_unrelated_mentions_and_different_venue_on_same_page_rejected(self) -> None:
+        """Names appearing on the same page or served by a different venue must not be falsely paired."""
+        obs_page = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://karnatakatourism.org/mysuru-food-guide",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": (
+                "Guru Sweet Mart is a famous shop in Mysuru, while Hotel Mylari serves Mysore Masala Dosa. "
+                "Separately, Bisi Bele Bath is popular across Karnataka."
+            ),
+            "artifact_ref": {"title": "Mysuru Food Guide", "address": "Mysuru"},
+        }
+        venues = [
+            {"name": "Guru Sweet Mart", "source_urls": ["https://karnatakatourism.org/mysuru-food-guide"]},
+            {"name": "Hotel Mylari", "source_urls": ["https://karnatakatourism.org/mysuru-food-guide"]},
+        ]
+        dishes = [
+            {"name": "Mysore Masala Dosa", "dish_type": "breakfast"},
+            {"name": "Bisi Bele Bath", "dish_type": "main_course"},
+        ]
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs_page],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        guru = next(v for v in venues if v["name"] == "Guru Sweet Mart")
+        mylari = next(v for v in venues if v["name"] == "Hotel Mylari")
+
+        assert guru["serves_dishes"] == []
+        assert mylari["serves_dishes"] == ["Mysore Masala Dosa"]
+        pairings = cast(list[dict[str, str]], mylari.get("dish_pairings", []))
+        assert len(pairings) == 1
+        assert pairings[0]["source_url"] == "https://karnatakatourism.org/mysuru-food-guide"
+        assert "Hotel Mylari serves Mysore Masala Dosa" in pairings[0]["evidence_excerpt"]
+
+    def test_negated_dish_to_venue_claim_rejected(self) -> None:
+        """Negated statements must not be treated as positive dish-to-venue pairings."""
+        obs_neg = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/mysuru-review",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Guru Sweet Mart does not serve Mysore Masala Dosa.",
+            "artifact_ref": {"title": "Mysuru Review", "address": "Mysuru"},
+        }
+        venues = [{"name": "Guru Sweet Mart", "source_urls": ["https://example.com/mysuru-review"]}]
+        dishes = [{"name": "Mysore Masala Dosa", "dish_type": "breakfast"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs_neg],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == []
+        assert len(dishes[0]["paired_venues"]) == 0
+
+    def test_url_or_metadata_only_match_rejected(self) -> None:
+        """Matches appearing only in URL or search metadata without fetched page text must be rejected."""
+        obs_meta = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/guru-sweet-mart-mysore-pak",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Welcome to our Mysuru travel guide.",
+            "artifact_ref": {
+                "title": "Guru Sweet Mart Mysore Pak",
+                "snippet": "Guru Sweet Mart Mysore Pak",
+                "address": "Mysuru",
+            },
+        }
+        venues = [{"name": "Guru Sweet Mart", "source_urls": ["https://example.com/guru-sweet-mart-mysore-pak"]}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs_meta],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == []
+        assert len(dishes[0]["paired_venues"]) == 0
+
+    def test_same_clause_cooccurrence_without_serving_relationship_rejected(self) -> None:
+        """Same-clause co-occurrence without a serving or menu relationship must not pair dish to venue."""
+        obs_non_serving = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://example.com/mysuru-blog",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "We bought Mysore Pak across the street after dinner at Gufha Restaurant.",
+            "artifact_ref": {"title": "Mysuru Blog", "address": "Mysuru"},
+        }
+        venues = [{"name": "Gufha Restaurant", "source_urls": ["https://example.com/mysuru-blog"]}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs_non_serving],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == []
+        assert len(dishes[0]["paired_venues"]) == 0
+
+    def test_positive_venue_menu_item_scoped_to_venue_accepted(self) -> None:
+        """A menu item scoped to the matched venue and location supports a dish-to-venue pairing."""
+        obs_menu = {
+            "id": str(uuid.uuid4()),
+            "source_url": "https://gurusweetmart.in/menu",
+            "extraction_method": "TRAFILATURA_TEXT",
+            "excerpt_text": "Guru Sweet Mart Menu:\n- Mysore Pak (Pure Ghee)\n- Badam Halwa",
+            "artifact_ref": {"title": "Guru Sweet Mart", "address": "Mysuru"},
+        }
+        venues = [{"name": "Guru Sweet Mart", "source_urls": ["https://gurusweetmart.in/menu"]}]
+        dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+        PlaceExtractionService.pair_dishes_and_venues(
+            venues=venues,
+            dishes=dishes,
+            observations=[obs_menu],
+            expected_cities={"Mysuru", "Mysore"},
+        )
+        assert venues[0]["serves_dishes"] == ["Mysore Pak"]
+        pairings = cast(list[dict[str, str]], venues[0].get("dish_pairings", []))
+        assert len(pairings) == 1
+        assert pairings[0]["source_url"] == "https://gurusweetmart.in/menu"
+        assert "Mysore Pak" in pairings[0]["evidence_excerpt"]

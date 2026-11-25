@@ -553,6 +553,29 @@ class QueryPlanningService:
         )
 
     @classmethod
+    def has_explicit_food_intent(cls, brief: dict[str, Any] | TripBrief) -> bool:
+        """Determines whether a trip brief explicitly requests local food or dining research."""
+        if isinstance(brief, TripBrief):
+            raw_prefs = list(brief.dietary_preferences) + list(brief.traveler_preferences)
+        elif isinstance(brief, dict):
+            raw_prefs = list(brief.get("dietary_preferences") or []) + list(
+                brief.get("traveler_preferences") or []
+            )
+        else:
+            raw_prefs = []
+        food_keywords = (
+            "food",
+            "cuisine",
+            "dining",
+            "culinary",
+            "restaurant",
+            "dish",
+            "street food",
+            "local food",
+        )
+        return any(any(kw in str(p).lower() for kw in food_keywords) for p in raw_prefs)
+
+    @classmethod
     def plan_food_queries(
         cls,
         brief: dict[str, Any] | TripBrief,

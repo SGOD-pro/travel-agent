@@ -6077,7 +6077,10 @@ async def route_evidence_decision_node(
             else getattr(brief, "must_visit_places", None)
         )
         planned_queries: Any
-        if state.get("research_focus") == "food":
+        is_food_only = state.get("research_focus") == "food" or (
+            not has_must_visits and QueryPlanningService.has_explicit_food_intent(brief)
+        )
+        if is_food_only:
             planned_queries = QueryPlanningService.plan_food_queries(
                 brief, max_queries=DEFAULT_MAX_QUERIES
             )
@@ -6152,7 +6155,7 @@ async def route_evidence_decision_node(
                 if isinstance(brief, dict)
                 else getattr(brief, "origin_name", ""),
                 "categories": ["dining", "food"]
-                if state.get("research_focus") == "food"
+                if is_food_only
                 else ["attractions", "lodging", "transit"],
             },
             "idempotency_key": f"{exec_uuid}:collect:{dest_hash[:16]}",
