@@ -608,8 +608,6 @@ class PlaceExtractionService:
         if expected_cities:
             norm_expected = {c.strip().lower() for c in expected_cities if c and c.strip()}
 
-        import re
-
         from functions.orchestrator.evidence.claim_ingestion import (
             SNIPPET_SOURCE_METHODS,
             _has_conflicting_city,
@@ -632,36 +630,44 @@ class PlaceExtractionService:
             "once served",
             "no longer ",
         )
-        non_subject_prefixes = (
-            "across from",
-            "across",
-            "opposite to",
-            "opposite",
-            "near",
-            "next to",
-            "beside",
-            "behind",
-            "in front of",
-            "outside",
-            "around",
-            "unlike",
-            "after",
+        loc_forbidden_tokens = frozenset(
+            {
+                "that",
+                "which",
+                "who",
+                "where",
+                "recommends",
+                "recommend",
+                "suggests",
+                "suggest",
+                "mentions",
+                "mention",
+                "serves",
+                "serve",
+                "not",
+                "never",
+                "used",
+                "formerly",
+                "previously",
+                "is",
+                "are",
+                "was",
+                "near",
+                "beside",
+                "opposite",
+                "across",
+                "stopped",
+                "ceased",
+            }
         )
-        serving_markers = (
-            "serves ",
-            "serve ",
-            "serving ",
-            "famous for ",
-            "known for ",
-            "renowned for ",
-            "is the birthplace of ",
-            "birthplace of ",
-            "specialty is ",
-            "specializes in ",
-            "specialises in ",
-            "offers ",
-            "offer ",
-            "menu includes ",
+        referral_cues = (
+            "ask ",
+            "next door",
+            "shop",
+            "across",
+            "outside",
+            "nearby",
+            "another ",
         )
         status_notice_markers = (
             "sold out",
@@ -721,7 +727,16 @@ class PlaceExtractionService:
 
                     matched_excerpt: str | None = None
 
-                    # 1. Check explicit serving statements with subject=venue and object=dish
+                    # 1. Check direct serving statements: <Venue> [in <loc>] <serving_verb> [adj] <Dish>
+                    v_terms = list(dict.fromkeys(t for t in (v_name, v_norm) if t))
+                    d_terms = list(dict.fromkeys(t for t in (d_name, d_fallback) if t))
+                    verb_pat = (
+                        r"(?:serves|serve|serving|offers|offer|"
+                        r"is\s+(?:the\s+)?birthplace\s+of|"
+                        r"is\s+(?:famous|known|renowned)\s+for|"
+                        r"specializes\s+in|specialises\s+in)"
+                    )
+                    adj_pat = r"(?:(?:authentic|traditional|soft|pure\s+ghee|fresh|homemade|hot|crispy|famous|legendary)\s+)*"
                     for sent in sentences:
                         clauses = [
                             c.strip()
@@ -734,47 +749,29 @@ class PlaceExtractionService:
                         ]
                         for clause in clauses:
                             clause_lower = clause.lower()
-                            for sm in serving_markers:
-                                if sm not in clause_lower:
-                                    continue
-                                subj_part, obj_part = clause_lower.split(sm, 1)
-
-                                # Object must resolve to the dish
-                                d_in_obj = d_name in obj_part or (
-                                    d_fallback is not None and d_fallback in obj_part
-                                )
-                                if not d_in_obj:
-                                    continue
-
-                                # Reject negated or historical claims
-                                if any(neg in subj_part for neg in negation_markers):
-                                    continue
-                                if any(hist in subj_part for hist in historical_markers):
-                                    continue
-                                if f"no {d_name}" in obj_part or f"without {d_name}" in obj_part:
-                                    continue
-                                if d_fallback is not None and (
-                                    f"no {d_fallback}" in obj_part
-                                    or f"without {d_fallback}" in obj_part
-                                ):
-                                    continue
-
-                                # Subject must resolve to the matched venue (not a prepositional modifier)
-                                v_match_term = (
-                                    v_name
-                                    if (v_name and v_name in subj_part)
-                                    else (v_norm if (v_norm and v_norm in subj_part) else None)
-                                )
-                                if not v_match_term:
-                                    continue
-
-                                idx = subj_part.rfind(v_match_term)
-                                before_venue = subj_part[:idx].strip()
-                                if any(before_venue.endswith(p) for p in non_subject_prefixes):
-                                    continue
-
-                                matched_excerpt = sent[:200]
-                                break
+                            if any(neg in clause_lower for neg in negation_markers):
+                                continue
+                            if any(hist in clause_lower for hist in historical_markers):
+                                continue
+                            for vt in v_terms:
+                                for dt in d_terms:
+                                    direct_pat = (
+                                        rf"^(?:original\s+)?{re.escape(vt)}"
+                                        rf"(?:\s+(?:in|at|on)\s+(?P<loc>[a-z0-9\s]+?))?\s+"
+                                        rf"{verb_pat}\s+{adj_pat}{re.escape(dt)}"
+                                        rf"(?:\s+(?:sweet|dish))?$"
+                                    )
+                                    m = re.match(direct_pat, clause_lower)
+                                    if m:
+                                        loc_span = (m.group("loc") or "").strip()
+                                        if loc_span and any(
+                                            tok in loc_forbidden_tokens for tok in loc_span.split()
+                                        ):
+                                            continue
+                                        matched_excerpt = sent[:200]
+                                        break
+                                if matched_excerpt is not None:
+                                    break
                             if matched_excerpt is not None:
                                 break
                         if matched_excerpt is not None:
@@ -797,7 +794,6 @@ class PlaceExtractionService:
                                 active_heading = ln if v_in_ln else None
                                 continue
                             if ln.endswith(":"):
-                                # Another section header (e.g. "Reviews:", "Hours:") ends menu scope
                                 active_heading = None
                                 continue
 
@@ -807,16 +803,30 @@ class PlaceExtractionService:
                                 )
                                 if not d_in_ln:
                                     continue
-                                if any(st in ln_lower for st in status_notice_markers):
-                                    sold_out_detected = True
+                                is_status = any(st in ln_lower for st in status_notice_markers)
+                                if not is_status and any(
+                                    neg in ln_lower for neg in negation_markers
+                                ):
                                     continue
-                                if any(neg in ln_lower for neg in negation_markers):
+                                item_match = re.match(r"^(?:[-*•]\s+|\d+[.)]\s+)(.+)$", ln_lower)
+                                if not item_match:
+                                    if is_status:
+                                        sold_out_detected = True
                                     continue
-                                is_menu_item = ln.startswith(("- ", "* ", "• ")) or bool(
-                                    re.match(r"^\d+[.)]\s+", ln)
-                                )
-                                if is_menu_item and matched_excerpt is None:
-                                    matched_excerpt = f"{active_heading} {ln}"[:200]
+                                item_body = item_match.group(1).strip()
+                                parts = re.split(r"\s*[(|\-–—:]\s*", item_body, maxsplit=1)
+                                item_name = parts[0].strip()
+                                item_suffix = parts[1].strip() if len(parts) > 1 else ""
+                                if item_suffix and any(cue in item_suffix for cue in referral_cues):
+                                    continue
+                                if any(
+                                    re.match(rf"^{adj_pat}{re.escape(dt)}$", item_name)
+                                    for dt in d_terms
+                                ):
+                                    if is_status:
+                                        sold_out_detected = True
+                                    if matched_excerpt is None:
+                                        matched_excerpt = f"{active_heading} {ln}"[:200]
 
                     if matched_excerpt is not None:
                         availability = "SOLD_OUT" if sold_out_detected else "UNKNOWN"

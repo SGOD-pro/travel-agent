@@ -741,3 +741,36 @@ class TestSourceBackedLocalFoodResearch:
         assert len(pairings) == 1
         assert pairings[0].get("availability") == "SOLD_OUT"
         assert pairings[0].get("in_stock") is not True
+
+    def test_indirect_prose_and_menu_referral_rejected(self) -> None:
+        """Indirect prose ('recommends a shop that serves', 'serves coffee with a view of') and menu referrals must remain unpaired."""
+        cases = [
+            "Gufha Restaurant recommends a shop that serves Mysore Pak.",
+            "Gufha Restaurant in Mysuru recommends a shop that serves Mysore Pak.",
+            "Gufha Restaurant in Mysuru does not serve Mysore Pak.",
+            "Gufha Restaurant in Mysuru used to serve Mysore Pak.",
+            "Gufha Restaurant serves coffee with a view of the Mysore Pak shop.",
+            "Gufha Restaurant Menu:\n- Ask the shop next door for Mysore Pak",
+            "Gufha Restaurant Menu:\n- Mysore Pak - Ask the shop next door",
+        ]
+        for idx, excerpt in enumerate(cases):
+            obs = {
+                "id": str(uuid.uuid4()),
+                "source_url": f"https://example.com/case-{idx}",
+                "extraction_method": "TRAFILATURA_TEXT",
+                "excerpt_text": excerpt,
+                "artifact_ref": {"title": "Gufha Restaurant", "address": "Mysuru"},
+            }
+            venues = [{"name": "Gufha Restaurant", "source_urls": [f"https://example.com/case-{idx}"]}]
+            dishes = [{"name": "Mysore Pak", "dish_type": "sweet"}]
+
+            PlaceExtractionService.pair_dishes_and_venues(
+                venues=venues,
+                dishes=dishes,
+                observations=[obs],
+                expected_cities={"Mysuru", "Mysore"},
+            )
+            assert venues[0]["serves_dishes"] == [], f"Failed for: {excerpt}"
+            assert venues[0]["dish_pairings"] == [], f"Failed for: {excerpt}"
+            assert len(dishes[0]["paired_venues"]) == 0, f"Failed for: {excerpt}"
+            assert len(dishes[0]["venue_pairings"]) == 0, f"Failed for: {excerpt}"
