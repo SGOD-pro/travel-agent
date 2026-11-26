@@ -185,7 +185,7 @@ class PlaceExtractionService:
 
             # 1. Check local place result structured metadata from SerpApi with verified GPS coordinates
             if isinstance(artifact_ref, dict):
-                if extract_observation_purpose(artifact_ref) == "advisory":
+                if "advisory" in extract_observation_purposes(artifact_ref):
                     # Advisory results must remain road disruptions/alerts and cannot become sightseeing candidates
                     continue
 
@@ -1035,8 +1035,10 @@ class PlaceExtractionService:
 
             art_ref = _obs_attr(obs, "artifact_ref") or {}
             art_dict = art_ref if isinstance(art_ref, dict) else {}
-            purpose = extract_observation_purpose(art_dict)
-            if purpose in ("advisory", "dining", "lodging"):
+            purposes = extract_observation_purposes(art_dict)
+            if "advisory" in purposes:
+                continue
+            if "hidden_places" not in purposes and bool(purposes & {"dining", "lodging"}):
                 continue
 
             status_val = str(art_dict.get("status") or "").strip().upper()
@@ -1117,14 +1119,43 @@ class PlaceExtractionService:
                 else (entry["snippet_excerpts"][0] if entry["snippet_excerpts"] else "")
             )
 
-            is_restricted = has_fetched_content and any(
-                rm in fetched_lower for rm in restricted_markers
+            negated_restriction_pat = (
+                r"\b(?:no|not|without|never|don't|doesn't|does\s+not|do\s+not|need\s+not|none)\s+"
+                r"(?:a\s+|any\s+|special\s+)?$"
             )
+            is_restricted = False
+            if has_fetched_content:
+                for rm in restricted_markers:
+                    for rm_m in re.finditer(rf"\b{re.escape(rm)}\b", fetched_lower):
+                        prefix = fetched_lower[max(0, rm_m.start() - 32) : rm_m.start()]
+                        if any(sep in prefix for sep in (".", ";", "\n", "!")):
+                            last_sep = max(
+                                prefix.rfind("."),
+                                prefix.rfind(";"),
+                                prefix.rfind("\n"),
+                                prefix.rfind("!"),
+                            )
+                            prefix = prefix[last_sep + 1 :]
+                        if re.search(negated_restriction_pat, prefix):
+                            continue
+                        is_restricted = True
+                        break
+                    if is_restricted:
+                        break
+
             has_public_access = False
             if has_fetched_content and not is_restricted:
-                for sent in re.split(r"[.\n;!?]+", fetched_lower):
+                cleaned_for_access = re.sub(
+                    r"\b(?:no|without)\s+(?:a\s+|any\s+|special\s+)?(?:permit|prior\s+permission)(?:\s+(?:is\s+)?(?:required|needed))?\b",
+                    " ",
+                    fetched_lower,
+                )
+                for sent in re.split(r"[.\n;!?]+", cleaned_for_access):
                     if any(pm in sent for pm in public_access_markers):
-                        if not any(dw in sent for dw in disqualifying_access_words):
+                        if not any(
+                            re.search(rf"\b{re.escape(dw.strip())}\b", sent)
+                            for dw in disqualifying_access_words
+                        ):
                             has_public_access = True
                             break
 

@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from functions.evidence_collector.fixtures import (
     RawObservation,
+    normalize_url,
 )
 from functions.evidence_collector.models import SourceObservationModel
 from functions.evidence_collector.scrapling_adapter import (
@@ -372,7 +373,7 @@ class EvidenceCollectorService:
             ).strip().lower()
             dest_val = str(art_ref.get("destination") or art_ref.get("query_dest") or "").strip()
 
-            clean_url = url.split("?")[0] if "?" in url else url
+            clean_url = normalize_url(url)
             if clean_url in ranked_by_clean_url:
                 existing_entry = ranked_by_clean_url[clean_url][1]
                 if purpose_val and purpose_val not in existing_entry["purposes"]:
@@ -711,10 +712,19 @@ class EvidenceCollectorService:
         collected_observations: list[RawObservation] = []
         emitted_browser_requests: list[dict[str, Any]] = []
         unavailable_sources: list[dict[str, Any]] = []
+        search_failed_purposes: dict[str, str] = {}
+        search_budget_exhausted_purposes: set[str] = set()
+        search_halted_purposes: set[str] = set()
+
+        def _query_purpose(item: Any) -> str:
+            if isinstance(item, dict):
+                return str(item.get("purpose") or item.get("query_purpose") or "").strip().lower()
+            return ""
 
         try:
             # 3. Process search queries with durable pre call budget reservations (AC 14)
-            for q in queries:
+            for idx_q, q in enumerate(queries):
+                q_p = _query_purpose(q)
                 # Check deadline before dispatch
                 now = datetime.now(UTC)
                 stmt = select(ExecutionModel).where(ExecutionModel.id == envelope.execution_id)
@@ -723,6 +733,9 @@ class EvidenceCollectorService:
                 if exec_model:
                     if exec_model.status == "CANCELLED" or exec_model.cancelled_at is not None:
                         logger.info("Parent execution cancelled; halting collection loop")
+                        for rem_q in queries[idx_q:]:
+                            if rp := _query_purpose(rem_q):
+                                search_halted_purposes.add(rp)
                         break
                     if (
                         exec_model.deadline_at
@@ -730,6 +743,9 @@ class EvidenceCollectorService:
                         >= exec_model.deadline_at
                     ):
                         logger.warning("Execution deadline approaching; halting collection loop")
+                        for rem_q in queries[idx_q:]:
+                            if rp := _query_purpose(rem_q):
+                                search_halted_purposes.add(rp)
                         break
 
                 # Missing configuration must produce explicit failure or unavailable result
@@ -738,12 +754,15 @@ class EvidenceCollectorService:
                         "SERPAPI_API_KEY is not configured; search provider unavailable for query '%s'",
                         q,
                     )
+                    err_msg = "SERPAPI_API_KEY is not configured; live search requires valid credentials"
+                    if q_p:
+                        search_failed_purposes.setdefault(q_p, err_msg)
                     unavailable_sources.append(
                         {
                             "source_type": "SEARCH",
                             "query": q,
                             "status": "UNAVAILABLE",
-                            "error": "SERPAPI_API_KEY is not configured; live search requires valid credentials",
+                            "error": err_msg,
                         }
                     )
                     continue
@@ -761,6 +780,9 @@ class EvidenceCollectorService:
                     logger.info(
                         "Budget exhausted for execution %s; stopping queries", envelope.execution_id
                     )
+                    for rem_q in queries[idx_q:]:
+                        if rp := _query_purpose(rem_q):
+                            search_budget_exhausted_purposes.add(rp)
                     break
 
                 # Execute provider call outside database transaction
@@ -811,6 +833,8 @@ class EvidenceCollectorService:
                 except TimeoutError as e:
                     logger.warning("SerpApi search timed out for query '%s': %s", q, e)
                     call_outcome = "TIMEOUT"
+                    if q_p:
+                        search_failed_purposes.setdefault(q_p, f"Search timed out: {e}")
                     unavailable_sources.append(
                         {
                             "source_type": "SEARCH",
@@ -825,6 +849,8 @@ class EvidenceCollectorService:
                 except SerpApiAdapterError as e:
                     logger.warning("SerpApi search failed for query '%s': %s", q, e)
                     call_outcome = "PROVIDER_ERROR"
+                    if q_p:
+                        search_failed_purposes.setdefault(q_p, str(e))
                     unavailable_sources.append(
                         {
                             "source_type": "SEARCH",
@@ -836,6 +862,8 @@ class EvidenceCollectorService:
                 except Exception as e:
                     logger.warning("Search query failed for '%s': %s", q, e)
                     call_outcome = "UNCERTAIN" if dispatched else "NOT_DISPATCHED"
+                    if q_p:
+                        search_failed_purposes.setdefault(q_p, str(e))
                     raise
                 finally:
                     await self._safe_reconcile_budget(
@@ -865,17 +893,46 @@ class EvidenceCollectorService:
                     skipped_purposes_out=skipped_purposes,
                 )
             for req_p in sorted(requested_purposes):
-                if req_p not in skipped_purposes and not any(
-                    isinstance(e, dict) and req_p in (e.get("purposes") or [e.get("purpose")])
+                has_selected = any(
+                    isinstance(e, dict)
+                    and req_p
+                    in [
+                        str(p).strip().lower()
+                        for p in (e.get("purposes") or ([e.get("purpose")] if e.get("purpose") else []))
+                    ]
                     for e in target_entries
-                ):
-                    skipped_purposes[req_p] = (
-                        f"Skipped {req_p} fetch: no eligible URL found in search results."
-                    )
+                )
+                if not has_selected:
+                    if req_p in search_budget_exhausted_purposes:
+                        skipped_purposes[req_p] = (
+                            f"Skipped {req_p} search: search budget exhausted."
+                        )
+                    elif req_p in search_halted_purposes:
+                        skipped_purposes[req_p] = (
+                            f"Skipped {req_p} search: execution halted before dispatch."
+                        )
+                    elif req_p in search_failed_purposes:
+                        skipped_purposes[req_p] = (
+                            f"Skipped {req_p} search: search failed ({search_failed_purposes[req_p]})."
+                        )
+                    elif req_p not in skipped_purposes:
+                        skipped_purposes[req_p] = (
+                            f"Skipped {req_p} fetch: no eligible URL found in search results."
+                        )
 
             purpose_success_counts: dict[str, int] = {}
+            purpose_browser_escalated: set[str] = set()
             purpose_failure_errors: dict[str, list[str]] = {}
             purpose_capacity_skipped: set[str] = set()
+            purpose_halted_skipped: dict[str, str] = {}
+
+            def _entry_purposes(item: Any) -> list[str]:
+                if not isinstance(item, dict):
+                    return []
+                raw_ps = list(item.get("purposes") or []) or (
+                    [str(item.get("purpose"))] if item.get("purpose") else []
+                )
+                return [str(p).strip().lower() for p in raw_ps if str(p).strip()]
 
             if target_entries:
                 static_extractions_successful = 0
@@ -887,6 +944,7 @@ class EvidenceCollectorService:
                         page_purpose = str(url_entry.get("purpose") or "")
                         page_purposes = list(url_entry.get("purposes") or [])
                         page_dest = str(url_entry.get("destination") or "")
+                        page_destinations = list(url_entry.get("destinations") or [])
                         page_purpose_destinations = list(
                             url_entry.get("purpose_destinations") or []
                         )
@@ -897,9 +955,10 @@ class EvidenceCollectorService:
                         page_purpose = ""
                         page_purposes = []
                         page_dest = ""
+                        page_destinations = []
                         page_purpose_destinations = []
 
-                    entry_purposes = page_purposes or ([page_purpose] if page_purpose else [])
+                    entry_purposes = _entry_purposes(url_entry)
 
                     if not page_url:
                         continue
@@ -912,6 +971,11 @@ class EvidenceCollectorService:
                     if exec_model:
                         if exec_model.status == "CANCELLED" or exec_model.cancelled_at is not None:
                             logger.info("Parent execution cancelled; halting extraction loop")
+                            for rem_entry in target_entries[idx_url:]:
+                                for rp in _entry_purposes(rem_entry):
+                                    purpose_halted_skipped.setdefault(
+                                        rp, f"Skipped {rp} fetch: execution cancelled."
+                                    )
                             break
                         if (
                             exec_model.deadline_at
@@ -921,6 +985,11 @@ class EvidenceCollectorService:
                             logger.warning(
                                 "Execution deadline approaching; halting extraction loop"
                             )
+                            for rem_entry in target_entries[idx_url:]:
+                                for rp in _entry_purposes(rem_entry):
+                                    purpose_halted_skipped.setdefault(
+                                        rp, f"Skipped {rp} fetch: execution deadline approaching."
+                                    )
                             break
 
                     # If this is a dedicated URL task without search queries, enforce budget reservations
@@ -936,10 +1005,16 @@ class EvidenceCollectorService:
                         )
                         if not res_id:
                             budget_exhausted = True
+                            for rem_entry in target_entries[idx_url:]:
+                                for rp in _entry_purposes(rem_entry):
+                                    purpose_halted_skipped.setdefault(
+                                        rp, f"Skipped {rp} fetch: fetch budget exhausted."
+                                    )
                             break
 
                     dispatched = False
                     call_success = False
+                    is_browser_escalation = False
                     call_outcome = None
                     fetch_error: str | None = None
                     try:
@@ -961,6 +1036,8 @@ class EvidenceCollectorService:
                                     ext_art.setdefault("query_purposes", page_purposes)
                                 if page_dest:
                                     ext_art.setdefault("destination", page_dest)
+                                if page_destinations:
+                                    ext_art.setdefault("destinations", page_destinations)
                                 if page_purpose_destinations:
                                     ext_art.setdefault(
                                         "purpose_destinations", page_purpose_destinations
@@ -973,8 +1050,19 @@ class EvidenceCollectorService:
                                     calls_made += 1
                                     cost_spent += cost_per_call
                                 call_success = True
-                                call_outcome = "SUCCESS"
-                                static_extractions_successful += 1
+                                is_browser_escalation = bool(b_reqs) or (
+                                    bool(obs_list)
+                                    and all(
+                                        str(getattr(o, "extraction_method", "") or "").upper().strip()
+                                        == "NEEDS_BROWSER"
+                                        for o in obs_list
+                                    )
+                                )
+                                if is_browser_escalation:
+                                    call_outcome = "BROWSER_ESCALATED"
+                                else:
+                                    call_outcome = "SUCCESS"
+                                    static_extractions_successful += 1
                             else:
                                 fetch_error = "empty extraction"
                         elif hasattr(active_extraction_adapter, "extract"):
@@ -989,6 +1077,8 @@ class EvidenceCollectorService:
                                     ext_art.setdefault("query_purposes", page_purposes)
                                 if page_dest:
                                     ext_art.setdefault("destination", page_dest)
+                                if page_destinations:
+                                    ext_art.setdefault("destinations", page_destinations)
                                 if page_purpose_destinations:
                                     ext_art.setdefault(
                                         "purpose_destinations", page_purpose_destinations
@@ -1000,8 +1090,17 @@ class EvidenceCollectorService:
                                     calls_made += 1
                                     cost_spent += cost_per_call
                                 call_success = True
-                                call_outcome = "SUCCESS"
-                                static_extractions_successful += 1
+                                is_browser_escalation = (
+                                    str(getattr(extracted_obs, "extraction_method", "") or "")
+                                    .upper()
+                                    .strip()
+                                    == "NEEDS_BROWSER"
+                                )
+                                if is_browser_escalation:
+                                    call_outcome = "BROWSER_ESCALATED"
+                                else:
+                                    call_outcome = "SUCCESS"
+                                    static_extractions_successful += 1
                             else:
                                 fetch_error = "empty extraction"
                     except TimeoutError as e:
@@ -1048,7 +1147,10 @@ class EvidenceCollectorService:
                     # Bounded static extractions: stop once at least 2 static pages have been extracted
                     if call_success:
                         for ep in entry_purposes:
-                            purpose_success_counts[ep] = purpose_success_counts.get(ep, 0) + 1
+                            if is_browser_escalation:
+                                purpose_browser_escalated.add(ep)
+                            else:
+                                purpose_success_counts[ep] = purpose_success_counts.get(ep, 0) + 1
                     else:
                         err_msg = fetch_error or str(call_outcome or "fetch failed")
                         for ep in entry_purposes:
@@ -1056,19 +1158,21 @@ class EvidenceCollectorService:
 
                     if static_extractions_successful >= 2:
                         for rem_entry in target_entries[idx_url + 1 :]:
-                            if isinstance(rem_entry, dict):
-                                rem_purposes = list(rem_entry.get("purposes") or []) or (
-                                    [str(rem_entry.get("purpose"))]
-                                    if rem_entry.get("purpose")
-                                    else []
-                                )
-                                for rp in rem_purposes:
-                                    purpose_capacity_skipped.add(rp)
+                            for rp in _entry_purposes(rem_entry):
+                                purpose_capacity_skipped.add(rp)
                         break
 
             for ep, errs in purpose_failure_errors.items():
                 if purpose_success_counts.get(ep, 0) == 0 and ep not in skipped_purposes:
                     skipped_purposes[ep] = f"Skipped {ep} fetch: fetch failure ({errs[0]})."
+            for bp in sorted(purpose_browser_escalated):
+                if purpose_success_counts.get(bp, 0) == 0 and bp not in skipped_purposes:
+                    skipped_purposes[bp] = (
+                        f"Skipped {bp} static fetch: browser escalation required (NEEDS_BROWSER)."
+                    )
+            for hp, h_reason in purpose_halted_skipped.items():
+                if purpose_success_counts.get(hp, 0) == 0 and hp not in skipped_purposes:
+                    skipped_purposes[hp] = h_reason
             for rp in sorted(purpose_capacity_skipped):
                 if purpose_success_counts.get(rp, 0) == 0 and rp not in skipped_purposes:
                     skipped_purposes[rp] = (

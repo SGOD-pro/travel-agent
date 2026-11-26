@@ -1016,6 +1016,26 @@ class DeterministicEvidenceEligibilityGate:
                         "hours_details": resolved,
                     },
                 )
+            if resolved.get("unknown_visit_dates"):
+                unknown_desc = ", ".join(
+                    str(u.get("weekday") or u.get("date"))
+                    for u in resolved.get("unknown_visit_dates", [])
+                    if isinstance(u, dict)
+                )
+                return (
+                    CandidateHoursStatus.UNKNOWN,
+                    DEFAULT_ASSUMED_WINDOW_START,
+                    DEFAULT_ASSUMED_WINDOW_END,
+                    True,
+                    {
+                        "hours_status": "UNKNOWN",
+                        "hours_diagnostic": (
+                            f"Schedule does not cover requested visit dates ({unknown_desc}); "
+                            "assumed daytime window 09:00-18:00 applied."
+                        ),
+                        "hours_details": resolved,
+                    },
+                )
 
         if saw_stale:
             return (

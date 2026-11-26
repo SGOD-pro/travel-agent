@@ -798,3 +798,319 @@ class TestSourceBackedHiddenPlaces:
         assert "no eligible url" in area_reasons.get("food", "")
         assert "fetch failure" in area_reasons.get("advisory", "")
         assert "fetch capacity exhausted" in area_reasons.get("hidden_places", "")
+
+    async def test_review_findings_shared_purpose_needs_browser_search_failure_query_params_and_no_permit(self) -> None:
+        """Covers all 5 review findings:
+        1. Shared dining + hidden_places URL retains exact associations and valid claim support.
+        2. NEEDS_BROWSER does not consume static extraction capacity.
+        3. Search failure and search budget exhaustion are distinct from no eligible URL.
+        4. Distinct content-bearing query parameters survive URL deduplication.
+        5. 'No permit required' does not trigger restricted access; actual permit still excludes.
+        """
+        from datetime import UTC, datetime
+        from types import SimpleNamespace
+        from typing import cast
+
+        from contracts.candidate import CandidateExistenceStatus, RegisteredCandidate
+        from functions.evidence_collector.fixtures import RawObservation
+        from functions.evidence_collector.serpapi_adapter import SerpApiAdapterError
+        from functions.evidence_collector.service import (
+            EvidenceCollectorService,
+            TaskDispatchEnvelope,
+        )
+        from functions.orchestrator.evidence.claim_ingestion import ingest_claims_from_observations
+        from functions.orchestrator.execution.fencing import TaskClaimResult
+        from functions.orchestrator.places.schemas import CoordinatePoint
+
+        # Finding 4: Distinct content-bearing query parameters survive deduplication
+        url_obs: list[RawObservation] = [
+            RawObservation.create(
+                source_url="https://tourism.example.org/place?id=1&utm_source=ref",
+                publisher="tourism.example.org",
+                excerpt_text="Place 1",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={"purpose": "hidden_places", "destination": "Mysuru", "title": "Place 1"},
+            ),
+            RawObservation.create(
+                source_url="https://tourism.example.org/place?id=2",
+                publisher="tourism.example.org",
+                excerpt_text="Place 2",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={"purpose": "attractions", "destination": "Mysuru", "title": "Place 2"},
+            ),
+            RawObservation.create(
+                source_url="https://tourism.example.org/place?id=1",
+                publisher="tourism.example.org",
+                excerpt_text="Place 1 again",
+                extraction_method="SERPAPI_SEARCH",
+                artifact_ref={"purpose": "dining", "destination": "Mysuru", "title": "Place 1"},
+            ),
+        ]
+        selected_urls = EvidenceCollectorService.select_eligible_search_urls(url_obs, max_urls=3)
+        assert len(selected_urls) == 2
+        selected_by_url = {e["url"]: e for e in selected_urls}
+        assert "https://tourism.example.org/place?id=1" in selected_by_url
+        assert "https://tourism.example.org/place?id=2" in selected_by_url
+
+        # Finding 5: 'No permit required' qualifies; actual permit required is excluded
+        now = datetime.now(UTC)
+        eval_obs = [
+            {
+                "extraction_method": "SCRAPLING_HTTP",
+                "canonical_url": "https://mysuru.example.org/open-stepwell",
+                "excerpt_text": "Ancient Stepwell in Mysuru is open to the public daily with no permit required.",
+                "artifact_ref": {
+                    "title": "Ancient Stepwell",
+                    "purpose": "hidden_places",
+                    "gps_coordinates": {"latitude": 12.3120, "longitude": 76.6410},
+                },
+            },
+            {
+                "extraction_method": "SCRAPLING_HTTP",
+                "canonical_url": "https://mysuru.example.org/permit-cave",
+                "excerpt_text": "Restricted Cave in Mysuru is open only with a special permit required from forestry.",
+                "artifact_ref": {
+                    "title": "Restricted Cave",
+                    "purpose": "hidden_places",
+                    "gps_coordinates": {"latitude": 12.3220, "longitude": 76.6510},
+                },
+            },
+            # Finding 1: Shared dining + hidden_places URL
+            {
+                "id": uuid.uuid4(),
+                "extraction_method": "SCRAPLING_HTTP",
+                "canonical_url": "https://mysuru.example.org/heritage-courtyard-cafe",
+                "source_url": "https://mysuru.example.org/heritage-courtyard-cafe",
+                "publisher": "mysuru.example.org",
+                "content_hash": "h1",
+                "retrieved_at": now,
+                "excerpt_text": "Heritage Courtyard in Mysuru is open to visitors daily as a hidden garden and cafe.",
+                "artifact_ref": {
+                    "title": "Heritage Courtyard",
+                    "purpose": "dining",
+                    "query_purpose": "dining",
+                    "purposes": ["dining", "hidden_places"],
+                    "query_purposes": ["dining", "hidden_places"],
+                    "purpose_destinations": [
+                        {"purpose": "dining", "destination": "Mysuru"},
+                        {"purpose": "hidden_places", "destination": "Mysuru"},
+                    ],
+                    "gps_coordinates": {"latitude": 12.3150, "longitude": 76.6450},
+                },
+            },
+        ]
+        res_eval = PlaceExtractionService.evaluate_hidden_place_candidates(
+            eval_obs, expected_cities={"Mysuru"}
+        )
+        verified_names = {v["name"] for v in res_eval["verified_optional_stops"]}
+        restricted_names = {r["name"] for r in res_eval["restricted_or_closed"]}
+        assert "Ancient Stepwell" in verified_names
+        assert "Heritage Courtyard" in verified_names
+        assert "Restricted Cave" in restricted_names
+
+        # Finding 1 continued: ingest_claims_from_observations preserves active claim support for shared URL
+        submitted_claims: list[Any] = []
+        obs_model = SimpleNamespace(
+            id=uuid.uuid4(),
+            execution_id=uuid.uuid4(),
+            extraction_method="SCRAPLING_HTTP",
+            canonical_url="https://mysuru.example.org/heritage-courtyard-cafe",
+            source_url="https://mysuru.example.org/heritage-courtyard-cafe",
+            publisher="mysuru.example.org",
+            retrieved_at=now,
+            excerpt_text="Heritage Courtyard in Mysuru is open to visitors daily as a hidden garden and cafe.",
+            artifact_ref=cast(dict[str, Any], eval_obs[2])["artifact_ref"],
+        )
+
+        class _StubClaimSession:
+            async def execute(self, stmt: Any) -> Any:
+                sql_str = str(stmt).lower()
+                is_obs_query = "source_observations" in sql_str
+
+                class _R:
+                    def scalars(self) -> Any:
+                        class _S:
+                            def all(self) -> list[Any]:
+                                return [obs_model] if is_obs_query else []
+
+                        return _S()
+
+                return _R()
+
+        class _StubClaimService:
+            def __init__(self, session: Any) -> None:
+                pass
+
+            async def submit_claim(self, *, claim_data: Any, observations_with_support: Any, as_of: Any) -> Any:
+                rec = SimpleNamespace(id=uuid.uuid4(), typed_value=claim_data.typed_value, subject_id=claim_data.subject_id)
+                submitted_claims.append((claim_data, observations_with_support))
+                return rec
+
+        import functions.orchestrator.evidence.claim_ingestion as ci_mod
+        orig_cs = ci_mod.ClaimVerificationService  # type: ignore[attr-defined]
+        ci_mod.ClaimVerificationService = _StubClaimService  # type: ignore[attr-defined,assignment]
+        try:
+            cand = RegisteredCandidate(
+                place_id=uuid.uuid4(),
+                primary_name="Heritage Courtyard",
+                category="attraction",
+                point=CoordinatePoint(lat=12.3150, lng=76.6450),
+                existence_status=CandidateExistenceStatus.UNVERIFIED,
+            )
+            await ingest_claims_from_observations(
+                session=_StubClaimSession(),  # type: ignore[arg-type]
+                execution_id=uuid.uuid4(),
+                candidates=[cand],
+                expected_cities={"Mysuru"},
+                include_hours_claims=False,
+            )
+        finally:
+            ci_mod.ClaimVerificationService = orig_cs  # type: ignore[attr-defined]
+
+        assert any(
+            cd.subject_id == "heritage courtyard" and cd.typed_value.get("status") == "active"
+            for cd, _ in submitted_claims
+        )
+
+        # Findings 2 & 3: NEEDS_BROWSER does not consume static cap; search failure & budget exhaustion distinct
+        exec_id = uuid.uuid4()
+        task_id = uuid.uuid4()
+
+        class _StubFencing:
+            async def claim_task(self, **kwargs: Any) -> TaskClaimResult:
+                return TaskClaimResult(
+                    claimed=True,
+                    task_id=task_id,
+                    execution_id=exec_id,
+                    worker="evidence_collector",
+                    action="collect_evidence",
+                    context_version=1,
+                    lease_token=uuid.uuid4(),
+                    lease_expiry=datetime.now(UTC),
+                    attempt=1,
+                )
+
+            async def fail_task(self, **kwargs: Any) -> None:
+                pass
+
+        class _StubSearchWithFailure:
+            async def search(self, query: str, limit: int = 5, extra_params: Any = None) -> list[RawObservation]:
+                if "advisory" in query.lower():
+                    raise SerpApiAdapterError("upstream 503")
+                if "hours" in query.lower():
+                    return [
+                        RawObservation.create(
+                            source_url="https://mysorepalace.karnataka.gov.in/js-only",
+                            publisher="mysorepalace.karnataka.gov.in",
+                            excerpt_text="JS page",
+                            extraction_method="SERPAPI_SEARCH",
+                            artifact_ref={"title": "Mysuru Palace JS"},
+                        )
+                    ]
+                if "hidden" in query.lower():
+                    return [
+                        RawObservation.create(
+                            source_url="https://mysuru.example.org/hidden-1",
+                            publisher="mysuru.example.org",
+                            excerpt_text="Hidden 1",
+                            extraction_method="SERPAPI_SEARCH",
+                            artifact_ref={"title": "Hidden 1"},
+                        )
+                    ]
+                return []
+
+        class _StubExtractBrowserThenStatic:
+            async def extract_page(self, url: str, category: str = "general", title: str | None = None) -> tuple[list[RawObservation], list[dict[str, Any]]]:
+                if "js-only" in url:
+                    return (
+                        [
+                            RawObservation.create(
+                                source_url=url,
+                                publisher="mysorepalace.karnataka.gov.in",
+                                excerpt_text="[DYNAMIC_PAGE: JAVASCRIPT_REQUIRED]",
+                                extraction_method="NEEDS_BROWSER",
+                            )
+                        ],
+                        [{"url": url, "category": category, "reason": "DYNAMIC_JAVASCRIPT_REQUIRED"}],
+                    )
+                return (
+                    [
+                        RawObservation.create(
+                            source_url=url,
+                            publisher="mysuru.example.org",
+                            excerpt_text="Open to visitors daily.",
+                            extraction_method="SCRAPLING_HTTP",
+                        )
+                    ],
+                    [],
+                )
+
+        class _StubSession2:
+            async def execute(self, stmt: Any) -> Any:
+                class _R:
+                    def scalar_one_or_none(self) -> Any:
+                        return None
+                return _R()
+
+        collector = EvidenceCollectorService(_StubSession2())  # type: ignore[arg-type]
+        collector._fencing_service = _StubFencing()  # type: ignore[assignment]
+        reserve_calls = 0
+
+        async def _reserve_budget(*args: Any, **kwargs: Any) -> Any:
+            nonlocal reserve_calls
+            reserve_calls += 1
+            if reserve_calls >= 4:
+                return None
+            return uuid.uuid4()
+
+        async def _noop_init(*args: Any, **kwargs: Any) -> None:
+            return None
+
+        async def _noop_rec(*args: Any, **kwargs: Any) -> None:
+            return None
+
+        collector.initialize_execution_budget_if_needed = _noop_init  # type: ignore[method-assign]
+        collector.reserve_budget = _reserve_budget  # type: ignore[method-assign]
+        collector._safe_reconcile_budget = _noop_rec  # type: ignore[method-assign]
+        captured_out2: dict[str, Any] = {}
+
+        async def _stage2(**kwargs: Any) -> tuple[uuid.UUID, list[uuid.UUID]]:
+            captured_out2["fetch_outcomes"] = kwargs.get("fetch_outcomes")
+            captured_out2["skipped_purposes"] = kwargs.get("skipped_purposes")
+            captured_out2["browser_requests"] = kwargs.get("browser_requests")
+            return (task_id, [])
+
+        collector.stage_observations_and_complete = _stage2  # type: ignore[method-assign]
+        env2 = TaskDispatchEnvelope(
+            event_id=uuid.uuid4(),
+            task_id=task_id,
+            execution_id=exec_id,
+            kind="task_dispatch",
+            task_attempt=1,
+            outbox_delivery_attempts=1,
+            worker="evidence_collector",
+            action="collect_evidence",
+            context_version=1,
+            inner_payload={
+                "queries": [
+                    {"query": "Mysuru hours", "purpose": "hours", "destination": "Mysuru"},
+                    {"query": "Mysuru advisory", "purpose": "advisory", "destination": "Mysuru"},
+                    {"query": "Mysuru hidden places", "purpose": "hidden_places", "destination": "Mysuru"},
+                    {"query": "Mysuru dining", "purpose": "dining", "destination": "Mysuru"},
+                ],
+                "budget": {"currency": "INR", "cost_per_call_minor": 100},
+            },
+        )
+        await collector.execute_collection_task(
+            env2,
+            adapter=_StubSearchWithFailure(),
+            extraction_adapter=_StubExtractBrowserThenStatic(),
+        )
+        assert captured_out2["fetch_outcomes"]["successful_fetches"] == 1
+        assert len(captured_out2["browser_requests"]) == 1
+        sp2 = captured_out2["skipped_purposes"]
+        assert "search failed" in sp2["advisory"].lower()
+        assert "search budget exhausted" in sp2["dining"].lower()
+        assert "browser escalation required" in sp2["hours"].lower()
+        assert "hidden_places" not in sp2
+

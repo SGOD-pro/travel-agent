@@ -108,6 +108,7 @@ class ExtractedHoursPayload(BaseModel):
     closed_days: list[str] = Field(default_factory=list)
     dates_covered: str | None = None
     weekly_schedule: list[dict[str, Any]] = Field(default_factory=list)
+    activity_schedules: dict[str, dict[str, Any]] = Field(default_factory=dict)
     raw_excerpt: str | None = None
 
 
@@ -203,21 +204,73 @@ def _parse_time_pair(start_raw: str, end_raw: str) -> tuple[str | None, str | No
     return start_norm, end_norm
 
 
-def extract_structured_hours_from_text(
-    text: str,
-    *,
-    source_url: str | None = None,
-    local_timezone: str = "Asia/Kolkata",
-    place_name: str | None = None,
-    source_kind: str = "PAGE_CONTENT",
-) -> ExtractedHoursPayload | None:
-    """Deterministically extracts opening, ticketing, last entry, and closed days from page text."""
-    if not text or not isinstance(text, str):
-        return None
-    normalized_text = " ".join(text.split())
-    if not normalized_text:
-        return None
+_SECONDARY_ACTIVITY_RE = re.compile(
+    r"\b(?:"
+    r"sound\s+and\s+light(?:\s+program)?(?:\s+show)?|"
+    r"son\s+et\s+lumiere|"
+    r"illumination(?:\s+timings?)?|"
+    r"light\s+show|"
+    r"laser\s+show|"
+    r"cultural\s+show|"
+    r"boating(?:\s+timings?)?|"
+    r"safari(?:\s+timings?)?"
+    r")\b",
+    re.IGNORECASE,
+)
+_GENERAL_ADMISSION_RE = re.compile(
+    r"\b(?:"
+    r"palace\s+entrance(?:\s+timings?)?|"
+    r"general\s+admission|"
+    r"visiting\s+hours|"
+    r"entrance\s+timings?|"
+    r"entry\s+timings?|"
+    r"museum\s+timings?|"
+    r"garden\s+timings?"
+    r")\b",
+    re.IGNORECASE,
+)
 
+
+def _segment_text_by_activity(normalized_text: str) -> dict[str, str]:
+    """Splits page text into general_admission vs named secondary activity sections."""
+    # Split on sentence boundaries or explicit activity heading boundaries
+    raw_segments = re.split(
+        r"(?<=[.!?])\s+|(?=\b(?:Sound\s+and\s+Light\s+Show|Illumination\s+timings?|Palace\s+Entrance\s+Timings?|General\s+Admission|Visiting\s+Hours)\b)",
+        normalized_text,
+        flags=re.IGNORECASE,
+    )
+    buckets: dict[str, list[str]] = {"general_admission": []}
+    current_activity = "general_admission"
+
+    for seg in raw_segments:
+        s = seg.strip()
+        if not s:
+            continue
+        has_gen = bool(_GENERAL_ADMISSION_RE.search(s))
+        sec_m = _SECONDARY_ACTIVITY_RE.search(s)
+        if has_gen and not sec_m:
+            current_activity = "general_admission"
+        elif sec_m and not has_gen:
+            sec_raw = sec_m.group(0).lower()
+            if "illumination" in sec_raw:
+                current_activity = "illumination"
+            elif "sound" in sec_raw or "son et lumiere" in sec_raw or "light" in sec_raw or "laser" in sec_raw:
+                current_activity = "sound_and_light_show"
+            elif "boating" in sec_raw:
+                current_activity = "boating"
+            elif "safari" in sec_raw:
+                current_activity = "safari"
+            else:
+                current_activity = "secondary_show"
+        elif "click to book" in s.lower() and current_activity == "general_admission":
+            pass
+        buckets.setdefault(current_activity, []).append(s)
+
+    return {k: " ".join(v).strip() for k, v in buckets.items() if v}
+
+
+def _extract_schedule_fields(normalized_text: str) -> dict[str, Any]:
+    """Extracts opening hours, ticketing cutoffs, closed days, and days covered from one activity text."""
     closed_days: list[str] = []
     day_pattern = r"(?:mon(?:days?)?|tue(?:sdays?)?|wed(?:nesdays?)?|thu(?:rsdays?)?|fri(?:days?)?|sat(?:urdays?)?|sun(?:days?)?)"
 
@@ -251,7 +304,7 @@ def extract_structured_hours_from_text(
     masked_text = normalized_text
 
     ticket_range_m = re.search(
-        r"(?:ticketing(?:\s+hours)?|ticket\s+(?:counter|window|sales?))[^.;\n]{0,40}?"
+        r"(?:ticketing(?:\s+hours)?|ticket\s+(?:counter|window|sales?)|tickets?\s+issued)[^.;\n]{0,40}?"
         + _TIME_RANGE_RE.pattern,
         normalized_text,
         re.IGNORECASE,
@@ -299,24 +352,22 @@ def extract_structured_hours_from_text(
 
     # Extract days covered while ignoring ranges preceded by closed or except
     days_covered: list[str] = []
-    for day_range_m in re.finditer(
-        rf"(?<!closed\s)(?<!except\s)({day_pattern})\s*(?:-|to|–|through)\s*({day_pattern})",
-        normalized_text,
-        re.IGNORECASE,
-    ):
-        prefix = normalized_text[max(0, day_range_m.start() - 16) : day_range_m.start()].lower()
-        if "closed" in prefix or "except" in prefix:
-            continue
-        days_covered = [
-            d
-            for d in _expand_day_range(day_range_m.group(1), day_range_m.group(2))
-            if d not in closed_days
-        ]
-        break
-    if not days_covered and re.search(r"\b(?:daily|all\s+days|every\s+day)\b", normalized_text, re.IGNORECASE):
+    if re.search(r"\b(?:daily|all\s+days|every\s+day|everyday)\b", normalized_text, re.IGNORECASE):
         days_covered = [d for d in _DAY_NAMES if d not in closed_days]
-    elif not days_covered and closed_days:
-        days_covered = [d for d in _DAY_NAMES if d not in closed_days]
+    else:
+        for day_range_m in re.finditer(
+            rf"(?<!closed\s)(?<!except\s)({day_pattern})\s*(?:-|to|–|through)\s*({day_pattern})",
+            normalized_text,
+            re.IGNORECASE,
+        ):
+            prefix = normalized_text[max(0, day_range_m.start() - 16) : day_range_m.start()].lower()
+            if "closed" in prefix or "except" in prefix:
+                continue
+            for exp_d in _expand_day_range(day_range_m.group(1), day_range_m.group(2)):
+                if exp_d not in closed_days and exp_d not in days_covered:
+                    days_covered.append(exp_d)
+        if not days_covered and closed_days:
+            days_covered = [d for d in _DAY_NAMES if d not in closed_days]
 
     # Extract seasonal date range if present
     dates_covered: str | None = None
@@ -330,9 +381,6 @@ def extract_structured_hours_from_text(
         dates_covered = f"{season_m.group(1)} to {season_m.group(2)}"
     elif re.search(r"\b(?:all\s+year|year\s+round)\b", normalized_text, re.IGNORECASE):
         dates_covered = "All year"
-
-    if not opens and not closes and not closed_days and not last_entry and not ticketing_closes:
-        return None
 
     weekly_schedule: list[dict[str, Any]] = []
     if days_covered or closed_days:
@@ -354,6 +402,74 @@ def extract_structured_hours_from_text(
                         }
                     )
 
+    return {
+        "opens": opens,
+        "closes": closes,
+        "ticketing_opens": ticketing_opens,
+        "ticketing_closes": ticketing_closes,
+        "last_entry": last_entry,
+        "days_covered": days_covered,
+        "closed_days": closed_days,
+        "dates_covered": dates_covered,
+        "weekly_schedule": weekly_schedule,
+    }
+
+
+def extract_structured_hours_from_text(
+    text: str,
+    *,
+    source_url: str | None = None,
+    local_timezone: str = "Asia/Kolkata",
+    place_name: str | None = None,
+    source_kind: str = "PAGE_CONTENT",
+) -> ExtractedHoursPayload | None:
+    """Deterministically extracts opening, ticketing, last entry, and closed days from page text."""
+    if not text or not isinstance(text, str):
+        return None
+    normalized_text = " ".join(text.split())
+    if not normalized_text:
+        return None
+
+    buckets = _segment_text_by_activity(normalized_text)
+    gen_text = buckets.get("general_admission") or ""
+    primary_fields = _extract_schedule_fields(gen_text) if gen_text else {}
+
+    activity_schedules: dict[str, dict[str, Any]] = {}
+    for act_name, act_text in buckets.items():
+        if act_name == "general_admission":
+            continue
+        act_fields = _extract_schedule_fields(act_text)
+        if any(
+            act_fields.get(k)
+            for k in ("opens", "closes", "closed_days", "days_covered", "last_entry", "ticketing_closes")
+        ):
+            activity_schedules[act_name] = act_fields
+
+    if not primary_fields or (
+        not primary_fields.get("opens")
+        and not primary_fields.get("closes")
+        and not primary_fields.get("closed_days")
+        and not primary_fields.get("last_entry")
+        and not primary_fields.get("ticketing_closes")
+    ):
+        if not activity_schedules:
+            primary_fields = _extract_schedule_fields(normalized_text)
+        else:
+            return None
+
+    opens = primary_fields.get("opens")
+    closes = primary_fields.get("closes")
+    ticketing_opens = primary_fields.get("ticketing_opens")
+    ticketing_closes = primary_fields.get("ticketing_closes")
+    last_entry = primary_fields.get("last_entry")
+    days_covered = primary_fields.get("days_covered") or []
+    closed_days = primary_fields.get("closed_days") or []
+    dates_covered = primary_fields.get("dates_covered")
+    weekly_schedule = primary_fields.get("weekly_schedule") or []
+
+    if not opens and not closes and not closed_days and not last_entry and not ticketing_closes:
+        return None
+
     return ExtractedHoursPayload(
         place_name=place_name,
         source_url=source_url,
@@ -368,6 +484,7 @@ def extract_structured_hours_from_text(
         closed_days=closed_days,
         dates_covered=dates_covered,
         weekly_schedule=weekly_schedule,
+        activity_schedules=activity_schedules,
         raw_excerpt=normalized_text[:500],
     )
 
@@ -556,6 +673,7 @@ def resolve_hours_for_dates(
             "all_closed": False,
             "closed_visit_dates": [],
             "open_visit_dates": [],
+            "unknown_visit_dates": [],
             "opens": typed_val.get("opens") or typed_val.get("open"),
             "closes": typed_val.get("closes") or typed_val.get("close"),
             "ticketing_opens": typed_val.get("ticketing_opens"),
@@ -570,33 +688,48 @@ def resolve_hours_for_dates(
 
     open_dates: list[dict[str, Any]] = []
     closed_dates: list[dict[str, Any]] = []
+    unknown_dates: list[dict[str, Any]] = []
+    has_explicit_day_coverage = bool(days_covered_norm) or bool(weekly_by_day)
+
     for d in visit_dates:
         weekday_name = calendar.day_name[d.weekday()]
         day_entry = weekly_by_day.get(weekday_name)
         in_season = _date_in_seasonal_range(d, dates_covered)
-        is_closed = (
+        is_explicitly_closed = (
             weekday_name in closed_days_norm
-            or (bool(days_covered_norm) and weekday_name not in days_covered_norm)
             or (day_entry is not None and bool(day_entry.get("is_closed")))
             or not in_season
         )
-        if is_closed:
+        if is_explicitly_closed:
             reason = (
                 f"Closed on {weekday_name}"
                 if weekday_name in closed_days_norm or (day_entry and day_entry.get("is_closed"))
-                else (
-                    f"Outside seasonal window ({dates_covered})"
-                    if not in_season
-                    else f"Not listed in open days ({', '.join(days_covered_norm)})"
-                )
+                else f"Outside seasonal window ({dates_covered})"
             )
             closed_dates.append({"date": d.isoformat(), "weekday": weekday_name, "reason": reason})
-        else:
-            o = (day_entry or {}).get("opens") or typed_val.get("opens") or typed_val.get("open")
-            c = (day_entry or {}).get("closes") or typed_val.get("closes") or typed_val.get("close")
-            t_o = (day_entry or {}).get("ticketing_opens") or typed_val.get("ticketing_opens")
-            t_c = (day_entry or {}).get("ticketing_closes") or typed_val.get("ticketing_closes")
-            le = (day_entry or {}).get("last_entry") or typed_val.get("last_entry")
+            continue
+
+        is_covered_open = (
+            not has_explicit_day_coverage
+            or weekday_name in days_covered_norm
+            or (day_entry is not None and not bool(day_entry.get("is_closed")))
+        )
+        if not is_covered_open:
+            unknown_dates.append(
+                {
+                    "date": d.isoformat(),
+                    "weekday": weekday_name,
+                    "reason": f"Date not covered by schedule ({', '.join(days_covered_norm)})",
+                }
+            )
+            continue
+
+        o = (day_entry or {}).get("opens") or typed_val.get("opens") or typed_val.get("open")
+        c = (day_entry or {}).get("closes") or typed_val.get("closes") or typed_val.get("close")
+        t_o = (day_entry or {}).get("ticketing_opens") or typed_val.get("ticketing_opens")
+        t_c = (day_entry or {}).get("ticketing_closes") or typed_val.get("ticketing_closes")
+        le = (day_entry or {}).get("last_entry") or typed_val.get("last_entry")
+        if o and c:
             open_dates.append(
                 {
                     "date": d.isoformat(),
@@ -608,17 +741,26 @@ def resolve_hours_for_dates(
                     "last_entry": le,
                 }
             )
+        else:
+            unknown_dates.append(
+                {
+                    "date": d.isoformat(),
+                    "weekday": weekday_name,
+                    "reason": f"Missing opening/closing times for {weekday_name}",
+                }
+            )
 
     first_open = open_dates[0] if open_dates else {}
     return {
-        "all_closed": len(open_dates) == 0 and len(closed_dates) > 0,
+        "all_closed": len(open_dates) == 0 and len(closed_dates) > 0 and len(unknown_dates) == 0,
         "closed_visit_dates": closed_dates,
         "open_visit_dates": open_dates,
-        "opens": first_open.get("opens") or typed_val.get("opens") or typed_val.get("open"),
-        "closes": first_open.get("closes") or typed_val.get("closes") or typed_val.get("close"),
-        "ticketing_opens": first_open.get("ticketing_opens") or typed_val.get("ticketing_opens"),
-        "ticketing_closes": first_open.get("ticketing_closes") or typed_val.get("ticketing_closes"),
-        "last_entry": first_open.get("last_entry") or typed_val.get("last_entry"),
+        "unknown_visit_dates": unknown_dates,
+        "opens": first_open.get("opens") if open_dates else None,
+        "closes": first_open.get("closes") if open_dates else None,
+        "ticketing_opens": first_open.get("ticketing_opens") if open_dates else None,
+        "ticketing_closes": first_open.get("ticketing_closes") if open_dates else None,
+        "last_entry": first_open.get("last_entry") if open_dates else None,
         "closed_days": sorted(closed_days_norm),
         "days_covered": days_covered_norm,
         "dates_covered": dates_covered,

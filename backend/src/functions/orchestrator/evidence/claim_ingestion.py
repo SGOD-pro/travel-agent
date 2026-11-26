@@ -28,7 +28,7 @@ from functions.orchestrator.evidence.hours_extraction import (
 )
 from functions.orchestrator.evidence.models import ClaimModel
 from functions.orchestrator.evidence.place_extraction import (
-    extract_observation_purpose,
+    extract_observation_purposes,
 )
 from functions.orchestrator.evidence.schemas import (
     ClaimCategory,
@@ -488,7 +488,7 @@ def _match_observation_entity(
     title_tokens = obs_title_norm.split() if obs_title_norm else []
 
     art_ref = _obs_attr(obs, "artifact_ref")
-    if extract_observation_purpose(art_ref) == "advisory":
+    if "advisory" in extract_observation_purposes(art_ref):
         # Road advisory observations cannot match candidate place existence
         return False, False, None
 
@@ -1107,8 +1107,8 @@ async def ingest_claims_from_observations(
             else ""
         )
 
-        obs_purpose = extract_observation_purpose(art_ref)
-        is_advisory = obs_purpose == "advisory" or any(
+        obs_purposes = extract_observation_purposes(art_ref)
+        is_advisory = "advisory" in obs_purposes or any(
             k in cat
             for k in (
                 "advisory",

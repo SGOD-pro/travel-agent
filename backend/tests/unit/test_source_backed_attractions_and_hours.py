@@ -777,3 +777,182 @@ class TestItinerarySchedulingAndClosedDayHandling:
         assert "Late Entry Optional" not in scheduled_names
         assert any(d.name == "Late Entry Optional" and d.skip_reason == "TIME_WINDOW_EXCEEDED" for d in solved.dropped_stops)
 
+    async def test_mysuru_palace_activity_scoped_hours_uncovered_dates_and_partial_weekend_dispatch(self) -> None:
+        from contracts.routing import RouteRequest
+        from functions.orchestrator.evidence.hours_extraction import resolve_hours_for_dates
+
+        captured_mysuru_page = (
+            "Palace Entrance Timings: Everyday from 10.00 am to 5.30 pm. "
+            "Tickets issued for Palace Entrance between 10.00AM – 5.30 PM. "
+            "Illumination timings - Sundays & Public Holidays : 7.00 pm - 8.00 pm. "
+            "Sound and Light Show (son et lumiere) at the Palace - All days except Sundays & Govt. Holidays. "
+            "Kannada :: Monday to Wednesday - Time 7.00 PM to 8.00 PM & Saturday - Time 8.15 PM to 9.15 PM. "
+            "English :: Thursday to Saturday - Time 7.00 PM to 8.00 PM. "
+            "Ticket will be issued only at Varaha Gate Counter (South Side) from 6.30pm onwards."
+        )
+        extracted = extract_structured_hours_from_text(
+            captured_mysuru_page,
+            source_url="https://mysorepalace.karnataka.gov.in/timings.html",
+            local_timezone="Asia/Kolkata",
+            place_name="Mysuru Palace",
+        )
+        assert extracted is not None
+        assert extracted.opens == "10:00"
+        assert extracted.closes == "17:30"
+        assert extracted.ticketing_opens == "10:00"
+        assert extracted.ticketing_closes == "17:30"
+        assert extracted.closed_days == []
+        assert "Saturday" in extracted.days_covered
+        assert "Sunday" in extracted.days_covered
+        assert "sound_and_light_show" in extracted.activity_schedules
+        assert "Sunday" in extracted.activity_schedules["sound_and_light_show"]["closed_days"]
+        assert "illumination" in extracted.activity_schedules
+        assert extracted.activity_schedules["illumination"]["opens"] == "19:00"
+
+        weekend = [date(2026, 11, 28), date(2026, 11, 29)]
+        resolved_weekend = resolve_hours_for_dates(
+            extracted.model_dump(),
+            visit_dates=weekend,
+            local_timezone="Asia/Kolkata",
+        )
+        assert resolved_weekend["all_closed"] is False
+        assert len(resolved_weekend["open_visit_dates"]) == 2
+        assert resolved_weekend["closed_visit_dates"] == []
+        assert resolved_weekend["unknown_visit_dates"] == []
+
+        # Uncovered date resolves as unknown rather than closed or verified
+        uncovered_res = resolve_hours_for_dates(
+            {
+                "opens": "10:00",
+                "closes": "17:00",
+                "days_covered": ["Monday", "Tuesday", "Wednesday"],
+                "closed_days": [],
+                "source_url": "https://example.org/partial",
+            },
+            visit_dates=weekend,
+            local_timezone="Asia/Kolkata",
+        )
+        assert uncovered_res["all_closed"] is False
+        assert uncovered_res["open_visit_dates"] == []
+        assert len(uncovered_res["unknown_visit_dates"]) == 2
+        assert uncovered_res["opens"] is None
+
+        # Weekend with one verified open day (Saturday) and one closed day (Sunday) is eligible on Saturday
+        place_id = uuid.uuid4()
+        exec_id = uuid.uuid4()
+        candidate = RegisteredCandidate(
+            place_id=place_id,
+            primary_name="Mysuru Palace",
+            category="palace",
+            point=CoordinatePoint(lat=12.305163, lng=76.655175),
+            existence_status=CandidateExistenceStatus.VERIFIED,
+            is_must_visit=True,
+        )
+        obs_page = {
+            "id": str(uuid.uuid4()),
+            "execution_id": str(exec_id),
+            "place_id": str(place_id),
+            "extraction_method": "SCRAPLING_HTTP",
+            "canonical_url": "https://mysorepalace.karnataka.gov.in/timings.html",
+            "excerpt_text": captured_mysuru_page,
+            "support_type": EvidenceSupportType.SUPPORTS.value,
+            "artifact_ref": {"status": "SUCCESS", "gps": {"lat": 12.305163, "lng": 76.655175}},
+        }
+        partial_weekend_claims = [
+            {
+                "execution_id": str(exec_id),
+                "subject_id": "Mysuru Palace",
+                "category": ClaimCategory.ATTRACTION.value,
+                "place_id": str(place_id),
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "typed_value": {"status": "active"},
+                "evidence_links": [{"support_type": EvidenceSupportType.SUPPORTS.value, "observation": obs_page}],
+            },
+            {
+                "execution_id": str(exec_id),
+                "subject_id": "Mysuru Palace",
+                "category": ClaimCategory.HOURS.value,
+                "place_id": str(place_id),
+                "verification": VerificationStatus.VERIFIED.value,
+                "freshness": FreshnessStatus.FRESH.value,
+                "typed_value": {
+                    "opens": "10:00",
+                    "closes": "17:30",
+                    "ticketing_opens": "10:00",
+                    "ticketing_closes": "16:30",
+                    "days_covered": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+                    "closed_days": ["Sunday"],
+                    "source_url": "https://mysorepalace.karnataka.gov.in/timings.html",
+                    "source_kind": "PAGE_CONTENT",
+                    "extraction_method": "SCRAPLING_HTTP",
+                    "local_timezone": "Asia/Kolkata",
+                },
+                "evidence_links": [{"support_type": EvidenceSupportType.SUPPORTS.value, "observation": obs_page}],
+            },
+        ]
+        report = await DeterministicEvidenceEligibilityGate(session=None).evaluate_candidate_eligibility(
+            execution_id=exec_id,
+            candidates=[candidate],
+            fixture_observations=[obs_page],
+            fixture_claims=partial_weekend_claims,
+            visit_dates=weekend,
+            local_timezone="Asia/Kolkata",
+        )
+        assert len(report.eligible_stops) == 1
+        eval_palace = report.eligible_stops[0]
+        assert eval_palace.hours_status == CandidateHoursStatus.VERIFIED_HOURS
+        assert eval_palace.is_hours_assumed is False
+        assert eval_palace.window_start == time(10, 0)
+        assert eval_palace.window_end == time(17, 30)
+
+        # Dispatch route optimizer schedules on the open Saturday (2026-11-28) with ticketing cutoff
+        state: TripPlanningState = {
+            "execution_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "trip_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Bengaluru",
+                "origin_lat": 12.9716,
+                "origin_lng": 77.5946,
+                "destinations": [{"name": "Mysuru", "latitude": 12.2958, "longitude": 76.6394, "stay_days": 2}],
+                "must_visit_places": ["Mysuru Palace"],
+                "start_date": "2026-11-28",
+                "end_date": "2026-11-29",
+                "travelers": 2,
+                "budget": {"amount": "15000.00", "currency": "INR"},
+                "preferred_modes": ["car_petrol"],
+            },
+            "eligible_stops": [
+                {
+                    "primary_name": "Mysuru",
+                    "category": "destination",
+                    "point": {"lat": 12.2958, "lng": 76.6394},
+                    "existence_status": "VERIFIED",
+                    "hours_status": "HOURS_ASSUMED",
+                },
+                {
+                    "primary_name": "Mysuru Palace",
+                    "place_id": str(place_id),
+                    "category": "palace",
+                    "point": {"lat": 12.305163, "lng": 76.655175},
+                    "suggested_stay_minutes": 60,
+                    "existence_status": "VERIFIED",
+                    "hours_status": eval_palace.hours_status.value,
+                    "is_must_visit": True,
+                    "hours_details": eval_palace.hours_details,
+                },
+            ],
+        }
+        dispatched = dispatch_route_optimizer_node(state)
+        req = RouteRequest.model_validate(dispatched["pending_tasks"][0]["payload"])
+        palace_stop = next(s for s in req.stops if s.name == "Mysuru Palace")
+        assert palace_stop.is_must_visit is True
+        assert palace_stop.window_start is not None
+        assert palace_stop.window_end is not None
+        assert dispatched.get("must_visit_conflicts", []) == []
+        # Saturday 10:00 IST = 04:30 UTC; ticketing_closes 16:30 + 60m dwell = 17:30 IST = 12:00 UTC
+        assert (palace_stop.window_start.day, palace_stop.window_start.hour, palace_stop.window_start.minute) == (28, 4, 30)
+        assert (palace_stop.window_end.day, palace_stop.window_end.hour, palace_stop.window_end.minute) == (28, 12, 0)
+
+
