@@ -240,6 +240,8 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Mysuru opening hours acceptance run: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 122 tests across unit and PostgreSQL integration suites, ruff, strict mypy, and live Bengaluru to Mysuru pipeline trace)
    - [x] Source-backed local food research: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed unit test suite, strict mypy typing, ruff linting, and live Bengaluru to Mysuru pipeline trace)
    - [x] Source-backed hidden-place research: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 11 hidden-place unit tests, 101 regression and PostgreSQL hours integration tests, ruff, strict mypy, and live Mysuru pipeline trace)
+   - [x] Backend acceptance and hidden-place route eligibility: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 4 live scenarios including Bengaluru to Mysuru HITL pause and resume, standalone detour reroute, fail-closed closure, and Raniganj to Ooty degradation)
+   - [x] Mysuru Palace activity-scoped hours and backend acceptance follow-ups: [verify.md](../specs/0007-trip-planner-e2e/verify.md) (passed 114 targeted unit tests, 17 PostgreSQL integration tests, ruff, strict mypy, and live Bengaluru to Mysuru HITL replay reaching optimizer with 10:00 to 17:30 IST admission hours)
 - [x] Review it (fresh model): `/check review 0007-trip-planner-e2e`
    - [x] Slice 1 provider neutral language model client contracts and offline fixtures: [2026-10-29-trip-planner-llm-slice1.md](../reviews/2026-10-29-trip-planner-llm-slice1.md) (Approve)
    - [x] Slice 2 Open Meteo weather service, forecast horizon policy, and corridor weather aggregator: [2026-10-31-trip-planner-weather-slice2.md](../reviews/2026-10-31-trip-planner-weather-slice2.md) (Approve)
@@ -268,6 +270,8 @@ Coordinate brief parsing, generative place research, deterministic candidate val
    - [x] Mysuru opening hours acceptance run: [2026-11-25-0007-mysuru-hours-acceptance.md](../reviews/2026-11-25-0007-mysuru-hours-acceptance.md) (Approve)
    - [x] Source-backed local food research: [2026-11-25-0007-food-research.md](../reviews/2026-11-25-0007-food-research.md) (Approve)
    - [x] Source-backed hidden-place research: [2026-11-25-0007-hidden-places.md](../reviews/2026-11-25-0007-hidden-places.md) (Approve with nits)
+   - [x] Backend acceptance and hidden-place route eligibility: [2026-11-26-0007-backend-acceptance.md](../reviews/2026-11-26-0007-backend-acceptance.md) (Request changes)
+   - [x] Mysuru Palace hours scoping and backend acceptance follow-ups: [2026-11-26-0007-mysuru-hours-and-review-fixes.md](../reviews/2026-11-26-0007-mysuru-hours-and-review-fixes.md) (Approve with nits)
 - [ ] Test it: `/test 0007-trip-planner-e2e`
 - [ ] Document it: `/document 0007-trip-planner-e2e`
 
