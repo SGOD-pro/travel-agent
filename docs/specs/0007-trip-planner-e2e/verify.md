@@ -125,3 +125,41 @@ Previous verification reports for Slices 1 through 6 proved contract compliance,
 - **Route & Schedule**: Route ID `b93f54ff-fca8-4c69-8b22-c6e54985c947` with real geometry (8 stops scheduled), `proposal_status: ready_for_approval`, `must_visit_conflicts: []`.
 - **Mysuru Palace Visit**: Scheduled `2026-11-28T13:47:23+05:30` to `2026-11-28T14:47:23+05:30` IST (`08:17:23Z` to `09:17:23Z`), within its sourced `10:00`–`17:30` IST admission window.
 - **Pending**: Live positive dish-to-venue pairing and hidden-place optional stop scheduling remain `PENDING` where live fetched sources do not prove them.
+- **Artifacts**:
+  - v6 pause: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_mysuru_hitl_pause_v6.json`
+  - v6 resumed: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_mysuru_hitl_resumed_v6.json`
+  - v6 summary: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_mysuru_acceptance_v6.json`
+  - v7 live-provider pause (`LLM_PROVIDER=bedrock`, `WEATHER_PROVIDER=open_meteo`, `LAYA_ENDPOINT_URL=""`, `VALHALLA_ENDPOINT_URL=http://localhost:8002`, tested at `da09db8`): `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_mysuru_hitl_pause_v7.json`
+  - v7 live-provider resumed (Route `dc0129f4-cb00-4ffb-a915-f72b90e43f01`, `ready_for_approval`, Palace `13:47:23` to `14:47:23` IST): `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_mysuru_hitl_resumed_v7.json`
+  - v7 vs v6 comparison: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_mysuru_v7_vs_v6_comparison.json`
+
+### Live Provider Baseline Audit & Ooty Comparison (2026-11-26, v7 & v8)
+- **Tested SHA**: `da09db8406940acf6c824f10fcba630798e2c48b`
+- **Ooty HITL Execution (v8)**: Job `23359812-90a8-4103-9f48-ac39d55e80e5`, Trip `c4787000-3860-4d8d-aaa1-c22ff23b0401`, Question `cd4506e1-5523-4ea6-a9e8-83e80a78bb3d` (`2026-12-05` to `2026-12-06`), Route `998bfc58-d01c-4dd4-b9d7-fd82344b50f7`, `proposal_status: partial`, `provider_modes: live` (`llm: live_bedrock`, `weather: live_open_meteo`, `search: live_serpapi`, `routing: live_valhalla` at `http://localhost:8002`, LAYA off).
+- **Comparative Findings (Ranked by User Impact)**:
+  1. **[High] Missing must-visit in Ooty (v8)**: `Government Botanical Garden` did not get verified/scheduled (`must_visit_conflicts` reported `"could not verify location or opening hours in research evidence"`), whereas Mysuru Palace succeeded in v7.
+  2. **[High] Multi-day compression onto Day 1 (Reproduced in v7 & v8)**: Both 2-day itineraries compressed all stops onto Day 1 (`2026-11-28` 8 stops in v7; `2026-12-05` 6 stops in v8), leaving Day 2 empty.
+  3. **[Medium] Dining venues scheduled as sightseeing stops (Reproduced in v7 & v8)**: `Mahesh Prasad` and `The Old House` (v7) and `The Periodic Table` (v8) were scheduled as 60-minute sightseeing stops instead of deferred/meal-scoped dining.
+  4. **[Low] Origin entrance fee & zero/micro-leg tolls in budget (Reproduced in v7 & v8)**: `entry_fee_Bengaluru` and toll lines on `0.0 km` / `0.052 km` intra-city legs appear in `budget_lines` (`15` unknowns in v7, `11` in v8; no duplicates).
+- **Verified Passing**: Weather metadata (`stop_name`, `forecast_time`, `temperature_celsius`, `condition`, `precipitation_mm`) is populated and hour-aligned in both v7 and v8.
+- **Pending**: Live positive dish-to-venue pairing and hidden-place optional stop scheduling remain `PENDING` in both v7 and v8 (`status: PARTIAL`).
+- **Ooty Artifacts**:
+  - Brief: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_v8_brief.json`
+  - Pause: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_pause_v8.json`
+  - Resumed: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_resumed_v8.json`
+
+### Explicit Must-Visit Bounded Place Lookup Verification (2026-11-26, v11)
+- **Tested SHA**: `210e98278a1d2ccf58d974e8a9d782a22d124cd4` (from baseline `da09db8406940acf6c824f10fcba630798e2c48b`)
+- **Review Record**: [2026-11-26-0007-must-visit-place-lookup.md](../../reviews/2026-11-26-0007-must-visit-place-lookup.md) (`APPROVE`)
+- **Static & Test Suites**:
+  - `ruff check` on all 5 modified files (`serpapi_adapter.py`, `place_extraction.py`, `query_planner.py`, `graph.py`, `test_source_backed_attractions_and_hours.py`): `All checks passed!`
+  - `mypy` on all 4 modified production files: `Success: no issues found in 4 source files`
+  - `pytest` across 12 unit & PostgreSQL integration suites (`test_serpapi_adapter.py`, `test_place_extraction.py`, `test_source_backed_attractions_and_hours.py`, `test_source_backed_hidden_places.py`, `test_source_backed_local_food_research.py`, `test_query_planner.py`, `test_destination_research_coverage.py`, `test_optimizer_dispatch_semantics.py`, `test_trip_planner_proposal_slice5.py`, `test_source_backed_hours_postgres.py`, `test_source_backed_hidden_places_postgres.py`, `test_destination_research_dispatch.py`): `147 passed` (includes Mysuru must-visit regression and new regression covering priority, budget exhaustion, wrong-city rejection, no centroid substitution, lookup-only unverified hours, spatial ambiguity rejection, and singular `place_results` parsing).
+- **Live Ooty HITL Replay (v11)**:
+  - **Execution**: Job `de52e662-70b2-49e9-a433-5c92e822f7f5`, Trip `1b1517b9-cd4f-4295-937e-3c1e0c4fd12b`, Question `507e5d64-b605-4811-8f81-e215dbad87c0` (`2026-12-05` to `2026-12-06`).
+  - **Provider Modes (`live`)**: `llm: live_bedrock`, `weather: live_open_meteo`, `search: live_serpapi`, `routing: live_valhalla` (`http://localhost:8002`, LAYA off).
+  - **Matched Must-Visit & Schedule**: `Government Botanical Garden` (`place_id: c30feb34-232f-4776-85be-0cf12f10cb94`, coords `11.4188751, 76.7113878` from singular `google_maps` `place_results`) reached the optimizer and was scheduled as Stop 6 (`2026-12-05T16:48:33+05:30` to `2026-12-05T17:48:33+05:30` IST / `11:18:33Z` to `12:18:33Z`), `route_id: a74911de-d68d-4814-9140-bd924bdd94e5`.
+  - **Proposal Status & Coverage**: `status: partial` with `must_visit_conflicts` transparently disclosing `HOURS_ASSUMED` on `Government Botanical Garden` (Wikipedia returned HTTP 429 during fetch, so lookup alone did not verify hours) and `research_coverage.skipped_research_areas` recording the exhausted query/fetch caps (`hours`, `dining`, `attractions`).
+  - **Artifacts**:
+    - Pause: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_pause_v11.json`
+    - Resumed: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_resumed_v11.json`
