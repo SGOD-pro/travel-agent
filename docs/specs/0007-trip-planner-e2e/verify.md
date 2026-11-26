@@ -117,3 +117,11 @@ Previous verification reports for Slices 1 through 6 proved contract compliance,
 - **Strict Typing Compliance**: Added explicit parameter and return type annotations across all 12 tests and coroutine helpers in `test_hitl_pipeline.py`. Strict mypy checks pass with zero errors.
 - **Modular Connection Parsing**: Reused `normalize_asyncpg_url` from `acceptance_database.py` in `run_hitl_pipeline.py`.
 - **Clean Route Module Imports**: Relocated `TripPlanningService` imports to top level in `jobs.py` and `trips.py`.
+
+### Mysuru Weekend Scheduling Acceptance (2026-11-26, v6)
+- **Tested SHA**: `a004704c3268148727cdcaf60a534eb1af5aa4b8`
+- **HITL Execution**: Job `d4615bb5-bb73-40a6-9f23-902b7c35e99b`, Trip `8f4368e2-f636-4ca3-9991-7e7d7a277114`, Question `b8dd61c0-7e5f-4315-bb29-6a18b84438ba` (`travel_dates`: `2026-11-28` to `2026-11-29`).
+- **Provider Modes (`mixed`)**: `llm: fixture`, `weather: fixture`, `search: live_serpapi`, `routing: live_valhalla` (`http://localhost:8002`, local `travel_valhalla` container with `southern-zone-latest.osm.pbf`).
+- **Route & Schedule**: Route ID `b93f54ff-fca8-4c69-8b22-c6e54985c947` with real geometry (8 stops scheduled), `proposal_status: ready_for_approval`, `must_visit_conflicts: []`.
+- **Mysuru Palace Visit**: Scheduled `2026-11-28T13:47:23+05:30` to `2026-11-28T14:47:23+05:30` IST (`08:17:23Z` to `09:17:23Z`), within its sourced `10:00`–`17:30` IST admission window.
+- **Pending**: Live positive dish-to-venue pairing and hidden-place optional stop scheduling remain `PENDING` where live fetched sources do not prove them.
