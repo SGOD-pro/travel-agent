@@ -1246,5 +1246,76 @@ class TestItinerarySchedulingAndClosedDayHandling:
         )
         assert len(parsed_single) == 1
 
+    async def test_scrapling_page_with_seo_title_falls_back_to_excerpt_entity_match(self) -> None:
+        """SCRAPLING_HTTP pages with SEO page titles fall back to excerpt matching while SERPAPI_SEARCH still rejects."""
+        from types import SimpleNamespace
+
+        from functions.orchestrator.evidence.claim_ingestion import _match_observation_entity
+        from functions.orchestrator.evidence.hours_extraction import (
+            extract_structured_hours_from_text,
+        )
+
+        cand = SimpleNamespace(
+            primary_name="Government Botanical Garden",
+            category="nature",
+            point_latitude=11.4188751,
+            point_longitude=76.7113878,
+            point=SimpleNamespace(lat=11.4188751, lng=76.7113878),
+        )
+
+        # Case 1: Page title has SEO suffix "& Hotels Nearby" (hotels in DISTINCT_ENTITY_MODIFIERS)
+        obs_hotels_seo = {
+            "source_url": "https://www.tourdeooty.com/botanical-garden-ooty.html",
+            "extraction_method": "SCRAPLING_HTTP",
+            "excerpt_text": (
+                "The Botanical Garden Ooty, officially known as the Government Botanical Garden, "
+                "is one of the most iconic tourist attractions in Tamil Nadu. "
+                "Monday to Sunday 7:00 AM to 6:30 PM."
+            ),
+            "artifact_ref": {
+                "page_title": "Government Botanical Garden Ooty\n – Timings, Entry Fee, Location & Hotels Nearby",
+                "query_purpose": "hours",
+            },
+        }
+        matched_1, _, _ = _match_observation_entity(
+            obs_hotels_seo, cand, expected_cities={"ooty", "udhagamandalam"}  # type: ignore[arg-type]
+        )
+        assert matched_1 is True
+        assert extract_structured_hours_from_text(obs_hotels_seo["excerpt_text"]).opens == "07:00"
+
+        # Case 2: Page title omits "Government", uses plural "Gardens" + "Entrance Ticket Cost"
+        obs_plural_seo = {
+            "source_url": "https://ootytourism.co.in/ooty-botanical-gardens",
+            "extraction_method": "SCRAPLING_HTTP",
+            "excerpt_text": (
+                "Ooty Botanical Gardens Timings Monday 7:00 am – 6:30 pm Sunday 7:00 am – 6:30 pm. "
+                "Spread over an area of 55 acres, the Government Botanical Gardens is a famous sightseeing place."
+            ),
+            "artifact_ref": {
+                "page_title": "Botanical Gardens Ooty (Timings, Entry Fee, Entrance Ticket Cost)",
+                "query_purpose": "hours",
+            },
+        }
+        matched_2, _, _ = _match_observation_entity(
+            obs_plural_seo, cand, expected_cities={"ooty", "udhagamandalam"}  # type: ignore[arg-type]
+        )
+        assert matched_2 is True
+        assert extract_structured_hours_from_text(obs_plural_seo["excerpt_text"]).closes == "18:30"
+
+        # Negative control: SERPAPI_SEARCH with DISTINCT_ENTITY_MODIFIERS in title must still be rejected
+        obs_bus_stand = {
+            "source_url": "https://maps.google.com/?cid=999",
+            "extraction_method": "SERPAPI_SEARCH",
+            "excerpt_text": "Government Botanical Garden Bus Stand is outside Government Botanical Garden.",
+            "artifact_ref": {
+                "title": "Government Botanical Garden Bus Stand",
+                "query_purpose": "attractions",
+            },
+        }
+        matched_neg, _, _ = _match_observation_entity(
+            obs_bus_stand, cand, expected_cities={"ooty", "udhagamandalam"}  # type: ignore[arg-type]
+        )
+        assert matched_neg is False
+
 
 

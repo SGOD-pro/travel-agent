@@ -538,6 +538,11 @@ def _match_observation_entity(
     entity_norm = art_title_norm or obs_title_norm
     entity_tokens = art_tokens or title_tokens
 
+    excerpt = (_obs_attr(obs, "excerpt_text") or "").strip()
+    excerpt_lower = excerpt.lower()
+    obs_ext_method = str(_obs_attr(obs, "extraction_method") or "").upper().strip()
+    is_page_observation = bool(obs_ext_method and obs_ext_method not in SNIPPET_SOURCE_METHODS)
+
     title_matches = False
     if entity_norm:
         if cand_norm == entity_norm:
@@ -549,35 +554,37 @@ def _match_observation_entity(
             extra_in_cand = set(cand_tokens) - set(entity_tokens)
 
             # If the entity title contains distinct entity modifiers (cafe, bus stop, school, etc.), reject
+            # For scraped/rendered web pages (is_page_observation), fall through to excerpt matching
+            # instead of rejecting on SEO page title suffixes (e.g. "& Hotels Nearby").
             if extra_in_entity & DISTINCT_ENTITY_MODIFIERS:
-                return False, False, None
-            if extra_in_cand & DISTINCT_ENTITY_MODIFIERS:
-                return False, False, None
-
-            # Shorter candidate name matching a different longer title:
-            # Allow expected destination city tokens and benign info/hours words alongside monument descriptors.
-            allowed_extras = set(ALLOWED_VENUE_INFO_TOKENS)
-            if expected_cities:
-                for ec in expected_cities:
-                    allowed_extras.update(_normalize_name(ec).split())
-
-            if len(cand_tokens) < len(entity_tokens):
-                if len(cand_tokens) < 2 or not extra_in_entity.issubset(allowed_extras):
+                if not is_page_observation:
                     return False, False, None
-                if set(cand_tokens).issubset(set(entity_tokens)):
-                    title_matches = True
-
-            # Candidate name has more words than entity:
-            elif len(cand_tokens) > len(entity_tokens):
-                if len(entity_tokens) < 2 or not extra_in_cand.issubset(allowed_extras):
+            elif extra_in_cand & DISTINCT_ENTITY_MODIFIERS:
+                if not is_page_observation:
                     return False, False, None
-                if set(entity_tokens).issubset(set(cand_tokens)):
-                    title_matches = True
+            else:
+                # Shorter candidate name matching a different longer title:
+                # Allow expected destination city tokens and benign info/hours words alongside monument descriptors.
+                allowed_extras = set(ALLOWED_VENUE_INFO_TOKENS)
+                if expected_cities:
+                    for ec in expected_cities:
+                        allowed_extras.update(_normalize_name(ec).split())
 
-    excerpt = (_obs_attr(obs, "excerpt_text") or "").strip()
-    excerpt_lower = excerpt.lower()
-    obs_ext_method = str(_obs_attr(obs, "extraction_method") or "").upper().strip()
-    is_page_observation = bool(obs_ext_method and obs_ext_method not in SNIPPET_SOURCE_METHODS)
+                if len(cand_tokens) < len(entity_tokens):
+                    if len(cand_tokens) < 2 or not extra_in_entity.issubset(allowed_extras):
+                        if not is_page_observation:
+                            return False, False, None
+                    elif set(cand_tokens).issubset(set(entity_tokens)):
+                        title_matches = True
+
+                # Candidate name has more words than entity:
+                elif len(cand_tokens) > len(entity_tokens):
+                    if len(entity_tokens) < 2 or not extra_in_cand.issubset(allowed_extras):
+                        if not is_page_observation:
+                            return False, False, None
+                    elif set(entity_tokens).issubset(set(cand_tokens)):
+                        title_matches = True
+
     excerpt_matches = False
     if not title_matches and excerpt and (not entity_norm or is_page_observation):
         # Check text observations when untitled or when matching attributable scraped page content

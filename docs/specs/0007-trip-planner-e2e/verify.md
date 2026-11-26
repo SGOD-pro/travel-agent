@@ -163,3 +163,28 @@ Previous verification reports for Slices 1 through 6 proved contract compliance,
   - **Artifacts**:
     - Pause: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_pause_v11.json`
     - Resumed: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_resumed_v11.json`
+
+### Ooty Must-Visit Hours Closure Check (2026-11-26, v11 Trace & v12 Replay) — PENDING
+- **Tested SHA**: `20b6b2cd4e6a9360d8adb077b822c9f485a17009` (only pre-existing `backend/scripts/rerouting_verification_result.json` modified in working tree)
+- **Provider Modes (`live`)**: `llm: live_bedrock`, `weather: live_open_meteo`, `search: live_serpapi`, `routing: live_valhalla` (`http://localhost:8002`, LAYA off).
+- **v11 Hours Pipeline Trace (`de52e662-70b2-49e9-a433-5c92e822f7f5`)**:
+  - `https://en.wikipedia.org/wiki/Government_Botanical_Garden` failed with **HTTP `429`**.
+  - Within the existing 3-URL fetch cap, `SCRAPLING_HTTP` fetched both `https://ootytourism.co.in/ooty-botanical-gardens` and `https://www.tourdeooty.com/botanical-garden-ooty.html` (`tripadvisor.com` and `makemytrip.com` were skipped due to the 3-URL fetch cap and `-4` aggregator scoring).
+  - **Root Cause (Claim Verification / Entity Matching, NOT fetch cap or extraction)**: `extract_structured_hours_from_text` cleanly extracted `07:00–18:30` (Monday–Sunday) from both fetched pages, and `_has_conflicting_city` returned `False`, but `claim_ingestion._match_observation_entity` (`claim_ingestion.py:552-575`) returned `(False, False, None)` early before checking `excerpt_matches`: `tourdeooty.com` was rejected at line `552` because its `page_title` ended with `"Hotels Nearby"` (`"hotels"` in `DISTINCT_ENTITY_MODIFIERS`), and `ootytourism.co.in` was rejected at line `566` because `"gardens"`, `"entrance"`, `"ticket"`, `"cost"` are not in `ALLOWED_VENUE_INFO_TOKENS`.
+- **v12 Live Replay (`6661023a-aa7e-4073-8178-50896a8449b7`, Trip `59ca0ccb-fadb-485a-a3c2-4c81dbab857a`, Question `01045c62-2e07-4692-a06b-3ea6d298bb7e`)**:
+  - `Government Botanical Garden` scheduled as Stop 6 (`2026-12-05T16:48:33+05:30` to `2026-12-05T17:48:33+05:30` IST), `route_id: a89e62b6-19fa-4237-9c12-6ce16cff7cb3`, `status: partial` (`HOURS_ASSUMED`).
+  - Live `hours` search returned `tripadvisor.com.sg` / `tripadvisor.com.au` (both **HTTP `403`**), `trip101.com/article/botanical-garden-ooty` (fetched `SCRAPLING_HTTP`, no hours in 4000-char excerpt), and `tripadvisor.com` FAQ + `facebook.com` (skipped by 3-URL fetch cap).
+  - **Artifacts**:
+    - Pause: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_pause_v12.json`
+    - Resumed: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_resumed_v12.json`
+    - Audit summary: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hours_verification_v12.json`
+
+### Scraped Page SEO Title Entity-Match Fix Verification (2026-11-26, v13)
+- **Root Cause Fix**: Updated `claim_ingestion._match_observation_entity` (`backend/src/functions/orchestrator/evidence/claim_ingestion.py:541-580`) so `is_page_observation` (`SCRAPLING_HTTP` / `BROWSER_HTML`) falls through to `excerpt_matches` instead of returning `False` early on HTML `<title>` SEO suffixes (`DISTINCT_ENTITY_MODIFIERS` or unallowlisted info/plural tokens), while preserving strict title rejection on `SERPAPI_SEARCH`.
+- **Static & Test Suites**:
+  - `ruff check` on `claim_ingestion.py` and `test_source_backed_attractions_and_hours.py`: `All checks passed!`
+  - `mypy src/functions/orchestrator/evidence/claim_ingestion.py`: `Success: no issues found in 1 source file`
+  - `pytest` across 8 unit & PostgreSQL integration suites (`test_source_backed_attractions_and_hours.py`, `test_source_backed_hidden_places.py`, `test_source_backed_local_food_research.py`, `test_candidate_corridor_and_eligibility.py`, `test_optimizer_dispatch_semantics.py`, `test_source_backed_hours_postgres.py`, `test_source_backed_hidden_places_postgres.py`, `test_destination_research_dispatch.py`): `116 passed` (includes `test_scrapling_page_with_seo_title_falls_back_to_excerpt_entity_match` reproducing both `tourdeooty.com` and `ootytourism.co.in`).
+- **Live Ooty Replay (v13)**: Job `0187db61-274c-4e2f-8df2-751fb2ca73e3`, Trip `c7148d1a-74dc-4d15-a216-b48b1c7c87b3`, `route_id: ab190be5-f23e-495a-9a21-77fdd189a09a`, `status: partial` (`HOURS_ASSUMED`; live search in this run returned `tripadvisor.com.sg` / `tripadvisor.com.au` HTTP `403` and `trip101.com` without hours in excerpt).
+  - Pause: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_pause_v13.json`
+  - Resumed: `/home/swyra/.gemini/antigravity/brain/8164c4ef-ba83-4dfc-ba3e-de3074a6d381/scratch/bengaluru_ooty_hitl_resumed_v13.json`
