@@ -216,3 +216,457 @@ class TestSourceBackedHoursPostgres:
 
             assert by_name[rg_name].hours_status != CandidateHoursStatus.VERIFIED_HOURS
             assert by_name[rg_name].is_hours_assumed is True
+
+    @pytest.mark.asyncio
+    async def test_seo_title_attribution_positive_and_multi_venue_or_wrong_city_negatives(
+        self, session_factory: Any
+    ) -> None:
+        """SEO-titled pages verify hours only when excerpt+locality match; multi-venue, cafe, and wrong-city pages do not."""
+        # Positive: SCRAPLING_HTTP and BROWSER_HTML with SEO titles attribute hours to the matching venue
+        async with session_factory() as session:
+            exec_id, owner_id = await _seed_execution(session)
+            now = datetime.now(UTC)
+            suffix = uuid.uuid4().hex[:6]
+            bg_name = f"Government Botanical Garden {suffix}"
+
+            session.add_all(
+                [
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=exec_id,
+                        source_url=f"https://nilgiris.nic.in/place-{suffix}",
+                        canonical_url=f"https://nilgiris.nic.in/place-{suffix}",
+                        publisher="google_maps",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=f"Place: {bg_name} | Address: Vannarapettai, Ooty, Tamil Nadu",
+                        excerpt_locator="serpapi:place_results",
+                        extraction_method="SERPAPI_SEARCH",
+                        artifact_ref={
+                            "title": bg_name,
+                            "address": "Vannarapettai, Ooty, Tamil Nadu",
+                            "gps_coordinates": {"latitude": 11.4189, "longitude": 76.7114},
+                            "query_purpose": "attractions",
+                        },
+                        created_at=now,
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=exec_id,
+                        source_url=f"https://www.tourdeooty.com/bg-{suffix}.html",
+                        canonical_url=f"https://www.tourdeooty.com/bg-{suffix}.html",
+                        publisher="tourdeooty.com",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"{bg_name} Entrance Timings: 7:00 AM - 6:30 PM. "
+                            f"{bg_name} Ooty: 7:00 AM - 6:30 PM. "
+                            f"Monday: 07:00 AM - 06:30 PM. Tuesday: Closed. "
+                            f"The {bg_name} in Ooty is open Monday to Sunday 7:00 AM to 6:30 PM. "
+                            "Nearest airport is Kempegowda International Airport in Bengaluru; buses from Bengaluru and Coimbatore."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": f"{bg_name} - Timings, Entry Fee, Location & Hotels Nearby",
+                            "query_purpose": "hours",
+                        },
+                        created_at=now,
+                    ),
+                ]
+            )
+            await session.commit()
+
+            candidates = [
+                RegisteredCandidate(
+                    primary_name=bg_name,
+                    category="nature",
+                    point=CoordinatePoint(lat=11.4189, lng=76.7114),
+                    existence_status=CandidateExistenceStatus.VERIFIED,
+                    is_must_visit=True,
+                )
+            ]
+            await ingest_claims_from_observations(
+                session=session,
+                execution_id=exec_id,
+                owner_id=owner_id,
+                candidates=candidates,
+                expected_cities={"ooty", "udhagamandalam"},
+                include_hours_claims=True,
+            )
+            await session.commit()
+
+        async with session_factory() as eval_session:
+            gate = DeterministicEvidenceEligibilityGate(session=eval_session)
+            report = await gate.evaluate_candidate_eligibility(
+                candidates=candidates,
+                execution_id=exec_id,
+                owner_id=owner_id,
+                visit_dates=[date(2026, 12, 5)],
+                local_timezone="Asia/Kolkata",
+            )
+            stop = (report.eligible_stops + report.editorial_recommendations)[0]
+            from functions.orchestrator.evidence.claim_ingestion import (
+                _scope_page_text_to_candidate,
+            )
+
+            assert stop.hours_status == CandidateHoursStatus.VERIFIED_HOURS
+            assert stop.window_start == time(7, 0)
+            assert stop.window_end == time(18, 30)
+            assert "Tuesday: Closed." in _scope_page_text_to_candidate(
+                "Government Botanical Garden is open 09:00 AM - 05:00 PM. Tuesday: Closed.",
+                "Government Botanical Garden",
+            )
+            assert "Monday: 07:00 AM - 06:30 PM" in _scope_page_text_to_candidate(
+                "Government Botanical Garden Ooty Timings:\nMonday: 07:00 AM - 06:30 PM\nTuesday: 07:00 AM - 06:30 PM",
+                "Government Botanical Garden",
+                expected_cities={"ooty"},
+            )
+
+        # Positive 2: BROWSER_HTML with plural/info SEO title attributes hours to the matching venue
+        async with session_factory() as browser_session:
+            b_exec_id, b_owner_id = await _seed_execution(browser_session)
+            now = datetime.now(UTC)
+            suffix = uuid.uuid4().hex[:6]
+            b_name = f"Government Botanical Garden {suffix}"
+            browser_session.add_all(
+                [
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=b_exec_id,
+                        source_url=f"https://nilgiris.nic.in/bplace-{suffix}",
+                        canonical_url=f"https://nilgiris.nic.in/bplace-{suffix}",
+                        publisher="google_maps",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=f"Place: {b_name} | Address: Vannarapettai, Ooty, Tamil Nadu",
+                        excerpt_locator="serpapi:place_results",
+                        extraction_method="SERPAPI_SEARCH",
+                        artifact_ref={
+                            "title": b_name,
+                            "address": "Vannarapettai, Ooty, Tamil Nadu",
+                            "gps_coordinates": {"latitude": 11.4189, "longitude": 76.7114},
+                            "query_purpose": "attractions",
+                        },
+                        created_at=now,
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=b_exec_id,
+                        source_url=f"https://ootytourism.co.in/bg-{suffix}",
+                        canonical_url=f"https://ootytourism.co.in/bg-{suffix}",
+                        publisher="ootytourism.co.in",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"Ooty Botanical Gardens Timings Monday to Sunday 7:00 am – 6:30 pm. "
+                            f"{b_name} is a famous sightseeing place in Ooty."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="BROWSER_HTML",
+                        artifact_ref={
+                            "page_title": f"Botanical Gardens Ooty {suffix} (Timings, Entry Fee, Entrance Ticket Cost)",
+                            "query_purpose": "hours",
+                        },
+                        created_at=now,
+                    ),
+                ]
+            )
+            await browser_session.commit()
+            b_candidates = [
+                RegisteredCandidate(
+                    primary_name=b_name,
+                    category="nature",
+                    point=CoordinatePoint(lat=11.4189, lng=76.7114),
+                    existence_status=CandidateExistenceStatus.VERIFIED,
+                    is_must_visit=True,
+                )
+            ]
+            await ingest_claims_from_observations(
+                session=browser_session,
+                execution_id=b_exec_id,
+                owner_id=b_owner_id,
+                candidates=b_candidates,
+                expected_cities={"ooty", "udhagamandalam"},
+                include_hours_claims=True,
+            )
+            await browser_session.commit()
+
+        async with session_factory() as b_eval_session:
+            b_gate = DeterministicEvidenceEligibilityGate(session=b_eval_session)
+            b_report = await b_gate.evaluate_candidate_eligibility(
+                candidates=b_candidates,
+                execution_id=b_exec_id,
+                owner_id=b_owner_id,
+                visit_dates=[date(2026, 12, 5)],
+                local_timezone="Asia/Kolkata",
+            )
+            b_stop = (b_report.eligible_stops + b_report.editorial_recommendations)[0]
+            assert b_stop.hours_status == CandidateHoursStatus.VERIFIED_HOURS
+            assert b_stop.window_start == time(7, 0)
+            assert b_stop.window_end == time(18, 30)
+
+        # Negative: Multi-venue distance/listicle, distinct-entity Cafe title, and wrong-city past char 300 must not verify
+        async with session_factory() as neg_session:
+            neg_exec_id, neg_owner_id = await _seed_execution(neg_session)
+            now = datetime.now(UTC)
+            suffix = uuid.uuid4().hex[:6]
+            bg_name = f"Government Botanical Garden {suffix}"
+            padding = " ".join(["Lush"] * 90)
+
+            neg_session.add_all(
+                [
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://nilgiris.nic.in/neg-place-{suffix}",
+                        canonical_url=f"https://nilgiris.nic.in/neg-place-{suffix}",
+                        publisher="google_maps",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=f"Place: {bg_name} | Address: Vannarapettai, Ooty, Tamil Nadu",
+                        excerpt_locator="serpapi:place_results",
+                        extraction_method="SERPAPI_SEARCH",
+                        artifact_ref={
+                            "title": bg_name,
+                            "address": "Vannarapettai, Ooty, Tamil Nadu",
+                            "gps_coordinates": {"latitude": 11.4189, "longitude": 76.7114},
+                            "query_purpose": "attractions",
+                        },
+                        created_at=now,
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://guide.example/multi-{suffix}",
+                        canonical_url=f"https://guide.example/multi-{suffix}",
+                        publisher="guide.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"{bg_name} is 2 km from Rose Garden. Rose Garden is open 09:00 AM to 05:00 PM."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": "Ooty Gardens Guide - Timings & Hotels Nearby",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://list.example/top10-{suffix}",
+                        canonical_url=f"https://list.example/top10-{suffix}",
+                        publisher="list.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"Places to Visit in Ooty: {bg_name} is a major landmark in Ooty. "
+                            "Doddabetta Peak: Open 07:00 AM to 06:00 PM."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": "Top 10 Places to Visit in Ooty",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://cafe.example/garden-{suffix}",
+                        canonical_url=f"https://cafe.example/garden-{suffix}",
+                        publisher="cafe.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"Our cozy cafe sits right inside the {bg_name} in Ooty and serves coffee from 08:00 AM to 09:00 PM daily."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": f"Garden View Cafe at {bg_name}",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://ooty-nav.example/botanical-{suffix}",
+                        canonical_url=f"https://ooty-nav.example/botanical-{suffix}",
+                        publisher="ooty-nav.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"Explore {bg_name} {padding} Located in Shibpur, Kolkata, West Bengal. Open 06:00 AM to 05:00 PM."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": f"{bg_name} Timings",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://rose.example/garden-{suffix}",
+                        canonical_url=f"https://rose.example/garden-{suffix}",
+                        publisher="rose.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"{bg_name} is near Rose Garden, which is open 08:30 AM to 06:30 PM. "
+                            f"{bg_name} is in Ooty while Rose Garden is open 08:30 AM to 06:30 PM. "
+                            "Rose Garden opening hours: 08:30 AM - 06:30 PM. "
+                            "Doddabetta Peak opens 7:00 AM to 6:00 PM. Rose Garden (Ooty): 08:30 AM - 06:30 PM. "
+                            "1. Doddabetta Peak: Open 07:00 AM to 06:00 PM. It is open daily."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": f"{bg_name} - Timings & Nearby Attractions",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://compare.example/vs-{suffix}",
+                        canonical_url=f"https://compare.example/vs-{suffix}",
+                        publisher="compare.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"{bg_name} Ooty vs Kolkata Botanical Garden. Kolkata garden is open 06:00 AM to 05:00 PM."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "city_hint": "Ooty",
+                            "page_title": f"{bg_name} Ooty - Timings",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://howrah.example/station-{suffix}",
+                        canonical_url=f"https://howrah.example/station-{suffix}",
+                        publisher="howrah.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"{bg_name} is near Nearest railway station is Howrah, Kolkata. Open 06:00 AM to 05:00 PM daily."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": f"{bg_name} - Timings",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://eqlen.example/rose-{suffix}",
+                        canonical_url=f"https://eqlen.example/rose-{suffix}",
+                        publisher="eqlen.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"Open 08:30 AM to 06:30 PM daily. Located 2 km away from the {bg_name}."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": f"Government Rose Garden {suffix}",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://hotels.example/nearby-{suffix}",
+                        canonical_url=f"https://hotels.example/nearby-{suffix}",
+                        publisher="hotels.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"Located 2 km from {bg_name}, this property has front desk hours 08:00 AM - 10:00 PM."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "page_title": f"{bg_name} - Hotels Nearby",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                    SourceObservationModel(
+                        id=uuid.uuid4(),
+                        execution_id=neg_exec_id,
+                        source_url=f"https://compare2.example/vs-{suffix}",
+                        canonical_url=f"https://compare2.example/vs-{suffix}",
+                        publisher="compare2.example",
+                        content_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+                        retrieved_at=now,
+                        excerpt_text=(
+                            f"Kolkata vs Ooty {bg_name}: open 06:00 AM to 05:00 PM."
+                        ),
+                        excerpt_locator="main:text",
+                        extraction_method="SCRAPLING_HTTP",
+                        artifact_ref={
+                            "city_hint": "Ooty",
+                            "page_title": f"{bg_name} Ooty - Timings",
+                            "query_purpose": "hours",
+                        },
+                    ),
+                ]
+            )
+            await neg_session.commit()
+
+            neg_candidates = [
+                RegisteredCandidate(
+                    primary_name=bg_name,
+                    category="nature",
+                    point=CoordinatePoint(lat=11.4189, lng=76.7114),
+                    existence_status=CandidateExistenceStatus.VERIFIED,
+                    is_must_visit=True,
+                )
+            ]
+            await ingest_claims_from_observations(
+                session=neg_session,
+                execution_id=neg_exec_id,
+                owner_id=neg_owner_id,
+                candidates=neg_candidates,
+                expected_cities={"ooty", "udhagamandalam"},
+                include_hours_claims=True,
+            )
+            await neg_session.commit()
+
+            neg_hours_claims = (
+                (
+                    await neg_session.execute(
+                        select(ClaimModel).where(
+                            ClaimModel.execution_id == neg_exec_id,
+                            ClaimModel.category == ClaimCategory.HOURS.value,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            assert len(neg_hours_claims) == 0
+
+            neg_gate = DeterministicEvidenceEligibilityGate(session=neg_session)
+            neg_report = await neg_gate.evaluate_candidate_eligibility(
+                candidates=neg_candidates,
+                execution_id=neg_exec_id,
+                owner_id=neg_owner_id,
+                visit_dates=[date(2026, 12, 5)],
+                local_timezone="Asia/Kolkata",
+            )
+            neg_stop = (neg_report.eligible_stops + neg_report.editorial_recommendations)[0]
+            assert neg_stop.hours_status != CandidateHoursStatus.VERIFIED_HOURS
+            assert neg_stop.is_hours_assumed is True

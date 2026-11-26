@@ -87,7 +87,11 @@ DISTINCT_ENTITY_MODIFIERS: frozenset[str] = frozenset(
         "dhaba",
         "mess",
         "hotel",
+        "hotels",
         "resort",
+        "resorts",
+        "cafes",
+        "restaurants",
         "lodge",
         "motel",
         "hostel",
@@ -421,26 +425,52 @@ def _has_conflicting_city(
         or ""
     ).strip().lower()
     excerpt = str(_obs_attr(obs, "excerpt_text") or "").strip().lower()
-    obs_url = str(_obs_attr(obs, "canonical_url") or _obs_attr(obs, "source_url") or "").lower()
 
     # Reject immediately if structured city_hint explicitly names a non expected city
     if city_hint and not any(exp in city_hint or city_hint in exp for exp in norm_expected):
         return True
 
-    header_context = f"{city_hint} {address} {obs_title}"
-    if any(re.search(rf"\b{re.escape(exp)}\b", header_context) for exp in norm_expected):
+    conflicting_pool = KNOWN_CONFLICTING_CITIES - norm_expected
+    if address:
+        for city in conflicting_pool:
+            if re.search(rf"\b{re.escape(city)}\b", address):
+                return True
+
+    if address and any(
+        re.search(rf"\b{re.escape(exp)}\b", address) for exp in norm_expected
+    ):
+        for city in conflicting_pool:
+            if re.search(
+                rf"\b(?:(?:vs\.?|versus)\s+{re.escape(city)}|{re.escape(city)}\s+(?:vs\.?|versus))\b",
+                excerpt,
+            ):
+                return True
         return False
 
-    conflicting_pool = KNOWN_CONFLICTING_CITIES - norm_expected
-    full_context = f"{city_hint} {address} {obs_title} {excerpt[:300]} {obs_url}"
-    expected_in_full = any(
-        re.search(rf"\b{re.escape(exp)}\b", full_context) for exp in norm_expected
-    )
-    if not expected_in_full:
-        check_scope = f"{address} {obs_title} {excerpt[:220]}"
+    if obs_title:
         for city in conflicting_pool:
-            if re.search(rf"\b{re.escape(city)}\b", check_scope):
+            if re.search(rf"\b{re.escape(city)}\b", obs_title):
                 return True
+
+    has_expected_in_doc = any(
+        re.search(rf"\b{re.escape(exp)}\b", f"{city_hint} {obs_title} {excerpt}")
+        for exp in norm_expected
+    )
+    access_transit_re = re.compile(
+        r"\b(?:nearest|closest)\s+(?:airport|railway|rail|station|bus)\b"
+    )
+    for city in conflicting_pool:
+        for m in re.finditer(rf"\b{re.escape(city)}\b", excerpt):
+            win = excerpt[max(0, m.start() - 65) : min(len(excerpt), m.end() + 45)]
+            if has_expected_in_doc and (
+                access_transit_re.search(win)
+                or re.search(
+                    rf"\b(?:buses?|trains?|flights?|airport|highway)\s+(?:from|to|via)\s+(?:[a-z]+\s+and\s+)?{re.escape(city)}\b",
+                    win,
+                )
+            ):
+                continue
+            return True
     return False
 
 
@@ -534,14 +564,53 @@ def _match_observation_entity(
         ):
             return False, False, None
 
-    # Determine structured entity title from observation
-    entity_norm = art_title_norm or obs_title_norm
-    entity_tokens = art_tokens or title_tokens
-
     excerpt = (_obs_attr(obs, "excerpt_text") or "").strip()
     excerpt_lower = excerpt.lower()
     obs_ext_method = str(_obs_attr(obs, "extraction_method") or "").upper().strip()
     is_page_observation = bool(obs_ext_method and obs_ext_method not in SNIPPET_SOURCE_METHODS)
+
+    # Determine structured entity title from observation; for web pages, strip trailing SEO suffixes
+    # (e.g. "– Timings, Entry Fee, Location & Hotels Nearby") before modifier checks.
+    raw_entity_title = (
+        (
+            art_ref.get("page_title")
+            or art_ref.get("title")
+            or art_ref.get("name")
+            or art_ref.get("place_name")
+            or art_ref.get("property_name")
+        )
+        if isinstance(art_ref, dict)
+        else None
+    ) or obs_title
+    if is_page_observation and isinstance(raw_entity_title, str) and raw_entity_title.strip():
+        stripped_title = re.split(
+            r"\s*[-–—|:(]\s*(?:timings?|hours|entry\s+fee|entrance|ticket|20\d\d)\b",
+            raw_entity_title.strip(),
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip()
+        if stripped_title:
+            stripped_norm = _normalize_name(stripped_title)
+            entity_norm = stripped_norm
+            entity_tokens = stripped_norm.split()
+        else:
+            entity_norm = art_title_norm or obs_title_norm
+            entity_tokens = art_tokens or title_tokens
+    else:
+        entity_norm = art_title_norm or obs_title_norm
+        entity_tokens = art_tokens or title_tokens
+
+    # Reject multi-venue listicle/roundup page titles unless candidate itself is the leading subject
+    if is_page_observation and isinstance(raw_entity_title, str) and raw_entity_title.strip():
+        raw_title_lower = raw_entity_title.strip().lower()
+        is_listicle_title = bool(
+            re.search(
+                r"\b(top\s+\d+|best\s+\d+|\d+\s+(?:best|top|places|attractions)|places\s+to\s+visit|things\s+to\s+do)\b",
+                raw_title_lower,
+            )
+        )
+        if is_listicle_title and not entity_norm.startswith(cand_norm):
+            return False, False, None
 
     title_matches = False
     if entity_norm:
@@ -554,36 +623,54 @@ def _match_observation_entity(
             extra_in_cand = set(cand_tokens) - set(entity_tokens)
 
             # If the entity title contains distinct entity modifiers (cafe, bus stop, school, etc.), reject
-            # For scraped/rendered web pages (is_page_observation), fall through to excerpt matching
-            # instead of rejecting on SEO page title suffixes (e.g. "& Hotels Nearby").
             if extra_in_entity & DISTINCT_ENTITY_MODIFIERS:
-                if not is_page_observation:
-                    return False, False, None
-            elif extra_in_cand & DISTINCT_ENTITY_MODIFIERS:
-                if not is_page_observation:
-                    return False, False, None
+                return False, False, None
+            if extra_in_cand & DISTINCT_ENTITY_MODIFIERS:
+                return False, False, None
+
+            # Shorter candidate name matching a different longer title:
+            # Allow expected destination city tokens and benign info/hours words alongside monument descriptors.
+            allowed_extras = set(ALLOWED_VENUE_INFO_TOKENS)
+            if expected_cities:
+                for ec in expected_cities:
+                    allowed_extras.update(_normalize_name(ec).split())
+
+            def _scraped_title_compatible() -> bool:
+                cand_set = set(cand_tokens)
+                tokens_to_check = extra_in_entity if len(cand_tokens) <= len(entity_tokens) else entity_tokens
+                unexplained = {
+                    tok
+                    for tok in tokens_to_check
+                    if tok not in allowed_extras
+                    and not any(_tokens_match_ignoring_inflection([ct], [tok]) for ct in cand_set)
+                }
+                shared_count = sum(
+                    1
+                    for ct in cand_set
+                    if any(_tokens_match_ignoring_inflection([ct], [et]) for et in entity_tokens)
+                )
+                min_shared = min(2, len(cand_set), len(entity_tokens))
+                return not unexplained and shared_count >= min_shared
+
+            if len(cand_tokens) < len(entity_tokens):
+                if len(cand_tokens) < 2 or not extra_in_entity.issubset(allowed_extras):
+                    if not is_page_observation or not _scraped_title_compatible():
+                        return False, False, None
+                elif set(cand_tokens).issubset(set(entity_tokens)):
+                    title_matches = True
+
+            # Candidate name has more words than entity:
+            elif len(cand_tokens) > len(entity_tokens):
+                if len(entity_tokens) < 2 or not extra_in_cand.issubset(allowed_extras):
+                    if not is_page_observation or not _scraped_title_compatible():
+                        return False, False, None
+                elif set(entity_tokens).issubset(set(cand_tokens)):
+                    title_matches = True
+
+            # Equal token length with non-inflectional differences (e.g., "Government Rose Garden"):
             else:
-                # Shorter candidate name matching a different longer title:
-                # Allow expected destination city tokens and benign info/hours words alongside monument descriptors.
-                allowed_extras = set(ALLOWED_VENUE_INFO_TOKENS)
-                if expected_cities:
-                    for ec in expected_cities:
-                        allowed_extras.update(_normalize_name(ec).split())
-
-                if len(cand_tokens) < len(entity_tokens):
-                    if len(cand_tokens) < 2 or not extra_in_entity.issubset(allowed_extras):
-                        if not is_page_observation:
-                            return False, False, None
-                    elif set(cand_tokens).issubset(set(entity_tokens)):
-                        title_matches = True
-
-                # Candidate name has more words than entity:
-                elif len(cand_tokens) > len(entity_tokens):
-                    if len(entity_tokens) < 2 or not extra_in_cand.issubset(allowed_extras):
-                        if not is_page_observation:
-                            return False, False, None
-                    elif set(entity_tokens).issubset(set(cand_tokens)):
-                        title_matches = True
+                if not is_page_observation or not _scraped_title_compatible():
+                    return False, False, None
 
     excerpt_matches = False
     if not title_matches and excerpt and (not entity_norm or is_page_observation):
@@ -592,9 +679,21 @@ def _match_observation_entity(
             if not _is_casual_mention(excerpt):
                 cand_lower = cand_norm if cand_norm in excerpt_lower else cand_name.lower()
                 idx = excerpt_lower.find(cand_lower)
-                trailing_text = excerpt_lower[idx + len(cand_lower) : idx + len(cand_lower) + 30]
+                leading_text = excerpt_lower[max(0, idx - 40) : idx]
+                trailing_text = excerpt_lower[idx + len(cand_lower) : idx + len(cand_lower) + 40]
+                leading_words = set(re.findall(r"\b\w+\b", leading_text))
                 trailing_words = set(re.findall(r"\b\w+\b", trailing_text))
-                if not (trailing_words & DISTINCT_ENTITY_MODIFIERS):
+                is_distance_mention = bool(
+                    re.search(
+                        r"\b\d+(?:\.\d+)?\s*(?:km|m|miles?)\s+(?:away\s+)?(?:from|to|near)\s+(?:the\s+|a\s+|an\s+)?$",
+                        leading_text,
+                    )
+                    or re.match(
+                        r"^\s*(?:is|are)?\s*\d+(?:\.\d+)?\s*(?:km|m|miles?)\s+(?:away\s+)?(?:from|to|near)\b",
+                        trailing_text,
+                    )
+                )
+                if not is_distance_mention and not ((leading_words | trailing_words) & DISTINCT_ENTITY_MODIFIERS):
                     excerpt_matches = True
 
     name_matches = title_matches or excerpt_matches
@@ -632,6 +731,152 @@ def _match_observation_entity(
 
     is_closed = _is_place_closed_or_unavailable(obs)
     return True, is_closed, obs_coords
+
+
+def _scope_page_text_to_candidate(
+    page_text: str,
+    cand_name: str,
+    expected_cities: set[str] | None = None,
+) -> str:
+    """Drops sentences/clauses that attribute opening hours to a different named place."""
+    if not page_text or not cand_name:
+        return page_text
+    cand_tokens = set(_normalize_name(cand_name).split())
+    if not cand_tokens:
+        return page_text
+    city_tokens: set[str] = set()
+    if expected_cities:
+        for ec in expected_cities:
+            city_tokens.update(_normalize_name(ec).split())
+
+    segments = re.split(
+        r"(?<!\b\d)(?<=[.!?])\s+|\n+|;\s+|,\s+(?=(?:which|where|while|whereas|and|but)\b)|\s+(?=while\s+|whereas\s+)",
+        page_text,
+    )
+
+    conj_prefix = r"(?:(?:and|but|while|whereas|where)\s+)?"
+    place_token = r"(?:[A-Z][A-Za-z0-9'&.-]*|of|the|and)"
+    other_place_hours_re = re.compile(
+        rf"^\s*{conj_prefix}(?:\d+[.)]\s*|[-*•]\s*)?"
+        rf"([A-Z][A-Za-z0-9'&.-]*(?:\s+{place_token}){{0,5}}"
+        r"(?:\s+(?:garden|gardens|park|parks|temple|temples|museum|museums|palace|fort|lake|falls|peak|hill|zoo|beach))?)"
+        r"(?:\s*\([^)]+\)|,\s*[A-Z][A-Za-z0-9'&.-]*|\s+(?:in|at|near)\s+[A-Z][A-Za-z0-9'&.-]*)?"
+        r"(?:\s+(?i:(?:opening|visiting|entry|general|admission)\s+)?(?i:timings?|hours))?\s*"
+        r"(?:[:\-–]\s*(?:(?i:open|closed|timings?|hours)|\d)|(?i:is|are|opens?|closes?)\s+(?:(?i:generally|daily)\s+)?(?:(?i:open|closed)\b|(?:(?i:at|from)\s+)?\d)|\b(?i:timings?|hours)\s+(?i:are|is)\s+\d)",
+    )
+    lead_subject_re = re.compile(
+        rf"^\s*{conj_prefix}(?:\d+[.)]\s*|[-*•]\s*|Visit\s+)?([A-Z][A-Za-z0-9'&.-]*(?:\s+{place_token}){{0,5}})\s+(?:is|are|nearby)\b"
+    )
+    distance_obj_re = re.compile(
+        r"(?:\b\d+(?:\.\d+)?\s*(?:km|m|miles?)\s+(?:away\s+)?(?:from|to|near)|\b(?:is|are)?\s*(?:near|opposite|beside|adjacent\s+to))\s+(?:the\s+)?([A-Z][A-Za-z0-9'&.-]*(?:\s+[A-Z][A-Za-z0-9'&.-]*){0,4})"
+    )
+    pronoun_hours_re = re.compile(
+        rf"^\s*{conj_prefix}(?:it|this|they|which|where)\s+(?:is|are|opens?|closes?)\b",
+        re.IGNORECASE,
+    )
+    generic_subjects = {
+        "it",
+        "the",
+        "this",
+        "they",
+        "which",
+        "where",
+        "garden",
+        "palace",
+        "museum",
+        "temple",
+        "fort",
+        "park",
+        "timings",
+        "timing",
+        "hours",
+        "hour",
+        "open",
+        "opening",
+        "closing",
+        "daily",
+        "day",
+        "today",
+        "ticketing",
+        "ticket",
+        "entry",
+        "entrance",
+        "admission",
+        "visiting",
+        "visitor",
+        "visitors",
+        "gate",
+        "general",
+        "last",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "saturday",
+        "sunday",
+        "mon",
+        "tue",
+        "tues",
+        "wed",
+        "thu",
+        "thur",
+        "thurs",
+        "fri",
+        "sat",
+        "sun",
+        "weekdays",
+        "weekday",
+        "weekends",
+        "weekend",
+        "holiday",
+        "holidays",
+        "summer",
+        "winter",
+        "boating",
+        "illumination",
+        "sound",
+        "light",
+        "show",
+        "safari",
+    }
+
+    def _is_other_place(tokens: set[str]) -> bool:
+        if not tokens or tokens <= generic_subjects:
+            return False
+        for tok in tokens:
+            if tok in generic_subjects or tok in city_tokens:
+                continue
+            if not any(_tokens_match_ignoring_inflection([tok], [ct]) for ct in cand_tokens):
+                return True
+        return False
+
+    kept: list[str] = []
+    last_other_subject = False
+    for seg in segments:
+        if pronoun_hours_re.match(seg) and last_other_subject:
+            continue
+        m = other_place_hours_re.match(seg)
+        if m:
+            subj_tokens = set(_normalize_name(m.group(1).strip()).split())
+            if _is_other_place(subj_tokens):
+                last_other_subject = True
+                continue
+        dist_m = distance_obj_re.search(seg)
+        if dist_m:
+            obj_tokens = set(_normalize_name(dist_m.group(1).strip()).split())
+            if _is_other_place(obj_tokens):
+                last_other_subject = True
+                kept.append(seg)
+                continue
+        lead_m = lead_subject_re.match(seg)
+        if lead_m:
+            lead_tokens = set(_normalize_name(lead_m.group(1).strip()).split())
+            last_other_subject = _is_other_place(lead_tokens)
+        else:
+            last_other_subject = False
+        kept.append(seg)
+    return " ".join(kept).strip()
 
 
 def _observation_supports_candidate(
@@ -951,8 +1196,15 @@ async def ingest_claims_from_observations(
 
                 obs_art = obs.artifact_ref if isinstance(obs.artifact_ref, dict) else {}
                 raw_hours_hint = str(obs_art.get("hours") or obs_art.get("timings") or "").strip()
-                page_text = f"{raw_hours_hint}. {obs.excerpt_text or ''}".strip(". ")
+                raw_page_text = f"{raw_hours_hint}. {obs.excerpt_text or ''}".strip(". ")
                 is_snippet_only = ext_method in SNIPPET_SOURCE_METHODS
+                page_text = (
+                    raw_page_text
+                    if is_snippet_only
+                    else _scope_page_text_to_candidate(
+                        raw_page_text, cand_name, expected_cities=expected_cities
+                    )
+                )
 
                 extracted = extract_structured_hours_from_text(
                     page_text,

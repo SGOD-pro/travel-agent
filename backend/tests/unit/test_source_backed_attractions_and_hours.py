@@ -1281,7 +1281,8 @@ class TestItinerarySchedulingAndClosedDayHandling:
             obs_hotels_seo, cand, expected_cities={"ooty", "udhagamandalam"}  # type: ignore[arg-type]
         )
         assert matched_1 is True
-        assert extract_structured_hours_from_text(obs_hotels_seo["excerpt_text"]).opens == "07:00"
+        h1 = extract_structured_hours_from_text(str(obs_hotels_seo["excerpt_text"]))
+        assert h1 is not None and h1.opens == "07:00"
 
         # Case 2: Page title omits "Government", uses plural "Gardens" + "Entrance Ticket Cost"
         obs_plural_seo = {
@@ -1300,7 +1301,8 @@ class TestItinerarySchedulingAndClosedDayHandling:
             obs_plural_seo, cand, expected_cities={"ooty", "udhagamandalam"}  # type: ignore[arg-type]
         )
         assert matched_2 is True
-        assert extract_structured_hours_from_text(obs_plural_seo["excerpt_text"]).closes == "18:30"
+        h2 = extract_structured_hours_from_text(str(obs_plural_seo["excerpt_text"]))
+        assert h2 is not None and h2.closes == "18:30"
 
         # Negative control: SERPAPI_SEARCH with DISTINCT_ENTITY_MODIFIERS in title must still be rejected
         obs_bus_stand = {
