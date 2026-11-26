@@ -607,11 +607,20 @@ async def evaluate_candidates_node(
             default_destination_lng=default_lng,
             expected_cities=expected_city_names if expected_city_names else None,
         )
-        existing_names = {p.name.strip().lower() for p in candidate_proposals}
+        # Evidence-backed proposals supersede unverified discovered_places coordinates
+        # while preserving distinct spatial clusters extracted from observations.
+        discovered_by_name: dict[str, int] = {
+            p.name.strip().lower(): idx for idx, p in enumerate(candidate_proposals)
+        }
+        replaced_discovered: set[str] = set()
         for ep in evidence_proposals:
-            if ep.name.strip().lower() not in existing_names:
+            ep_key = ep.name.strip().lower()
+            if ep_key in discovered_by_name and ep_key not in replaced_discovered:
+                candidate_proposals[discovered_by_name[ep_key]] = ep
+                replaced_discovered.add(ep_key)
+            else:
                 candidate_proposals.append(ep)
-                existing_names.add(ep.name.strip().lower())
+        existing_names = {p.name.strip().lower() for p in candidate_proposals}
 
         # Ensure positively verified hidden-place stops (with merged coords & public access)
         # are also proposed for claim-backed registration/eligibility if not already extracted.
@@ -871,15 +880,20 @@ async def rank_candidates_node(
 
     # Convert candidates to PlaceProposal objects for ranking
     proposals_to_rank: list[PlaceProposal] = []
-    seen_names: set[str] = set()
+    seen_keys: set[tuple[str, float, float]] = set()
 
     for s in eligible_stops:
         name = str(s.get("primary_name") or s.get("name", "")).strip()
-        if not name or name.lower() in seen_names:
-            continue
         pt = s.get("point", {})
         lat_val = pt.get("lat") if isinstance(pt, dict) else s.get("lat", 0.0)
         lng_val = pt.get("lng") if isinstance(pt, dict) else s.get("lng", 0.0)
+        dedupe_key = (
+            name.lower(),
+            round(float(lat_val or 0.0), 3),
+            round(float(lng_val or 0.0), 3),
+        )
+        if not name or dedupe_key in seen_keys:
+            continue
         proposals_to_rank.append(
             PlaceProposal(
                 name=name,
@@ -897,7 +911,9 @@ async def rank_candidates_node(
                 address=s.get("address"),
             )
         )
-        seen_names.add(name.lower())
+        seen_keys.add(dedupe_key)
+
+    seen_names = {k[0] for k in seen_keys}
 
     for r in editorial_recs:
         name = str(r.get("primary_name") or r.get("name", "")).strip()
@@ -1604,6 +1620,20 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
         deferred_candidates: list[str] = list(state.get("deferred_candidates") or [])
         scheduled_stop_names: set[str] = {d.name.strip().lower() for d in brief.destinations}
 
+        # Detect ambiguous must-visit matches (multiple distinct spatial candidates sharing the same must-visit name)
+        mv_locations: dict[str, set[tuple[float, float]]] = {}
+        for item in sightseeing_candidates:
+            iname = str(item.get("primary_name") or item.get("name") or "").strip().lower()
+            if iname in must_visit_norms or bool(item.get("is_must_visit")):
+                pt = item.get("point") or {}
+                lat_val = pt.get("lat") if isinstance(pt, dict) else item.get("lat")
+                lng_val = pt.get("lng") if isinstance(pt, dict) else item.get("lng")
+                if lat_val is not None and lng_val is not None:
+                    mv_locations.setdefault(iname, set()).add(
+                        (round(float(lat_val), 3), round(float(lng_val), 3))
+                    )
+        ambiguous_mv_norms = {n for n, locs in mv_locations.items() if len(locs) > 1}
+
         # Candidate capacity enforcement: schedule must visit places first, then top optional candidates
         ordered_sightseeing = sorted(
             sightseeing_candidates,
@@ -1621,6 +1651,19 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
             s_name = str(s.get("primary_name") or s.get("name") or "").strip()
             s_name_norm = s_name.lower()
             is_mv = bool(s.get("is_must_visit") or s_name_norm in must_visit_norms)
+            if s_name_norm in ambiguous_mv_norms:
+                if not any(
+                    str(c.get("place_name") or "").strip().lower() == s_name_norm
+                    for c in must_visit_conflicts
+                ):
+                    must_visit_conflicts.append(
+                        {
+                            "place_name": s_name,
+                            "hours_status": "AMBIGUOUS",
+                            "reason": f"{s_name}: ambiguous candidate matches found; cannot deterministically schedule",
+                        }
+                    )
+                continue
             hours_status_val = str(s.get("hours_status") or "")
             raw_hd = s.get("hours_details")
             hours_det: dict[str, Any] = raw_hd if isinstance(raw_hd, dict) else {}

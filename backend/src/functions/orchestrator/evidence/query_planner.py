@@ -453,39 +453,63 @@ class QueryPlanningService:
 
         primary = destinations[0] if destinations else "Destination"
         query_candidates: list[PlannedQuery] = []
+        skipped_areas: list[dict[str, str]] = []
 
-        # Prioritize explicit traveler must visit hours within query budget
+        # Prioritize explicit traveler must-visit place lookup (GPS) + admission hours within ceiling
         for mv_place in must_visits:
-            if len(query_candidates) >= max(1, ceiling // 2):
-                break
-            query_candidates.append(
-                PlannedQuery(
-                    f"{mv_place} {primary} opening hours timings last entry official",
-                    purpose="hours",
-                    destination=primary,
-                    engine="google",
+            if len(query_candidates) < ceiling:
+                query_candidates.append(
+                    PlannedQuery(
+                        f"{mv_place} {primary}",
+                        purpose="attractions",
+                        destination=primary,
+                        engine="google_maps",
+                    )
                 )
-            )
+            else:
+                skipped_areas.append(
+                    {
+                        "area": "must_visit_lookup",
+                        "reason": f"Skipped must-visit place lookup for {mv_place}: collector query ceiling ({ceiling}) exhausted.",
+                    }
+                )
+                continue
+            if len(query_candidates) < ceiling:
+                query_candidates.append(
+                    PlannedQuery(
+                        f"{mv_place} {primary} opening hours timings last entry official",
+                        purpose="hours",
+                        destination=primary,
+                        engine="google",
+                    )
+                )
+            else:
+                skipped_areas.append(
+                    {
+                        "area": "must_visit_hours",
+                        "reason": f"Skipped must-visit hours lookup for {mv_place}: collector query ceiling ({ceiling}) exhausted.",
+                    }
+                )
 
-        # Cover primary destination attractions and official visiting hours
+        # Cover primary destination attractions, secondary destinations, hours, and optional research
         if destinations:
             d0 = destinations[0]
-            query_candidates.append(
-                PlannedQuery(
-                    f"{d0} top attractions sightseeing places to visit",
-                    purpose="attractions",
-                    destination=d0,
-                    engine="google_maps",
+            if len(query_candidates) < ceiling:
+                query_candidates.append(
+                    PlannedQuery(
+                        f"{d0} top attractions sightseeing places to visit",
+                        purpose="attractions",
+                        destination=d0,
+                        engine="google_maps",
+                    )
                 )
-            )
-            query_candidates.append(
-                PlannedQuery(
-                    f"{d0} tourist attractions opening hours timings closed day{date_context}".strip(),
-                    purpose="hours",
-                    destination=d0,
-                    engine="google",
+            else:
+                skipped_areas.append(
+                    {
+                        "area": "attractions",
+                        "reason": f"Skipped general attractions research for {d0}: collector query ceiling ({ceiling}) exhausted.",
+                    }
                 )
-            )
             for extra_dest in destinations[1:]:
                 if len(query_candidates) >= ceiling:
                     break
@@ -497,47 +521,74 @@ class QueryPlanningService:
                         engine="google_maps",
                     )
                 )
-
-            # Fill remaining budget slots with requested food and hidden-place research
-            skipped_areas: list[dict[str, str]] = []
-            if destinations:
-                d0 = destinations[0]
-                if cls.has_explicit_food_intent(brief):
-                    if len(query_candidates) < ceiling:
-                        query_candidates.append(
-                            PlannedQuery(
-                                f"{d0} authentic local food restaurants",
-                                purpose="dining",
-                                destination=d0,
-                                engine="google_maps",
-                            )
+            has_mv_hours = any(q.purpose == "hours" for q in query_candidates)
+            if has_mv_hours and cls.has_explicit_food_intent(brief):
+                if len(query_candidates) < ceiling:
+                    query_candidates.append(
+                        PlannedQuery(
+                            f"{d0} authentic local food restaurants",
+                            purpose="dining",
+                            destination=d0,
+                            engine="google_maps",
                         )
-                    else:
-                        skipped_areas.append(
-                            {
-                                "area": "food",
-                                "reason": f"Skipped food research: collector query ceiling ({ceiling}) exhausted by must-visit and opening-hours queries.",
-                            }
+                    )
+                else:
+                    skipped_areas.append(
+                        {
+                            "area": "food",
+                            "reason": f"Skipped food research: collector query ceiling ({ceiling}) exhausted by must-visit and opening-hours queries.",
+                        }
+                    )
+            if len(query_candidates) < ceiling:
+                query_candidates.append(
+                    PlannedQuery(
+                        f"{d0} tourist attractions opening hours timings closed day{date_context}".strip(),
+                        purpose="hours",
+                        destination=d0,
+                        engine="google",
+                    )
+                )
+            else:
+                skipped_areas.append(
+                    {
+                        "area": "hours",
+                        "reason": f"Skipped general hours research for {d0}: collector query ceiling ({ceiling}) exhausted.",
+                    }
+                )
+            if not has_mv_hours and cls.has_explicit_food_intent(brief):
+                if len(query_candidates) < ceiling:
+                    query_candidates.append(
+                        PlannedQuery(
+                            f"{d0} authentic local food restaurants",
+                            purpose="dining",
+                            destination=d0,
+                            engine="google_maps",
                         )
-                if cls.has_explicit_hidden_place_intent(brief):
-                    if len(query_candidates) < ceiling:
-                        query_candidates.append(
-                            PlannedQuery(
-                                f"{d0} hidden gems offbeat places public entry visitor information",
-                                purpose="hidden_places",
-                                destination=d0,
-                                engine="google",
-                            )
+                    )
+                else:
+                    skipped_areas.append(
+                        {
+                            "area": "food",
+                            "reason": f"Skipped food research: collector query ceiling ({ceiling}) exhausted by must-visit and opening-hours queries.",
+                        }
+                    )
+            if cls.has_explicit_hidden_place_intent(brief):
+                if len(query_candidates) < ceiling:
+                    query_candidates.append(
+                        PlannedQuery(
+                            f"{d0} hidden gems offbeat places public entry visitor information",
+                            purpose="hidden_places",
+                            destination=d0,
+                            engine="google",
                         )
-                    else:
-                        skipped_areas.append(
-                            {
-                                "area": "hidden_places",
-                                "reason": f"Skipped hidden_places research: collector query ceiling ({ceiling}) exhausted by must-visit and opening-hours queries.",
-                            }
-                        )
-        else:
-            skipped_areas = []
+                    )
+                else:
+                    skipped_areas.append(
+                        {
+                            "area": "hidden_places",
+                            "reason": f"Skipped hidden_places research: collector query ceiling ({ceiling}) exhausted by must-visit and opening-hours queries.",
+                        }
+                    )
 
         final_queries = query_candidates[:ceiling]
         covered = [

@@ -91,6 +91,8 @@ def _is_same_place(
     n1 = _normalize_place_name(name1)
     n2 = _normalize_place_name(name2)
     if n1 == n2:
+        if lat1 is not None and lat2 is not None and lng1 is not None and lng2 is not None:
+            return abs(lat1 - lat2) < 0.003 and abs(lng1 - lng2) < 0.003
         return True
 
     # Check spatial proximity if coordinates are present (within ~0.003 degrees, approx 300m)

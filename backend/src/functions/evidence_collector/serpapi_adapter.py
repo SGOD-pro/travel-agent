@@ -311,7 +311,11 @@ class SerpApiAdapter:
         if isinstance(places_data, list):
             place_items = places_data
         elif isinstance(places_data, dict):
-            place_items = places_data.get("places", []) or places_data.get("local_results", [])
+            nested = places_data.get("places", []) or places_data.get("local_results", [])
+            if nested:
+                place_items = nested
+            elif places_data.get("title") or places_data.get("gps_coordinates"):
+                place_items = [places_data]
 
         for idx, place in enumerate(place_items):
             title = str(place.get("title") or "").strip()
@@ -487,7 +491,11 @@ class SerpApiAdapter:
             results: list[RawObservation] = []
 
             # 1. Parse place or local results first to capture structured POIs with verified coordinates
-            local_raw = data.get("local_results") or data.get("places_results")
+            local_raw = (
+                data.get("local_results")
+                or data.get("places_results")
+                or data.get("place_results")
+            )
             if local_raw:
                 results.extend(
                     self._parse_place_results(

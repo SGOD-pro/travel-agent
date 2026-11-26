@@ -955,4 +955,296 @@ class TestItinerarySchedulingAndClosedDayHandling:
         assert (palace_stop.window_start.day, palace_stop.window_start.hour, palace_stop.window_start.minute) == (28, 4, 30)
         assert (palace_stop.window_end.day, palace_stop.window_end.hour, palace_stop.window_end.minute) == (28, 12, 0)
 
+    async def test_must_visit_bounded_place_lookup_priority_ambiguity_and_budget_exhaustion(self) -> None:
+        """Broad attraction results omit a required place, but targeted must-visit venue lookup
+        returns the local match with coordinates and separate fetched page supplies hours.
+        Covers wrong-city rejection, ambiguous names, lookup-alone unverified hours, and budget exhaustion.
+        """
+        from contracts.routing import RouteRequest
+        from functions.orchestrator.evidence.place_extraction import PlaceExtractionService
+
+        # 1. Query planner emits targeted place lookup + hours for explicit must-visit within ceiling
+        brief = TripBrief(
+            origin_name="Bengaluru",
+            origin_lat=12.9716,
+            origin_lng=77.5946,
+            destinations=[DestinationPoint(name="Ooty", latitude=11.4102, longitude=76.6950, stay_days=2)],
+            must_visit_places=["Government Botanical Garden"],
+            start_date=date(2026, 12, 5),
+            end_date=date(2026, 12, 6),
+            traveler_preferences=["botanical gardens", "authentic local cuisine"],
+        )
+        planned = QueryPlanningService.plan_attractions_and_hours_queries(brief, max_queries=4)
+        assert len(planned) == 4
+        assert any(
+            q.purpose == "attractions" and q.engine == "google_maps" and "Government Botanical Garden" in q.query
+            for q in planned
+        )
+        assert any(
+            q.purpose == "hours" and q.engine == "google" and "Government Botanical Garden" in q.query
+            for q in planned
+        )
+        # When must-visit hours already fills hours, dining is included and general d0 hours skip is recorded
+        assert any(q.purpose == "dining" for q in planned)
+        assert any(
+            s.get("area") == "hours"
+            for s in (getattr(planned, "skipped_research_areas", []) or [])
+        )
+
+        # 2. Budget exhaustion: 3 must-visits cannot all fit in ceiling=4; uncovered must-visits & skipped areas reported
+        crowded_brief = TripBrief(
+            origin_name="Bengaluru",
+            origin_lat=12.9716,
+            origin_lng=77.5946,
+            destinations=[DestinationPoint(name="Ooty", latitude=11.4102, longitude=76.6950, stay_days=2)],
+            must_visit_places=["Government Botanical Garden", "Doddabetta Peak", "Pykara Falls"],
+            start_date=date(2026, 12, 5),
+            end_date=date(2026, 12, 6),
+            traveler_preferences=["authentic local food"],
+        )
+        crowded_planned = QueryPlanningService.plan_attractions_and_hours_queries(crowded_brief, max_queries=4)
+        assert len(crowded_planned) == 4
+        assert all(q.purpose in ("attractions", "hours") for q in crowded_planned)
+        assert any("Pykara Falls" in str(s) for s in (getattr(crowded_planned, "skipped_research_areas", []) or []))
+
+        # 3. Extraction rejects wrong-city and centroid substitutes; combines targeted lookup coords + fetched hours
+        obs_list = [
+            # Broad Ooty attraction (not the must-visit)
+            {
+                "canonical_url": "https://maps.google.com/?cid=1",
+                "source_url": "https://maps.google.com/?cid=1",
+                "publisher": "google_maps",
+                "extraction_method": "SERPAPI_SEARCH",
+                "excerpt_text": "Place: Thread Garden | Address: Ooty, Tamil Nadu",
+                "artifact_ref": {
+                    "title": "Thread Garden",
+                    "purpose": "attractions",
+                    "address": "Ooty, Tamil Nadu",
+                    "gps_coordinates": {"latitude": 11.4069, "longitude": 76.6882},
+                },
+            },
+            # Wrong-city Botanical Garden (Kolkata) must be rejected
+            {
+                "canonical_url": "https://maps.google.com/?cid=2",
+                "source_url": "https://maps.google.com/?cid=2",
+                "publisher": "google_maps",
+                "extraction_method": "SERPAPI_SEARCH",
+                "excerpt_text": "Place: Government Botanical Garden | Address: Shibpur, Kolkata, West Bengal",
+                "artifact_ref": {
+                    "title": "Government Botanical Garden",
+                    "purpose": "attractions",
+                    "address": "Shibpur, Kolkata, West Bengal",
+                    "gps_coordinates": {"latitude": 22.5594, "longitude": 88.2913},
+                },
+            },
+            # Targeted lookup with no GPS (must NOT substitute destination centroid)
+            {
+                "canonical_url": "https://ootytourism.co.in/botanical-no-gps",
+                "source_url": "https://ootytourism.co.in/botanical-no-gps",
+                "publisher": "ootytourism.co.in",
+                "extraction_method": "SERPAPI_SEARCH",
+                "excerpt_text": "Government Botanical Garden in Ooty",
+                "artifact_ref": {
+                    "title": "Government Botanical Garden",
+                    "purpose": "attractions",
+                    "address": "Ooty, Tamil Nadu",
+                },
+            },
+            # Targeted google_maps lookup returning real Ooty coordinates
+            {
+                "canonical_url": "https://maps.google.com/?cid=3",
+                "source_url": "https://maps.google.com/?cid=3",
+                "publisher": "google_maps",
+                "extraction_method": "SERPAPI_SEARCH",
+                "excerpt_text": "Place: Government Botanical Garden | Address: Vannarapettai, Ooty, Tamil Nadu",
+                "artifact_ref": {
+                    "title": "Government Botanical Garden",
+                    "purpose": "attractions",
+                    "address": "Vannarapettai, Ooty, Tamil Nadu",
+                    "gps_coordinates": {"latitude": 11.4189, "longitude": 76.7115},
+                },
+            },
+            # Separate fetched page supplying admission hours
+            {
+                "canonical_url": "https://nilgiris.nic.in/botanical-garden",
+                "source_url": "https://nilgiris.nic.in/botanical-garden",
+                "publisher": "nilgiris.nic.in",
+                "extraction_method": "SCRAPLING_HTTP",
+                "excerpt_text": "Government Botanical Garden Ooty is open daily from 07:00 AM to 06:30 PM.",
+                "artifact_ref": {
+                    "title": "Government Botanical Garden Ooty",
+                    "purpose": "hours",
+                    "address": "Ooty, Tamil Nadu",
+                },
+            },
+        ]
+        proposals = PlaceExtractionService.extract_candidates_from_observations(
+            obs_list,
+            default_destination_lat=11.4102,
+            default_destination_lng=76.6950,
+            expected_cities={"Ooty", "Udhagamandalam", "Nilgiris"},
+        )
+        garden_props = [p for p in proposals if "botanical" in p.name.lower()]
+        assert len(garden_props) == 1
+        assert garden_props[0].estimated_latitude is not None
+        assert garden_props[0].estimated_longitude is not None
+        assert abs(garden_props[0].estimated_latitude - 11.4189) < 1e-4
+        assert abs(garden_props[0].estimated_longitude - 76.7115) < 1e-4
+        assert "https://maps.google.com/?cid=3" in garden_props[0].source_urls
+        assert "https://nilgiris.nic.in/botanical-garden" in garden_props[0].source_urls
+
+        # 4. Place lookup alone (without SCRAPLING_HTTP hours) must not verify hours
+        exec_id = uuid.uuid4()
+        g_id = uuid.uuid4()
+        cand = RegisteredCandidate(
+            place_id=g_id,
+            primary_name="Government Botanical Garden",
+            category="garden",
+            point=CoordinatePoint(lat=11.4189, lng=76.7115),
+            existence_status=CandidateExistenceStatus.VERIFIED,
+            is_must_visit=True,
+        )
+        lookup_only_report = await DeterministicEvidenceEligibilityGate(session=None).evaluate_candidate_eligibility(
+            execution_id=exec_id,
+            candidates=[cand],
+            fixture_observations=[obs_list[3]],
+            fixture_claims=[
+                {
+                    "execution_id": str(exec_id),
+                    "place_id": str(g_id),
+                    "subject_id": "Government Botanical Garden",
+                    "category": ClaimCategory.ATTRACTION.value,
+                    "verification": VerificationStatus.VERIFIED.value,
+                    "freshness": FreshnessStatus.FRESH.value,
+                    "evidence_links": [{"support_type": EvidenceSupportType.SUPPORTS.value, "observation": obs_list[3]}],
+                }
+            ],
+            visit_dates=[date(2026, 12, 5), date(2026, 12, 6)],
+            local_timezone="Asia/Kolkata",
+        )
+        assert lookup_only_report.eligible_stops[0].hours_status == CandidateHoursStatus.HOURS_ASSUMED
+
+        # 5. Ambiguous must-visit candidates (2 distinct spatial places with same name) are preserved in extraction and rejected in dispatch
+        ambig_obs = [
+            {
+                "canonical_url": "https://maps.google.com/?cid=101",
+                "source_url": "https://maps.google.com/?cid=101",
+                "publisher": "google_maps",
+                "extraction_method": "SERPAPI_SEARCH",
+                "excerpt": "Place: Government Botanical Garden | Address: Vannarapettai, Ooty, Tamil Nadu",
+                "artifact_ref": {
+                    "title": "Government Botanical Garden",
+                    "address": "Vannarapettai, Ooty, Tamil Nadu",
+                    "gps_coordinates": {"latitude": 11.4189, "longitude": 76.7115},
+                },
+            },
+            {
+                "canonical_url": "https://maps.google.com/?cid=102",
+                "source_url": "https://maps.google.com/?cid=102",
+                "publisher": "google_maps",
+                "extraction_method": "SERPAPI_SEARCH",
+                "excerpt": "Place: Government Botanical Garden | Address: Fern Hill, Ooty, Tamil Nadu",
+                "artifact_ref": {
+                    "title": "Government Botanical Garden",
+                    "address": "Fern Hill, Ooty, Tamil Nadu",
+                    "gps_coordinates": {"latitude": 11.4500, "longitude": 76.7500},
+                },
+            },
+        ]
+        ambig_extracted = PlaceExtractionService.extract_candidates_from_observations(
+            ambig_obs,
+            default_destination_lat=11.4102,
+            default_destination_lng=76.6950,
+            expected_cities={"Ooty"},
+        )
+        assert len([p for p in ambig_extracted if p.name == "Government Botanical Garden"]) == 2
+
+        ambig_state: TripPlanningState = {
+            "execution_id": str(uuid.uuid4()),
+            "owner_id": str(uuid.uuid4()),
+            "trip_id": str(uuid.uuid4()),
+            "brief": {
+                "origin_name": "Bengaluru",
+                "origin_lat": 12.9716,
+                "origin_lng": 77.5946,
+                "destinations": [{"name": "Ooty", "latitude": 11.4102, "longitude": 76.6950, "stay_days": 2}],
+                "must_visit_places": ["Government Botanical Garden"],
+                "start_date": "2026-12-05",
+                "end_date": "2026-12-06",
+                "travelers": 2,
+                "budget": {"amount": "18000.00", "currency": "INR"},
+                "preferred_modes": ["car_petrol"],
+            },
+            "eligible_stops": [
+                {
+                    "primary_name": "Government Botanical Garden",
+                    "place_id": str(uuid.uuid4()),
+                    "category": "garden",
+                    "point": {"lat": 11.4189, "lng": 76.7115},
+                    "existence_status": "VERIFIED",
+                    "hours_status": "VERIFIED_HOURS",
+                    "is_must_visit": True,
+                },
+                {
+                    "primary_name": "Government Botanical Garden",
+                    "place_id": str(uuid.uuid4()),
+                    "category": "garden",
+                    "point": {"lat": 11.4500, "lng": 76.7500},
+                    "existence_status": "VERIFIED",
+                    "hours_status": "VERIFIED_HOURS",
+                    "is_must_visit": True,
+                },
+            ],
+        }
+        ambig_dispatched = dispatch_route_optimizer_node(ambig_state)
+        ambig_req = RouteRequest.model_validate(ambig_dispatched["pending_tasks"][0]["payload"])
+        assert not any(s.name == "Government Botanical Garden" for s in ambig_req.stops)
+        assert any("ambiguous" in str(c).lower() for c in ambig_dispatched.get("must_visit_conflicts", []))
+
+        # 6. SerpApiAdapter parses singular google_maps place_results dict via search() and _parse_place_results()
+        import json
+        from datetime import UTC, datetime
+
+        import httpx
+
+        from functions.evidence_collector.serpapi_adapter import SerpApiAdapter
+
+        single_payload = {
+            "place_results": {
+                "title": "Government Botanical Garden",
+                "address": "Vannarapettai, Ooty, Tamil Nadu",
+                "gps_coordinates": {"latitude": 11.4189, "longitude": 76.7115},
+                "rating": 4.5,
+                "reviews": 12000,
+                "place_id": "ChIJ123",
+            }
+        }
+        mock_transport = httpx.MockTransport(
+            lambda req: httpx.Response(200, content=json.dumps(single_payload).encode("utf-8"))
+        )
+        adapter = SerpApiAdapter(
+            api_key="test-key",
+            base_url="https://mock.serpapi.test",
+            client=httpx.AsyncClient(transport=mock_transport),
+        )
+        search_obs = await adapter.search(
+            "Government Botanical Garden Ooty",
+            engine="google_maps",
+            extra_params={"purpose": "attractions", "destination": "Ooty"},
+        )
+        assert len(search_obs) == 1
+        assert search_obs[0].artifact_ref is not None
+        assert search_obs[0].artifact_ref["title"] == "Government Botanical Garden"
+        assert search_obs[0].artifact_ref["gps_coordinates"]["latitude"] == 11.4189
+
+        parsed_single = adapter._parse_place_results(
+            single_payload["place_results"],
+            datetime.now(UTC),
+            query_purpose="attractions",
+            query_dest="Ooty",
+            selected_engine="google_maps",
+        )
+        assert len(parsed_single) == 1
+
+
 
