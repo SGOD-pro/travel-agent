@@ -1319,5 +1319,317 @@ class TestItinerarySchedulingAndClosedDayHandling:
         )
         assert matched_neg is False
 
+    async def test_destination_centroid_does_not_hijack_venue_hours_or_make_2day_trip_infeasible(
+        self,
+    ) -> None:
+        """Brief destination centroid must not match venue timings pages; feasible 2-day vs genuinely infeasible."""
+        import uuid
+        from types import SimpleNamespace
+
+        from contracts.routing import RouteRequest, RouteStatus, SolverStatus
+        from functions.orchestrator.evidence.claim_ingestion import _match_observation_entity
+        from functions.orchestrator.graphs.trip_planner.graph import (
+            dispatch_route_optimizer_node,
+        )
+        from functions.route_optimizer.solver import OrToolsRoutingSolver
+
+        # 1. Destination centroid ("Mysuru", category="destination") must NOT match Mysuru Palace Timings page
+        dest_cand = SimpleNamespace(
+            primary_name="Mysuru",
+            category="destination",
+            point_latitude=12.2958,
+            point_longitude=76.6394,
+            point=SimpleNamespace(lat=12.2958, lng=76.6394),
+        )
+        palace_cand = SimpleNamespace(
+            primary_name="Mysuru Palace",
+            category="attraction",
+            point_latitude=12.305163,
+            point_longitude=76.655175,
+            point=SimpleNamespace(lat=12.305163, lng=76.655175),
+        )
+        obs_palace_timings = {
+            "source_url": "https://mysorepalace.karnataka.gov.in/timings.html",
+            "extraction_method": "SCRAPLING_HTTP",
+            "excerpt_text": (
+                "World Famous Mysuru Palace Timings for Visitors: "
+                "Palace Entrance Timings: Everyday from 10.00 am to 5.30 pm."
+            ),
+            "artifact_ref": {
+                "title": "Mysuru Palace Timings",
+                "page_title": "Mysuru Palace Timings",
+                "category": "attraction",
+                "purpose": "hours",
+                "purposes": ["hours"],
+                "destination": "Mysuru",
+            },
+        }
+        dest_matched, _, _ = _match_observation_entity(
+            obs_palace_timings, dest_cand, expected_cities={"Mysuru"}  # type: ignore[arg-type]
+        )
+        palace_matched, _, _ = _match_observation_entity(
+            obs_palace_timings, palace_cand, expected_cities={"Mysuru"}  # type: ignore[arg-type]
+        )
+        assert dest_matched is False
+        assert palace_matched is True
+
+        # Multi-token destination centroid ("Mount Abu") must not hijack temple/museum venues via ALLOWED_VENUE_INFO_TOKENS
+        abu_dest = SimpleNamespace(
+            primary_name="Mount Abu",
+            category="destination",
+            point_latitude=24.5926,
+            point_longitude=72.7156,
+            point=SimpleNamespace(lat=24.5926, lng=72.7156),
+        )
+        obs_abu_temple = {
+            "source_url": "https://maps.google.com/?cid=123",
+            "extraction_method": "SERPAPI_SEARCH",
+            "excerpt_text": "Mount Abu Temple is a popular attraction.",
+            "artifact_ref": {
+                "title": "Mount Abu Temple",
+                "category": "temple",
+                "purpose": "attractions",
+                "latitude": 24.5926,
+                "longitude": 72.7156,
+            },
+        }
+        abu_matched, _, _ = _match_observation_entity(
+            obs_abu_temple, abu_dest, expected_cities={"Mount Abu"}  # type: ignore[arg-type]
+        )
+        assert abu_matched is False
+
+        # 2. Feasible 2-day Bengaluru -> Mysuru dispatch (only Mysuru Palace is eligible, not destination centroid)
+        brief = {
+            "origin_name": "Bengaluru",
+            "origin_lat": 12.9716,
+            "origin_lng": 77.5946,
+            "destinations": [
+                {
+                    "name": "Mysuru",
+                    "latitude": 12.2958,
+                    "longitude": 76.6394,
+                    "stay_days": 2,
+                    "confidence": 1.0,
+                }
+            ],
+            "must_visit_places": ["Mysuru Palace"],
+            "start_date": "2026-11-28",
+            "end_date": "2026-11-29",
+            "timezone": "Asia/Kolkata",
+            "travelers": 2,
+            "rooms": 1,
+            "budget": {"amount": "15000.00", "currency": "INR"},
+            "preferred_modes": ["car_petrol"],
+        }
+        eligible_palace = {
+            "primary_name": "Mysuru Palace",
+            "category": "attraction",
+            "point": {"lat": 12.305163, "lng": 76.655175},
+            "suggested_stay_minutes": 60,
+            "is_must_visit": True,
+            "existence_status": "VERIFIED",
+            "hours_status": "VERIFIED_HOURS",
+            "is_hours_assumed": False,
+            "window_start": "10:00",
+            "window_end": "17:30",
+        }
+        res_feasible = dispatch_route_optimizer_node(
+            {
+                "execution_id": str(uuid.uuid4()),
+                "brief": brief,
+                "eligible_stops": [eligible_palace],
+                "editorial_recommendations": [],
+                "excluded_candidates": [],
+            }
+        )
+        req_feasible = RouteRequest.model_validate(res_feasible["pending_tasks"][0]["payload"])
+        assert [s.name for s in req_feasible.stops] == ["Bengaluru", "Mysuru Palace"]
+
+        # Approximate 3h drive matrix (Bengaluru <-> Mysuru Palace = 10800s)
+        durations_2x2: list[list[int | None]] = [[0, 10800], [10800, 0]]
+        distances_2x2: list[list[int | None]] = [[0, 145000], [145000, 0]]
+        sol_feasible = OrToolsRoutingSolver().solve(
+            req_feasible, durations_s=durations_2x2, distances_m=distances_2x2
+        )
+        assert sol_feasible.status == RouteStatus.FEASIBLE
+        assert sol_feasible.solver_status == SolverStatus.OPTIMAL
+
+        # 3. Genuinely infeasible case: explicit 6-hour dwell on mandatory stop inside 10:00-17:30 Day 1 window
+        # (passes single-venue window check at dispatch, but 3h drive + 6h dwell exceeds 17:30 closing in solver)
+        infeasible_palace = dict(eligible_palace, suggested_stay_minutes=360)
+        res_infeasible = dispatch_route_optimizer_node(
+            {
+                "execution_id": str(uuid.uuid4()),
+                "brief": brief,
+                "eligible_stops": [infeasible_palace],
+                "editorial_recommendations": [],
+                "excluded_candidates": [],
+            }
+        )
+        req_infeasible = RouteRequest.model_validate(res_infeasible["pending_tasks"][0]["payload"])
+        assert [s.name for s in req_infeasible.stops] == ["Bengaluru", "Mysuru Palace"]
+        sol_infeasible = OrToolsRoutingSolver().solve(
+            req_infeasible, durations_s=durations_2x2, distances_m=distances_2x2
+        )
+        assert sol_infeasible.status == RouteStatus.INFEASIBLE
+        assert sol_infeasible.solver_status == SolverStatus.INFEASIBLE
+
+    async def test_venue_locality_separates_page_navigation_from_genuine_wrong_city_and_other_venue_hours(
+        self,
+    ) -> None:
+        """Navigation/tour-package links do not reject valid local hours; wrong-city & other-venue hours still reject."""
+        from types import SimpleNamespace
+
+        from functions.evidence_collector.scrape import ScraplingExtractionAdapter
+        from functions.orchestrator.evidence.claim_ingestion import (
+            _match_observation_entity,
+            _scope_page_text_to_candidate,
+        )
+        from functions.orchestrator.evidence.hours_extraction import (
+            extract_structured_hours_from_text,
+        )
+
+        garden_cand = SimpleNamespace(
+            primary_name="Government Botanical Garden",
+            category="nature",
+            point_latitude=11.4188751,
+            point_longitude=76.7113878,
+            point=SimpleNamespace(lat=11.4188751, lng=76.7113878),
+        )
+        dest_cand = SimpleNamespace(
+            primary_name="Ooty",
+            category="destination",
+            point_latitude=11.4102,
+            point_longitude=76.6950,
+            point=SimpleNamespace(lat=11.4102, lng=76.6950),
+        )
+
+        # 1. HTML extraction strips <nav>/<header>/<footer>/<aside> tour-package boilerplate inside <body>
+        html = """
+        <html><body>
+          <header><nav>Bangalore to Ooty Tour Packages | Chennai to Ooty Tour Packages</nav></header>
+          <div>
+            <h1>Government Botanical Garden Ooty – Timings, Entry Fee, Location &amp; Hotels Nearby</h1>
+            <p class="address">Nilgiris, Vannarapettai, Ooty, Tamil Nadu</p>
+            <p>The Government Botanical Garden is open daily from 7:00 AM to 6:30 PM.</p>
+          </div>
+          <footer>Mysore to Ooty Tour Packages | Delhi to Ooty Tour Packages</footer>
+        </body></html>
+        """
+        obs_list, _ = await ScraplingExtractionAdapter().extract_page(
+            "https://www.tourdeooty.com/botanical-garden-ooty.html",
+            category="attraction",
+            html_override=html,
+        )
+        assert len(obs_list) == 1
+        extracted_exc = obs_list[0].excerpt_text
+        assert "Bangalore to Ooty Tour Packages" not in extracted_exc
+        assert "Mysore to Ooty Tour Packages" not in extracted_exc
+        matched_html, _, _ = _match_observation_entity(
+            obs_list[0], garden_cand, expected_cities={"Ooty", "Udhagamandalam"}  # type: ignore[arg-type]
+        )
+        assert matched_html is True
+        dest_rejected_html, _, _ = _match_observation_entity(
+            obs_list[0], dest_cand, expected_cities={"Ooty", "Udhagamandalam"}  # type: ignore[arg-type]
+        )
+        assert dest_rejected_html is False
+
+        # 2. Captured saved-page observations with div-based tour-package nav bars still match garden & reject dest
+        obs_ootytourism = {
+            "source_url": "https://ootytourism.co.in/ooty-botanical-gardens",
+            "extraction_method": "SCRAPLING_HTTP",
+            "excerpt_text": (
+                "Home Places to Visit Tour Packages 1 Day Mysore to Ooty Tour by Cab "
+                "One Day Ooty Trip from Coimbatore by Cab Botanical Gardens Ooty (Timings, Entry Fee) "
+                "Ooty Botanical Gardens Address : Nilgiris, Vannarapettai , Ooty , Tamil Nadu , 643002 , India "
+                "Ooty Botanical Gardens Timings Monday 7:00 am – 6:30 pm Sunday 7:00 am – 6:30 pm "
+                "The Government Botanical Garden in Ooty is open from 7 in the morning till 6:30 in the evening."
+            ),
+            "artifact_ref": {
+                "title": "Botanical Gardens Ooty (Timings, Entry Fee, Entrance Ticket Cost)",
+                "page_title": "Botanical Gardens Ooty (Timings, Entry Fee, Entrance Ticket Cost)",
+                "address": "Nilgiris, Vannarapettai",
+                "city_hint": "Ooty",
+                "category": "attraction",
+                "purpose": "hours",
+            },
+        }
+        obs_tourdeooty = {
+            "source_url": "https://www.tourdeooty.com/botanical-garden-ooty.html",
+            "extraction_method": "SCRAPLING_HTTP",
+            "excerpt_text": (
+                "Home Tour Packages Citywise Coimbatore to Ooty Tour Packages Bangalore to Ooty Tour Packages "
+                "Mysore to Ooty Tour Packages Chennai to Ooty Tour Packages Delhi to Ooty Tour Packages "
+                "Government Botanical Garden Ooty – Timings, Entry Fee, Location & Hotels Nearby "
+                "The Botanical Garden Ooty, officially known as the Government Botanical Garden, "
+                "Monday to Sunday 7:00 AM to 6:30 PM. Nearest Airport: Coimbatore (90 km)."
+            ),
+            "artifact_ref": {
+                "title": "Government Botanical Garden Ooty\n – Timings, Entry Fee, Location & Hotels Nearby",
+                "page_title": "Government Botanical Garden Ooty\n – Timings, Entry Fee, Location & Hotels Nearby",
+                "category": "attraction",
+                "purpose": "hours",
+            },
+        }
+        for saved_obs in (obs_ootytourism, obs_tourdeooty):
+            m_g, _, _ = _match_observation_entity(
+                saved_obs, garden_cand, expected_cities={"Ooty", "Udhagamandalam"}  # type: ignore[arg-type]
+            )
+            m_d, _, _ = _match_observation_entity(
+                saved_obs, dest_cand, expected_cities={"Ooty", "Udhagamandalam"}  # type: ignore[arg-type]
+            )
+            assert m_g is True
+            assert m_d is False
+            h = extract_structured_hours_from_text(str(saved_obs["excerpt_text"]))
+            assert h is not None and h.opens == "07:00" and h.closes == "18:30"
+
+        # 3. Genuine wrong-city evidence in title, address, city_hint, or venue content must still be rejected
+        for wrong_obs in (
+            {
+                "source_url": "https://example.com/bengaluru-garden",
+                "extraction_method": "SCRAPLING_HTTP",
+                "excerpt_text": "Government Botanical Garden is open 6:00 AM to 6:00 PM.",
+                "artifact_ref": {"page_title": "Government Botanical Garden Bangalore", "purpose": "hours"},
+            },
+            {
+                "source_url": "https://example.com/lalbagh",
+                "extraction_method": "SCRAPLING_HTTP",
+                "excerpt_text": "Government Botanical Garden is open 6:00 AM to 6:00 PM.",
+                "artifact_ref": {"page_title": "Government Botanical Garden", "address": "Mavalli, Bengaluru", "purpose": "hours"},
+            },
+            {
+                "source_url": "https://example.com/multi-city-hint",
+                "extraction_method": "SCRAPLING_HTTP",
+                "excerpt_text": "Government Botanical Garden is open 6:00 AM to 6:00 PM.",
+                "artifact_ref": {"page_title": "Government Botanical Garden", "city_hint": "Ooty, Bangalore", "purpose": "hours"},
+            },
+            {
+                "source_url": "https://example.com/visit-to-wrong-city",
+                "extraction_method": "SCRAPLING_HTTP",
+                "excerpt_text": "Government Botanical Garden Ooty guide. Plan a visit to Bangalore after your trip. Open 6:00 AM to 6:00 PM.",
+                "artifact_ref": {"page_title": "Government Botanical Garden", "purpose": "hours"},
+            },
+            {
+                "source_url": "https://example.com/content-wrong-city",
+                "extraction_method": "SCRAPLING_HTTP",
+                "excerpt_text": "Government Botanical Garden is located in Bangalore, Karnataka. Open 6:00 AM to 6:00 PM.",
+                "artifact_ref": {"page_title": "Government Botanical Garden", "purpose": "hours"},
+            },
+        ):
+            m_wrong, _, _ = _match_observation_entity(
+                wrong_obs, garden_cand, expected_cities={"Ooty", "Udhagamandalam"}  # type: ignore[arg-type]
+            )
+            assert m_wrong is False
+
+        # 4. Hours belonging to a different venue on the same page must not attach to Government Botanical Garden
+        multi_venue_text = (
+            "Government Rose Garden is open 8:30 AM to 6:00 PM daily. "
+            "Government Botanical Garden is a scenic landmark in Ooty."
+        )
+        scoped = _scope_page_text_to_candidate(multi_venue_text, "Government Botanical Garden")
+        h_scoped = extract_structured_hours_from_text(scoped)
+        assert h_scoped is None
+
+
 
 

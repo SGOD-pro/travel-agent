@@ -207,3 +207,42 @@ Previous verification reports for Slices 1 through 6 proved contract compliance,
   - Ooty E2E: `bengaluru_ooty_hitl_pause_final.json`, `bengaluru_ooty_hitl_resumed_final.json`
   - Standalone optimizer: `standalone_optimizer_mysuru_final.json`
   - Raniganj → Ooty: `raniganj_ooty_final.json`
+
+### Mysuru Required-Stop Scheduling Infeasibility Fix (2026-11-27) — PASS
+- **Baseline & Comparison**:
+  - `v7` (`03273f42-69ae-4cfa-9a7b-b7b6b0680950`, `route_id: dc0129f4-cb00-4ffb-a915-f72b90e43f01`) dispatched `[Bengaluru (ORIGIN, mv=True, dwell=0), Mysuru Palace (DESTINATION, mv=True, dwell=3600s, 04:30Z–12:00Z / 10:00–17:30 IST)]` and solved feasibly.
+  - Both final infeasible runs (`2291a2c6-f32f-4de9-9b8f-6a4e503243f8` and `d8b70438-6615-4972-867f-ba6ee4c22413`) also injected `[1] Mysuru` (`DESTINATION`, `mv=True`, `dwell=21600s` [6h from `d.stay_days * 180 * 60` heuristic in `graph.py:495,1499`, not an explicit traveler constraint], `coords=(12.2958, 76.6394)`, `win=04:30Z–12:00Z`) because `claim_ingestion._match_observation_entity` matched single-token `category="destination"` candidate `Mysuru` against `https://mysorepalace.karnataka.gov.in/timings.html` (`page_title: "Mysuru Palace Timings"` via `"palace"` in `ALLOWED_VENUE_INFO_TOKENS`, `min_shared=1`, and `excerpt_matches`). Combined Day 1 demand (`~3h` drive + `6h` + `1h` = `~10h`) exceeded the `7.5h` `10:00–17:30 IST` window, making the solver `INFEASIBLE`.
+- **Root-Cause Fix (`backend/src/functions/orchestrator/evidence/claim_ingestion.py`)**:
+  - Updated `_match_observation_entity` so `category == "destination"` candidates never match venue-scoped purposes (`hours`, `attractions`, `hidden_places`, `dining`, `lodging`) or non-`destination` categories, cannot use `_scraped_title_compatible()` or `ALLOWED_VENUE_INFO_TOKENS` subset matching against multi-token venue titles, and cannot match via `excerpt_matches`.
+- **Verification & Review (`APPROVE`)**:
+  - `ruff check` on `claim_ingestion.py` and `test_source_backed_attractions_and_hours.py`: `All checks passed!`
+  - `mypy backend/src/functions/orchestrator/evidence/claim_ingestion.py`: `Success: no issues found in 1 source file`
+  - `pytest` across 8 unit & PostgreSQL integration suites (`test_source_backed_attractions_and_hours.py`, `test_optimizer_dispatch_semantics.py`, `test_route_optimizer_production_regressions.py`, `test_route_optimizer_overnight_boundaries.py`, `test_candidate_corridor_and_eligibility.py`, `test_destination_research_coverage.py`, `test_optimizer_dispatch_integration.py`, `test_source_backed_hours_postgres.py`): `112 passed in 102.22s` (includes `test_destination_centroid_does_not_hijack_venue_hours_or_make_2day_trip_infeasible` covering destination-centroid rejection, feasible 2-day Bengaluru → Mysuru solve, and genuinely infeasible 6h explicit-dwell case).
+  - Live HITL Replay (`52c9d4a4-8d97-4e87-96dc-1287590a5a05`, Trip `ba3758ba-d4e2-4b3e-bcc0-7ba01c841dc2`, `route_id: 310aef7a-6a88-4703-8d7a-09414770dc22`, `live_serpapi` + `live_valhalla` `http://localhost:8002`, LAYA off): `Brief destination Mysuru lacks verified existence evidence; retained in editorial recommendations`; `Final status: SUCCEEDED`, `routes.solver_status: FEASIBLE` (`status: PARTIAL`), `Mysuru Palace` scheduled `2026-11-28T12:47:42+05:30` to `2026-11-28T13:47:42+05:30` IST.
+  - Artifacts: `bengaluru_mysuru_e2e_pause_v2.json`, `bengaluru_mysuru_e2e_resumed_v2.json`.
+  - Fresh `pro` Senior Code Reviewer verdict: **APPROVE**.
+
+### Venue Locality Separation from Page Navigation & Live Mysuru/Ooty Replays (2026-11-27) — PASS (Ooty Hours Closed) / PENDING (Mysuru Live Hours)
+- **Tested Commit**: `6ebd7258c86853b3687878809912e89ddbbfa930` (with approved Mysuru destination-centroid fix and pre-existing `backend/scripts/rerouting_verification_result.json` preserved).
+- **Saved-Page Reproduction (`44a12723-4e93-451a-a448-2fe2b7e8ba47`)**:
+  - `ootytourism.co.in/ooty-botanical-gardens` (`city_hint: "Ooty"`, `address: "Nilgiris, Vannarapettai"`) and `tourdeooty.com/botanical-garden-ooty.html` both clearly identify `Government Botanical Garden` in Ooty and state `07:00–18:30` daily hours.
+  - Extraction (`scrape.py:608-617`) called `main_elem.get_all_text()` without excluding `<nav>`/`<header>`/`<footer>`/`<aside>`, and `_has_conflicting_city` (`claim_ingestion.py`) did not honor structured `city_hint` or exempt origin-to-destination tour-package navigation links (`"1 Day Mysore to Ooty Tour by Cab"`, `"One Day Ooty Trip from Coimbatore by Cab"`, `"Bangalore to Ooty Tour Packages"`), causing false wrong-city rejections.
+- **Root-Cause Fix**:
+  - `backend/src/functions/evidence_collector/scrape.py` (`extract_page`): passed `ignore_tags=("script", "style", "nav", "header", "footer", "aside")` to `main_elem.get_all_text(...)`.
+  - `backend/src/functions/orchestrator/evidence/claim_ingestion.py` (`_has_conflicting_city`, `_match_observation_entity`): validated `city_hint` with word boundaries against both `norm_expected` and `conflicting_pool` before trusting it; exempted `{city} to {expected} ... tour/trip/package` and `(tour|trip|package|cab|taxi|visit) (from|via) {city}` navigation links when `has_expected_in_doc` is True; kept `(?:from|via)` only (still rejecting `"visit to Bangalore"`); widened `win` to `m.end() + 80`; and blocked `cand_cat == "destination"` from `food` or `art_ref["hours"]`/`"timings"`.
+- **Static & Test Suites**:
+  - `ruff check` on `scrape.py`, `claim_ingestion.py`, `test_source_backed_attractions_and_hours.py`: `All checks passed!`
+  - `mypy backend/src/functions/evidence_collector/scrape.py backend/src/functions/orchestrator/evidence/claim_ingestion.py`: `Success: no issues found in 2 source files`
+  - `pytest` across 7 unit & PostgreSQL integration suites (`test_place_extraction.py`, `test_source_backed_attractions_and_hours.py`, `test_optimizer_dispatch_semantics.py`, `test_candidate_corridor_and_eligibility.py`, `test_source_backed_hours_postgres.py`, `test_source_backed_hidden_places_postgres.py`, `test_optimizer_dispatch_integration.py`): `79 passed in 31.97s` (plus reviewer run across 9 suites: `164 passed in 21.66s`).
+- **Live HITL Replays (`live_bedrock`, `live_open_meteo`, `live_serpapi`, `live_valhalla` `http://localhost:8002`, LAYA off)**:
+  - **Bengaluru → Ooty (`v14`, Job `1658788e-fb86-4a3b-89b4-c5eb35f564b3`, Trip `05e10f53-b19d-4b46-8214-540bca464b2b`, Route `8c184e26-2001-4269-b61b-de35a82406af`)**:
+    - Lookup: **PASS** (`Government Botanical Garden` `ATTRACTION VERIFIED`; `Ooty` centroid has `0` claims).
+    - Routing: **PASS** (scheduled Stop 6 `2026-12-05T16:48:33+05:30` to `2026-12-05T17:48:33+05:30` IST).
+    - Verified Hours: **PASS** (`HOURS VERIFIED` `07:00–18:30` from `https://ootytourism.co.in/ooty-botanical-gardens`, `must_visit_conflicts: []`, `status: ready_for_approval`; `16:48:33–17:48:33 IST` fits `07:00–18:30 IST`).
+    - Artifacts: `bengaluru_ooty_hitl_pause_v14.json`, `bengaluru_ooty_hitl_resumed_v14.json`.
+  - **Bengaluru → Mysuru (`v3`, Job `63334651-10f3-447c-a8c0-495291853116`, Trip `de882754-1763-4802-9299-18ca38c0360a`, Route `fc283566-bbfb-4a9e-a6c2-1ce1af60e346`)**:
+    - Lookup: **PASS** (`Mysuru Palace` `ATTRACTION VERIFIED`; `Mysuru` centroid has `0` claims, no mandatory city-centroid stop created).
+    - Routing: **PASS** (`route_status: FEASIBLE`, `Mysuru Palace` scheduled `2026-11-28T14:51:41+05:30` to `2026-11-28T15:51:41+05:30` IST).
+    - Verified Hours: **PENDING** (`HOURS_ASSUMED` in `must_visit_conflicts` on `https://mysorepalace.karnataka.gov.in/`, `status: partial` honestly preserved).
+    - Artifacts: `bengaluru_mysuru_e2e_pause_v3.json`, `bengaluru_mysuru_e2e_resumed_v3.json`.
+- **Fresh `pro` Senior Code Reviewer (`/check review`)**: **APPROVE**.

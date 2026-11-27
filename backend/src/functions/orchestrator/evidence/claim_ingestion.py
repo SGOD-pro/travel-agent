@@ -427,10 +427,17 @@ def _has_conflicting_city(
     excerpt = str(_obs_attr(obs, "excerpt_text") or "").strip().lower()
 
     # Reject immediately if structured city_hint explicitly names a non expected city
-    if city_hint and not any(exp in city_hint or city_hint in exp for exp in norm_expected):
-        return True
-
+    city_hint_matches_expected = bool(
+        city_hint
+        and any(re.search(rf"\b{re.escape(exp)}\b", city_hint) for exp in norm_expected)
+    )
     conflicting_pool = KNOWN_CONFLICTING_CITIES - norm_expected
+    city_hint_has_conflict = bool(
+        city_hint
+        and any(re.search(rf"\b{re.escape(city)}\b", city_hint) for city in conflicting_pool)
+    )
+    if city_hint and (city_hint_has_conflict or not city_hint_matches_expected):
+        return True
     if address:
         for city in conflicting_pool:
             if re.search(rf"\b{re.escape(city)}\b", address):
@@ -452,6 +459,15 @@ def _has_conflicting_city(
             if re.search(rf"\b{re.escape(city)}\b", obs_title):
                 return True
 
+    if city_hint_matches_expected and not city_hint_has_conflict:
+        for city in conflicting_pool:
+            if re.search(
+                rf"\b(?:(?:vs\.?|versus)\s+{re.escape(city)}|{re.escape(city)}\s+(?:vs\.?|versus))\b",
+                excerpt,
+            ):
+                return True
+        return False
+
     has_expected_in_doc = any(
         re.search(rf"\b{re.escape(exp)}\b", f"{city_hint} {obs_title} {excerpt}")
         for exp in norm_expected
@@ -459,11 +475,18 @@ def _has_conflicting_city(
     access_transit_re = re.compile(
         r"\b(?:nearest|closest)\s+(?:airport|railway|rail|station|bus)\b"
     )
+    expected_alt = "|".join(re.escape(exp) for exp in sorted(norm_expected))
     for city in conflicting_pool:
+        nav_pkg_re = re.compile(
+            rf"(?:\b{re.escape(city)}\s+to\s+(?:{expected_alt})\b(?:\s+\w+){{0,3}}\s*\b(?:tour|tours|trip|trips|package|packages|cab|bus|taxi)\b"
+            rf"|\b(?:tour|tours|trip|trips|package|packages|cab|taxi|visit)\s+(?:from|via)\s+{re.escape(city)}\b)",
+            re.IGNORECASE,
+        )
         for m in re.finditer(rf"\b{re.escape(city)}\b", excerpt):
-            win = excerpt[max(0, m.start() - 65) : min(len(excerpt), m.end() + 45)]
+            win = excerpt[max(0, m.start() - 65) : min(len(excerpt), m.end() + 80)]
             if has_expected_in_doc and (
                 access_transit_re.search(win)
+                or nav_pkg_re.search(win)
                 or re.search(
                     rf"\b(?:buses?|trains?|flights?|airport|highway)\s+(?:from|to|via)\s+(?:[a-z]+\s+and\s+)?{re.escape(city)}\b",
                     win,
@@ -558,6 +581,15 @@ def _match_observation_entity(
         "police",
         "school",
     }
+    if cand_cat == "destination":
+        obs_purposes = extract_observation_purposes(art_ref)
+        if obs_purposes & {"hours", "attractions", "hidden_places", "dining", "lodging", "food"}:
+            return False, False, None
+        if art_category and art_category != "destination":
+            return False, False, None
+        if isinstance(art_ref, dict) and (art_ref.get("hours") or art_ref.get("timings")):
+            return False, False, None
+
     if cand_cat in ("attraction", "heritage", "monument", "nature", "sightseeing"):
         if art_category in incompatible_categories or any(
             t in incompatible_categories for t in art_types
@@ -636,6 +668,8 @@ def _match_observation_entity(
                     allowed_extras.update(_normalize_name(ec).split())
 
             def _scraped_title_compatible() -> bool:
+                if cand_cat == "destination":
+                    return False
                 cand_set = set(cand_tokens)
                 tokens_to_check = extra_in_entity if len(cand_tokens) <= len(entity_tokens) else entity_tokens
                 unexplained = {
@@ -653,7 +687,7 @@ def _match_observation_entity(
                 return not unexplained and shared_count >= min_shared
 
             if len(cand_tokens) < len(entity_tokens):
-                if len(cand_tokens) < 2 or not extra_in_entity.issubset(allowed_extras):
+                if cand_cat == "destination" or len(cand_tokens) < 2 or not extra_in_entity.issubset(allowed_extras):
                     if not is_page_observation or not _scraped_title_compatible():
                         return False, False, None
                 elif set(cand_tokens).issubset(set(entity_tokens)):
@@ -661,7 +695,7 @@ def _match_observation_entity(
 
             # Candidate name has more words than entity:
             elif len(cand_tokens) > len(entity_tokens):
-                if len(entity_tokens) < 2 or not extra_in_cand.issubset(allowed_extras):
+                if cand_cat == "destination" or len(entity_tokens) < 2 or not extra_in_cand.issubset(allowed_extras):
                     if not is_page_observation or not _scraped_title_compatible():
                         return False, False, None
                 elif set(entity_tokens).issubset(set(cand_tokens)):
@@ -673,7 +707,7 @@ def _match_observation_entity(
                     return False, False, None
 
     excerpt_matches = False
-    if not title_matches and excerpt and (not entity_norm or is_page_observation):
+    if not title_matches and excerpt and cand_cat != "destination" and (not entity_norm or is_page_observation):
         # Check text observations when untitled or when matching attributable scraped page content
         if cand_norm in excerpt_lower or cand_name.lower() in excerpt_lower:
             if not _is_casual_mention(excerpt):

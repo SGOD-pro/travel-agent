@@ -607,7 +607,9 @@ class ScraplingExtractionAdapter(WebExtractionPort):
         main_elem = page.css("main, article, .content, #content, body").first
         raw_text = (
             (
-                main_elem.get_all_text()
+                main_elem.get_all_text(
+                    ignore_tags=("script", "style", "nav", "header", "footer", "aside")
+                )
                 if hasattr(main_elem, "get_all_text")
                 else getattr(main_elem, "text", "")
             )
