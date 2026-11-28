@@ -291,3 +291,23 @@ Previous verification reports for Slices 1 through 6 proved contract compliance,
   - `mypy` on `routing.py`, `graph.py`, `replan.py`, `multimodal.py`, `service.py`, `solver.py`, `test_optimizer_dispatch_semantics.py`: `Success: no issues found in 7 source files`
   - `pytest` across 8 unit & PostgreSQL integration suites (reviewer run): `85 passed in 147.88s` (`test_optimizer_dispatch_semantics.py` `13 passed` including Day 2 distribution, empty Day 2 validity, worker hydration, multimodal pedestrian, and replan hydration).
 - **Fresh `pro` Senior Code Reviewer (`/check review`)**: **APPROVE**.
+
+### SWENA Multi-Agent Trip Planner and Route Optimizer Demos Rehearsal at `6ed2b99f` (2026-11-28) — PASS (Demo Ready)
+- **Tested SHA**: `6ed2b99fee724dbcf1ad65f153d5a3c2f64fabed` (`main`, pre-existing `backend/scripts/rerouting_verification_result.json` modification preserved).
+- **Demo Readiness Verdict**: **PASS** (both demo workflows proved through direct Python backend without UI or HTTP API).
+- **Spec 0007 Acceptance**: **IN PROGRESS** (live Ooty Botanical Garden hours pending on Wikipedia HTTP 429; live LAYA recorded as untested).
+- **Valhalla Preflight**: `http://localhost:8002` (tiles `southern-zone-latest.osm.pbf`) returned HTTP 200 for `/route` and `/sources_to_targets` covering Bengaluru, Mysuru, and Ooty.
+- **Demo 1 Rehearsal (Bengaluru → Ooty Multi-Agent Trip Planner)**:
+  - **Provider Modes**: `live_bedrock` (`apac.amazon.nova-lite-v1:0`), `live_open_meteo`, `live_serpapi`, `live_valhalla` (`http://localhost:8002`), LAYA off.
+  - **Pause Step**: Job `b2b13b9a-57c6-4294-9200-5352a0e46309`, Trip `df5e0537-f25f-4a40-8cfe-b25c7fafc541`, status `WAITING_USER`, question `travel_dates` persisted in database. Artifact: `bengaluru_ooty_demo_pause.json`.
+  - **Resume Step**: Resumed same job `b2b13b9a-57c6-4294-9200-5352a0e46309` with travel dates `2026-12-05` to `2026-12-06`. Status: `SUCCEEDED`. Route ID: `ff094795-5f0f-4ee4-bde2-60349f1b7bac`, `route_status: FEASIBLE`, proposal `status: partial` (honest degradation due to unverified hours).
+  - **Multi-Day Pacing**: Day 1 has 5 visits (`09:00:00..17:50:48 IST`). Overnight gap is 15 hours 09 minutes 12 seconds (`17:50:48 IST` to `09:00:00 IST`). Day 2 has 3 visits (`09:00:00..12:11:42 IST`) ending with Government Botanical Garden (`11:11:42..12:11:42 IST`).
+  - **Botanical Garden Sourced Hours Fit**: Scheduled visit (`11:11:42..12:11:42 IST`) fits inside the sourced official window (`07:00..18:30 IST`). Live hours check is recorded as **PENDING** because Wikipedia returned HTTP 429 during fetch.
+  - **Route Geometry**: GeoJSON LineString contains 5,826 coordinates.
+  - **Comparison with `v16`**: `v16` had 10 stops and 246 minutes travel time. Rehearsal produced 9 stops and 245 minutes travel time. Both achieve 0 dropped stops among eligible attractions, clear Day 1/Day 2 distribution, and identical overnight gap. Artifact: `bengaluru_ooty_demo_resumed.json`.
+- **Demo 2 Rehearsal (Standalone Route Optimizer on Mysuru Corridor)**:
+  - **Baseline Route**: Route `348b5733-0411-4c7a-9470-bc243ddc280f` (`FEASIBLE`, `OPTIMAL`, 5,598 meters, 460 seconds, 2 legs with hydrated geometry).
+  - **Road Closure Detour Replan**: Route `19b04697-a7eb-42a0-874a-9a16c0e0c604` (`FEASIBLE`, 5,843 meters, 488 seconds, version 2). Completed stop `St. Philomena Cathedral` preserved. Detour avoids closure polygon (`detour_avoids_closure: true`).
+  - **Inescapable Closure**: Route `5ed63a9d-957a-4727-b975-eeabb54588c4` (`INFEASIBLE`, version 3). 0 legs fabricated. Diagnostic warning: `"No valid detour found for mandatory stop 'Karanji Lake'"`.
+  - **Artifact**: `standalone_optimizer_demo_rehearsal.json`.
+- **Runbook**: Complete rehearsal runbook with CLI commands and reproduction details saved to `swena_demo_runbook.md`.
