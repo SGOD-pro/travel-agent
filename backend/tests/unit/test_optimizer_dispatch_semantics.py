@@ -775,3 +775,499 @@ class TestOptimizerDispatchSemantics:
         bad_stop = next(s for s in req.stops if s.name == "Bad Coordinate Sight")
         assert bad_stop.location.latitude == 0.0
         assert bad_stop.location.longitude == 0.0
+
+    def test_multiday_trip_distributes_stops_across_eligible_days_and_allows_empty_day(self) -> None:
+        """2-day trip dispatches daily windows across both days without overnight visits or forced Day 2 stops."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from contracts.routing import RouteStatus
+        from functions.route_optimizer.solver import OrToolsRoutingSolver
+
+        ist = ZoneInfo("Asia/Kolkata")
+        exec_id = uuid.uuid4()
+        brief_2day = {
+            "origin_name": "Bengaluru",
+            "origin_lat": 12.9716,
+            "origin_lng": 77.5946,
+            "destinations": [
+                {
+                    "name": "Ooty",
+                    "latitude": 11.4102,
+                    "longitude": 76.6950,
+                    "stay_days": 2,
+                    "confidence": 1.0,
+                }
+            ],
+            "must_visit_places": ["Government Botanical Garden"],
+            "start_date": "2026-12-05",
+            "end_date": "2026-12-06",
+            "timezone": "Asia/Kolkata",
+            "travelers": 2,
+            "rooms": 1,
+            "budget": {"amount": "15000.00", "currency": "INR"},
+            "preferred_modes": ["car_petrol"],
+        }
+
+        garden = {
+            "primary_name": "Government Botanical Garden",
+            "category": "nature",
+            "point": {"lat": 11.4188, "lng": 76.7113},
+            "suggested_stay_minutes": 60,
+            "is_must_visit": True,
+            "existence_status": "VERIFIED",
+            "hours_status": "VERIFIED_HOURS",
+            "is_hours_assumed": False,
+            "hours_details": {
+                "opens": "07:00",
+                "closes": "18:30",
+                "open_visit_dates": [
+                    {"date": "2026-12-05", "opens": "07:00", "closes": "18:30"},
+                    {"date": "2026-12-06", "opens": "07:00", "closes": "18:30"},
+                ],
+            },
+        }
+        other_stops = [
+            {
+                "primary_name": f"Ooty Sight {i}",
+                "category": "attraction",
+                "point": {"lat": 11.41 + i * 0.005, "lng": 76.70 + i * 0.005},
+                "suggested_stay_minutes": 60,
+                "existence_status": "VERIFIED",
+                "hours_status": "HOURS_ASSUMED",
+                "is_hours_assumed": True,
+            }
+            for i in range(1, 8)
+        ]
+        # Pin one stop explicitly to Day 1
+        other_stops[0]["visit_date"] = "2026-12-05"
+
+        res = dispatch_route_optimizer_node(
+            {
+                "execution_id": str(exec_id),
+                "brief": brief_2day,
+                "eligible_stops": [garden, *other_stops],
+                "editorial_recommendations": [],
+                "excluded_candidates": [],
+            }
+        )
+        req = RouteRequest.model_validate(res["pending_tasks"][0]["payload"])
+        assert len(req.stops) == 9  # Bengaluru + 8 Ooty stops
+        garden_stop = next(s for s in req.stops if s.name == "Government Botanical Garden")
+        pinned_stop = next(s for s in req.stops if s.name == "Ooty Sight 1")
+        unpinned_stop = next(s for s in req.stops if s.name == "Ooty Sight 2")
+        assert len(garden_stop.daily_windows) == 2
+        assert len(unpinned_stop.daily_windows) == 2
+        assert pinned_stop.daily_windows == []
+
+        # Matrix: Bengaluru <-> any Ooty stop = 13200s (3h40m), between Ooty stops = 300s (5m)
+        n = len(req.stops)
+        durations_s: list[list[int | None]] = [
+            [0 if i == j else (13200 if i == 0 or j == 0 else 300) for j in range(n)]
+            for i in range(n)
+        ]
+        distances_m: list[list[int | None]] = [
+            [0 if i == j else (270000 if i == 0 or j == 0 else 2000) for j in range(n)]
+            for i in range(n)
+        ]
+
+        sol = OrToolsRoutingSolver().solve(req, durations_s=durations_s, distances_m=distances_m)
+        assert sol.status == RouteStatus.FEASIBLE
+        assert len(sol.stops) == 9  # Zero dropped stops: overflow uses Day 2
+
+        day1_stops = [
+            s for s in sol.stops[1:]
+            if s.planned_arrival_at and s.planned_arrival_at.astimezone(ist).date().isoformat() == "2026-12-05"
+        ]
+        day2_stops = [
+            s for s in sol.stops[1:]
+            if s.planned_arrival_at and s.planned_arrival_at.astimezone(ist).date().isoformat() == "2026-12-06"
+        ]
+        assert len(day1_stops) >= 4
+        assert len(day2_stops) >= 2
+        # Explicit Day 1 stop stays on Day 1
+        assert any(s.name == "Ooty Sight 1" for s in day1_stops)
+        # No overnight visits (all Day 2 stops start >= 07:00 IST and finish <= 18:30 IST)
+        for s in day2_stops:
+            assert s.planned_arrival_at is not None and s.planned_departure_at is not None
+            arr_ist = s.planned_arrival_at.astimezone(ist)
+            dep_ist = s.planned_departure_at.astimezone(ist)
+            assert arr_ist >= datetime(2026, 12, 6, 7, 0, tzinfo=ist)
+            assert dep_ist <= datetime(2026, 12, 6, 18, 30, tzinfo=ist)
+
+        # Empty Day 2 is valid when a 2-day trip has only 1 stop
+        res_single = dispatch_route_optimizer_node(
+            {
+                "execution_id": str(uuid.uuid4()),
+                "brief": brief_2day,
+                "eligible_stops": [garden],
+                "editorial_recommendations": [],
+                "excluded_candidates": [],
+            }
+        )
+        req_single = RouteRequest.model_validate(res_single["pending_tasks"][0]["payload"])
+        sol_single = OrToolsRoutingSolver().solve(
+            req_single,
+            durations_s=[[0, 13200], [13200, 0]],
+            distances_m=[[0, 270000], [270000, 0]],
+        )
+        assert sol_single.status == RouteStatus.FEASIBLE
+        assert len(sol_single.stops) == 2
+        assert sol_single.stops[1].planned_arrival_at is not None
+        assert sol_single.stops[1].planned_arrival_at.astimezone(ist).date().isoformat() == "2026-12-05"
+
+    async def test_worker_hydration_honors_daily_windows_for_day2_and_detour_overflow(self) -> None:
+        """_hydrate_leg_geometries_and_revalidate_schedule respects daily_windows on Day 2 and detour drops."""
+        from datetime import UTC, datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock
+
+        from contracts.routing import (
+            DailyWindow,
+            OptimizedRoute,
+            Point,
+            RouteLegOutput,
+            RouteObjective,
+            RouteRequest,
+            RouteStatus,
+            RouteStopInput,
+            ScheduledStopOutput,
+            SolverStatus,
+            StopType,
+            TrafficBasis,
+        )
+        from contracts.trips import TransportMode
+        from functions.route_optimizer.service import RouteOptimizerWorkerService
+        from functions.route_optimizer.valhalla import ValhallaRouteResult
+
+        day1_ws = datetime(2026, 12, 5, 3, 30, tzinfo=UTC)  # 09:00 IST
+        day1_we = datetime(2026, 12, 5, 12, 30, tzinfo=UTC)  # 18:00 IST
+        day2_ws = datetime(2026, 12, 6, 3, 30, tzinfo=UTC)  # 09:00 IST
+        day2_we = datetime(2026, 12, 6, 12, 30, tzinfo=UTC)  # 18:00 IST
+        dws = [
+            DailyWindow(window_start=day1_ws, window_end=day1_we),
+            DailyWindow(window_start=day2_ws, window_end=day2_we),
+        ]
+
+        origin = RouteStopInput(
+            id=uuid.uuid4(),
+            name="Origin",
+            location=Point(latitude=11.41, longitude=76.70),
+            stop_type=StopType.ORIGIN,
+            dwell_seconds=0,
+        )
+        stop1 = RouteStopInput(
+            id=uuid.uuid4(),
+            name="Day1 Stop",
+            location=Point(latitude=11.42, longitude=76.71),
+            stop_type=StopType.DESTINATION,
+            is_must_visit=True,
+            window_start=day1_ws,
+            window_end=day1_we,
+            daily_windows=dws,
+            dwell_seconds=3600,
+        )
+        stop2 = RouteStopInput(
+            id=uuid.uuid4(),
+            name="Day2 Stop",
+            location=Point(latitude=11.43, longitude=76.72),
+            stop_type=StopType.DESTINATION,
+            is_must_visit=False,
+            window_start=day1_ws,
+            window_end=day1_we,
+            daily_windows=dws,
+            dwell_seconds=3600,
+        )
+
+        req = RouteRequest(
+            departure_at=day1_ws,
+            return_deadline=datetime(2026, 12, 6, 14, 30, tzinfo=UTC),
+            stops=[origin, stop1, stop2],
+            is_round_trip=False,
+            transport_mode=TransportMode.CAR_PETROL,
+        )
+
+        # Initial route arrives at Day1 Stop at 16:45 IST (11:15Z), finishes at 17:45 IST (12:15Z),
+        # so road arrival at Day2 Stop is 17:50 IST (12:20Z) -> waits overnight until Day 2 09:00 IST (03:30Z).
+        initial_route = OptimizedRoute(
+            status=RouteStatus.FEASIBLE,
+            solver_status=SolverStatus.OPTIMAL,
+            objective=RouteObjective.FASTEST,
+            departure_at=day1_ws,
+            stops=[
+                ScheduledStopOutput(
+                    id=origin.id,
+                    stop_id=origin.id,
+                    stop_order=0,
+                    name=origin.name,
+                    location=origin.location,
+                    stop_type=StopType.ORIGIN,
+                    planned_arrival_at=day1_ws,
+                    planned_departure_at=day1_ws,
+                ),
+                ScheduledStopOutput(
+                    id=stop1.id,
+                    stop_id=stop1.id,
+                    stop_order=1,
+                    name=stop1.name,
+                    location=stop1.location,
+                    stop_type=StopType.DESTINATION,
+                    is_must_visit=True,
+                    window_start=day1_ws,
+                    window_end=day1_we,
+                    daily_windows=dws,
+                    dwell_seconds=3600,
+                    planned_arrival_at=datetime(2026, 12, 5, 11, 15, tzinfo=UTC),
+                    planned_departure_at=datetime(2026, 12, 5, 12, 15, tzinfo=UTC),
+                ),
+                ScheduledStopOutput(
+                    id=stop2.id,
+                    stop_id=stop2.id,
+                    stop_order=2,
+                    name=stop2.name,
+                    location=stop2.location,
+                    stop_type=StopType.DESTINATION,
+                    is_must_visit=False,
+                    window_start=day2_ws,
+                    window_end=day2_we,
+                    daily_windows=dws,
+                    dwell_seconds=3600,
+                    planned_arrival_at=day2_ws,
+                    planned_departure_at=day2_ws + timedelta(seconds=3600),
+                ),
+            ],
+            legs=[
+                RouteLegOutput(
+                    leg_order=0,
+                    from_stop_id=origin.id,
+                    to_stop_id=stop1.id,
+                    from_stop_name=origin.name,
+                    to_stop_name=stop1.name,
+                    transport_mode=TransportMode.CAR_PETROL,
+                    departure_at=day1_ws,
+                    arrival_at=datetime(2026, 12, 5, 11, 15, tzinfo=UTC),
+                    distance_m=10000,
+                    travel_seconds=27900,
+                    traffic_basis=TrafficBasis.MODELED,
+                ),
+                RouteLegOutput(
+                    leg_order=1,
+                    from_stop_id=stop1.id,
+                    to_stop_id=stop2.id,
+                    from_stop_name=stop1.name,
+                    to_stop_name=stop2.name,
+                    transport_mode=TransportMode.CAR_PETROL,
+                    departure_at=datetime(2026, 12, 5, 12, 15, tzinfo=UTC),
+                    arrival_at=datetime(2026, 12, 5, 12, 20, tzinfo=UTC),
+                    distance_m=2000,
+                    travel_seconds=300,
+                    traffic_basis=TrafficBasis.MODELED,
+                ),
+            ],
+        )
+
+        # Case 1: Normal hydration keeps Day2 Stop on Day 2 (09:00-10:00 IST) with updated window_start/end
+        mock_valhalla = MagicMock()
+        mock_valhalla.route = AsyncMock(
+            side_effect=[
+                ValhallaRouteResult(total_distance_m=10000, total_travel_seconds=27900, legs=[], geometry={"type": "LineString", "coordinates": [[76.70, 11.41], [76.71, 11.42]]}),
+                ValhallaRouteResult(total_distance_m=2000, total_travel_seconds=300, legs=[], geometry={"type": "LineString", "coordinates": [[76.71, 11.42], [76.72, 11.43]]}),
+            ]
+        )
+        svc = RouteOptimizerWorkerService(session=MagicMock(), valhalla_client=mock_valhalla)
+        hydrated = await svc._hydrate_leg_geometries_and_revalidate_schedule(
+            initial_route=initial_route,
+            request=req,
+            client=mock_valhalla,
+            restrictions=None,
+        )
+        assert hydrated.status == RouteStatus.FEASIBLE
+        day2_out = hydrated.stops[2]
+        assert day2_out.planned_arrival_at == day2_ws
+        assert day2_out.planned_departure_at == day2_ws + timedelta(seconds=3600)
+        assert day2_out.window_start == day2_ws
+        assert day2_out.window_end == day2_we
+
+        # Case 2: Huge detour on leg 1 pushes arrival past Day 2 closing -> optional Day2 Stop is dropped
+        mock_valhalla.route = AsyncMock(
+            side_effect=[
+                ValhallaRouteResult(total_distance_m=10000, total_travel_seconds=27900, legs=[], geometry={"type": "LineString", "coordinates": [[76.70, 11.41], [76.71, 11.42]]}),
+                ValhallaRouteResult(total_distance_m=500000, total_travel_seconds=90000, legs=[], geometry={"type": "LineString", "coordinates": [[76.71, 11.42], [76.72, 11.43]]}),
+            ]
+        )
+        svc._solve_route_with_provider = AsyncMock(  # type: ignore[method-assign]
+            return_value=OptimizedRoute(
+                status=RouteStatus.FEASIBLE,
+                solver_status=SolverStatus.OPTIMAL,
+                objective=RouteObjective.FASTEST,
+                departure_at=day1_ws,
+                stops=initial_route.stops[:2],
+                legs=initial_route.legs[:1],
+            )
+        )
+        detoured = await svc._hydrate_leg_geometries_and_revalidate_schedule(
+            initial_route=initial_route,
+            request=req,
+            client=mock_valhalla,
+            restrictions=None,
+        )
+        assert detoured.status == RouteStatus.PARTIAL
+        assert len(detoured.dropped_stops) == 1
+        assert detoured.dropped_stops[0].name == "Day2 Stop"
+
+    async def test_multimodal_pedestrian_and_replan_hydration_honor_daily_windows_on_day2(self) -> None:
+        """Pedestrian multimodal branch and RouteReplanService._hydrate_new_legs honor Day 2 daily_windows."""
+        from datetime import UTC, datetime, timedelta
+        from unittest.mock import AsyncMock, MagicMock
+
+        from contracts.routing import (
+            DailyWindow,
+            OptimizedRoute,
+            Point,
+            RouteLegOutput,
+            RouteObjective,
+            RouteRequest,
+            RouteStatus,
+            RouteStopInput,
+            ScheduledStopOutput,
+            SolverStatus,
+            StopType,
+            TrafficBasis,
+        )
+        from contracts.trips import TransportMode
+        from functions.route_optimizer.multimodal import MultimodalTransitionService
+        from functions.route_optimizer.replan import RouteReplanService
+        from functions.route_optimizer.valhalla import ValhallaRouteResult
+
+        day1_ws = datetime(2026, 12, 5, 3, 30, tzinfo=UTC)
+        day1_we = datetime(2026, 12, 5, 12, 30, tzinfo=UTC)
+        day2_ws = datetime(2026, 12, 6, 3, 30, tzinfo=UTC)
+        day2_we = datetime(2026, 12, 6, 12, 30, tzinfo=UTC)
+        dws = [
+            DailyWindow(window_start=day1_ws, window_end=day1_we),
+            DailyWindow(window_start=day2_ws, window_end=day2_we),
+        ]
+
+        # 1. Pedestrian-only stop arriving late Day 1 waits overnight and completes on Day 2
+        origin = RouteStopInput(
+            id=uuid.uuid4(),
+            name="Origin",
+            location=Point(latitude=11.41, longitude=76.70),
+            stop_type=StopType.ORIGIN,
+            dwell_seconds=0,
+        )
+        ped_stop = RouteStopInput(
+            id=uuid.uuid4(),
+            name="Pedestrian Garden",
+            location=Point(latitude=11.42, longitude=76.71),
+            stop_type=StopType.DESTINATION,
+            is_must_visit=True,
+            is_pedestrian_only=True,
+            window_start=day1_ws,
+            window_end=day1_we,
+            daily_windows=dws,
+            dwell_seconds=3600,
+        )
+        mm_req = RouteRequest(
+            departure_at=datetime(2026, 12, 5, 12, 15, tzinfo=UTC),  # 17:45 IST Day 1
+            return_deadline=datetime(2026, 12, 6, 14, 30, tzinfo=UTC),
+            stops=[origin, ped_stop],
+            is_round_trip=False,
+            transport_mode=TransportMode.CAR_PETROL,
+        )
+        mock_valhalla = MagicMock()
+        mock_valhalla.route = AsyncMock(
+            return_value=ValhallaRouteResult(
+                total_distance_m=1500,
+                total_travel_seconds=600,
+                legs=[],
+                geometry={"type": "LineString", "coordinates": [[76.70, 11.41], [76.71, 11.42]]},
+            )
+        )
+        from geoalchemy2.shape import from_shape
+        from shapely.geometry import Point as ShapelyPoint
+
+        mm_svc = MultimodalTransitionService(valhalla_client=mock_valhalla)
+        hub_mock = MagicMock(
+            id=uuid.uuid4(),
+            primary_name="Garden Parking",
+            point=from_shape(ShapelyPoint(76.709, 11.419), srid=4326),
+        )
+        mm_svc.find_verified_parking_hub = AsyncMock(return_value=(hub_mock, 120.0))  # type: ignore[method-assign]
+        mm_route = await mm_svc.plan_multimodal_route(mm_req)
+        assert mm_route.status == RouteStatus.FEASIBLE
+        ped_out = next(s for s in mm_route.stops if s.name == "Pedestrian Garden")
+        assert ped_out.planned_arrival_at == day2_ws
+        assert ped_out.planned_departure_at == day2_ws + timedelta(seconds=3600)
+        assert ped_out.window_start == day2_ws
+        assert ped_out.window_end == day2_we
+        assert ped_out.daily_windows == dws
+
+        # 2. RouteReplanService._hydrate_new_legs preserves Day 2 active window
+        replan_svc = RouteReplanService()
+        sub_req = RouteRequest(
+            departure_at=datetime(2026, 12, 5, 12, 15, tzinfo=UTC),
+            return_deadline=datetime(2026, 12, 6, 14, 30, tzinfo=UTC),
+            stops=[origin, ped_stop.model_copy(update={"is_pedestrian_only": False})],
+            is_round_trip=False,
+            transport_mode=TransportMode.CAR_PETROL,
+        )
+        replan_init = OptimizedRoute(
+            status=RouteStatus.FEASIBLE,
+            solver_status=SolverStatus.OPTIMAL,
+            objective=RouteObjective.FASTEST,
+            departure_at=sub_req.departure_at,
+            stops=[
+                ScheduledStopOutput(
+                    id=origin.id,
+                    stop_id=origin.id,
+                    stop_order=0,
+                    name=origin.name,
+                    location=origin.location,
+                    stop_type=StopType.ORIGIN,
+                    planned_arrival_at=sub_req.departure_at,
+                    planned_departure_at=sub_req.departure_at,
+                ),
+                ScheduledStopOutput(
+                    id=ped_stop.id,
+                    stop_id=ped_stop.id,
+                    stop_order=1,
+                    name=ped_stop.name,
+                    location=ped_stop.location,
+                    stop_type=StopType.DESTINATION,
+                    is_must_visit=True,
+                    window_start=day2_ws,
+                    window_end=day2_we,
+                    daily_windows=dws,
+                    dwell_seconds=3600,
+                    planned_arrival_at=day2_ws,
+                    planned_departure_at=day2_ws + timedelta(seconds=3600),
+                ),
+            ],
+            legs=[
+                RouteLegOutput(
+                    leg_order=0,
+                    from_stop_id=origin.id,
+                    to_stop_id=ped_stop.id,
+                    from_stop_name=origin.name,
+                    to_stop_name=ped_stop.name,
+                    transport_mode=TransportMode.CAR_PETROL,
+                    departure_at=sub_req.departure_at,
+                    arrival_at=datetime(2026, 12, 5, 12, 25, tzinfo=UTC),
+                    distance_m=1500,
+                    travel_seconds=600,
+                    traffic_basis=TrafficBasis.MODELED,
+                )
+            ],
+        )
+        hydrated_replan = await replan_svc._hydrate_new_legs(
+            new_route_solution=replan_init,
+            sub_request=sub_req,
+            client=mock_valhalla,
+            restrictions=None,
+        )
+        assert hydrated_replan.status == RouteStatus.FEASIBLE
+        replan_out = hydrated_replan.stops[1]
+        assert replan_out.planned_arrival_at == day2_ws
+        assert replan_out.window_start == day2_ws
+        assert replan_out.window_end == day2_we
+        assert replan_out.daily_windows == dws

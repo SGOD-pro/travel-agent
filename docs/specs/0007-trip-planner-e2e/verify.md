@@ -223,7 +223,7 @@ Previous verification reports for Slices 1 through 6 proved contract compliance,
   - Fresh `pro` Senior Code Reviewer verdict: **APPROVE**.
 
 ### Venue Locality Separation from Page Navigation & Live Mysuru/Ooty Replays (2026-11-27) — PASS (Ooty Hours Closed) / PENDING (Mysuru Live Hours)
-- **Tested Commit**: `6ebd7258c86853b3687878809912e89ddbbfa930` (with approved Mysuru destination-centroid fix and pre-existing `backend/scripts/rerouting_verification_result.json` preserved).
+- **Tested Commit**: `6ebd7258c86853b3687878809912e89ddbbfa930` (later committed locally at `c55b86083991d2c63fb4393d6d267fe01d37a00b`; pre-existing `backend/scripts/rerouting_verification_result.json` preserved).
 - **Saved-Page Reproduction (`44a12723-4e93-451a-a448-2fe2b7e8ba47`)**:
   - `ootytourism.co.in/ooty-botanical-gardens` (`city_hint: "Ooty"`, `address: "Nilgiris, Vannarapettai"`) and `tourdeooty.com/botanical-garden-ooty.html` both clearly identify `Government Botanical Garden` in Ooty and state `07:00–18:30` daily hours.
   - Extraction (`scrape.py:608-617`) called `main_elem.get_all_text()` without excluding `<nav>`/`<header>`/`<footer>`/`<aside>`, and `_has_conflicting_city` (`claim_ingestion.py`) did not honor structured `city_hint` or exempt origin-to-destination tour-package navigation links (`"1 Day Mysore to Ooty Tour by Cab"`, `"One Day Ooty Trip from Coimbatore by Cab"`, `"Bangalore to Ooty Tour Packages"`), causing false wrong-city rejections.
@@ -245,4 +245,49 @@ Previous verification reports for Slices 1 through 6 proved contract compliance,
     - Routing: **PASS** (`route_status: FEASIBLE`, `Mysuru Palace` scheduled `2026-11-28T14:51:41+05:30` to `2026-11-28T15:51:41+05:30` IST).
     - Verified Hours: **PENDING** (`HOURS_ASSUMED` in `must_visit_conflicts` on `https://mysorepalace.karnataka.gov.in/`, `status: partial` honestly preserved).
     - Artifacts: `bengaluru_mysuru_e2e_pause_v3.json`, `bengaluru_mysuru_e2e_resumed_v3.json`.
+- **Fresh `pro` Senior Code Reviewer (`/check review`)**: **APPROVE**.
+
+### Mysuru Verified-Hours Acceptance Check at `c55b8608` (2026-11-27, v4) — PENDING
+- **Tested SHA**: `c55b86083991d2c63fb4393d6d267fe01d37a00b` (`main`, pre-existing `backend/scripts/rerouting_verification_result.json` preserved).
+- **v3/v4 vs v7 Search & Fetch Comparison**:
+  - In `v7` (`03273f42-69ae-4cfa-9a7b-b7b6b0680950`), live SerpAPI `hours` search returned `https://mysorepalace.karnataka.gov.in/timings.html` at **rank 1**, `SCRAPLING_HTTP` fetched it, and `HOURS` (`10:00–17:30`) was verified.
+  - In both `v3` (`63334651-10f3-447c-a8c0-495291853116`) and `v4` (`abeb589d-91b3-496f-9e29-debacf5255b8`), `https://mysorepalace.karnataka.gov.in/timings.html` was **absent from live SerpAPI `hours` search results** (only the homepage `https://mysorepalace.karnataka.gov.in/` appeared via `google_maps` `place_results`). SerpAPI returned `pikme.org/activity/mysore-palace-timings` (rank 1), `facebook.com/fb-answers/...` (rank 2), `guidetour.in/mysore-palace/` (rank 3), `traveltriangle.com/...` (rank 4), and `travelmarg.com/...` (rank 5). Both `pikme.org` and `guidetour.in` were fetched by `SCRAPLING_HTTP`, and neither contained extractable admission hours in its 4000-char excerpt (`extract_structured_hours_from_text(...) -> None`).
+- **Live Mysuru Replay (`v4`, Job `abeb589d-91b3-496f-9e29-debacf5255b8`, Trip `5af62d91-729f-4cb9-bda3-c1916e8410f7`, Route `88c0201f-d2fc-4c1f-8a24-47f4a1f5e71f`)**:
+  - **Provider Modes**: `live_bedrock`, `live_open_meteo`, `live_serpapi`, `live_valhalla` (`http://localhost:8002`, LAYA off).
+  - **Lookup**: **PASS** (`Mysuru Palace` `ATTRACTION VERIFIED`).
+  - **Centroid Guard**: **PASS** (`Mysuru` centroid has `0` claims and no mandatory city-centroid stop was created).
+  - **Routing**: **PASS** (`route_status: FEASIBLE`, `Mysuru Palace` scheduled `2026-11-28T14:51:41+05:30` to `2026-11-28T15:51:41+05:30` IST).
+  - **Truthful Degradation**: **PASS** (`status: partial`, `must_visit_conflicts` honestly reports `HOURS_ASSUMED` on `https://mysorepalace.karnataka.gov.in/`).
+  - **Live Verified Admission Hours**: **PENDING** (upstream SerpAPI `hours` search did not return `mysorepalace.karnataka.gov.in/timings.html`, and fetched alternates lacked hours).
+  - **Artifacts**: `bengaluru_mysuru_e2e_pause_v4.json`, `bengaluru_mysuru_e2e_resumed_v4.json`.
+
+### Controlled Replay of Saved `v7` Mysuru Hours Evidence on `c55b8608` (2026-11-27) — PASS (Controlled Replay)
+- **Tested SHA**: `c55b86083991d2c63fb4393d6d267fe01d37a00b`
+- **Replay Execution ID**: `a0cf01b7-6dfc-4f84-b1a2-7a22668ae0cb` (replaying saved `v7` `03273f42-69ae-4cfa-9a7b-b7b6b0680950` `source_observations` from `v7_saved_observations.json` through `CandidateRegistrationService`, `ingest_claims_from_observations`, `DeterministicEvidenceEligibilityGate`, `dispatch_route_optimizer_node`, and `OrToolsRoutingSolver` with local Valhalla `http://localhost:8002` and original `bengaluru_mysuru_e2e_brief.json` + `2026-11-28`..`2026-11-29` dates; no seeded claims or venue-specific rules).
+- **Claim & Centroid Guard**: `Mysuru Palace` received `ATTRACTION (VERIFIED)` and `HOURS (VERIFIED, 10:00–17:30)` from `https://mysorepalace.karnataka.gov.in/timings.html` (`"Official Website of GoK Corona Related Information ... Timings World Famous Mysuru Palace about Timings for Visitors Palace Entrance Timings: Everyday from 10.00 am..."`). `Mysuru` (`category="destination"`) had `0` claims and remained in `editorial_recommendations` (`eligible_stops: ["Mysuru Palace"]`).
+- **Optimizer Input**: `[Bengaluru (ORIGIN, is_must_visit=True, dwell=0), Mysuru Palace (DESTINATION, is_must_visit=True, dwell=3600s, window=2026-11-28T10:00:00+05:30..2026-11-28T17:30:00+05:30)]`.
+- **Solver Result**: `RouteStatus.FEASIBLE`, `SolverStatus.OPTIMAL`; `Mysuru Palace` scheduled `2026-11-28T10:41:27+05:30` to `2026-11-28T11:41:27+05:30` IST (fits `10:00–17:30 IST`).
+- **Artifact**: `bengaluru_mysuru_v7_controlled_replay.json`.
+
+### Multi-Day Itinerary Pacing Fix & Live Verification (2026-11-28) — PASS
+- **Baseline & Root Cause (`c55b86083991d2c63fb4393d6d267fe01d37a00b`)**:
+  - Saved `v7` (Mysuru) and `v8`/`v14` (Ooty) compressed all stops into Day 1 and returned `route_status: PARTIAL` (`2` dropped stops in Mysuru `v7`; `4` dropped stops in Ooty `v14`) with `0` visits on Day 2 because `_resolve_stop_window` in `graph.py` emitted only a single `visit_date` (`Day 1`) window, excluding Day 2 at dispatch despite `stay_days=2` and `return_deadline = Day 2 20:00 IST`.
+- **Root-Cause Fix**:
+  - `backend/src/contracts/routing.py`: Added `DailyWindow`, `_normalize_dt_utc`, `select_active_daily_window`, and `daily_windows` on `RouteStopInput` and `ScheduledStopOutput`.
+  - `backend/src/functions/orchestrator/graphs/trip_planner/graph.py`: Added `_build_day_window` and `_resolve_stop_daily_windows` (honoring explicit `visit_date`/`day_offset` single-day pins, expanding `stay_days` across `[brief.start_date..brief.end_date]` and `open_visit_dates`, and delegating `_resolve_stop_window` to `_build_day_window`), checking `dwell_s` against single-day max `win_len`.
+  - `backend/src/functions/route_optimizer/solver.py`: Enforced per-day windows via `CumulVar.RemoveInterval` for overnight closed gaps, deactivated infeasible optional stops via `ActiveVar.SetValue(0)`, used solver `CumulVar` for overnight wait, and updated `ScheduledStopOutput` active-day `window_start`/`window_end` and `daily_windows`.
+  - `backend/src/functions/route_optimizer/service.py`, `replan.py`, `multimodal.py`: Updated `_hydrate_leg_geometries_and_revalidate_schedule`, `RouteReplanService._hydrate_new_legs`, and both driving and pedestrian branches of `MultimodalTransitionService.plan_multimodal_route` to honor `daily_windows` via `select_active_daily_window`.
+- **Before vs After Live HITL Replays (`live_bedrock`, `live_open_meteo`, `live_serpapi`, `live_valhalla` `http://localhost:8002`, LAYA off)**:
+  - **Ooty (`v14` before vs `v16` after, Job `42868c70-0209-46e3-acc8-c3caea79026c`, Trip `6d21dbeb-7412-44c1-9ad0-7f9cf1dc4eb3`, Route `6cf209cb-a76a-4619-a3a0-4a1081cf15dc`)**:
+    - Before (`v14`): `route_status: PARTIAL`, Day 1 `5` visits (`300m` dwell, `09:00:00..17:48:33 IST`, `228m` travel), Day 2 `0` visits, `4` dropped stops.
+    - After (`v16`): `route_status: FEASIBLE`, `0` dropped stops (`+18m` travel across `4` rescued stops); Day 1 `5` visits (`300m` dwell, `09:00:00..17:50:48 IST`), overnight gap `17:50:48..09:00:00` (`15h09m12s`), Day 2 `4` visits (`240m` dwell, `09:00:00..13:12:59 IST`, ending with `Government Botanical Garden` `12:12:59..13:12:59 IST`).
+    - Artifacts: `bengaluru_ooty_hitl_pause_v16.json`, `bengaluru_ooty_hitl_resumed_v16.json`.
+  - **Mysuru (`v7` before vs `v6_paced` after, Job `a380082d-1bc1-421c-b79c-c30062b7cf32`, Trip `23d069f1-1555-4907-bff8-65a1c516e3e8`, Route `5de6cbc6-593a-4186-8d98-8b2b073c5aff`)**:
+    - Before (`v7`): `route_status: PARTIAL`, Day 1 `7` visits (`420m` dwell, `09:00:00..17:52:55 IST`, `112m` travel), Day 2 `0` visits, `2` dropped stops.
+    - After (`v6_paced`): `route_status: FEASIBLE`, `0` dropped stops (`+8m` travel); Day 1 `6` visits (`360m` dwell, `09:00:00..16:57:13 IST`), overnight gap `16:57:13..09:00:00` (`16h02m47s`), Day 2 `1` visit (`Regional Museum of Natural History Mysuru`, `60m` dwell, `09:00:00..10:00:00 IST`).
+    - Artifacts: `bengaluru_mysuru_e2e_pause_v6_paced.json`, `bengaluru_mysuru_e2e_resumed_v6_paced.json`.
+- **Static, Unit & Integration Checks (after final edit)**:
+  - `ruff check` on all 8 modified files: `All checks passed!`
+  - `mypy` on `routing.py`, `graph.py`, `replan.py`, `multimodal.py`, `service.py`, `solver.py`, `test_optimizer_dispatch_semantics.py`: `Success: no issues found in 7 source files`
+  - `pytest` across 8 unit & PostgreSQL integration suites (reviewer run): `85 passed in 147.88s` (`test_optimizer_dispatch_semantics.py` `13 passed` including Day 2 distribution, empty Day 2 validity, worker hydration, multimodal pedestrian, and replan hydration).
 - **Fresh `pro` Senior Code Reviewer (`/check review`)**: **APPROVE**.

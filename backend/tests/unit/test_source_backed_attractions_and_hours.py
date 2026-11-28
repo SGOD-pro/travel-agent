@@ -1454,9 +1454,9 @@ class TestItinerarySchedulingAndClosedDayHandling:
         assert sol_feasible.status == RouteStatus.FEASIBLE
         assert sol_feasible.solver_status == SolverStatus.OPTIMAL
 
-        # 3. Genuinely infeasible case: explicit 6-hour dwell on mandatory stop inside 10:00-17:30 Day 1 window
+        # 3. Genuinely infeasible case: explicit 6-hour dwell on mandatory stop pinned to Day 1 (10:00-17:30)
         # (passes single-venue window check at dispatch, but 3h drive + 6h dwell exceeds 17:30 closing in solver)
-        infeasible_palace = dict(eligible_palace, suggested_stay_minutes=360)
+        infeasible_palace = dict(eligible_palace, suggested_stay_minutes=360, visit_date="2026-11-28")
         res_infeasible = dispatch_route_optimizer_node(
             {
                 "execution_id": str(uuid.uuid4()),

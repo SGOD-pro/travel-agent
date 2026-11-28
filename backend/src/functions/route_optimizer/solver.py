@@ -29,6 +29,7 @@ from contracts.routing import (
     SolverStatus,
     TrafficBasis,
     VehicleFuelProfile,
+    select_active_daily_window,
 )
 from contracts.trips import TransportMode
 
@@ -275,6 +276,34 @@ class OrToolsRoutingSolver:
             if node_idx == -1:
                 continue
 
+            if s.daily_windows:
+                valid_ranges: list[tuple[int, int]] = []
+                for dw in sorted(s.daily_windows, key=lambda w: w.window_start):
+                    dw_s = max(0, int((_ensure_utc(dw.window_start) - dep_at).total_seconds()))
+                    dw_e = int((_ensure_utc(dw.window_end) - dep_at).total_seconds()) - s.dwell_seconds
+                    if dw_e >= dw_s and dw_e >= 0:
+                        valid_ranges.append((dw_s, dw_e))
+                if not valid_ranges:
+                    if s.is_must_visit:
+                        return OptimizedRoute(
+                            departure_at=dep_at,
+                            status=RouteStatus.INFEASIBLE,
+                            solver_status=SolverStatus.INFEASIBLE,
+                            diagnostics=[
+                                f"Mandatory stop '{s.name}' cannot complete service before closing: "
+                                f"dwell={s.dwell_seconds}s exceeds daily windows"
+                            ],
+                        )
+                    routing.ActiveVar(node_idx).SetValue(0)
+                    continue
+                time_dim.CumulVar(node_idx).SetRange(valid_ranges[0][0], valid_ranges[-1][1])
+                for k in range(len(valid_ranges) - 1):
+                    gap_start = valid_ranges[k][1] + 1
+                    gap_end = valid_ranges[k + 1][0] - 1
+                    if gap_start <= gap_end:
+                        time_dim.CumulVar(node_idx).RemoveInterval(gap_start, gap_end)
+                continue
+
             rel_start = 0
             if s.window_start is not None:
                 start_utc = _ensure_utc(s.window_start)
@@ -422,6 +451,7 @@ class OrToolsRoutingSolver:
                         skip_reason=skip_reason,
                         window_start=s.window_start,
                         window_end=s.window_end,
+                        daily_windows=s.daily_windows,
                         dwell_seconds=s.dwell_seconds,
                     )
                 )
@@ -455,9 +485,17 @@ class OrToolsRoutingSolver:
                 total_travel_seconds += leg_dur
                 total_distance_m += leg_dist
 
-                # Wait accounting if arriving before window start
+                # Wait accounting if arriving before window start (or overnight gap to next eligible day)
                 wait = 0
-                if s.window_start is not None:
+                if s.daily_windows:
+                    idx_node = get_node_index(node)
+                    if idx_node != -1:
+                        solver_start = dep_at + timedelta(
+                            seconds=int(solution.Value(time_dim.CumulVar(idx_node)))
+                        )
+                        if arr_time < solver_start:
+                            wait = int((solver_start - arr_time).total_seconds())
+                elif s.window_start is not None:
                     win_start_utc = _ensure_utc(s.window_start)
                     if arr_time < win_start_utc:
                         wait = int((win_start_utc - arr_time).total_seconds())
@@ -500,6 +538,11 @@ class OrToolsRoutingSolver:
             )
             stop_arrival = service_start if is_overnight_wait else arr_time
 
+            active_win = (
+                select_active_daily_window(s.daily_windows, arr_time, dwell, preferred_time=service_start)
+                if s.daily_windows
+                else None
+            )
             scheduled_stops.append(
                 ScheduledStopOutput(
                     id=s.id,
@@ -510,8 +553,9 @@ class OrToolsRoutingSolver:
                     location=s.location,
                     stop_type=s.stop_type,
                     is_must_visit=s.is_must_visit,
-                    window_start=s.window_start,
-                    window_end=s.window_end,
+                    window_start=active_win[0] if active_win else s.window_start,
+                    window_end=active_win[1] if active_win else s.window_end,
+                    daily_windows=s.daily_windows,
                     dwell_seconds=dwell,
                     planned_arrival_at=stop_arrival,
                     planned_departure_at=dep_time,

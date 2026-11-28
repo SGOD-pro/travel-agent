@@ -225,6 +225,7 @@ class RouteReplanService:
                     is_must_visit=s.is_must_visit,
                     window_start=s.window_start,
                     window_end=s.window_end,
+                    daily_windows=list(getattr(s, "daily_windows", []) or []),
                     dwell_seconds=s.dwell_seconds,
                     is_completed=False,
                     is_pedestrian_only=is_ped,
@@ -605,18 +606,33 @@ class RouteReplanService:
             arr_time = leg_dep + timedelta(seconds=leg_dur)
             dwell = target_input.dwell_seconds if target_input else to_stop.dwell_seconds
             wait_s = 0
-            if target_input and target_input.window_start:
-                w_start = _ensure_utc(target_input.window_start)
-                if arr_time < w_start:
-                    wait_s = int((w_start - arr_time).total_seconds())
+            w_start = None
+            w_end = None
+            if target_input and target_input.daily_windows:
+                from contracts.routing import select_active_daily_window
+
+                active_dw = select_active_daily_window(
+                    target_input.daily_windows,
+                    arr_time,
+                    dwell,
+                    preferred_time=_ensure_utc(to_stop.planned_arrival_at)
+                    if to_stop.planned_arrival_at
+                    else None,
+                )
+                if active_dw:
+                    w_start, w_end = active_dw
+            elif target_input:
+                w_start = _ensure_utc(target_input.window_start) if target_input.window_start else None
+                w_end = _ensure_utc(target_input.window_end) if target_input.window_end else None
+
+            if w_start and arr_time < w_start:
+                wait_s = int((w_start - arr_time).total_seconds())
 
             service_start = arr_time + timedelta(seconds=wait_s)
             target_dep = service_start + timedelta(seconds=dwell)
 
             # Hard service window revalidation: dwell completion before closing
-            if target_input and target_input.window_end:
-                w_end = _ensure_utc(target_input.window_end)
-                if w_end and target_dep > w_end:
+            if target_input and w_end and target_dep > w_end:
                     if target_input.is_must_visit:
                         return new_route_solution.model_copy(
                             update={
@@ -682,8 +698,9 @@ class RouteReplanService:
                             is_must_visit=False,
                             is_skipped=True,
                             skip_reason="TIME_WINDOW_OR_DROP_PENALTY",
-                            window_start=target_input.window_start,
-                            window_end=target_input.window_end,
+                            window_start=w_start or target_input.window_start,
+                            window_end=w_end or target_input.window_end,
+                            daily_windows=target_input.daily_windows,
                             dwell_seconds=target_input.dwell_seconds,
                         )
                         final_status = (
@@ -723,6 +740,11 @@ class RouteReplanService:
                         "planned_departure_at": target_dep,
                         "wait_seconds": wait_s,
                         "dwell_seconds": dwell,
+                        "window_start": w_start or to_stop.window_start,
+                        "window_end": w_end or to_stop.window_end,
+                        "daily_windows": target_input.daily_windows
+                        if target_input
+                        else to_stop.daily_windows,
                     }
                 )
             )
@@ -863,6 +885,7 @@ class RouteReplanService:
                     else (getattr(prev_s, "skip_reason", None) or infeasible_reason),
                     window_start=s.window_start,
                     window_end=s.window_end,
+                    daily_windows=list(getattr(s, "daily_windows", []) or []),
                     dwell_seconds=s.dwell_seconds,
                     planned_arrival_at=getattr(prev_s, "planned_arrival_at", None)
                     or getattr(s, "planned_arrival_at", None),

@@ -54,6 +54,7 @@ from contracts.llm import (
 )
 from contracts.money import BudgetCategory, BudgetLine, BudgetSummary, Currency
 from contracts.routing import (
+    DailyWindow,
     Point,
     RoadBudgetCalculator,
     RoadSegment,
@@ -1199,13 +1200,199 @@ def _find_nearest_brief_destination(
     return best_dest
 
 
+def _build_day_window(
+    visit_date: date,
+    stop_data: dict[str, Any],
+    selected_day_entry: dict[str, Any],
+    hours_details: dict[str, Any],
+    trip_tz: zoneinfo.ZoneInfo,
+) -> tuple[datetime | None, datetime | None]:
+    """Builds UTC (window_start, window_end) for a single visit_date."""
+    is_assumed = bool(
+        stop_data.get("is_hours_assumed", False)
+        or stop_data.get("hours_status")
+        in ("HOURS_ASSUMED", "HOURS_CONFLICTED", "UNKNOWN", "USER_SUPPLIED_UNVERIFIED")
+    )
+    t_start = _parse_window_time(
+        selected_day_entry.get("opens")
+        or stop_data.get("window_start")
+        or hours_details.get("opens")
+    ) or (time(9, 0) if is_assumed else None)
+    t_end = _parse_window_time(
+        selected_day_entry.get("closes")
+        or stop_data.get("window_end")
+        or hours_details.get("closes")
+    ) or (time(18, 0) if is_assumed else None)
+
+    tick_open = _parse_window_time(
+        selected_day_entry.get("ticketing_opens") or hours_details.get("ticketing_opens")
+    )
+    if tick_open is not None and t_start is not None and tick_open > t_start:
+        t_start = tick_open
+
+    if t_start is None or t_end is None:
+        dt_start = (
+            datetime.combine(visit_date, t_start, tzinfo=trip_tz).astimezone(UTC)
+            if t_start is not None
+            else None
+        )
+        dt_end = (
+            datetime.combine(visit_date, t_end, tzinfo=trip_tz).astimezone(UTC)
+            if t_end is not None
+            else None
+        )
+        return dt_start, dt_end
+
+    end_date = visit_date + timedelta(days=1) if t_end <= t_start else visit_date
+
+    eff_tick_close = selected_day_entry.get("ticketing_closes") or hours_details.get("ticketing_closes")
+    eff_last_entry = selected_day_entry.get("last_entry") or hours_details.get("last_entry")
+    entry_cutoffs = [
+        ct
+        for raw_c in (eff_tick_close, eff_last_entry)
+        if (ct := _parse_window_time(raw_c)) is not None
+    ]
+    if entry_cutoffs and end_date == visit_date:
+        earliest_cutoff = min(entry_cutoffs)
+        dwell_minutes = int(stop_data.get("suggested_stay_minutes") or 60)
+        cutoff_dt = datetime.combine(visit_date, earliest_cutoff, tzinfo=trip_tz) + timedelta(
+            minutes=dwell_minutes
+        )
+        close_dt = datetime.combine(end_date, t_end, tzinfo=trip_tz)
+        if cutoff_dt < close_dt:
+            t_end = cutoff_dt.timetz().replace(tzinfo=None)
+
+    dt_start = datetime.combine(visit_date, t_start, tzinfo=trip_tz).astimezone(UTC)
+    dt_end = datetime.combine(end_date, t_end, tzinfo=trip_tz).astimezone(UTC)
+    return dt_start, dt_end
+
+
+def _resolve_stop_daily_windows(
+    stop_data: dict[str, Any],
+    brief: TripBrief,
+    brief_dest: DestinationPoint | None,
+    trip_tz: zoneinfo.ZoneInfo,
+) -> list[tuple[datetime, datetime]]:
+    """Resolves all eligible local-day UTC windows for a stop across its destination stay_days."""
+    dest_offsets = _compute_dest_day_offsets(brief)
+    total_days = max(1, (brief.end_date - brief.start_date).days + 1)
+    explicit_date: date | None = None
+    matched_dest = brief_dest
+
+    if matched_dest is not None:
+        if matched_dest.visit_date is not None:
+            explicit_date = matched_dest.visit_date
+        elif matched_dest.day_offset is not None:
+            explicit_date = brief.start_date + timedelta(days=matched_dest.day_offset)
+
+    if explicit_date is None:
+        raw_vd = stop_data.get("visit_date")
+        if isinstance(raw_vd, date):
+            explicit_date = raw_vd
+        elif isinstance(raw_vd, str) and raw_vd.strip():
+            try:
+                explicit_date = date.fromisoformat(raw_vd.strip())
+            except Exception:
+                pass
+
+    if explicit_date is None:
+        raw_offset = stop_data.get("day_offset")
+        if raw_offset is not None:
+            try:
+                explicit_date = brief.start_date + timedelta(days=int(raw_offset))
+            except Exception:
+                pass
+
+    if explicit_date is not None:
+        candidate_dates = [max(brief.start_date, min(brief.end_date, explicit_date))]
+    else:
+        if matched_dest is None:
+            dest_hint = (
+                str(
+                    stop_data.get("destination")
+                    or stop_data.get("destination_name")
+                    or (
+                        stop_data.get("provenance", {}).get("destination")
+                        if isinstance(stop_data.get("provenance"), dict)
+                        else ""
+                    )
+                    or ""
+                )
+                .strip()
+                .lower()
+            )
+            if dest_hint:
+                matched_dest = next(
+                    (d for d in brief.destinations if d.name.strip().lower() == dest_hint),
+                    None,
+                )
+            if matched_dest is None:
+                pt = stop_data.get("point", {})
+                raw_lat = pt.get("lat") if isinstance(pt, dict) else getattr(pt, "lat", None)
+                raw_lng = pt.get("lng") if isinstance(pt, dict) else getattr(pt, "lng", None)
+                if raw_lat is not None and raw_lng is not None:
+                    try:
+                        matched_dest = _find_nearest_brief_destination(
+                            float(raw_lat), float(raw_lng), brief
+                        )
+                    except (ValueError, TypeError):
+                        pass
+            if matched_dest is None and brief.destinations:
+                matched_dest = brief.destinations[0]
+
+        if matched_dest is not None:
+            start_off = dest_offsets.get(matched_dest.name.strip().lower(), 0)
+            span_days = max(1, int(getattr(matched_dest, "stay_days", 1) or 1))
+        else:
+            start_off = 0
+            span_days = total_days
+        end_off = min(total_days, start_off + span_days)
+        candidate_dates = [
+            brief.start_date + timedelta(days=off)
+            for off in range(start_off, max(start_off + 1, end_off))
+        ]
+
+    hours_details = stop_data.get("hours_details") or {}
+    if not isinstance(hours_details, dict):
+        hours_details = {}
+    open_visit_dates = [
+        item
+        for item in (hours_details.get("open_visit_dates") or [])
+        if isinstance(item, dict) and item.get("date")
+    ]
+    by_iso = {str(item["date"]): item for item in open_visit_dates}
+
+    windows: list[tuple[datetime, datetime]] = []
+    if open_visit_dates:
+        matching_dates = [d for d in candidate_dates if d.isoformat() in by_iso]
+        dates_to_use = matching_dates if matching_dates else []
+        if not dates_to_use:
+            try:
+                fallback_d = date.fromisoformat(str(open_visit_dates[0]["date"]))
+                dates_to_use = [fallback_d]
+            except ValueError:
+                dates_to_use = candidate_dates[:1]
+        for d in dates_to_use:
+            entry = by_iso.get(d.isoformat(), open_visit_dates[0])
+            dt_s, dt_e = _build_day_window(d, stop_data, entry, hours_details, trip_tz)
+            if dt_s is not None and dt_e is not None:
+                windows.append((dt_s, dt_e))
+    else:
+        for d in candidate_dates:
+            dt_s, dt_e = _build_day_window(d, stop_data, {}, hours_details, trip_tz)
+            if dt_s is not None and dt_e is not None:
+                windows.append((dt_s, dt_e))
+
+    return windows
+
+
 def _resolve_stop_window(
     stop_data: dict[str, Any],
     brief: TripBrief,
     brief_dest: DestinationPoint | None,
     trip_tz: zoneinfo.ZoneInfo,
 ) -> tuple[datetime | None, datetime | None]:
-    """Resolves local opening window and converts consistently to UTC.
+    """Resolves single-day local opening window and converts consistently to UTC.
 
     Supports:
     - Multi-day trip offsets: respects brief_dest.visit_date or day_offset, or stop_data visit_date / day_offset.
@@ -1308,67 +1495,7 @@ def _resolve_stop_window(
             except ValueError:
                 pass
 
-    is_assumed = bool(
-        stop_data.get("is_hours_assumed", False)
-        or stop_data.get("hours_status")
-        in ("HOURS_ASSUMED", "HOURS_CONFLICTED", "UNKNOWN", "USER_SUPPLIED_UNVERIFIED")
-    )
-    t_start = _parse_window_time(
-        selected_day_entry.get("opens")
-        or stop_data.get("window_start")
-        or hours_details.get("opens")
-    ) or (time(9, 0) if is_assumed else None)
-    t_end = _parse_window_time(
-        selected_day_entry.get("closes")
-        or stop_data.get("window_end")
-        or hours_details.get("closes")
-    ) or (time(18, 0) if is_assumed else None)
-
-    tick_open = _parse_window_time(
-        selected_day_entry.get("ticketing_opens") or hours_details.get("ticketing_opens")
-    )
-    if tick_open is not None and t_start is not None and tick_open > t_start:
-        t_start = tick_open
-
-    if t_start is None or t_end is None:
-        dt_start = (
-            datetime.combine(visit_date, t_start, tzinfo=trip_tz).astimezone(UTC)
-            if t_start is not None
-            else None
-        )
-        dt_end = (
-            datetime.combine(visit_date, t_end, tzinfo=trip_tz).astimezone(UTC)
-            if t_end is not None
-            else None
-        )
-        return dt_start, dt_end
-
-    # Midnight date boundary crossing: if end time is earlier than or equal to start time,
-    # venue closes on the next morning.
-    end_date = visit_date + timedelta(days=1) if t_end <= t_start else visit_date
-
-    # Enforce earliest admission or ticketing cutoff against dwell duration so solver arrival
-    # obeys ticketing_closes and last_entry without exceeding venue close.
-    eff_tick_close = selected_day_entry.get("ticketing_closes") or hours_details.get("ticketing_closes")
-    eff_last_entry = selected_day_entry.get("last_entry") or hours_details.get("last_entry")
-    entry_cutoffs = [
-        ct
-        for raw_c in (eff_tick_close, eff_last_entry)
-        if (ct := _parse_window_time(raw_c)) is not None
-    ]
-    if entry_cutoffs and end_date == visit_date:
-        earliest_cutoff = min(entry_cutoffs)
-        dwell_minutes = int(stop_data.get("suggested_stay_minutes") or 60)
-        cutoff_dt = datetime.combine(visit_date, earliest_cutoff, tzinfo=trip_tz) + timedelta(
-            minutes=dwell_minutes
-        )
-        close_dt = datetime.combine(end_date, t_end, tzinfo=trip_tz)
-        if cutoff_dt < close_dt:
-            t_end = cutoff_dt.timetz().replace(tzinfo=None)
-
-    dt_start = datetime.combine(visit_date, t_start, tzinfo=trip_tz).astimezone(UTC)
-    dt_end = datetime.combine(end_date, t_end, tzinfo=trip_tz).astimezone(UTC)
-    return dt_start, dt_end
+    return _build_day_window(visit_date, stop_data, selected_day_entry, hours_details, trip_tz)
 
 
 def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
@@ -1729,12 +1856,27 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
                 lat_val = 0.0
                 lng_val = 0.0
 
-            dt_w_start, dt_w_end = _resolve_stop_window(s, brief, None, trip_tz)
+            daily_wins = _resolve_stop_daily_windows(s, brief, None, trip_tz)
+            if daily_wins:
+                dt_w_start, dt_w_end = daily_wins[0]
+                daily_window_models = (
+                    [DailyWindow(window_start=ws, window_end=we) for ws, we in daily_wins]
+                    if len(daily_wins) > 1
+                    else []
+                )
+                win_len = max(int((we - ws).total_seconds()) for ws, we in daily_wins)
+            else:
+                dt_w_start, dt_w_end = _resolve_stop_window(s, brief, None, trip_tz)
+                daily_window_models = []
+                win_len = (
+                    int((dt_w_end - dt_w_start).total_seconds())
+                    if dt_w_start and dt_w_end
+                    else 0
+                )
             dwell_s = int(s.get("suggested_stay_minutes", 60)) * 60
 
             # Check if dwell exceeds daily opening or last entry cutoff window
             if dt_w_start and dt_w_end:
-                win_len = int((dt_w_end - dt_w_start).total_seconds())
                 if dwell_s > win_len:
                     cutoff_reason = (
                         f"Deferred: suggested dwell ({dwell_s}s) exceeds available daily opening window ({win_len}s)"
@@ -1777,6 +1919,7 @@ def dispatch_route_optimizer_node(state: TripPlanningState) -> dict[str, Any]:
                         dwell_seconds=dwell_s,
                         window_start=dt_w_start,
                         window_end=dt_w_end,
+                        daily_windows=daily_window_models,
                     )
                 )
             else:

@@ -10,7 +10,7 @@ Conforms strictly to docs/TRD.md:
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import Any
@@ -197,6 +197,47 @@ class RestrictionType(StrEnum):
     DELAY = "DELAY"
 
 
+class DailyWindow(BaseModel):
+    """Single eligible local-day opening window in UTC."""
+
+    model_config = ConfigDict(frozen=True)
+
+    window_start: datetime
+    window_end: datetime
+
+
+def _normalize_dt_utc(dt: datetime) -> datetime:
+    return dt.astimezone(UTC) if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+def select_active_daily_window(
+    daily_windows: list[DailyWindow],
+    arr_time: datetime,
+    dwell_seconds: int,
+    preferred_time: datetime | None = None,
+) -> tuple[datetime, datetime] | None:
+    """Selects the active daily window matching preferred_time (if feasible) or earliest feasible window."""
+    if not daily_windows:
+        return None
+    arr_utc = _normalize_dt_utc(arr_time)
+    pref_utc = _normalize_dt_utc(preferred_time) if preferred_time is not None else None
+    sorted_dws = sorted(daily_windows, key=lambda w: _normalize_dt_utc(w.window_start))
+    if pref_utc is not None:
+        for dw in sorted_dws:
+            dw_s = _normalize_dt_utc(dw.window_start)
+            dw_e = _normalize_dt_utc(dw.window_end)
+            cand_start = max(arr_utc, dw_s)
+            if dw_s <= pref_utc <= dw_e and cand_start + timedelta(seconds=dwell_seconds) <= dw_e:
+                return dw_s, dw_e
+    for dw in sorted_dws:
+        dw_s = _normalize_dt_utc(dw.window_start)
+        dw_e = _normalize_dt_utc(dw.window_end)
+        if max(arr_utc, dw_s) + timedelta(seconds=dwell_seconds) <= dw_e:
+            return dw_s, dw_e
+    last_dw = sorted_dws[-1]
+    return _normalize_dt_utc(last_dw.window_start), _normalize_dt_utc(last_dw.window_end)
+
+
 class RouteStopInput(BaseModel):
     """Input stop representation for route optimization."""
 
@@ -210,6 +251,7 @@ class RouteStopInput(BaseModel):
     is_must_visit: bool = True
     window_start: datetime | None = None
     window_end: datetime | None = None
+    daily_windows: list[DailyWindow] = Field(default_factory=list)
     dwell_seconds: int = Field(default=0, ge=0)
     is_completed: bool = False
     is_pedestrian_only: bool = False
@@ -323,6 +365,7 @@ class ScheduledStopOutput(BaseModel):
     skip_reason: str | None = None
     window_start: datetime | None = None
     window_end: datetime | None = None
+    daily_windows: list[DailyWindow] = Field(default_factory=list)
     dwell_seconds: int = 0
     planned_arrival_at: datetime | None = None
     planned_departure_at: datetime | None = None

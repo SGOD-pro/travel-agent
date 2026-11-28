@@ -292,17 +292,27 @@ class MultimodalTransitionService:
 
                 # Dwell & window accounting
                 wait_s = 0
-                if target.window_start:
-                    w_start = _ensure_utc(target.window_start)
-                    if w_start and arr_time < w_start:
-                        wait_s = int((w_start - arr_time).total_seconds())
+                w_start = None
+                w_end = None
+                if target.daily_windows:
+                    from contracts.routing import select_active_daily_window
+
+                    active_dw = select_active_daily_window(
+                        target.daily_windows, arr_time, target.dwell_seconds
+                    )
+                    if active_dw:
+                        w_start, w_end = active_dw
+                else:
+                    w_start = _ensure_utc(target.window_start) if target.window_start else None
+                    w_end = _ensure_utc(target.window_end) if target.window_end else None
+
+                if w_start and arr_time < w_start:
+                    wait_s = int((w_start - arr_time).total_seconds())
 
                 service_start = arr_time + timedelta(seconds=wait_s)
                 dep_time = service_start + timedelta(seconds=target.dwell_seconds)
 
-                if target.window_end:
-                    w_end = _ensure_utc(target.window_end)
-                    if w_end and dep_time > w_end:
+                if w_end and dep_time > w_end:
                         if target.is_must_visit:
                             return OptimizedRoute(
                                 owner_id=request.owner_id,
@@ -334,8 +344,9 @@ class MultimodalTransitionService:
                                 is_must_visit=False,
                                 is_skipped=True,
                                 skip_reason="TIME_WINDOW_OR_DROP_PENALTY",
-                                window_start=target.window_start,
-                                window_end=target.window_end,
+                                window_start=w_start or target.window_start,
+                                window_end=w_end or target.window_end,
+                                daily_windows=target.daily_windows,
                                 dwell_seconds=target.dwell_seconds,
                             )
                             scheduled_stops.append(skipped_stop)
@@ -355,8 +366,9 @@ class MultimodalTransitionService:
                     location=target.location,
                     stop_type=target.stop_type,
                     is_must_visit=target.is_must_visit,
-                    window_start=target.window_start,
-                    window_end=target.window_end,
+                    window_start=w_start or target.window_start,
+                    window_end=w_end or target.window_end,
+                    daily_windows=target.daily_windows,
                     planned_arrival_at=stop_arrival,
                     planned_departure_at=dep_time,
                     dwell_seconds=target.dwell_seconds,
@@ -505,17 +517,27 @@ class MultimodalTransitionService:
 
                 # Window check
                 wait_s = 0
-                if target.window_start:
-                    w_start = _ensure_utc(target.window_start)
-                    if w_start and arr_time < w_start:
-                        wait_s = int((w_start - arr_time).total_seconds())
+                w_start = None
+                w_end = None
+                if target.daily_windows:
+                    from contracts.routing import select_active_daily_window
+
+                    active_dw = select_active_daily_window(
+                        target.daily_windows, arr_time, target.dwell_seconds
+                    )
+                    if active_dw:
+                        w_start, w_end = active_dw
+                else:
+                    w_start = _ensure_utc(target.window_start) if target.window_start else None
+                    w_end = _ensure_utc(target.window_end) if target.window_end else None
+
+                if w_start and arr_time < w_start:
+                    wait_s = int((w_start - arr_time).total_seconds())
 
                 service_start = arr_time + timedelta(seconds=wait_s)
                 dep_time = service_start + timedelta(seconds=target.dwell_seconds)
 
-                if target.window_end:
-                    w_end = _ensure_utc(target.window_end)
-                    if w_end and dep_time > w_end:
+                if w_end and dep_time > w_end:
                         if target.is_must_visit:
                             return OptimizedRoute(
                                 owner_id=request.owner_id,
@@ -547,8 +569,9 @@ class MultimodalTransitionService:
                                 is_must_visit=False,
                                 is_skipped=True,
                                 skip_reason="TIME_WINDOW_OR_DROP_PENALTY",
-                                window_start=target.window_start,
-                                window_end=target.window_end,
+                                window_start=w_start or target.window_start,
+                                window_end=w_end or target.window_end,
+                                daily_windows=target.daily_windows,
                                 dwell_seconds=target.dwell_seconds,
                             )
                             scheduled_stops.append(skipped_stop)
@@ -568,8 +591,9 @@ class MultimodalTransitionService:
                     location=target.location,
                     stop_type=target.stop_type,
                     is_must_visit=target.is_must_visit,
-                    window_start=target.window_start,
-                    window_end=target.window_end,
+                    window_start=w_start or target.window_start,
+                    window_end=w_end or target.window_end,
+                    daily_windows=target.daily_windows,
                     planned_arrival_at=stop_arrival,
                     planned_departure_at=dep_time,
                     dwell_seconds=target.dwell_seconds,
